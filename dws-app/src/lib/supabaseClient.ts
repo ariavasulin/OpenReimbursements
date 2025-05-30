@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -10,4 +10,7 @@ if (!supabaseAnonKey) {
   throw new Error("Missing environment variable NEXT_PUBLIC_SUPABASE_ANON_KEY");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// This client is intended for use in browser/client components.
+// For server-side operations (API routes, Server Components, Server Actions),
+// create a new client using createServerClient or createRouteHandlerClient from @supabase/ssr.
+export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
