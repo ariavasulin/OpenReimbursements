@@ -203,8 +203,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-[#222222] px-4 py-8">
-      <div className="w-full max-w-md space-y-8">
+    <div className="flex min-h-screen flex-col items-center justify-start bg-[#222222] px-4 py-8 overflow-hidden">
+      <div className="w-full max-w-xs space-y-8">
         <div className="flex flex-col items-center justify-center">
           <div className="mb-8 flex items-center justify-center">
             <Image
