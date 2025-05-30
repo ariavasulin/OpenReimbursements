@@ -37,7 +37,7 @@ User Story: As an employee, I want to view a list of all my submitted receipts w
 User Story: As an employee, I want to see the status of my receipts (Pending, Approved, Rejected, Reimbursed).
 3.1.4. Receipt Image Storage
 
-System Requirement: Uploaded receipt images will be stored permanently in a dedicated Design Workshops OneDrive account, organized into folders by employee. The application will store and display links to these images.
+System Requirement: Uploaded receipt images will be stored in a Supabase Storage bucket named `receipt-images`, organized by `user_id`. The application will store and display links to these images.
 3.2. Accounting Dashboard (Web Application) - Accountant/Admin Role 3.2.1. Authentication & Profile
 3.2.2. Receipt Management & Review (Full CRUD Capabilities)
 
@@ -45,7 +45,7 @@ User Story: As an accountant/admin, I want to see a dashboard overview (e.g., to
 User Story: As an accountant/admin, I want to view a comprehensive list of all submitted receipts from all employees.
 User Story: As an accountant/admin, I want to filter receipts by status (All, Pending, Approved, Reimbursed, Rejected), employee, date range.
 User Story: As an accountant/admin, I want to search for specific receipts (e.g., by employee name, description keywords).
-User Story: As an accountant/admin, I want to view the details of a specific receipt, including the receipt image (linked from OneDrive).
+User Story: As an accountant/admin, I want to view the details of a specific receipt, including the receipt image (linked from the Supabase `receipt-images` bucket).
 User Story: As an accountant/admin, I want to be able to edit any field of a submitted receipt (Date, Amount, Category, Description, Status).
 User Story: As an accountant/admin, I want to be able to delete receipts if necessary (e.g., duplicates, erroneous submissions).
 User Story: As an accountant/admin, I want to Approve, Reject, or change the status of receipts (e.g., mark as Reimbursed). No mandatory reason is required for rejection.
@@ -64,11 +64,11 @@ Accounting Dashboard: Microsoft OAuth.
 4.5. Integrations:
 
 Google Cloud Vision API (for OCR).
-Microsoft OneDrive (for receipt image storage).
+Supabase Storage (for receipt image storage, using a bucket named `receipt-images`).
 (Consider email service for future admin notifications or password resets if OTP fails).
-5. Data Management 5.1. Database: Supabase (PostgreSQL). Receipt metadata (date, amount, category, description, status, employee ID, link to OneDrive image). 5.2. OCR Data Flow: Image upload -> Google Cloud Vision API -> Parsed data pre-fills app fields. 5.3. Image Storage: Original receipt images stored permanently in OneDrive, linked in the database. 5.4. Data Retention:
+5. Data Management 5.1. Database: Supabase (PostgreSQL). Receipt metadata (date, amount, category, description, status, employee ID, path to image in Supabase Storage). 5.2. OCR Data Flow: Image upload -> Google Cloud Vision API -> Parsed data pre-fills app fields. 5.3. Image Storage: Original receipt images stored in the Supabase Storage bucket `receipt-images`, with their paths linked in the database. 5.4. Data Retention:
 
-Receipt images in OneDrive: Stored permanently.
+Receipt images in Supabase Storage (`receipt-images` bucket): Stored permanently.
 Receipt metadata in Supabase DB: Retained for a minimum of 7 years (for active querying and legal compliance), with potential for archival beyond that.
 6. Design & UX Considerations 6.1. Mobile-first responsive design for the employee web app. 
 6.2. Clear, intuitive interfaces for both employee and accounting users (referencing provided screenshots as a style guide). 
@@ -82,7 +82,7 @@ OCR processing time: < 10 seconds per receipt.
 
 Adherence to standard web security best practices (OWASP Top 10).
 Secure handling of PII and financial data.
-Secure API key management for external services (Google Cloud Vision, Twilio, OneDrive).
+Secure API key management for external services (Google Cloud Vision, Twilio, Supabase Storage).
 7.3. Scalability: System should be able to handle growth in the number of employees and receipts. 7.4. Reliability: High availability for both employee app and accounting dashboard.
 8. Success Metrics (V1) 
 8.1. Adoption rate by employees. 

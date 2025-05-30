@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'; // Import Session and AuthChangeEvent
 import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,40 +22,88 @@ export default function LoginPage() {
   const router = useRouter();
 
   // Redirect if already logged in
-  React.useEffect(() => {
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (session) {
-          router.replace('/dashboard'); // Assuming a dashboard page exists
+  useEffect(() => { // Combined initial check and auth state listener
+    const processAuthSession = async (session: Session | null, eventType?: AuthChangeEvent | string) => {
+      console.log('[Login Page] processAuthSession. EventType:', eventType, 'Session object:', session);
+      if (session && session.user) {
+        console.log('[Login Page] Session and session.user confirmed. User ID:', session.user.id, 'Attempting profile fetch...');
+        // Restore original profile fetching logic, ensuring all router.replace calls are in setTimeout
+        try {
+          const { data: profile, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('user_id, role, full_name')
+            .eq('user_id', session.user.id)
+            .single();
+
+          if (profileError) {
+            if (profileError.code === 'PGRST116') {
+              console.warn(`[Login Page] Profile not found for user ${session.user.id} (PGRST116). Defaulting to /employee.`);
+              setTimeout(() => {
+                console.log("[Login Page] Executing router.replace('/employee') due to PGRST116.");
+                router.replace('/employee');
+              }, 0);
+            } else {
+              console.error("[Login Page] Error fetching profile on auth change:", profileError.message);
+              // Stay on login page if there's an unexpected error fetching profile
+            }
+            return; // Important to return after handling profileError
+          }
+
+          if (profile) {
+            console.log("[Login Page] Profile fetched on auth change:", profile);
+            let targetPath = '/employee'; // Default
+            if (profile.role === 'employee') {
+              targetPath = '/employee';
+            } else if (profile.role === 'admin') {
+              targetPath = '/dashboard';
+            } else {
+              console.warn("[Login Page] Unknown user role:", profile.role, "- defaulting to /employee.");
+            }
+            console.log(`[Login Page] Attempting redirect to ${targetPath}...`);
+            setTimeout(() => {
+              console.log(`[Login Page] Executing router.replace('${targetPath}')`);
+              router.replace(targetPath);
+            }, 0);
+          } else {
+            // This case implies profileError was not 'PGRST116' but profile is still null.
+            console.warn("[Login Page] Profile data is null after fetch (and not PGRST116) for user:", session.user.id, "- defaulting to /employee.");
+            setTimeout(() => {
+              console.log("[Login Page] Executing router.replace('/employee') due to null profile.");
+              router.replace('/employee');
+            }, 0);
+          }
+        } catch (e) {
+          console.error("[Login Page] Exception during profile fetch in handleAuthChange:", e);
+          console.log("[Login Page] Exception caught, attempting redirect to /employee as fallback...");
+          setTimeout(() => {
+            console.log("[Login Page] Executing router.replace('/employee') due to exception.");
+            router.replace('/employee');
+          }, 0);
         }
-      }
-    );
-
-    // Check initial session
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        router.replace('/dashboard');
-      }
+      } // This closes the `if (session && session.user)` block
+      // If no session, or if session.user is null, this function implicitly returns undefined (which is fine for Promise<void>)
     };
-    checkSession();
-
-    return () => {
-      authListener?.subscription?.unsubscribe();
-    };
-  }, [router]);
-
-  // Effect to redirect when login is successful based on message
-  useEffect(() => {
-    if (message === 'Login successful! Redirecting...') {
-      // Add a small delay to allow onAuthStateChange to potentially fire first
-      // or for the user to see the message briefly.
-      const timer = setTimeout(() => {
-        router.replace('/dashboard');
-      }, 500); // 0.5 second delay
-      return () => clearTimeout(timer);
-    }
-  }, [message, router]);
+  
+      // Initial check
+      const checkInitialSession = async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        await processAuthSession(session, 'INITIAL_SESSION_CHECKED');
+      };
+      checkInitialSession();
+  
+      // Listen for auth changes
+      const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+        // This wrapper is not async, satisfying onAuthStateChange's direct type expectation better.
+        // The actual async work is inside processAuthSession.
+        processAuthSession(session, event);
+      });
+  
+      return () => {
+        authListener?.subscription?.unsubscribe();
+      };
+    }, [router]); // Restored router to dependency array
+  // Removed the useEffect that was watching the `message` state for redirection.
+  // The main useEffect above now handles all redirection based on auth state and role.
 
   const handleSendOtp = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

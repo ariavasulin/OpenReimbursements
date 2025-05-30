@@ -1,7 +1,9 @@
-import { supabase } from '@/lib/supabaseClient';
+import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
+  const supabase = await createSupabaseServerClient(); // Use the utility and await it
+
   try {
     const { phone } = await request.json();
 
@@ -21,6 +23,7 @@ export async function POST(request: Request) {
 
     if (error) {
       console.error('Supabase OTP send error:', error);
+      // Ensure the response is a NextResponse object
       return NextResponse.json({ error: error.message || 'Failed to send OTP' }, { status: 500 });
     }
 
