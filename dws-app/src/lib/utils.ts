@@ -13,20 +13,44 @@ export function formatCurrency(amount: number): string {
 }
 
 export function formatDate(dateString: string): string {
-  // Ensure the dateString is valid and correctly parsed.
-  // The prototype's formatDate assumes dateString is directly usable by `new Date()`.
-  // If dateString is already 'yyyy-MM-dd', `new Date(dateString)` might have timezone issues.
-  // It's often safer to parse 'yyyy-MM-dd' by splitting or using a library like date-fns.
-  // For now, keeping it simple as per prototype.
-  // Consider adding UTC handling if dates are stored as such: new Date(dateString + 'T00:00:00Z')
-  const date = new Date(dateString);
-  // Check if date is valid
-  if (isNaN(date.getTime())) {
-    return "Invalid Date";
+  // Handle timezone issues by parsing date components manually
+  // This prevents '2024-03-18' from being interpreted as midnight UTC
+  
+  // Check if it's in YYYY-MM-DD format
+  const dateMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  
+  if (dateMatch) {
+    // Parse components manually to avoid timezone issues
+    const year = parseInt(dateMatch[1], 10);
+    const month = parseInt(dateMatch[2], 10) - 1; // Month is 0-indexed
+    const day = parseInt(dateMatch[3], 10);
+    
+    // Create date in local timezone
+    const date = new Date(year, month, day);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      return "Invalid Date";
+    }
+    
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short", 
+      day: "numeric",
+    }).format(date);
+  } else {
+    // Fallback for other date formats
+    const date = new Date(dateString);
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      return "Invalid Date";
+    }
+    
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    }).format(date);
   }
-  return new Intl.DateTimeFormat("en-US", {
-    year: "numeric", // Added year for clarity
-    month: "short",
-    day: "numeric",
-  }).format(date)
 }

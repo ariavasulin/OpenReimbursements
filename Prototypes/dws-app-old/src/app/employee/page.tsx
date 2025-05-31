@@ -6,7 +6,7 @@ import Image from 'next/image'; // Added Image
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReceiptUploader from '@/components/receipt-uploader'; // Added
-import EmployeeReceiptTable from '@/components/employee-receipt-table'; // Changed to employee-specific table
+import ReceiptTable from '@/components/receipt-table';     // Added
 import type { Receipt, UserProfile } from '@/lib/types';        // Added Receipt type
 import { Button } from '@/components/ui/button';          // For logout button styling
 import { Toaster as SonnerToaster } from 'sonner';        // For toasts from uploader
@@ -134,48 +134,10 @@ export default function EmployeePage() {
           .eq('user_id', session.user.id)
           .single();
 
-        if (!mountedRef.current) return;
+        if (!mountedRef.current) return; // Check again after async operation
 
         if (profileError) {
-          console.error("EMPLOYEE_PAGE: protectPageAndFetchProfile - Error fetching user profile:", {
-            error: profileError,
-            code: profileError?.code,
-            message: profileError?.message,
-            details: profileError?.details,
-            hint: profileError?.hint,
-            userId: session.user.id
-          });
-          
-          // If it's a "No rows found" error, the profile might not exist
-          if (profileError.code === 'PGRST116') {
-            console.log("EMPLOYEE_PAGE: Profile not found, creating default profile");
-            // Try to create a default employee profile
-            const { data: newProfile, error: insertError } = await supabase
-              .from('user_profiles')
-              .insert({
-                user_id: session.user.id,
-                role: 'employee',
-                full_name: session.user.phone || 'Employee',
-                employee_id_internal: null
-              })
-              .select()
-              .single();
-            
-            if (insertError) {
-              console.error("EMPLOYEE_PAGE: Failed to create profile:", insertError);
-              authCheckCompleteRef.current = true;
-              setLoading(false);
-              router.replace('/login');
-              return;
-            } else {
-              console.log("EMPLOYEE_PAGE: Created new profile:", newProfile);
-              setUserProfile(newProfile);
-              authCheckCompleteRef.current = true;
-              setLoading(false);
-              return;
-            }
-          }
-          
+          console.error("EMPLOYEE_PAGE: protectPageAndFetchProfile - Error fetching user profile:", profileError);
           authCheckCompleteRef.current = true;
           setLoading(false);
           // On profile error, stay on page but don't set profile - let user try to refresh
@@ -307,7 +269,7 @@ export default function EmployeePage() {
         
         {receiptsLoading && <p className="text-center">Loading receipts...</p>}
         {receiptsError && <p className="text-center text-red-500">Error loading receipts: {receiptsError}</p>}
-        {!receiptsLoading && !receiptsError && <EmployeeReceiptTable receipts={receipts} />}
+        {!receiptsLoading && !receiptsError && <ReceiptTable receipts={receipts} />}
       
         <div className="mt-8 text-center">
           <Button

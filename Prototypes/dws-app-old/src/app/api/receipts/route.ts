@@ -169,19 +169,7 @@ export async function GET(request: Request) {
     console.log("GET /api/receipts: Fetching receipts from DB for user:", userId);
     const { data: receipts, error: dbError } = await supabase
       .from('receipts')
-      .select(`
-        id,
-        receipt_date,
-        amount,
-        status,
-        category_id,
-        user_id,
-        categories!receipts_category_id_fkey (name),
-        description,
-        image_url,
-        created_at,
-        updated_at
-      `)
+      .select('*')
       .eq('user_id', userId)
       .order('receipt_date', { ascending: false })
       .order('created_at', { ascending: false });
@@ -197,44 +185,30 @@ export async function GET(request: Request) {
     }
     console.log(`GET /api/receipts: Found ${receipts.length} receipts for user.`);
 
-    // Map receipts to match frontend Receipt interface
-    const mappedReceipts = receipts.map((item: any) => {
-      let publicImageUrl = item.image_url; // Default to existing if no processing needed
-      if (item.image_url) { // Ensure there's an image_url to process
-        console.log(`GET /api/receipts: Generating public URL for image path: ${item.image_url}`);
+    // Augment receipts with public image URLs
+    const receiptsWithPublicUrls = receipts.map(receipt => {
+      let publicImageUrl = receipt.image_url; // Default to existing if no processing needed
+      if (receipt.image_url) { // Ensure there's an image_url to process
+        console.log(`GET /api/receipts: Generating public URL for image path: ${receipt.image_url}`);
         const { data: publicUrlData } = supabase.storage
           .from('receipt-images')
-          .getPublicUrl(item.image_url); // image_url here is the path
+          .getPublicUrl(receipt.image_url); // image_url here is the path
         
         if (publicUrlData && publicUrlData.publicUrl) {
           publicImageUrl = publicUrlData.publicUrl;
           console.log(`GET /api/receipts: Generated public URL: ${publicImageUrl}`);
         } else {
-          console.warn(`GET /api/receipts: Could not generate public URL for ${item.image_url}. Falling back to stored path.`);
+          console.warn(`GET /api/receipts: Could not generate public URL for ${receipt.image_url}. Falling back to stored path.`);
         }
       }
-      
-      // Map database columns to frontend Receipt interface
       return {
-        id: item.id,
-        user_id: item.user_id,
-        employeeName: "Employee", // Not needed for employee view, but included for interface compatibility
-        employeeId: "N/A", // Not needed for employee view
-        date: item.receipt_date, // Map receipt_date to date
-        amount: item.amount,
-        status: item.status.toLowerCase(), // Normalize to lowercase for consistency
-        category_id: item.category_id,
-        category: item.categories?.name || "Uncategorized", // Map category name from join
-        description: item.description || "",
-        notes: item.description, // Keep both for compatibility
+        ...receipt,
         image_url: publicImageUrl,
-        created_at: item.created_at,
-        updated_at: item.updated_at,
       };
     });
     
-    console.log("GET /api/receipts: Returning mapped receipts. Data:", JSON.stringify(mappedReceipts, null, 2));
-    return NextResponse.json({ success: true, receipts: mappedReceipts as Receipt[] }, { status: 200 });
+    console.log("GET /api/receipts: Returning receipts with public URLs. Data:", JSON.stringify(receiptsWithPublicUrls, null, 2));
+    return NextResponse.json({ success: true, receipts: receiptsWithPublicUrls as Receipt[] }, { status: 200 });
 
   } catch (error) {
     console.error('GET /api/receipts: Unhandled error in try block:', error);

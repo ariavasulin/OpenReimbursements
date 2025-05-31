@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { ArrowLeft, Check, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { ArrowLeft, Check, X, ChevronLeft, ChevronRight, LogOut } from "lucide-react"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -12,7 +12,7 @@ import type { Receipt } from "@/lib/types"
 import { supabase } from "@/lib/supabaseClient"
 import { useEffect } from "react" // Ensure useEffect is imported
 
-export default function BatchReviewDashboard() {
+export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   const [receipts, setReceipts] = useState<Receipt[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [reviewedCount, setReviewedCount] = useState(0)
@@ -34,10 +34,10 @@ export default function BatchReviewDashboard() {
             receipt_date,
             amount,
             status,
-            category,
-            notes,
+            category_id,
+            categories!receipts_category_id_fkey (name),
+            description,
             image_url,
-            job_code,
             user_profiles (
               full_name,
               employee_id_internal
@@ -55,16 +55,17 @@ export default function BatchReviewDashboard() {
           employeeId: item.user_profiles?.employee_id_internal || "N/A",
           date: item.receipt_date,
           amount: item.amount,
-          category: item.category || "Uncategorized",
-          description: item.notes || "",
-          status: item.status.toLowerCase() as Receipt['status'], // Keep frontend status lowercase
-          imageUrl: item.image_url || "",
-          jobCode: item.job_code || item.jobCode || "",
+          category: item.categories?.name || "Uncategorized",
+          description: item.description || "",
+          status: item.status.toLowerCase() as Receipt['status'],
+          image_url: item.image_url ? supabase.storage.from('receipt-images').getPublicUrl(item.image_url).data.publicUrl : "",
+          // jobCode: item.job_code || item.jobCode || "", // Removed
         }))
         setReceipts(mappedReceipts)
       } catch (err: any) {
-        setError(err.message)
-        console.error("Error fetching pending receipts:", err)
+        const errorMessage = err?.message || (typeof err === 'object' && err !== null ? JSON.stringify(err) : String(err));
+        setError(errorMessage);
+        console.error("Error fetching pending receipts (processed):", errorMessage, "Original error:", err);
       } finally {
         setLoading(false)
       }
@@ -78,9 +79,10 @@ export default function BatchReviewDashboard() {
 
   const handleApprove = () => {
     if (!currentReceipt) return;
-    const newDecisions = { ...decisions, [currentReceipt.id]: "approved" }
+    const decision: "approved" = "approved";
+    const newDecisions = { ...decisions, [currentReceipt.id]: decision }
     setDecisions(newDecisions)
-    if (!Object.keys(decisions).includes(currentReceipt.id)) { // only advance reviewedCount if it's a new decision
+    if (!Object.keys(decisions).includes(currentReceipt.id)) {
         setReviewedCount(prev => prev + 1);
     }
     moveNext()
@@ -88,9 +90,10 @@ export default function BatchReviewDashboard() {
 
   const handleReject = () => {
     if (!currentReceipt) return;
-    const newDecisions = { ...decisions, [currentReceipt.id]: "rejected" }
+    const decision: "rejected" = "rejected";
+    const newDecisions = { ...decisions, [currentReceipt.id]: decision }
     setDecisions(newDecisions)
-    if (!Object.keys(decisions).includes(currentReceipt.id)) { // only advance reviewedCount if it's a new decision
+    if (!Object.keys(decisions).includes(currentReceipt.id)) {
         setReviewedCount(prev => prev + 1);
     }
     moveNext()
@@ -143,15 +146,16 @@ export default function BatchReviewDashboard() {
         const { data, error: supabaseError } = await supabase
           .from("receipts")
           .select(
-            `id, receipt_date, amount, status, category, notes, image_url, job_code, user_profiles (full_name, employee_id_internal)`
+            `id, receipt_date, amount, status, category_id, categories!receipts_category_id_fkey (name), description, image_url, user_profiles (full_name, employee_id_internal)`
           )
           .eq("status", "Pending")
           .order("created_at", { ascending: true })
         if (supabaseError) throw supabaseError
         setReceipts(data.map((item: any) => ({
             id: item.id, employeeName: item.user_profiles?.full_name || "N/A", employeeId: item.user_profiles?.employee_id_internal || "N/A",
-            date: item.receipt_date, amount: item.amount, category: item.category || "Uncategorized", description: item.notes || "",
-            status: item.status.toLowerCase() as Receipt['status'], imageUrl: item.image_url || "", jobCode: item.job_code || item.jobCode || "",
+            date: item.receipt_date, amount: item.amount, category: item.categories?.name || "Uncategorized", description: item.description || "",
+            status: item.status.toLowerCase() as Receipt['status'], image_url: item.image_url ? supabase.storage.from('receipt-images').getPublicUrl(item.image_url).data.publicUrl : "",
+            // jobCode: item.job_code || item.jobCode || "", // Removed
         })))
         setLoading(false)
       }
@@ -167,96 +171,115 @@ export default function BatchReviewDashboard() {
 
   if (loading) {
     return (
-      <div className="flex flex-col min-h-screen bg-background text-foreground items-center justify-center">
-        <p>Loading pending receipts...</p>
+      <div className="flex flex-col min-h-screen bg-[#222222] text-white items-center justify-center">
+        <p className="text-lg">Loading pending receipts...</p>
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="flex flex-col min-h-screen bg-background text-foreground items-center justify-center">
-        <p className="text-red-500">Error: {error}</p> {/* Consider using text-destructive */}
-        <Button onClick={() => window.location.reload()} className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90">Try Again</Button>
+      <div className="flex flex-col min-h-screen bg-[#222222] text-white items-center justify-center">
+        <p className="text-red-400">Error: {error}</p>
+        <Button onClick={() => window.location.reload()} className="mt-4 bg-[#2680FC] text-white hover:bg-[#1a6fd8]">Try Again</Button>
       </div>
     )
   }
 
   if (receipts.length === 0) {
     return (
-      <div className="flex flex-col min-h-screen bg-background text-foreground">
+      <div className="flex flex-col min-h-screen bg-[#222222] text-white">
          {/* Header */}
-        <div className="border-b border-border">
+        <div className="border-b border-[#444444]">
           <div className="flex h-16 items-center px-4 md:px-8">
             <div className="flex items-center">
               <Image src="/images/logo.png" alt="Company Logo" width={150} height={30} className="mr-3" />
             </div>
             <div className="ml-auto flex items-center space-x-4">
-              <Link href="/dashboard"> {/* Corrected Link to /dashboard */}
+              <Link href="/dashboard">
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
-                  className="bg-secondary text-secondary-foreground hover:bg-muted"
+                  className="bg-[#333333] text-white hover:bg-[#444444]"
                 >
                   <ArrowLeft className="mr-2 h-4 w-4" />
                   Back to Dashboard
                 </Button>
               </Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onLogout}
+                className="bg-red-500 text-white hover:bg-red-600"
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                Logout
+              </Button>
             </div>
           </div>
         </div>
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-xl">No pending receipts to review.</p>
+          <p className="text-xl text-white">No pending receipts to review.</p>
         </div>
       </div>
     )
   }
 
-  return (
-    <div className="flex flex-col min-h-screen bg-background text-foreground">
+  return ( // The error "Unexpected token div" was here. Ensuring proper return.
+    <div className="flex flex-col min-h-screen bg-[#222222] text-white">
       {/* Header */}
-      <div className="border-b border-border">
+      <div className="border-b border-[#444444]">
         <div className="flex h-16 items-center px-4 md:px-8">
           <div className="flex items-center">
             <Image src="/images/logo.png" alt="Company Logo" width={150} height={30} className="mr-3" />
           </div>
           <div className="ml-auto flex items-center space-x-4">
-            <Link href="/dashboard"> {/* Corrected Link to /dashboard */}
+            <Link href="/dashboard">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
-                className="bg-secondary text-secondary-foreground hover:bg-muted"
+                className="bg-[#333333] text-white hover:bg-[#444444]"
               >
                 <ArrowLeft className="mr-2 h-4 w-4" />
                 Back to Dashboard
               </Button>
             </Link>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onLogout}
+              className="bg-red-500 text-white hover:bg-red-600"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Logout
+            </Button>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 p-4 md:p-8 pt-6">
+      <div className="flex-1 p-4 md:p-8 pt-6 text-white">
         <div className="mb-6">
-          <h1 className="text-2xl font-bold mb-2">Batch Receipt Review</h1>
-          <p className="text-muted-foreground">
+          <h1 className="text-2xl font-bold mb-2 text-white">Batch Receipt Review</h1>
+          <p className="text-gray-400">
             Quickly review and approve/reject pending receipts. Progress: {reviewedCount} of {receipts.length} decided. ({currentIndex + 1} / {receipts.length} viewed)
           </p>
-          <Progress value={progress} className="h-2 mt-2 bg-secondary" indicatorClassName="bg-green-500" /> {/* Green indicator for progress seems fine */}
+          <Progress value={progress} className="h-2 mt-2 bg-[#444444]" indicatorColor="bg-green-500" />
         </div>
 
         {/* Show review UI if there are receipts and not all have had decisions made, or if all decided but user is still navigating them */}
         {receipts.length > 0 && reviewedCount < receipts.length && currentReceipt ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Receipt Details */}
-            <Card className="bg-card text-card-foreground border-border">
+            <Card className="bg-[#333333] text-white border-[#444444]">
               <CardHeader>
                 <div className="flex justify-between items-center">
-                  <CardTitle>Receipt {currentReceipt.id}</CardTitle>
+                  <CardTitle className="text-white">Receipt {currentReceipt.id}</CardTitle>
+                  {/* Badge styling kept as is for now for status distinction */}
                   <Badge variant="outline" className={`capitalize ${
                     decisions[currentReceipt.id] === 'approved' ? 'bg-green-500/30 text-green-300 border-green-500/30' :
                     decisions[currentReceipt.id] === 'rejected' ? 'bg-red-500/30 text-red-300 border-red-500/30' :
-                    'bg-yellow-500/30 text-yellow-300 border-yellow-500/30' // Assuming 'pending' maps to yellow
+                    'bg-yellow-500/30 text-yellow-300 border-yellow-500/30'
                   }`}>
                     {decisions[currentReceipt.id] || currentReceipt.status}
                   </Badge>
@@ -265,38 +288,38 @@ export default function BatchReviewDashboard() {
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-muted-foreground text-sm">Employee</p>
-                    <p className="font-medium">{currentReceipt.employeeName}</p>
+                    <p className="text-gray-400 text-sm">Employee</p>
+                    <p className="font-medium text-white">{currentReceipt.employeeName}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-sm">Employee ID</p>
-                    <p className="font-medium">{currentReceipt.employeeId}</p>
+                    <p className="text-gray-400 text-sm">Employee ID</p>
+                    <p className="font-medium text-white">{currentReceipt.employeeId}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-sm">Date</p>
-                    <p className="font-medium">{new Date(currentReceipt.date).toLocaleDateString()}</p>
+                    <p className="text-gray-400 text-sm">Date</p>
+                    <p className="font-medium text-white">{new Date(currentReceipt.date).toLocaleDateString()}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-sm">Amount</p>
-                    <p className="font-medium">${currentReceipt.amount.toFixed(2)}</p>
+                    <p className="text-gray-400 text-sm">Amount</p>
+                    <p className="font-medium text-white">${currentReceipt.amount.toFixed(2)}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-sm">Category</p>
-                    <p className="font-medium">{currentReceipt.category}</p>
+                    <p className="text-gray-400 text-sm">Category</p>
+                    <p className="font-medium text-white">{currentReceipt.category}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-sm">Description</p>
-                    <p className="font-medium">{currentReceipt.description}</p>
+                    <p className="text-gray-400 text-sm">Description</p>
+                    <p className="font-medium text-white">{currentReceipt.description}</p>
                   </div>
                 </div>
               </CardContent>
-              <CardFooter className="flex justify-between border-t border-border pt-4">
+              <CardFooter className="flex justify-between border-t border-[#444444] pt-4">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={movePrevious}
-                  disabled={currentIndex === 0 || isSubmitting} // Added isSubmitting here
-                  className="bg-secondary text-secondary-foreground hover:bg-muted disabled:opacity-50"
+                  disabled={currentIndex === 0 || isSubmitting}
+                  className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
@@ -307,7 +330,7 @@ export default function BatchReviewDashboard() {
                     size="sm"
                     onClick={handleReject}
                     disabled={isSubmitting}
-                    className="border-red-500/30 bg-red-500/30 text-red-300 hover:bg-red-500/50 hover:text-red-200 disabled:opacity-50"
+                    className="bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                   >
                     <X className="h-4 w-4 mr-1" />
                     Reject
@@ -317,7 +340,7 @@ export default function BatchReviewDashboard() {
                     size="sm"
                     onClick={handleApprove}
                     disabled={isSubmitting}
-                    className="border-green-500/30 bg-green-500/30 text-green-300 hover:bg-green-500/50 hover:text-green-200 disabled:opacity-50"
+                    className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
                   >
                     <Check className="h-4 w-4 mr-1" />
                     Approve
@@ -328,7 +351,7 @@ export default function BatchReviewDashboard() {
                   size="sm"
                   onClick={moveNext}
                   disabled={currentIndex === receipts.length - 1 || isSubmitting}
-                  className="bg-secondary text-secondary-foreground hover:bg-muted disabled:opacity-50"
+                  className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
                 >
                   Next
                   <ChevronRight className="h-4 w-4 ml-1" />
@@ -337,96 +360,88 @@ export default function BatchReviewDashboard() {
             </Card>
 
             {/* Receipt Image */}
-            <Card className="bg-card text-card-foreground border-border flex flex-col">
+            <Card className="bg-[#333333] text-white border-[#444444] flex flex-col">
               <CardHeader>
-                <CardTitle>Receipt Image</CardTitle>
+                <CardTitle className="text-white">Receipt Image</CardTitle>
               </CardHeader>
               <CardContent className="flex-1 flex items-center justify-center p-4">
-                {currentReceipt.imageUrl ? (
+                {currentReceipt.image_url ? (
                   <Image
-                    src={currentReceipt.imageUrl}
+                    src={currentReceipt.image_url}
                     alt={`Receipt ${currentReceipt.id}`}
                     width={400}
                     height={400}
                     className="object-contain max-w-full max-h-[400px] rounded-md"
                   />
                 ) : (
-                  <div className="text-center bg-muted rounded-lg p-4 w-full h-[400px] flex items-center justify-center">
-                    <p className="text-muted-foreground">No image available</p>
+                  <div className="text-center bg-[#444444] rounded-lg p-4 w-full h-[400px] flex items-center justify-center">
+                    <p className="text-gray-400">No image available</p>
                   </div>
                 )}
               </CardContent>
             </Card>
           </div>
         ) : receipts.length > 0 && Object.keys(decisions).length >= receipts.length ? (
-           // This card shows when decisions have been made for all initially fetched receipts
-           <Card className="bg-card text-card-foreground border-border mt-6">
+           <Card className="bg-[#333333] text-white border-[#444444] mt-6">
             <CardHeader>
-              <CardTitle>All Pending Receipts Processed</CardTitle>
+              <CardTitle className="text-white">All Pending Receipts Processed</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-muted-foreground">You have processed all available pending receipts. Submit your decisions or review them again.</p>
+              <p className="text-gray-400">You have processed all available pending receipts. Submit your decisions or review them again.</p>
               <div className="mt-4 space-y-2">
                 <div className="flex items-center">
                   <div className="w-4 h-4 rounded-full bg-green-500 mr-2"></div>
-                  <p>To be Approved: {Object.values(decisions).filter((d) => d === "approved").length}</p>
+                  <p className="text-white">To be Approved: {Object.values(decisions).filter((d) => d === "approved").length}</p>
                 </div>
                 <div className="flex items-center">
                   <div className="w-4 h-4 rounded-full bg-red-500 mr-2"></div>
-                  <p>To be Rejected: {Object.values(decisions).filter((d) => d === "rejected").length}</p>
+                  <p className="text-white">To be Rejected: {Object.values(decisions).filter((d) => d === "rejected").length}</p>
                 </div>
               </div>
             </CardContent>
-            <CardFooter className="flex justify-between">
+            <CardFooter className="flex justify-between border-t border-[#444444] pt-4">
               <Button
                 variant="outline"
-                onClick={() => setCurrentIndex(0)} // Allow user to go back and review decisions
+                onClick={() => setCurrentIndex(0)}
                 disabled={isSubmitting}
-                className="bg-secondary text-secondary-foreground hover:bg-muted disabled:opacity-50"
+                className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
               >
                 Review My Decisions
               </Button>
               <Button
                 onClick={handleSubmitAll}
                 disabled={isSubmitting || Object.keys(decisions).length === 0}
-                className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50" // Explicit green for submit
+                className="bg-[#2680FC] text-white hover:bg-[#1a6fd8] disabled:opacity-50"
               >
                 {isSubmitting ? "Submitting..." : `Submit ${Object.keys(decisions).length} Decisions`}
               </Button>
             </CardFooter>
           </Card>
-        )}
-
+        ) : null }
 
         {/* Navigation between receipts */}
         {currentReceipt && receipts.length > 0 && (
           <div className="mt-6 flex justify-center">
-            <div className="flex items-center space-x-2 bg-muted rounded-lg p-2 overflow-x-auto max-w-full">
+            <div className="flex items-center space-x-2 bg-[#444444] rounded-lg p-2 overflow-x-auto max-w-full">
               {receipts.length > 10 ? (
-                // Show pagination style navigation for many receipts (simplified for now)
                 <>
-                  {/* Always show first few */}
                   {[0, 1, 2].map((index) => (
                     <button
                       key={index}
                       onClick={() => setCurrentIndex(index)}
-                      disabled={isSubmitting} // Added disabled state
-                      className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                      disabled={isSubmitting}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                         index === currentIndex
-                          ? "bg-primary text-primary-foreground"
+                          ? "bg-[#2680FC] text-white"
                           : index < currentIndex || decisions[receipts[index].id]
-                            ? "bg-green-500/30 text-green-300" // Keep decision indication
-                            : "bg-secondary text-secondary-foreground hover:bg-accent"
-                      } disabled:opacity-50`}
+                            ? "bg-green-700/50 text-green-300"
+                            : "bg-[#555555] text-gray-300 hover:bg-[#666666]"
+                      }`}
                     >
                       {index + 1}
                     </button>
                   ))}
-
-                  {/* Show ellipsis if not at the beginning */}
-                  {currentIndex > 3 && receipts.length > 5 && <span className="text-foreground px-1">...</span>}
-
-                  {/* Show current and surrounding */}
+                  {currentIndex > 3 && receipts.length > 5 && <span className="text-gray-300 px-1">...</span>}
                   {currentIndex >= 3 && currentIndex < receipts.length - 3 && (
                     <>
                       {[currentIndex - 1, currentIndex, currentIndex + 1]
@@ -435,56 +450,51 @@ export default function BatchReviewDashboard() {
                           <button
                             key={index}
                             onClick={() => setCurrentIndex(index)}
-                            disabled={isSubmitting} // Added disabled state
-                            className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                            disabled={isSubmitting}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                               index === currentIndex
-                                ? "bg-primary text-primary-foreground"
+                                ? "bg-[#2680FC] text-white"
                                 : index < currentIndex || decisions[receipts[index].id]
-                                  ? "bg-green-500/30 text-green-300"
-                                  : "bg-secondary text-secondary-foreground hover:bg-accent"
-                            } disabled:opacity-50`}
+                                  ? "bg-green-700/50 text-green-300"
+                                  : "bg-[#555555] text-gray-300 hover:bg-[#666666]"
+                            }`}
                           >
                             {index + 1}
                           </button>
                         ))}
                     </>
                   )}
-
-                  {/* Show ellipsis if not at the end */}
-                  {currentIndex < receipts.length - 4 && receipts.length > 5 && <span className="text-foreground px-1">...</span>}
-
-                  {/* Always show last few */}
+                  {currentIndex < receipts.length - 4 && receipts.length > 5 && <span className="text-gray-300 px-1">...</span>}
                   {[receipts.length - 3, receipts.length - 2, receipts.length - 1].map((index) => (
                     <button
                       key={index}
                       onClick={() => setCurrentIndex(index)}
-                      disabled={isSubmitting} // Added disabled state
-                      className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                      disabled={isSubmitting}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                         index === currentIndex
-                          ? "bg-primary text-primary-foreground"
+                          ? "bg-[#2680FC] text-white"
                           : index < currentIndex || decisions[receipts[index].id]
-                            ? "bg-green-500/30 text-green-300"
-                            : "bg-secondary text-secondary-foreground hover:bg-accent"
-                      } disabled:opacity-50`}
+                            ? "bg-green-700/50 text-green-300"
+                            : "bg-[#555555] text-gray-300 hover:bg-[#666666]"
+                      }`}
                     >
                       {index + 1}
                     </button>
                   ))}
                 </>
               ) : (
-                // Show all buttons if 10 or fewer receipts
                 receipts.map((_, index) => (
                   <button
                     key={index}
                     onClick={() => setCurrentIndex(index)}
-                    disabled={isSubmitting} // Added disabled state
-                    className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                    disabled={isSubmitting}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                       index === currentIndex
-                        ? "bg-primary text-primary-foreground"
+                        ? "bg-[#2680FC] text-white"
                         : index < currentIndex || decisions[receipts[index].id]
-                          ? "bg-green-500/30 text-green-300"
-                          : "bg-secondary text-secondary-foreground hover:bg-accent"
-                    } disabled:opacity-50`}
+                          ? "bg-green-700/50 text-green-300"
+                          : "bg-[#555555] text-gray-300 hover:bg-[#666666]"
+                    }`}
                   >
                     {index + 1}
                   </button>

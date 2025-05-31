@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -13,29 +13,72 @@ import type { Receipt } from "@/lib/types"
 interface ReceiptTableProps {
   rowData?: Receipt[]
   height?: number | string
+  selectedRows?: Set<string>
+  onSelectedRowsChange?: (selectedRows: Set<string>) => void
+  currentPage?: number
+  pageSize?: number
+  onPageChange?: (page: number) => void
+  onPageSizeChange?: (pageSize: number) => void
 }
 
 type SortField = keyof Receipt
 type SortDirection = "asc" | "desc" | null
 
-const ReceiptTable: React.FC<ReceiptTableProps> = ({ rowData = [], height = 500 }) => {
-  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
+const ReceiptTable: React.FC<ReceiptTableProps> = ({ 
+  rowData = [], 
+  height = 500, 
+  selectedRows: controlledSelectedRows,
+  onSelectedRowsChange,
+  currentPage = 1,
+  pageSize = 10,
+  onPageChange,
+  onPageSizeChange
+}) => {
+  const [internalSelectedRows, setInternalSelectedRows] = useState<Set<string>>(new Set())
   const [sortField, setSortField] = useState<SortField | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+
+  // Use controlled or internal state
+  const selectedRows = controlledSelectedRows !== undefined ? controlledSelectedRows : internalSelectedRows
+
+  // Notify parent when selected rows change (only for uncontrolled mode)
+  useEffect(() => {
+    if (controlledSelectedRows === undefined && onSelectedRowsChange) {
+      onSelectedRowsChange(internalSelectedRows)
+    }
+  }, [internalSelectedRows, onSelectedRowsChange, controlledSelectedRows])
+
+  // Handle selection changes
+  const handleSelectedRowsChange = (newSelectedRows: Set<string>) => {
+    if (controlledSelectedRows !== undefined) {
+      // Controlled mode - notify parent
+      onSelectedRowsChange?.(newSelectedRows)
+    } else {
+      // Uncontrolled mode - update internal state
+      setInternalSelectedRows(newSelectedRows)
+    }
+  }
 
   // Sort data
   const sortedData = useMemo(() => {
     if (!sortField || !sortDirection) return rowData
 
     return [...rowData].sort((a, b) => {
-      const aValue = a[sortField]
-      const bValue = b[sortField]
+      const aValue = a[sortField];
+      const bValue = b[sortField];
 
-      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1
-      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1
-      return 0
+      // Handle undefined values by treating them as "lesser" or provide specific logic
+      if (aValue === undefined && bValue === undefined) return 0;
+      if (aValue === undefined) return sortDirection === "asc" ? -1 : 1;
+      if (bValue === undefined) return sortDirection === "asc" ? 1 : -1;
+
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return sortDirection === "asc" ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+      }
+
+      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
+      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
+      return 0;
     })
   }, [rowData, sortField, sortDirection])
 
@@ -44,8 +87,6 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({ rowData = [], height = 500 
     const startIndex = (currentPage - 1) * pageSize
     return sortedData.slice(startIndex, startIndex + pageSize)
   }, [sortedData, currentPage, pageSize])
-
-  const totalPages = Math.ceil(sortedData.length / pageSize)
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -78,9 +119,9 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({ rowData = [], height = 500 
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedRows(new Set(paginatedData.map((row) => row.id)))
+      handleSelectedRowsChange(new Set(paginatedData.map((row) => row.id)))
     } else {
-      setSelectedRows(new Set())
+      handleSelectedRowsChange(new Set())
     }
   }
 
@@ -91,7 +132,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({ rowData = [], height = 500 
     } else {
       newSelected.delete(id)
     }
-    setSelectedRows(newSelected)
+    handleSelectedRowsChange(newSelected)
   }
 
   const isAllSelected = paginatedData.length > 0 && paginatedData.every((row) => selectedRows.has(row.id))
@@ -116,109 +157,95 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({ rowData = [], height = 500 
   }
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-border bg-card" style={{ height }}>
+      <div className="rounded-md border border-[#444444] bg-[#333333]" style={{ height }}>
         <div className="overflow-auto h-full">
           <Table>
-            <TableHeader className="sticky top-0 bg-muted z-10"> {/* Changed bg for header */}
-              <TableRow className="border-border hover:bg-accent"> {/* hover:bg-accent or similar */}
-                <TableHead className="w-12 text-center">
+            <TableHeader className="sticky top-0 bg-[#444444] z-10">
+            <TableRow className="border-[#444444] hover:bg-[#555555]">
+              <TableHead className="w-12 text-center p-3">
                   <Checkbox
-                    checked={isAllSelected}
+                    checked={isIndeterminate ? 'indeterminate' : isAllSelected}
                     onCheckedChange={handleSelectAll}
-                    ref={(el) => {
-                      if (el) el.indeterminate = isIndeterminate
-                    }}
-                    // Standard ShadCN checkbox should pick up theme from globals.css
-                    // className="border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
+                  className="border-white data-[state=checked]:border-white data-[state=checked]:bg-[#444444] data-[state=checked]:text-white data-[state=indeterminate]:text-white data-[state=indeterminate]:bg-[#444444]"
                   />
                 </TableHead>
-                <TableHead className="text-foreground">
-                  <Button
-                    variant="ghost"
-                    onClick={() => handleSort("jobCode")}
-                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
-                  >
-                    Job Code
-                    {getSortIcon("jobCode")}
-                  </Button>
-                </TableHead>
-                <TableHead className="text-foreground">
-                  <Button
-                    variant="ghost"
+              <TableHead className="text-white text-left p-3">
+                <div
                     onClick={() => handleSort("date")}
-                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
                     Date
                     {getSortIcon("date")}
-                  </Button>
+                </div>
                 </TableHead>
-                <TableHead className="text-foreground">
-                  <Button
-                    variant="ghost"
+              <TableHead className="text-white text-left p-3">
+                <div
                     onClick={() => handleSort("employeeName")}
-                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
                     Employee
                     {getSortIcon("employeeName")}
-                  </Button>
+                </div>
                 </TableHead>
-                <TableHead className="text-foreground">
-                  <Button
-                    variant="ghost"
+              <TableHead className="text-white text-left p-3">
+                <div
                     onClick={() => handleSort("amount")}
-                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
                     Amount
                     {getSortIcon("amount")}
-                  </Button>
+                </div>
                 </TableHead>
-                <TableHead className="text-foreground">
-                  <Button
-                    variant="ghost"
+              <TableHead className="text-white text-left p-3">
+                <div
                     onClick={() => handleSort("category")}
-                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
                     Category
                     {getSortIcon("category")}
-                  </Button>
+                </div>
                 </TableHead>
-                <TableHead className="text-foreground">
-                  <Button
-                    variant="ghost"
+              <TableHead className="text-white text-left p-3">
+                <div
                     onClick={() => handleSort("description")}
-                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
                     Description
                     {getSortIcon("description")}
-                  </Button>
+                </div>
                 </TableHead>
-                <TableHead className="text-foreground text-center">Status</TableHead>
-                <TableHead className="text-foreground text-center">Image</TableHead>
+              <TableHead className="text-white text-center p-3">Status</TableHead>
+              <TableHead className="text-white text-center p-3">Image</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {paginatedData.map((receipt) => (
-                <TableRow key={receipt.id} className="border-border hover:bg-accent text-foreground">
-                  <TableCell className="text-center">
+                <TableRow key={receipt.id} className="border-[#444444] hover:bg-[#555555] text-white">
+                <TableCell className="text-center p-3">
                     <Checkbox
                       checked={selectedRows.has(receipt.id)}
                       onCheckedChange={(checked) => handleSelectRow(receipt.id, checked as boolean)}
-                      // Standard ShadCN checkbox
+                    className="border-white data-[state=checked]:border-white data-[state=checked]:bg-[#444444] data-[state=checked]:text-white"
                     />
                   </TableCell>
-                  <TableCell>{receipt.jobCode}</TableCell> {/* Removed explicit text-white */}
-                  <TableCell>{new Date(receipt.date).toLocaleDateString()}</TableCell>
-                  <TableCell>{receipt.employeeName}</TableCell>
-                  <TableCell>${receipt.amount.toFixed(2)}</TableCell>
-                  <TableCell>{receipt.category}</TableCell>
-                  <TableCell>{receipt.description}</TableCell>
-                  <TableCell className="text-center">{getStatusBadge(receipt.status)}</TableCell>
-                  <TableCell className="text-center">
+                <TableCell className="text-left p-3">{new Date(receipt.date).toLocaleDateString()}</TableCell>
+                <TableCell className="text-left p-3">{receipt.employeeName}</TableCell>
+                <TableCell className="text-left p-3">${receipt.amount.toFixed(2)}</TableCell>
+                <TableCell className="text-left p-3">{receipt.category}</TableCell>
+                <TableCell className="text-left p-3">{receipt.description}</TableCell>
+                <TableCell className="text-center p-3">{getStatusBadge(receipt.status)}</TableCell>
+                <TableCell className="text-center p-3">
                     <Button
                       variant="outline"
                       size="sm"
-                      className="bg-secondary text-secondary-foreground hover:bg-muted border-border"
+                      className="bg-[#444444] text-white hover:bg-[#555555] border-[#555555]"
+                      onClick={() => {
+                        if (receipt.image_url) {
+                          window.open(receipt.image_url, "_blank", "noopener,noreferrer");
+                        } else {
+                          alert("No image URL available for this receipt.");
+                        }
+                      }}
                     >
                       View
                     </Button>
@@ -228,79 +255,6 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({ rowData = [], height = 500 
             </TableBody>
           </Table>
         </div>
-      </div>
-
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <p className="text-sm text-muted-foreground">
-            Showing {Math.min((currentPage - 1) * pageSize + 1, sortedData.length)} to{" "}
-            {Math.min(currentPage * pageSize, sortedData.length)} of {sortedData.length} entries
-          </p>
-        </div>
-        <div className="flex items-center space-x-6">
-          <div className="flex items-center space-x-2">
-            <p className="text-sm text-muted-foreground">Rows per page</p>
-            <Select
-              value={pageSize.toString()}
-              onValueChange={(value) => {
-                setPageSize(Number(value))
-                setCurrentPage(1)
-              }}
-            >
-              <SelectTrigger className="h-8 w-[70px] bg-input text-foreground border-border">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-popover text-popover-foreground border-border">
-                <SelectItem value="10">10</SelectItem>
-                <SelectItem value="25">25</SelectItem>
-                <SelectItem value="50">50</SelectItem>
-                <SelectItem value="100">100</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center space-x-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-              disabled={currentPage === 1}
-              className="bg-secondary text-secondary-foreground hover:bg-muted border-border disabled:opacity-50"
-            >
-              Previous
-            </Button>
-            <div className="flex items-center space-x-1">
-              <p className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-              disabled={currentPage === totalPages}
-              className="bg-secondary text-secondary-foreground hover:bg-muted border-border disabled:opacity-50"
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Selected rows info */}
-      {selectedRows.size > 0 && (
-        <div className="flex items-center justify-between p-2 bg-muted text-muted-foreground rounded-md">
-          <p className="text-sm">{selectedRows.size} row(s) selected</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setSelectedRows(new Set())}
-            className="bg-secondary text-secondary-foreground hover:bg-accent border-border"
-          >
-            Clear selection
-          </Button>
-        </div>
-      )}
     </div>
   )
 }

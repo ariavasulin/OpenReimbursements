@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
-import type { UserProfile } from '@/lib/types'; // Ensure this import is correct
+import type { UserProfile } from '@/lib/types';
 import ReceiptDashboard from "@/components/receipt-dashboard";
 
 export default function DashboardPage() {
@@ -11,154 +11,149 @@ export default function DashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log('[Admin Dashboard] useEffect triggered');
+    console.log('[DASHBOARD DEBUG] Component mounted, starting auth check');
 
-    const fetchUserAndCheckSession = async () => {
-      console.log('[Admin Dashboard] fetchUserAndCheckSession called');
-      setLoading(true);
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      console.log('[Admin Dashboard] getSession result:', { session, sessionError });
+    // Create AbortController for this effect
+    const abortController = new AbortController();
+    let isCancelled = false;
 
-      if (sessionError) {
-        console.error('[Admin Dashboard] getSession error:', sessionError);
-        router.replace('/login');
-        setLoading(false);
-        return;
-      }
-      
-      if (!session) {
-        console.log('[Admin Dashboard] No session found by getSession, redirecting to login.');
-        router.replace('/login');
-        setLoading(false);
-        return;
-      }
-      
-      setUser(session.user);
-      console.log('[Admin Dashboard] Session found. User ID:', session.user.id);
-
-      const { data: profile, error: profileError } = await supabase
-        .from('user_profiles')
-        .select('user_id, role, full_name')
-        .eq('user_id', session.user.id)
-        .single();
-
-      if (profileError) {
-        console.error("[Admin Dashboard] Error fetching user profile:", profileError);
-        router.replace('/login');
-        setLoading(false);
-        return;
-      }
-
-      if (profile) {
-        console.log('[Admin Dashboard] Profile fetched:', profile);
-        setUserProfile(profile);
-        if (profile.role !== 'admin') {
-          console.log(`[Admin Dashboard] User role is ${profile.role}, redirecting.`);
-          setLoading(false); // Ensure loading is false before redirect
-          router.replace(profile.role === 'employee' ? '/employee' : '/login');
-        } else {
-          // Only set loading to false if admin
-          setLoading(false);
+    const checkAuth = async () => {
+      try {
+        console.log('[DASHBOARD DEBUG] Getting session...');
+        
+        // Get current session
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        // Check if this effect was cancelled
+        if (isCancelled || abortController.signal.aborted) {
+          console.log('[DASHBOARD DEBUG] Auth check cancelled');
+          return;
         }
-      } else {
-        console.warn("[Admin Dashboard] User profile not found for user_id:", session.user.id);
-        setLoading(false); // Ensure loading is false before redirect
-        router.replace('/login');
-      }
-    };
 
-    fetchUserAndCheckSession();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('[Admin Dashboard] onAuthStateChange event:', event, 'session:', session);
-        if (event === 'SIGNED_OUT' || !session) {
-          console.log('[Admin Dashboard] onAuthStateChange: SIGNED_OUT or no session, redirecting to login.');
-          setUser(null);
-          setUserProfile(null);
-          router.replace('/login');
-        } else if (session && session.user) { // Check if session.user exists
-          setUser(session.user);
-          const { data: profile, error: profileError } = await supabase
-            .from('user_profiles')
-            .select('user_id, role, full_name')
-            .eq('user_id', session.user.id)
-            .single();
-
-          if (profile && !profileError) {
-            setUserProfile(profile);
-            if (profile.role !== 'admin') {
-              router.replace(profile.role === 'employee' ? '/employee' : '/login');
-            }
-          } else if (profileError) {
-             console.error("[Admin Dashboard] Error fetching profile on auth change:", profileError);
-             router.replace('/login');
-          } else {
-            console.warn("[Admin Dashboard] Profile not found on auth change for user_id:", session.user.id);
+        if (sessionError || !session) {
+          console.log('[DASHBOARD DEBUG] No valid session, redirecting to login');
+          if (!isCancelled) {
             router.replace('/login');
           }
-        } else if (session && !session.user && event !== 'INITIAL_SESSION') {
-            // This case might happen if session exists but user object is null,
-            // and it's not the initial_session event which might be handled by fetchUserAndCheckSession
-            console.log('[Admin Dashboard] onAuthStateChange: Session exists but no user, redirecting to login.');
+          return;
+        }
+
+        console.log('[DASHBOARD DEBUG] Session found, fetching profile');
+        
+        // Get user profile
+        const { data: profile, error: profileError } = await supabase
+          .from('user_profiles')
+          .select('user_id, role, full_name')
+          .eq('user_id', session.user.id)
+          .single();
+
+        // Check again after async operation
+        if (isCancelled || abortController.signal.aborted) {
+          console.log('[DASHBOARD DEBUG] Auth check cancelled after profile fetch');
+          return;
+        }
+
+        if (profileError || !profile) {
+          console.error('[DASHBOARD DEBUG] Profile error details:', {
+            error: profileError,
+            code: profileError?.code,
+            message: profileError?.message,
+            details: profileError?.details,
+            hint: profileError?.hint,
+            userId: session.user.id,
+            hasProfile: !!profile
+          });
+          if (!isCancelled) {
             router.replace('/login');
+          }
+          return;
+        }
+
+        if (profile.role !== 'admin') {
+          console.log('[DASHBOARD DEBUG] User is not admin, redirecting');
+          if (!isCancelled) {
+            router.replace(profile.role === 'employee' ? '/employee' : '/login');
+          }
+          return;
+        }
+
+        // Success - only update state if not cancelled
+        if (!isCancelled && !abortController.signal.aborted) {
+          console.log('[DASHBOARD DEBUG] Auth successful, updating state');
+          setUser(session.user);
+          setUserProfile(profile);
+          setLoading(false);
+        }
+
+      } catch (err) {
+        console.error('[DASHBOARD DEBUG] Auth error:', err);
+        if (!isCancelled && !abortController.signal.aborted) {
+          setError('Authentication failed');
+          setLoading(false);
         }
       }
-    );
+    };
 
+    checkAuth();
+
+    // Auth state listener for sign out only
+    const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        console.log('[DASHBOARD DEBUG] User signed out');
+        if (!isCancelled) {
+          router.replace('/login');
+        }
+      }
+    });
+
+    // Cleanup function
     return () => {
+      console.log('[DASHBOARD DEBUG] Cleaning up auth effect');
+      isCancelled = true;
+      abortController.abort();
       authListener?.subscription?.unsubscribe();
     };
-  }, [router]);
+  }, []); // Empty dependency array
 
   const handleLogout = async () => {
-    const prevLoading = loading; // Store previous loading state
-    setLoading(true);
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      console.error('Error logging out:', error);
-       setLoading(prevLoading); // Restore previous loading state on error
-      // Optionally show an error message to the user
-    }
-    // onAuthStateChange will handle redirect to /login
-    // setLoading(false); // Not needed here as redirect will occur
+    console.log('[DASHBOARD DEBUG] Logging out');
+    await supabase.auth.signOut();
   };
+
+  console.log('[DASHBOARD DEBUG] Render - loading:', loading, 'user:', !!user, 'profile:', !!userProfile);
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#2e2e2e] text-white">
         <p className="text-lg">Loading dashboard...</p>
-        {/* You could add a spinner here */}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#2e2e2e] text-white">
+        <p className="text-lg text-red-400">Error: {error}</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="mt-4 px-4 py-2 bg-blue-500 text-white rounded"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   if (!user || !userProfile || userProfile.role !== 'admin') {
-    // This state should ideally be temporary as redirects handle it.
-    // Or it's shown if a non-admin somehow lands here without an immediate redirect.
     return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-[#2e2e2e] text-white">
-            <p className="text-lg mb-4">Access Denied or Redirecting to Login...</p>
-        </div>
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#2e2e2e] text-white">
+        <p className="text-lg mb-4">Access Denied</p>
+      </div>
     );
   }
 
-  // If user is admin
-  return (
-    <>
-      <ReceiptDashboard />
-      {/* Basic logout button for now, can be moved to a shared header later */}
-      <div className="absolute top-4 right-4">
-        <button
-          onClick={handleLogout}
-          className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--destructive)] hover:brightness-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--destructive)]"
-        >
-          Logout
-        </button>
-      </div>
-    </>
-  );
+  return <ReceiptDashboard onLogout={handleLogout} />;
 }
