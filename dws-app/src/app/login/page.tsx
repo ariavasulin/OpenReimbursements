@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
-import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
+// import type { AuthChangeEvent, Session } from '@supabase/supabase-js'; // Unused types
 import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,7 +73,7 @@ export default function LoginPage() {
 
     // Minimal auth state listener
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      (event, _session) => {
         console.log('[Login Page] Auth state change:', event);
         if (event === 'SIGNED_OUT') {
           isRedirectingRef.current = false;
@@ -90,8 +90,9 @@ export default function LoginPage() {
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      if (redirectTimeoutRef.current) {
-        clearTimeout(redirectTimeoutRef.current);
+      const timeoutId = redirectTimeoutRef.current;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     };
   }, []);

@@ -126,13 +126,13 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
           })
         }
 
-        const mappedReceipts: Receipt[] = data.map((item: any) => {
+        const mappedReceipts: Receipt[] = data.map((item: Record<string, any>) => {
           const userProfile = profilesMap.get(item.user_id)
           return {
             id: item.id,
             employeeName: userProfile?.full_name || "N/A",
             employeeId: userProfile?.employee_id_internal || "N/A",
-            date: item.receipt_date, // This is a string (ISO date)
+            receipt_date: item.receipt_date, // This is a string (ISO date)
             amount: item.amount,
             category: item.categories?.name || "Uncategorized",
             description: item.description || "",
@@ -142,15 +142,13 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
           }
         })
         setReceipts(mappedReceipts)
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error("Full error object fetching receipts:", JSON.stringify(err, null, 2));
         let errorMessage = "An unknown error occurred";
-        if (err && typeof err === 'object') {
-          if ('message' in err && typeof err.message === 'string') {
-            errorMessage = err.message;
-          } else if (Object.keys(err).length > 0) {
-            errorMessage = `Supabase error: ${JSON.stringify(err)}`;
-          }
+        if (err instanceof Error) {
+          errorMessage = err.message;
+        } else if (err && typeof err === 'object' && Object.keys(err).length > 0) {
+          errorMessage = `Supabase error: ${JSON.stringify(err)}`;
         } else if (typeof err === 'string') {
           errorMessage = err;
         }
@@ -191,7 +189,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     const headers = ["Date", "Employee", "Amount", "Category", "Description", "Status", "Image URL"] // Removed "Job Code"
     const csvData = filteredReceipts.map((receipt) => [
       // receipt.jobCode || "", // Removed
-      receipt.date ? new Date(receipt.date).toLocaleDateString() : "",
+      receipt.receipt_date ? new Date(receipt.receipt_date).toLocaleDateString() : "",
       receipt.employeeName,
       `$${receipt.amount.toFixed(2)}`,
       receipt.category || "",

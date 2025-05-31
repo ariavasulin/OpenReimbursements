@@ -1,14 +1,15 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
+import type { User } from '@supabase/supabase-js';
 import type { UserProfile } from '@/lib/types';
 import BatchReviewDashboard from "@/components/batch-review-dashboard";
 
 export default function BatchReviewPage() {
   const router = useRouter();
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -108,7 +109,7 @@ export default function BatchReviewPage() {
       abortController.abort();
       authListener?.subscription?.unsubscribe();
     };
-  }, []); // Empty dependency array
+  }, [router]);
 
   const handleLogout = async () => {
     console.log('[BATCH-REVIEW DEBUG] Logging out');
