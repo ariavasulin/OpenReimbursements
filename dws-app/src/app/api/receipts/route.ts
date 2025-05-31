@@ -171,6 +171,7 @@ export async function GET(request: Request) {
       .from('receipts')
       .select('*')
       .eq('user_id', userId)
+      .order('receipt_date', { ascending: false })
       .order('created_at', { ascending: false });
 
     if (dbError) {
