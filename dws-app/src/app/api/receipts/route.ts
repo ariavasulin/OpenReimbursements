@@ -102,7 +102,7 @@ export async function POST(request: Request) {
 
     // Proceed to Move/Rename the file in storage
     console.log(`POST /api/receipts: Attempting to move file from ${tempFilePath} to ${finalImagePath}`);
-    const { data: _moveData, error: moveError } = await supabase.storage
+    const { data: moveData, error: moveError } = await supabase.storage
       .from(bucketName)
       .move(tempFilePath, finalImagePath);
 
@@ -144,7 +144,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function GET(_request: Request) {
+export async function GET(request: Request) {
   console.log("GET /api/receipts: Handler called");
   const supabase = await createSupabaseServerClient();
 
@@ -198,7 +198,7 @@ export async function GET(_request: Request) {
     console.log(`GET /api/receipts: Found ${receipts.length} receipts for user.`);
 
     // Map receipts to match frontend Receipt interface
-    const mappedReceipts = receipts.map((item: Record<string, any>) => {
+    const mappedReceipts = receipts.map((item: any) => {
       let publicImageUrl = item.image_url; // Default to existing if no processing needed
       if (item.image_url) { // Ensure there's an image_url to process
         console.log(`GET /api/receipts: Generating public URL for image path: ${item.image_url}`);
@@ -220,7 +220,7 @@ export async function GET(_request: Request) {
         user_id: item.user_id,
         employeeName: "Employee", // Not needed for employee view, but included for interface compatibility
         employeeId: "N/A", // Not needed for employee view
-        receipt_date: item.receipt_date, // Map receipt_date to receipt_date
+        date: item.receipt_date, // Map receipt_date to date
         amount: item.amount,
         status: item.status.toLowerCase(), // Normalize to lowercase for consistency
         category_id: item.category_id,

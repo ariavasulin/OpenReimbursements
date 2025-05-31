@@ -18,39 +18,6 @@ type ToasterToast = ToastProps & {
   action?: ToastActionElement
 }
 
-type ActionTypes = {
-  ADD_TOAST: "ADD_TOAST";
-  UPDATE_TOAST: "UPDATE_TOAST";
-  DISMISS_TOAST: "DISMISS_TOAST";
-  REMOVE_TOAST: "REMOVE_TOAST";
-};
-// Keep the values for the reducer if they are used as string literals there.
-// If ActionType["ADD_TOAST"] is used, the type above is fine.
-// Let's check reducer usage. Reducer uses string literals like "ADD_TOAST".
-// So, the original const assertion was fine, the issue is it's *only* used as a type.
-// A common fix is to export the type if it's needed elsewhere, or use it locally.
-// Given it's used to define `ActionType` which is then used in `Action`,
-// the original `as const` is fine, the linter rule might be overly strict or misconfigured for this pattern.
-// Let's try prefixing it with an underscore if it's truly not used at runtime by other logic.
-// However, the reducer *does* use these values.
-// The issue is `ActionType` (line 35) uses `typeof actionTypes`.
-// If `actionTypes` is only used for `typeof`, the linter might flag it.
-
-// Let's try a different approach: define the string literals directly in the Action union.
-// This removes the need for `actionTypes` and `ActionType` intermediate types if they solely exist for this.
-
-// Reverting to a simpler fix for the linter, assuming the reducer's string literals are key.
-// The linter is saying it's "assigned a value but only used as a type".
-// This implies `actionTypes` itself isn't used, but `ActionType` (derived from it) is.
-// Let's ensure the reducer is actually using these values.
-// reducer (line 78 onwards) uses: "ADD_TOAST", "UPDATE_TOAST", "DISMISS_TOAST", "REMOVE_TOAST" as string literals.
-// So, `actionTypes` is not strictly needed at runtime if the reducer switch cases use the strings directly.
-
-// Correct fix: If `actionTypes` is only used to derive `ActionType`, and `ActionType` is used,
-// then `actionTypes` *is* being used. The linter might be getting confused.
-// One way to satisfy it is to ensure `actionTypes` is exported or used in a runtime context.
-// Or, simplify the type derivation.
-
 const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
   UPDATE_TOAST: "UPDATE_TOAST",
@@ -159,8 +126,6 @@ export const reducer = (state: State, action: Action): State => {
         ...state,
         toasts: state.toasts.filter((t) => t.id !== action.toastId),
       }
-    default:
-      return state
   }
 }
 
@@ -193,7 +158,7 @@ function toast({ ...props }: Toast) {
       ...props,
       id,
       open: true,
-      onOpenChange: (open: boolean) => {
+      onOpenChange: (open) => {
         if (!open) dismiss()
       },
     },

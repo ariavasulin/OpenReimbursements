@@ -1,11 +1,10 @@
 // src/app/employee/page.tsx
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'; // Added useRef and useCallback
+import React, { useState, useEffect, useRef } from 'react'; // Added useRef
 import Image from 'next/image'; // Added Image
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import type { User } from '@supabase/supabase-js'; // Added User type
 import ReceiptUploader from '@/components/receipt-uploader'; // Added
 import EmployeeReceiptTable from '@/components/employee-receipt-table'; // Changed to employee-specific table
 import type { Receipt, UserProfile } from '@/lib/types';        // Added Receipt type
@@ -14,7 +13,7 @@ import { Toaster as SonnerToaster } from 'sonner';        // For toasts from upl
 
 export default function EmployeePage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<any>(null); // Kept from original
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
@@ -26,7 +25,7 @@ export default function EmployeePage() {
   const authCheckCompleteRef = useRef(false);
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchReceipts = useCallback(async () => {
+  const fetchReceipts = async () => {
     console.log("EMPLOYEE_PAGE: fetchReceipts called. User set:", !!user, "Profile set:", !!userProfile, "Role:", userProfile?.role);
     if (!user || !userProfile || userProfile.role !== 'employee') {
       console.log("EMPLOYEE_PAGE: fetchReceipts - Pre-conditions not met. Not fetching.");
@@ -47,7 +46,7 @@ export default function EmployeePage() {
         try {
           errorData = await response.json();
           console.error("fetchReceipts: API error response:", errorData);
-        } catch (_e) {
+        } catch (e) {
           console.error("fetchReceipts: Could not parse error JSON from API. Status text:", response.statusText);
           errorData = { error: `API request failed with status ${response.status}: ${response.statusText}` };
         }
@@ -73,17 +72,17 @@ export default function EmployeePage() {
       console.log("EMPLOYEE_PAGE: fetchReceipts - Setting receiptsLoading to false in finally.");
       setReceiptsLoading(false);
     }
-  }, [user, userProfile]);
+  };
 
   // useEffect for fetching receipts, dependent on user and userProfile
   useEffect(() => {
     if (user && userProfile && userProfile.role === 'employee') {
       fetchReceipts();
     }
-  }, [user, userProfile, fetchReceipts]); // Re-run when user or userProfile changes
+  }, [user, userProfile]); // Re-run when user or userProfile changes
 
 
-  const handleReceiptAdded = (_newReceipt: Receipt) => {
+  const handleReceiptAdded = (newReceipt: Receipt) => {
     // Re-fetch receipts to ensure the list is up-to-date
     fetchReceipts();
   };
@@ -244,7 +243,7 @@ export default function EmployeePage() {
       }
       authListener?.subscription?.unsubscribe();
     };
-  }, [router, loading]);
+  }, [router]);
 
   // Cleanup on unmount
   useEffect(() => {

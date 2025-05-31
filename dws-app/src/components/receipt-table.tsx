@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-// import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select" // Unused Select components
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Receipt } from "@/lib/types"
 
 interface ReceiptTableProps {
@@ -24,15 +24,15 @@ interface ReceiptTableProps {
 type SortField = keyof Receipt
 type SortDirection = "asc" | "desc" | null
 
-const ReceiptTable: React.FC<ReceiptTableProps> = ({
-  rowData = [],
-  height = 500,
+const ReceiptTable: React.FC<ReceiptTableProps> = ({ 
+  rowData = [], 
+  height = 500, 
   selectedRows: controlledSelectedRows,
   onSelectedRowsChange,
   currentPage = 1,
   pageSize = 10,
-  onPageChange: _onPageChange, // Prefixed in parameter list
-  onPageSizeChange: _onPageSizeChange // Prefixed in parameter list
+  onPageChange,
+  onPageSizeChange
 }) => {
   const [internalSelectedRows, setInternalSelectedRows] = useState<Set<string>>(new Set())
   const [sortField, setSortField] = useState<SortField | null>(null)
@@ -171,11 +171,11 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                 </TableHead>
               <TableHead className="text-white text-left p-3">
                 <div
-                    onClick={() => handleSort("receipt_date")}
+                    onClick={() => handleSort("date")}
                   className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
                     Date
-                    {getSortIcon("receipt_date")}
+                    {getSortIcon("date")}
                 </div>
                 </TableHead>
               <TableHead className="text-white text-left p-3">
@@ -228,7 +228,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                     className="border-white data-[state=checked]:border-white data-[state=checked]:bg-[#444444] data-[state=checked]:text-white"
                     />
                   </TableCell>
-                <TableCell className="text-left p-3">{new Date(receipt.receipt_date).toLocaleDateString()}</TableCell>
+                <TableCell className="text-left p-3">{new Date(receipt.date).toLocaleDateString()}</TableCell>
                 <TableCell className="text-left p-3">{receipt.employeeName}</TableCell>
                 <TableCell className="text-left p-3">${receipt.amount.toFixed(2)}</TableCell>
                 <TableCell className="text-left p-3">{receipt.category}</TableCell>

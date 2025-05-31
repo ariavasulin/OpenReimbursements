@@ -49,9 +49,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-  } catch (error: unknown) {
+  } catch (error: any) {
     console.error('Check Duplicate API: Unexpected error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred while checking for duplicates.';
-    return NextResponse.json({ error: 'Internal server error', details: errorMessage }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
   }
 }

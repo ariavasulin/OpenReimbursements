@@ -1,15 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
-import type { User } from '@supabase/supabase-js';
 import type { UserProfile } from '@/lib/types';
 import ReceiptDashboard from "@/components/receipt-dashboard";
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +116,7 @@ export default function DashboardPage() {
       abortController.abort();
       authListener?.subscription?.unsubscribe();
     };
-  }, [router]);
+  }, []); // Empty dependency array
 
   const handleLogout = async () => {
     console.log('[DASHBOARD DEBUG] Logging out');
