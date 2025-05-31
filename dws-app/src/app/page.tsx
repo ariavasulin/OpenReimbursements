@@ -105,7 +105,7 @@ export default function HomePage() {
       }
       authListener?.subscription?.unsubscribe();
     };
-  }, [router, loading]);
+  }, [router]);
 
   // Cleanup on unmount
   useEffect(() => {

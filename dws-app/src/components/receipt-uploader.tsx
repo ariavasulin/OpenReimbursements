@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Upload, Camera } from "lucide-react"
 import { toast as sonnerToast } from "sonner" // Renamed to avoid conflict if 'toast' is used elsewhere
 import { useMobile } from "@/hooks/use-mobile"
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog" // DialogHeader removed, DialogTitle kept, DialogDescription removed
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog" // DialogHeader removed, DialogTitle kept
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
-// import { v4 as uuidv4 } from "uuid" // Unused import
+import { v4 as uuidv4 } from "uuid"
 import type { Receipt } from "@/lib/types"
 
 interface ReceiptUploaderProps {
