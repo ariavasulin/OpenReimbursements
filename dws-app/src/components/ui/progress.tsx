@@ -9,7 +9,7 @@ const Progress = React.forwardRef<
     max?: number
     indicatorColor?: string
   }
->(({ className, value, max = 100, indicatorColor, ...props }, ref) => (
+>(({ className, value, max: _max = 100, indicatorColor, ...props }, ref) => (
   <div ref={ref} className={cn("relative h-4 w-full overflow-hidden rounded-full bg-secondary", className)} {...props}>
     <div
       className={cn("h-full w-full flex-1 transition-all", indicatorColor || "bg-primary")}

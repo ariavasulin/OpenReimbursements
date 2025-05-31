@@ -3,7 +3,7 @@ export interface Receipt {
   user_id?: string; // Foreign key to auth.users.id, will be added when saving
   employeeName: string; // From prototype
   employeeId: string; // From prototype
-  date: string; // From prototype (was receipt_date)
+  receipt_date: string; // Standardized to receipt_date
   amount: number; // Corresponds to Supabase 'amount' (numeric)
   status: "Pending" | "Approved" | "Rejected" | "pending" | "approved" | "rejected" | "reimbursed"; // Merged, dws-app uses capitalized, prototype uses lowercase. Keeping both for now, will need to reconcile with components.
   category_id?: string; // Foreign key to categories.id
