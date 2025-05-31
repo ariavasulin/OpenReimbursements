@@ -11,6 +11,7 @@ import { CalendarIcon } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import { format, parseISO } from "date-fns" // Added parseISO
+import { toast as sonnerToast } from "sonner" // Import sonnerToast
 import { useState, useEffect } from "react" // Added useEffect
 import type { Receipt, Category as CategoryType } from "@/lib/types" // Added CategoryType
 import { useMobile } from "@/hooks/use-mobile" // Added useMobile hook
@@ -48,7 +49,8 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
   const [notes, setNotes] = useState(initialData?.notes || "");
   const [categories, setCategories] = useState<CategoryType[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
-
+  const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
+ 
   useEffect(() => {
     const fetchCategories = async () => {
       setIsLoadingCategories(true);
@@ -89,16 +91,71 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
   }, [initialData?.category_id]); // Re-fetch if initialData.category_id changes (though unlikely here)
 
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit({
-      receipt_date: date ? format(date, "yyyy-MM-dd") : undefined, // Pass receipt_date
-      amount: amount ? Number.parseFloat(amount) : undefined,
-      category_id: categoryId || undefined,
-      notes,
-    });
-  };
 
+    if (!date || !amount || !categoryId) {
+        sonnerToast.error("Missing details", { description: "Please fill in Date, Amount, and Category." });
+        return;
+    }
+    
+    const currentReceiptData = {
+      receipt_date: format(date, "yyyy-MM-dd"),
+      amount: Number.parseFloat(amount),
+      category_id: categoryId,
+      notes: notes.trim(), // Use trimmed notes for checks and submission
+    };
+
+    setIsCheckingDuplicate(true);
+    try {
+      const duplicateCheckResponse = await fetch('/api/receipts/check-duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          receipt_date: currentReceiptData.receipt_date,
+          amount: currentReceiptData.amount,
+        }),
+      });
+
+      if (!duplicateCheckResponse.ok) {
+        const errorData = await duplicateCheckResponse.json();
+        sonnerToast.error("Duplicate Check Failed", { description: errorData.error || "Could not verify receipt uniqueness." });
+        setIsCheckingDuplicate(false);
+        return;
+      }
+
+      const duplicateResult = await duplicateCheckResponse.json();
+
+      if (duplicateResult.isDuplicate) {
+        const currentTrimmedNotes = currentReceiptData.notes.toLowerCase();
+        const existingDescriptions = duplicateResult.existingReceipts.map(
+          (r: { description: string }) => (r.description || "").trim().toLowerCase()
+        );
+
+        if (existingDescriptions.includes(currentTrimmedNotes) || (currentTrimmedNotes === "" && existingDescriptions.some((desc: string) => desc === ""))) {
+          sonnerToast.warning(
+            "Potential Duplicate Found",
+            {
+              description: "A receipt with the same date and amount already exists with a similar or empty description. Please provide a unique description or cancel.",
+              duration: 8000, // Keep toast longer
+            }
+          );
+          setIsCheckingDuplicate(false);
+          return; // Stop submission
+        }
+      }
+      
+      // If no duplicate concern or description is unique, proceed with actual submission
+      onSubmit(currentReceiptData);
+
+    } catch (error) {
+      console.error("Error during duplicate check:", error);
+      sonnerToast.error("Error", { description: "An error occurred while checking for duplicates." });
+    } finally {
+      setIsCheckingDuplicate(false);
+    }
+  };
+ 
   const handleDateChange = (selectedDate: Date | undefined | string) => {
     if (typeof selectedDate === 'string') {
       // From native date input (yyyy-MM-dd)
@@ -203,11 +260,11 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
         </form>
       </CardContent>
       <CardFooter className="flex justify-between">
-        <Button variant="outline" onClick={onCancel} className="border-[#3e3e3e] text-neutral-800 hover:bg-[#4e4e4e] hover:text-white">
+        <Button variant="outline" onClick={onCancel} className="border-[#3e3e3e] text-neutral-800 hover:bg-[#4e4e4e] hover:text-white" disabled={isCheckingDuplicate}>
           Cancel
         </Button>
-        <Button type="submit" form="receipt-form" className="bg-blue-600 hover:bg-blue-700 text-white"> {/* Added text-white for consistency */}
-          Submit Receipt
+        <Button type="submit" form="receipt-form" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isCheckingDuplicate}>
+          {isCheckingDuplicate ? "Checking..." : "Submit Receipt"}
         </Button>
       </CardFooter>
     </Card>
