@@ -80,7 +80,6 @@ export default function EmployeeReceiptTable({ receipts }: EmployeeReceiptTableP
             <TableRow className="border-[#4e4e4e]">
               <TableHead className="text-white">Date</TableHead>
               <TableHead className="text-white">Amount</TableHead>
-              <TableHead className="text-white">Category</TableHead>
               <TableHead className="text-white">Status</TableHead>
               <TableHead className="text-white">Photo</TableHead>
             </TableRow>
@@ -91,7 +90,6 @@ export default function EmployeeReceiptTable({ receipts }: EmployeeReceiptTableP
                   <TableRow key={receipt.id} className="border-[#4e4e4e] hover:bg-[#383838]">
                     <TableCell>{receipt.date ? formatDate(receipt.date) : 'N/A'}</TableCell>
                     <TableCell>{formatCurrency(receipt.amount)}</TableCell>
-                    <TableCell>{receipt.category || 'Uncategorized'}</TableCell>
                     <TableCell><StatusBadge status={receipt.status} /></TableCell>
                     <TableCell>
                       {receipt.image_url ? (
@@ -113,7 +111,7 @@ export default function EmployeeReceiptTable({ receipts }: EmployeeReceiptTableP
                 ))
               : (
                   <TableRow className="border-[#4e4e4e] hover:bg-[#383838]">
-                    <TableCell colSpan={5} className="text-center py-4 text-gray-400">
+                    <TableCell colSpan={4} className="text-center py-4 text-gray-400">
                       No receipts found
                     </TableCell>
                   </TableRow>
