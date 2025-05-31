@@ -42,9 +42,7 @@ function parseAndSelectBestDate(fullText: string): string | null {
       try {
         let parsedDate = parse(dateString, fmt, new Date());
         if (isValid(parsedDate)) {
-          if (fmt.includes('yy') && !fmt.includes('yyyy')) { // If format is for a two-digit year
-            // Assume all two-digit years are in the 21st century (20xx)
-            // This converts years like 1923 or 0023 (from '23') to 2023.
+          if ((fmt.includes('yy') && !fmt.includes('yyyy')) && getYear(parsedDate) < 1000) {
             parsedDate = setYear(parsedDate, getYear(parsedDate) % 100 + 2000);
           }
           if (!isFuture(parsedDate)) {
