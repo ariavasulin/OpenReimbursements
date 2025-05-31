@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { ImageAnnotatorClient } from '@google-cloud/vision';
+import { parse, format, getYear, setYear, isValid, isFuture, compareDesc } from 'date-fns';
 
 let visionClient: ImageAnnotatorClient;
 let visionClientError: Error | null = null;
@@ -16,8 +17,139 @@ try {
 } catch (e: any) {
   visionClientError = e;
   console.error('OCR API: FATAL - Failed to initialize Google Vision Client:', e.message);
-  // If visionClient is not initialized, the POST handler will catch this
 }
+
+const newDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}\/\d{1,2}\/\d{2,4})|(\d{1,2}-\d{1,2}-\d{2,4})|(\d{1,2}\.\d{1,2}\.\d{2,4})|((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s\d{1,2}(?:st|nd|rd|th)?(?:,)?\s\d{2,4})|(\d{1,2}(?:st|nd|rd|th)?\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?(?:,)?\s\d{2,4})|(\d{1,2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?-\d{2,4})/gi;
+const dateFormats: string[] = [
+  'yyyy-MM-dd',
+  'MM/dd/yyyy', 'MM-dd-yyyy', 'MM.dd.yyyy',
+  'MM/dd/yy', 'MM-dd-yy', 'MM.dd.yy',
+  'MMM d, yyyy', 'd MMM yyyy',
+  'MMMM d, yyyy', 'd MMMM yyyy',
+  'dd-MMM-yyyy', 'dd-MMMM-yyyy', // Added for "19-Oct-2020" and "19-October-2020"
+  'MMM do, yyyy', 'do MMM yyyy', // For "Jan 1st, 2023"
+];
+
+function parseAndSelectBestDate(fullText: string): string | null {
+  const potentialDates: Date[] = [];
+  const matches = fullText.matchAll(newDateRegex);
+
+  for (const match of matches) {
+    const dateString = match[0]; 
+    if (!dateString) continue;
+
+    for (const fmt of dateFormats) {
+      try {
+        let parsedDate = parse(dateString, fmt, new Date());
+        if (isValid(parsedDate)) {
+          if ((fmt.includes('yy') && !fmt.includes('yyyy')) && getYear(parsedDate) < 1000) {
+            parsedDate = setYear(parsedDate, getYear(parsedDate) % 100 + 2000);
+          }
+          if (!isFuture(parsedDate)) {
+            potentialDates.push(parsedDate);
+            break; 
+          }
+        }
+      } catch (e) {
+        // Ignore parsing errors
+      }
+    }
+  }
+
+  if (potentialDates.length === 0) {
+    console.log("OCR API: No valid, non-future dates found after parsing attempts.");
+    return null;
+  }
+
+  potentialDates.sort(compareDesc);
+  const bestDate = potentialDates[0];
+  const formattedBestDate = format(bestDate, 'yyyy-MM-dd');
+  console.log("OCR API: Selected best date:", formattedBestDate, "(from raw:", bestDate, ")");
+  return formattedBestDate;
+}
+
+function extractBestAmount(fullText: string): number | null {
+  const lines = fullText.split('\n');
+  const potentialTotalAmounts: number[] = [];
+
+  const primaryTotalKeywords = ['TOTAL', 'GRAND TOTAL', 'TOTAL DUE', 'AMOUNT DUE', 'BALANCE DUE', 'PAYMENT DUE', '총계', '합계'];
+  const primaryTotalRegex = new RegExp(
+    `^(?:${primaryTotalKeywords.join('|')})\\s*[:\\s]*(?:[\\$€£¥]?\\s*)?(\\d+(?:[.,]\\d{1,2}))(?:\\s|$)`, 
+    'im'
+  );
+
+  for (const line of lines) {
+    const match = line.trim().match(primaryTotalRegex);
+    if (match && match[1]) {
+      const amountStr = match[1].replace(',', '.');
+      const amount = parseFloat(amountStr);
+      if (!isNaN(amount)) {
+        console.log(`OCR API (Priority 1): Found total candidate ${amount} on line: "${line.trim()}"`);
+        potentialTotalAmounts.push(amount);
+      }
+    }
+  }
+
+  if (potentialTotalAmounts.length > 0) {
+    const highestPriorityTotal = Math.max(...potentialTotalAmounts);
+    console.log("OCR API: Selected highest priority total:", highestPriorityTotal);
+    return highestPriorityTotal;
+  }
+
+  console.log("OCR API (Priority 1): No specific line-starting total found. Proceeding to broader search.");
+
+  const allAmountsFound: { value: number, line: string, hasGenuineTotalKeyword: boolean, isSubtotalOrTaxOrTip: boolean }[] = [];
+  const amountValueRegex = /(\d+(?:[.,]\d{1,2}))/g;
+
+  for (const line of lines) {
+    const trimmedLine = line.trim().toUpperCase();
+    const numbersInLine = Array.from(trimmedLine.matchAll(amountValueRegex), m => m[1]);
+
+    if (numbersInLine.length > 0) {
+        const lineIsGenuineTotal = /\bTOTAL\b/.test(trimmedLine) && !(/\bSUBTOTAL\b|\bSUB TOTAL\b|\bTAX\b|\bTIP\b|\bSVC\b|\bSERVICE CHARGE\b|\bDISCOUNT\b|\bCHANGE\b|\bCASH\b/.test(trimmedLine));
+        const lineIsSubtotalOrTaxOrTip = /\bSUBTOTAL\b|\bSUB TOTAL\b|\bTAX\b|\bTIP\b|\bSVC\b|\bSERVICE CHARGE\b/.test(trimmedLine);
+        
+        for (const numStr of numbersInLine) {
+            const amountStr = numStr.replace(',', '.');
+            const amount = parseFloat(amountStr);
+            if (!isNaN(amount)) {
+                allAmountsFound.push({ 
+                    value: amount, 
+                    line: trimmedLine, 
+                    hasGenuineTotalKeyword: lineIsGenuineTotal, 
+                    isSubtotalOrTaxOrTip: lineIsSubtotalOrTaxOrTip 
+                });
+            }
+        }
+    }
+  }
+  
+  if (allAmountsFound.length === 0) {
+    console.log("OCR API (Broader Search): No amounts found.");
+    return null;
+  }
+
+  const amountsOnGenuineTotalLines = allAmountsFound.filter(a => a.hasGenuineTotalKeyword);
+  if (amountsOnGenuineTotalLines.length > 0) {
+    const maxTotalAmount = Math.max(...amountsOnGenuineTotalLines.map(a => a.value));
+    console.log("OCR API (Priority 2): Selected max amount from 'genuine TOTAL' keyword lines:", maxTotalAmount);
+    return maxTotalAmount;
+  }
+  
+  console.log("OCR API (Priority 2): No 'genuine TOTAL' lines with amounts found.");
+
+  const nonSubtotalTaxTipAmounts = allAmountsFound.filter(a => !a.isSubtotalOrTaxOrTip);
+  if (nonSubtotalTaxTipAmounts.length > 0) {
+      const maxNonSpecialAmount = Math.max(...nonSubtotalTaxTipAmounts.map(a => a.value));
+      console.log("OCR API (Fallback 1): Selected max non-subtotal/tax/tip amount:", maxNonSpecialAmount);
+      return maxNonSpecialAmount;
+  }
+
+  const overallMaxAmount = Math.max(...allAmountsFound.map(a => a.value));
+  console.log("OCR API (Fallback 2 - Risky): Selected overall max amount:", overallMaxAmount);
+  return overallMaxAmount;
+}
+
 
 export async function POST(request: NextRequest) {
   if (visionClientError || !visionClient) {
@@ -41,9 +173,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing or invalid tempFilePath' }, { status: 400 });
     }
 
-    // 1. Fetch image from Supabase Storage
     const { data: fileData, error: downloadError } = await supabase.storage
-      .from('receipt-images') // As per .cursorrules line 85
+      .from('receipt-images') 
       .download(tempFilePath);
 
     if (downloadError || !fileData) {
@@ -52,8 +183,6 @@ export async function POST(request: NextRequest) {
     }
 
     const imageBytes = Buffer.from(await fileData.arrayBuffer());
-
-    // 2. Send image to Google Cloud Vision API
     const [result] = await visionClient.textDetection(imageBytes);
     const detections = result.textAnnotations;
 
@@ -62,58 +191,13 @@ export async function POST(request: NextRequest) {
 
     if (detections && detections.length > 0) {
       const fullText = detections[0].description || "";
-      console.log("OCR API: Full detected text:\n", fullText); // Log the full text
+      console.log("OCR API: Full detected text:\n", fullText);
 
-      // Basic Date Extraction
-      const dateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}\/\d{1,2}\/\d{2,4})|(\d{1,2}\.\d{1,2}\.\d{2,4})|((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s\d{1,2}(?:st|nd|rd|th)?(?:,)?\s\d{2,4})/i;
-      const dateMatch = fullText.match(dateRegex);
-      let rawExtractedDate: string | null = null;
-      if (dateMatch) {
-        // The first element (index 0) is the full match. Subsequent elements are the captured groups.
-        // We want the first non-null captured group.
-        rawExtractedDate = dateMatch.slice(1).find(group => group != null) || null;
-        console.log("OCR API: Raw extracted date string:", rawExtractedDate);
-        if (rawExtractedDate) {
-            try {
-                // Attempt to parse and reformat to YYYY-MM-DD
-                const parsedDate = new Date(rawExtractedDate.replace(/\./g, '/').replace(/(\d+)(st|nd|rd|th)/, '$1'));
-                if (!isNaN(parsedDate.getTime())) {
-                    extractedDate = parsedDate.toISOString().split('T')[0];
-                    console.log("OCR API: Parsed and formatted date:", extractedDate);
-                } else {
-                    console.warn("OCR API: Extracted date string resulted in an invalid date:", rawExtractedDate);
-                    extractedDate = null; // Invalid date
-                }
-            } catch (e) {
-                console.warn("OCR API: Could not parse extracted date string:", rawExtractedDate, e);
-                extractedDate = null;
-            }
-        } else {
-          console.log("OCR API: No date string matched regex.");
-        }
-      } else {
-        console.log("OCR API: dateRegex found no matches in full text.");
-      }
-
-
-      // Basic Amount Extraction
-      const amountRegex = /(?:total|amount|balance|charge|due|summe|gesamtbetrag)\s*(?:is|was|:)?\s*(?:[\$€£¥]?\s*)?(\d+(?:[.,]\d{1,2})?)/gi; // Added 'g' flag for multiple matches
-      let amountMatchesIterator = fullText.matchAll(amountRegex);
-      let potentialAmounts: number[] = [];
-      for (const match of amountMatchesIterator) {
-        if (match[1]) {
-            const currentAmountStr = match[1].replace(',', '.');
-            const currentAmount = parseFloat(currentAmountStr);
-            if (!isNaN(currentAmount)) {
-                potentialAmounts.push(currentAmount);
-            }
-        }
-      }
+      extractedDate = parseAndSelectBestDate(fullText);
+      extractedAmount = extractBestAmount(fullText);
       
-      if (potentialAmounts.length > 0) {
-        // Often the largest amount is the total.
-        extractedAmount = Math.max(...potentialAmounts);
-      }
+    } else {
+      console.log("OCR API: No text detections found in the image.");
     }
 
     console.log("OCR API: Returning data to client:", { date: extractedDate, amount: extractedAmount });
