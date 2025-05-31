@@ -1,0 +1,96 @@
+/* 1. Essential AG Grid Styles */
+@import "ag-grid-community/styles/ag-grid.css";
+@import "ag-grid-community/styles/ag-theme-quartz.css";
+
+/* 2. Custom Theme Overrides */
+.ag-theme-quartz {
+  --ag-background-color: #2e2e2e !important;
+  --ag-foreground-color: white !important;
+  --ag-border-color: #555 !important;
+  --ag-header-background-color: #3a3a3a !important;
+  --ag-odd-row-background-color: #333333 !important;
+  --ag-row-hover-color: #444444 !important;
+}
+
+/* 3. Center header text for centered columns */
+.ag-theme-quartz .ag-center-header .ag-header-cell-label {
+  justify-content: center;
+}
+
+/* Keep the rest of the Tailwind CSS imports and base styles */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 0 0% 18%; /* #2e2e2e */
+    --foreground: 0 0% 100%; /* white */
+
+    --card: 0 0% 18%; /* #2e2e2e */
+    --card-foreground: 0 0% 100%; /* white */
+
+    --popover: 0 0% 18%; /* #2e2e2e */
+    --popover-foreground: 0 0% 100%; /* white */
+
+    --primary: 0 0% 100%; /* white */
+    --primary-foreground: 0 0% 18%; /* #2e2e2e */
+
+    --secondary: 0 0% 24%; /* #3e3e3e */
+    --secondary-foreground: 0 0% 100%; /* white */
+
+    --muted: 0 0% 24%; /* #3e3e3e */
+    --muted-foreground: 0 0% 80%; /* light gray */
+
+    --accent: 0 0% 24%; /* #3e3e3e */
+    --accent-foreground: 0 0% 100%; /* white */
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 100%; /* white */
+
+    --border: 0 0% 24%; /* #3e3e3e */
+    --input: 0 0% 24%; /* #3e3e3e */
+    --ring: 0 0% 80%; /* light gray */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
