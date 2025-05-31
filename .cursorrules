@@ -1,0 +1,274 @@
+# DWS Receipts Application - Cursor Rules
+
+## Project Overview
+This is a Next.js 15 receipt management application for Design Workshops employees and accounting staff. The app enables mobile-first receipt submission with OCR capabilities and provides an admin dashboard for receipt management and approval workflows.
+
+## Architecture & Tech Stack
+
+### Core Technologies
+- **Framework**: Next.js 15 with App Router and TypeScript
+- **UI Library**: ShadCN/UI components with Tailwind CSS v4
+- **Backend**: Supabase (PostgreSQL database, Authentication, Storage)
+- **Authentication**: SMS OTP via Twilio (through Supabase Auth)
+- **Deployment**: Vercel
+- **State Management**: React hooks with client-side state
+- **Icons**: Lucide React
+- **Notifications**: Sonner for toast messages
+
+### Project Structure
+```
+dws-app/
+├── src/
+│   ├── app/                    # Next.js App Router
+│   │   ├── api/               # API routes
+│   │   │   ├── auth/          # Authentication endpoints
+│   │   │   ├── receipts/      # Receipt CRUD operations
+│   │   │   └── categories/    # Expense categories
+│   │   ├── login/             # Login page with OTP
+│   │   ├── employee/          # Employee dashboard
+│   │   ├── dashboard/         # Admin dashboard
+│   │   ├── layout.tsx         # Root layout
+│   │   ├── page.tsx           # Root redirect logic
+│   │   └── globals.css        # Global styles with CSS variables
+│   ├── components/            # React components
+│   │   ├── ui/               # ShadCN/UI components
+│   │   ├── receipt-uploader.tsx
+│   │   ├── receipt-table.tsx
+│   │   └── receipt-details-card.tsx
+│   ├── lib/                   # Utilities and configuration
+│   │   ├── supabaseClient.ts  # Browser Supabase client
+│   │   ├── supabaseServerClient.ts # Server Supabase client
+│   │   ├── types.ts           # TypeScript interfaces
+│   │   └── utils.ts           # Utility functions
+│   └── hooks/                 # Custom React hooks
+└── public/images/             # Static assets including logo
+```
+
+## Database Schema & Types
+
+### Core Interfaces
+```typescript
+interface Receipt {
+  id: string;                    // UUID primary key
+  user_id?: string;             // FK to auth.users.id
+  receipt_date: string;         // Date on the receipt (not submission date)
+  amount: number;               // Receipt amount
+  status: "Pending" | "Approved" | "Rejected"; // Capitalized for DB constraint
+  category_id?: string;         // FK to categories.id
+  category?: string;            // For display purposes
+  notes?: string;               // Maps to 'description' in DB
+  image_url?: string;           // Path in Supabase Storage or public URL
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  created_at?: string;
+}
+
+interface UserProfile {
+  user_id: string;              // FK to auth.users.id
+  role: 'employee' | 'admin';
+  full_name?: string;
+  employee_id_internal?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+```
+
+### Database Tables
+- `receipts`: Core receipt data with RLS policies
+- `categories`: Expense categories for dropdown selection
+- `user_profiles`: User roles and metadata with auto-creation trigger
+- Supabase Storage bucket: `receipt-images` for file storage
+
+## Authentication & Authorization
+
+### Authentication Flow
+1. **SMS OTP Login**: Users enter phone number → receive 4-digit SMS code → verify
+2. **Session Management**: Manual session setting via `supabase.auth.setSession()`
+3. **Role-based Routing**: Automatic redirect based on user profile role
+   - Employees → `/employee`
+   - Admins → `/dashboard`
+
+### API Authentication Pattern
+```typescript
+// Server-side authentication in API routes
+const supabase = await createSupabaseServerClient();
+const { data: { session } } = await supabase.auth.getSession();
+if (!session) {
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+}
+const userId = session.user.id;
+```
+
+## Receipt Upload Workflow
+
+### Two-Phase Upload Process
+1. **Phase 1**: Upload image to temporary path in Supabase Storage
+   - Endpoint: `POST /api/receipts/upload`
+   - Path: `user_id/temp_filename.ext`
+   - Returns: `tempFilePath`
+
+2. **Phase 2**: Create receipt record and finalize image location
+   - Endpoint: `POST /api/receipts`
+   - Creates DB record with temporary path
+   - Moves image to final path: `user_id/receipt_id.ext`
+   - Updates DB record with final image path
+
+### File Handling
+- **Accepted formats**: Images (JPG, PNG) and PDF files
+- **Size limit**: 10MB maximum
+- **Storage organization**: `receipt-images` bucket with user-specific folders
+- **Public URL generation**: For viewing uploaded receipts
+
+## UI/UX Guidelines
+
+### Design System
+- **Color Scheme**: Dark theme with `#222222` background, `#2680FC` primary blue
+- **Typography**: Geist Sans and Geist Mono fonts
+- **Mobile-first**: Responsive design prioritizing mobile experience
+- **Component Library**: ShadCN/UI with custom styling overrides
+
+### Key UI Patterns
+- **Loading States**: Comprehensive loading indicators for async operations
+- **Error Handling**: Toast notifications with descriptive error messages
+- **Form Validation**: Client-side validation with server-side verification
+- **Modal Dialogs**: For receipt details entry and confirmation
+
+## API Design Patterns
+
+### Consistent Response Format
+```typescript
+// Success responses
+{ success: true, data: any, message?: string }
+
+// Error responses  
+{ error: string, details?: any }
+```
+
+### Error Handling Strategy
+- Comprehensive try-catch blocks in all API routes
+- Detailed console logging for debugging
+- Graceful fallbacks and cleanup on failures
+- Consistent HTTP status codes
+
+### File Upload Error Recovery
+- Orphaned file cleanup on database insertion failures
+- Database record cleanup on file operation failures
+- Verification of file existence before operations
+
+## Development Guidelines
+
+### Code Style & Conventions
+- **TypeScript**: Strict mode enabled, explicit typing preferred
+- **Imports**: Use `@/` alias for src directory imports
+- **Components**: Functional components with hooks
+- **Error Boundaries**: Implement for production resilience
+- **Console Logging**: Detailed logging for debugging (remove in production)
+
+### State Management Patterns
+- **Local State**: useState for component-specific state
+- **Server State**: Direct API calls with loading/error states
+- **Authentication State**: Supabase auth state listener
+- **Form State**: Controlled components with validation
+
+### Performance Considerations
+- **Image Optimization**: Next.js Image component for logo and assets
+- **Bundle Size**: Tree-shaking enabled, minimal dependencies
+- **Loading States**: Prevent multiple simultaneous requests
+- **Caching**: Leverage Next.js and Supabase built-in caching
+
+## Environment Configuration
+
+### Required Environment Variables
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+### Supabase Configuration
+- **Auth Provider**: Phone (SMS) via Twilio
+- **RLS Policies**: Enabled on all tables with user-specific access
+- **Storage Policies**: User-specific read/write access to receipt-images bucket
+- **Database Triggers**: Auto-create user profiles on registration
+
+## Testing & Debugging
+
+### Common Issues & Solutions
+- **Session Persistence**: Manual session setting after OTP verification
+- **File Upload Failures**: Two-phase upload with cleanup on errors
+- **Loading State Races**: Proper useEffect dependency management
+- **Hydration Warnings**: Consistent server/client rendering
+
+### Debugging Tools
+- Comprehensive console logging in development
+- Supabase dashboard for database and storage monitoring
+- Browser dev tools for client-side debugging
+- Network tab for API request/response inspection
+
+## Future Considerations
+
+### Planned Features (Out of Scope for V1)
+- OCR integration with Google Cloud Vision API
+- Email notifications for status changes
+- Advanced reporting and analytics
+- Manager approval workflows
+- Direct accounting software integration
+- Batch operations for admin users
+
+### Scalability Considerations
+- Database indexing for performance
+- Image compression and optimization
+- CDN integration for global asset delivery
+- Monitoring and alerting systems
+
+## Security Best Practices
+
+### Data Protection
+- Row Level Security (RLS) on all database tables
+- User-specific file access in storage
+- Input validation and sanitization
+- Secure session management
+
+### API Security
+- Authentication required for all protected endpoints
+- Input validation on all API routes
+- Error message sanitization
+- Rate limiting considerations for production
+
+## Deployment & Production
+
+### Vercel Deployment
+- Automatic deployments from main branch
+- Environment variables configured in Vercel dashboard
+- Build optimization for production
+- Error monitoring and logging
+
+### Production Checklist
+- Remove development console.log statements
+- Configure proper error boundaries
+- Set up monitoring and alerting
+- Implement proper backup strategies
+- Configure CDN for static assets
+
+---
+
+## Development Commands
+```bash
+# Development server
+npm run dev
+
+# Production build
+npm run build
+
+# Start production server
+npm start
+
+# Linting
+npm run lint
+```
+
+This cursor rule should guide all development decisions and maintain consistency across the DWS Receipts application codebase. 

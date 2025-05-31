@@ -8,9 +8,11 @@ export function useMobile() {
   useEffect(() => {
     // Initial check
     const checkIfMobile = () => {
-      // Check for touch points as another indicator, or specific user agent strings.
-      // window.innerWidth < 768 is a common breakpoint for "mobile".
-      setIsMobile(window.innerWidth < 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
+      const widthIsMobile = window.innerWidth < 768;
+      const agentIsMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      console.log(`useMobile: window.innerWidth = ${window.innerWidth}, widthIsMobile = ${widthIsMobile}`);
+      console.log(`useMobile: navigator.userAgent = ${navigator.userAgent}, agentIsMobile = ${agentIsMobile}`);
+      setIsMobile(widthIsMobile || agentIsMobile);
     }
 
     checkIfMobile() // Call on mount

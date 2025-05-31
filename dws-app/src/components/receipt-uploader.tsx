@@ -20,49 +20,24 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
   const [isSubmitting, setIsSubmitting] = useState(false); // For the final submission step
   const [showDetailsCard, setShowDetailsCard] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [tempFilePathState, setTempFilePathState] = useState<string | null>(null); // Store tempFilePath
   const [extractedData, setExtractedData] = useState<Partial<Receipt>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
   const isMobile = useMobile();
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     setIsProcessingFile(true)
     setUploadedFile(file)
-
-    // Simulate OCR processing (as per original logic, since OCR is out of scope for now)
-    console.log("Simulating OCR for file:", file.name);
-    setTimeout(() => {
-      setIsProcessingFile(false)
-      // initialData for ReceiptDetailsCard. Date, Amount, Category will be handled by the card.
-      const mockExtractedData: Partial<Receipt> = {
-        notes: "", // Can keep notes if we want to pre-fill from OCR in future, or leave empty
-      }
-      setExtractedData(mockExtractedData) // Pass minimal or empty initial data for details
-      setShowDetailsCard(true)
-    }, 1500)
-  }
-
-  const handleDetailsSubmit = async (receiptData: Partial<Receipt>) => {
-    if (!uploadedFile) {
-      sonnerToast.error("No file selected", { description: "Please select a receipt image to upload." });
-      return;
-    }
-    // Use receipt_date for validation
-    if (!receiptData.receipt_date || receiptData.amount === undefined || !receiptData.category_id) {
-        sonnerToast.error("Missing details", { description: "Please fill in Date, Amount, and Category." });
-        return;
-    }
-
-
-    setIsSubmitting(true);
-    sonnerToast.info("Uploading receipt...", { id: "upload-toast" });
+    // Reset previously extracted data
+    setExtractedData({});
 
     try {
-      // Step 1: Upload the file to get a temporary path
+      // Step 1: Upload the file to get a temporary path (for OCR)
       const formData = new FormData();
-      formData.append("file", uploadedFile);
+      formData.append("file", file);
 
       const uploadResponse = await fetch("/api/receipts/upload", {
         method: "POST",
@@ -71,21 +46,80 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
 
       if (!uploadResponse.ok) {
         const errorData = await uploadResponse.json();
-        throw new Error(errorData.error || "Failed to upload image.");
+        throw new Error(errorData.error || "Failed to pre-upload image for OCR.");
       }
 
       const uploadResult = await uploadResponse.json();
       if (!uploadResult.success || !uploadResult.tempFilePath) {
-        throw new Error(uploadResult.error || "Image upload did not return a valid path.");
+        throw new Error(uploadResult.error || "Image pre-upload did not return a valid path.");
       }
 
-      // Step 2: Create the receipt record with the temporary file path
-      const createReceiptPayload = {
-        ...receiptData, // date, amount, category_id, notes
-        tempFilePath: uploadResult.tempFilePath,
-      };
+      const tempFilePath = uploadResult.tempFilePath;
+      setTempFilePathState(tempFilePath); // Store it in state
 
-      const createReceiptResponse = await fetch("/api/receipts", {
+      // Step 2: Call OCR API with the temporary file path
+      sonnerToast.info("Extracting receipt details...", { id: "ocr-toast" });
+      const ocrResponse = await fetch("/api/receipts/ocr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tempFilePath }),
+      });
+
+      if (!ocrResponse.ok) {
+        const errorData = await ocrResponse.json();
+        sonnerToast.error("OCR Failed", { id: "ocr-toast", description: errorData.error || "Could not extract details." });
+        // Proceed without OCR data
+        setExtractedData({});
+      } else {
+        const ocrResult = await ocrResponse.json();
+        if (ocrResult.success && ocrResult.data) {
+          sonnerToast.success("Details extracted!", { id: "ocr-toast", duration: 2000 });
+          setExtractedData({
+            receipt_date: ocrResult.data.date || undefined, // Ensure undefined if null
+            amount: ocrResult.data.amount !== null ? ocrResult.data.amount : undefined, // Ensure undefined if null
+            // notes will remain manual or can be set if vendor was extracted
+          });
+        } else {
+          sonnerToast.warning("OCR: No details found", { id: "ocr-toast", description: ocrResult.error || "Could not find date or amount." });
+          setExtractedData({});
+        }
+      }
+    } catch (error) {
+      console.error("Error during file processing or OCR:", error);
+      const errorMessage = error instanceof Error ? error.message : "File processing error.";
+      sonnerToast.error("Processing Error", { id: "ocr-toast", description: errorMessage });
+      setExtractedData({}); // Ensure form is blank on error
+    } finally {
+      setIsProcessingFile(false)
+        setShowDetailsCard(true) // Show card regardless of OCR success for manual input/correction
+      }
+    }
+  
+    const handleDetailsSubmit = async (receiptData: Partial<Receipt>) => {
+      if (!uploadedFile || !tempFilePathState) { // Check for tempFilePathState as well
+        sonnerToast.error("No file processed", { description: "Please select and process a receipt image first." });
+        return;
+      }
+      // Use receipt_date for validation
+      if (!receiptData.receipt_date || receiptData.amount === undefined || !receiptData.category_id) {
+          sonnerToast.error("Missing details", { description: "Please fill in Date, Amount, and Category." });
+          return;
+      }
+  
+      setIsSubmitting(true);
+      sonnerToast.info("Submitting receipt...", { id: "upload-toast" });
+  
+      try {
+        // Step 1: tempFilePath is already available from tempFilePathState
+        // The file was uploaded in handleFileSelect
+  
+        // Step 2: Create the receipt record with the stored temporary file path
+        const createReceiptPayload = {
+          ...receiptData, // date, amount, category_id, notes
+          tempFilePath: tempFilePathState, // Use the stored tempFilePath
+        };
+  
+        const createReceiptResponse = await fetch("/api/receipts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(createReceiptPayload),
@@ -111,6 +145,8 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
         fileInputRef.current.value = "";
       }
       setUploadedFile(null);
+      setTempFilePathState(null); // Clear tempFilePath from state
+      setExtractedData({}); // Clear extracted data
 
     } catch (error) {
       console.error("Error submitting receipt:", error);
@@ -127,6 +163,8 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
       fileInputRef.current.value = ""
     }
     setUploadedFile(null)
+    setTempFilePathState(null); // Clear tempFilePath from state on cancel
+    setExtractedData({}); // Clear extracted data on cancel
   }
 
   return (

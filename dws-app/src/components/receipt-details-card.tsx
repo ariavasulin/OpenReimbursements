@@ -23,8 +23,26 @@ interface ReceiptDetailsCardProps {
 
 export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptDetailsCardProps) {
   const isMobile = useMobile();
+  
+  const parseDateString = (dateString: string | undefined | null): Date | undefined => {
+    if (!dateString) return undefined;
+    // dateString is expected to be "YYYY-MM-DD"
+    const parts = dateString.split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1; // Month is 0-indexed for new Date()
+      const day = parseInt(parts[2], 10);
+      if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+        return new Date(year, month, day);
+      }
+    }
+    // Fallback or warning if format is unexpected, though OCR API should provide YYYY-MM-DD
+    console.warn("ReceiptDetailsCard: Could not parse initial date string:", dateString);
+    return undefined;
+  };
+
   // Use receipt_date from initialData if available
-  const [date, setDate] = useState<Date | undefined>(initialData?.receipt_date ? new Date(initialData.receipt_date) : undefined);
+  const [date, setDate] = useState<Date | undefined>(parseDateString(initialData?.receipt_date));
   const [amount, setAmount] = useState(initialData?.amount?.toString() || "");
   const [categoryId, setCategoryId] = useState<string>(initialData?.category_id || '');
   const [notes, setNotes] = useState(initialData?.notes || "");
@@ -50,11 +68,14 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
           // It's better if ReceiptUploader doesn't send a default category name.
           if (initialData?.category_id) {
              setCategoryId(initialData.category_id);
-          } else if (data.categories.length > 0 && !initialData?.category_id && !categoryId) {
-            // If no initial categoryId was provided and state is still empty string,
-            // consider setting a default, or leave as '' for "Select category" placeholder.
-            // For now, we'll leave it as '', user must select.
-            // setCategoryId(data.categories[0].id); // Example: set to first category
+          } else if (data.categories.length > 0 && !initialData?.category_id && categoryId === '') {
+            // If no initial categoryId was provided and categoryId state is still empty,
+            // try to set "Parking" as the default.
+            const parkingCategory = data.categories.find((cat: CategoryType) => cat.name.toLowerCase() === 'parking');
+            if (parkingCategory) {
+              setCategoryId(parkingCategory.id);
+            }
+            // If "Parking" isn't found, it will remain '', and user must select.
           }
         }
       } catch (error) {
