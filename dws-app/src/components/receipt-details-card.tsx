@@ -88,7 +88,7 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
       }
     };
     fetchCategories();
-  }, [initialData?.category_id, categoryId]); // Added categoryId to dependency array
+  }, [initialData?.category_id]); // Re-fetch if initialData.category_id changes (though unlikely here)
 
 
   const handleSubmit = async (e: React.FormEvent) => {
