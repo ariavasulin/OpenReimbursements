@@ -1,197 +1,308 @@
 "use client"
 
-import { useState } from "react"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import type React from "react"
+import { useState, useMemo } from "react"
+import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
-import type { Receipt } from "@/lib/types"
-import { formatCurrency, formatDate } from "@/lib/utils" // Ensure these exist in dws-app/src/lib/utils.ts
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ExternalLink } from "lucide-react"
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination"
+import type { Receipt } from "@/lib/types"
 
 interface ReceiptTableProps {
-  receipts: Receipt[]
+  rowData?: Receipt[]
+  height?: number | string
 }
 
-const ITEMS_PER_PAGE = 10
+type SortField = keyof Receipt
+type SortDirection = "asc" | "desc" | null
 
-export default function ReceiptTable({ receipts }: ReceiptTableProps) {
-  const [filter, setFilter] = useState<string>("all")
+const ReceiptTable: React.FC<ReceiptTableProps> = ({ rowData = [], height = 500 }) => {
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
+  const [sortField, setSortField] = useState<SortField | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>(null)
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
-  // Filter receipts based on status
-  const filteredReceipts = filter === "all" ? receipts : receipts.filter((receipt) => receipt.status === filter)
+  // Sort data
+  const sortedData = useMemo(() => {
+    if (!sortField || !sortDirection) return rowData
 
-  // Calculate total pages
-  const totalPages = Math.max(1, Math.ceil(filteredReceipts.length / ITEMS_PER_PAGE))
+    return [...rowData].sort((a, b) => {
+      const aValue = a[sortField]
+      const bValue = b[sortField]
 
-  // Ensure current page is valid after filtering
-  if (currentPage > totalPages) {
-    // This state update should be wrapped in useEffect or handled differently to avoid potential issues
-    // For now, keeping prototype logic. Consider:
-    // useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
-    setCurrentPage(totalPages) 
-  }
+      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1
+      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1
+      return 0
+    })
+  }, [rowData, sortField, sortDirection])
 
-  // Get current page receipts
-  const currentReceipts = filteredReceipts.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
+  // Paginate data
+  const paginatedData = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize
+    return sortedData.slice(startIndex, startIndex + pageSize)
+  }, [sortedData, currentPage, pageSize])
 
-  // Handle page change
-  const handlePageChange = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page)
+  const totalPages = Math.ceil(sortedData.length / pageSize)
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      if (sortDirection === "asc") {
+        setSortDirection("desc")
+      } else if (sortDirection === "desc") {
+        setSortField(null)
+        setSortDirection(null)
+      } else {
+        setSortDirection("asc")
+      }
+    } else {
+      setSortField(field)
+      setSortDirection("asc")
     }
   }
 
-  console.log("ReceiptTable: Received receipts prop:", JSON.stringify(receipts, null, 2)); // Log received props
+  const getSortIcon = (field: SortField) => {
+    if (sortField !== field) {
+      return <ChevronsUpDown className="ml-2 h-4 w-4" />
+    }
+    if (sortDirection === "asc") {
+      return <ChevronUp className="ml-2 h-4 w-4" />
+    }
+    if (sortDirection === "desc") {
+      return <ChevronDown className="ml-2 h-4 w-4" />
+    }
+    return <ChevronsUpDown className="ml-2 h-4 w-4" />
+  }
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedRows(new Set(paginatedData.map((row) => row.id)))
+    } else {
+      setSelectedRows(new Set())
+    }
+  }
+
+  const handleSelectRow = (id: string, checked: boolean) => {
+    const newSelected = new Set(selectedRows)
+    if (checked) {
+      newSelected.add(id)
+    } else {
+      newSelected.delete(id)
+    }
+    setSelectedRows(newSelected)
+  }
+
+  const isAllSelected = paginatedData.length > 0 && paginatedData.every((row) => selectedRows.has(row.id))
+  const isIndeterminate = paginatedData.some((row) => selectedRows.has(row.id)) && !isAllSelected
+
+  const getStatusBadge = (status: string) => {
+    const variants = {
+      pending: "bg-yellow-500/30 text-yellow-300 border-yellow-500/30",
+      approved: "bg-green-500/30 text-green-300 border-green-500/30",
+      reimbursed: "bg-blue-500/30 text-blue-300 border-blue-500/30",
+      rejected: "bg-red-500/30 text-red-300 border-red-500/30",
+    }
+
+    return (
+      <Badge
+        variant="outline"
+        className={`capitalize ${variants[status as keyof typeof variants] || "bg-gray-500/30 text-gray-300 border-gray-500/30"}`}
+      >
+        {status}
+      </Badge>
+    )
+  }
 
   return (
-    <div className="space-y-4 text-white"> {/* Added text-white for base text color in dark theme */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Your Receipts</h2>
-        <Select
-          value={filter}
-          onValueChange={(value) => {
-            setFilter(value)
-            setCurrentPage(1) // Reset to first page when filter changes
-          }}
-        >
-          <SelectTrigger className="w-[130px] bg-[#3e3e3e] border-[#4e4e4e] text-white">
-            <SelectValue placeholder="Filter" />
-          </SelectTrigger>
-          <SelectContent position="popper" className="bg-[#2e2e2e] text-white border-[#4e4e4e]">
-            <SelectItem value="all" className="hover:bg-[#4e4e4e]">All</SelectItem>
-            <SelectItem value="Pending" className="hover:bg-[#4e4e4e]">Pending</SelectItem>
-            <SelectItem value="Approved" className="hover:bg-[#4e4e4e]">Approved</SelectItem>
-            <SelectItem value="Rejected" className="hover:bg-[#4e4e4e]">Rejected</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="border border-[#4e4e4e] rounded-lg overflow-hidden bg-[#2e2e2e]"> {/* Changed bg to #2e2e2e from prototype's #3e3e3e for table area */}
-        <Table>
-          <TableHeader className="bg-[#3e3e3e] hover:bg-[#3e3e3e]">{/* Ensure header bg doesn't change on hover if not desired */}
-            <TableRow className="border-[#4e4e4e]">
-              <TableHead className="text-white">Date</TableHead>
-              <TableHead className="text-white">Amount</TableHead>
-              <TableHead className="text-white">Status</TableHead>
-              <TableHead className="text-white">Photo</TableHead>
-            </TableRow></TableHeader>
-          <TableBody>
-            {currentReceipts.length > 0
-              ? currentReceipts.map((receipt) => {
-                  console.log("ReceiptTable: Rendering receipt in map:", JSON.stringify(receipt, null, 2)); // Log each receipt being mapped
-                  return (<TableRow key={receipt.id} className="border-[#4e4e4e] hover:bg-[#383838]">
-                    <TableCell>{receipt.receipt_date ? formatDate(receipt.receipt_date) : 'N/A'}</TableCell>
-                    <TableCell>{formatCurrency(receipt.amount)}</TableCell>
-                    <TableCell><StatusBadge status={receipt.status} /></TableCell>
-                    <TableCell>
-                      {receipt.image_url ? (
-                        <a
-                          href={receipt.image_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center text-blue-400 hover:text-blue-300 transition-colors"
-                          aria-label={`View receipt photo for ${receipt.receipt_date ? formatDate(receipt.receipt_date) : 'this receipt'}`}
-                        >
-                          <span className="mr-1">View</span>
-                          <ExternalLink size={14} />
-                        </a>
-                      ) : (
-                        <span className="text-gray-500">No photo</span>
-                      )}
-                    </TableCell>
-                  </TableRow>);
-                })
-              : (<TableRow className="border-[#4e4e4e] hover:bg-[#383838]">
-                  <TableCell colSpan={4} className="text-center py-4 text-gray-400">
-                    No receipts found
+    <div className="space-y-4">
+      <div className="rounded-md border border-border bg-card" style={{ height }}>
+        <div className="overflow-auto h-full">
+          <Table>
+            <TableHeader className="sticky top-0 bg-muted z-10"> {/* Changed bg for header */}
+              <TableRow className="border-border hover:bg-accent"> {/* hover:bg-accent or similar */}
+                <TableHead className="w-12 text-center">
+                  <Checkbox
+                    checked={isAllSelected}
+                    onCheckedChange={handleSelectAll}
+                    ref={(el) => {
+                      if (el) el.indeterminate = isIndeterminate
+                    }}
+                    // Standard ShadCN checkbox should pick up theme from globals.css
+                    // className="border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
+                  />
+                </TableHead>
+                <TableHead className="text-foreground">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("jobCode")}
+                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  >
+                    Job Code
+                    {getSortIcon("jobCode")}
+                  </Button>
+                </TableHead>
+                <TableHead className="text-foreground">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("date")}
+                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  >
+                    Date
+                    {getSortIcon("date")}
+                  </Button>
+                </TableHead>
+                <TableHead className="text-foreground">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("employeeName")}
+                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  >
+                    Employee
+                    {getSortIcon("employeeName")}
+                  </Button>
+                </TableHead>
+                <TableHead className="text-foreground">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("amount")}
+                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  >
+                    Amount
+                    {getSortIcon("amount")}
+                  </Button>
+                </TableHead>
+                <TableHead className="text-foreground">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("category")}
+                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  >
+                    Category
+                    {getSortIcon("category")}
+                  </Button>
+                </TableHead>
+                <TableHead className="text-foreground">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("description")}
+                    className="h-auto p-0 font-medium text-foreground hover:bg-transparent hover:text-accent-foreground"
+                  >
+                    Description
+                    {getSortIcon("description")}
+                  </Button>
+                </TableHead>
+                <TableHead className="text-foreground text-center">Status</TableHead>
+                <TableHead className="text-foreground text-center">Image</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedData.map((receipt) => (
+                <TableRow key={receipt.id} className="border-border hover:bg-accent text-foreground">
+                  <TableCell className="text-center">
+                    <Checkbox
+                      checked={selectedRows.has(receipt.id)}
+                      onCheckedChange={(checked) => handleSelectRow(receipt.id, checked as boolean)}
+                      // Standard ShadCN checkbox
+                    />
                   </TableCell>
-                </TableRow>)
-            }
-          </TableBody>
-        </Table>
+                  <TableCell>{receipt.jobCode}</TableCell> {/* Removed explicit text-white */}
+                  <TableCell>{new Date(receipt.date).toLocaleDateString()}</TableCell>
+                  <TableCell>{receipt.employeeName}</TableCell>
+                  <TableCell>${receipt.amount.toFixed(2)}</TableCell>
+                  <TableCell>{receipt.category}</TableCell>
+                  <TableCell>{receipt.description}</TableCell>
+                  <TableCell className="text-center">{getStatusBadge(receipt.status)}</TableCell>
+                  <TableCell className="text-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="bg-secondary text-secondary-foreground hover:bg-muted border-border"
+                    >
+                      View
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
-      {totalPages > 1 && (
-        <div className="mt-4">
-          <Pagination>
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  // disabled={currentPage === 1} // className handles visual disabling
-                  className={currentPage === 1 ? "opacity-50 cursor-not-allowed text-gray-600 hover:bg-transparent hover:text-gray-600" : "text-white hover:bg-[#4e4e4e]"}
-                />
-              </PaginationItem>
+      {/* Pagination */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-2">
+          <p className="text-sm text-muted-foreground">
+            Showing {Math.min((currentPage - 1) * pageSize + 1, sortedData.length)} to{" "}
+            {Math.min(currentPage * pageSize, sortedData.length)} of {sortedData.length} entries
+          </p>
+        </div>
+        <div className="flex items-center space-x-6">
+          <div className="flex items-center space-x-2">
+            <p className="text-sm text-muted-foreground">Rows per page</p>
+            <Select
+              value={pageSize.toString()}
+              onValueChange={(value) => {
+                setPageSize(Number(value))
+                setCurrentPage(1)
+              }}
+            >
+              <SelectTrigger className="h-8 w-[70px] bg-input text-foreground border-border">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-popover text-popover-foreground border-border">
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="bg-secondary text-secondary-foreground hover:bg-muted border-border disabled:opacity-50"
+            >
+              Previous
+            </Button>
+            <div className="flex items-center space-x-1">
+              <p className="text-sm text-muted-foreground">
+                Page {currentPage} of {totalPages}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="bg-secondary text-secondary-foreground hover:bg-muted border-border disabled:opacity-50"
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      </div>
 
-              {Array.from({ length: totalPages }).map((_, index) => {
-                const pageNumber = index + 1
-                if (
-                  pageNumber === 1 ||
-                  pageNumber === totalPages ||
-                  (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1)
-                ) {
-                  return (
-                    <PaginationItem key={pageNumber}>
-                      <PaginationLink
-                        isActive={pageNumber === currentPage}
-                        onClick={() => handlePageChange(pageNumber)}
-                        className={pageNumber === currentPage ? "bg-[#2680FC] text-white border-[#2680FC] hover:bg-[#2680FC]" : "text-white hover:bg-[#4e4e4e]"}
-                      >
-                        {pageNumber}
-                      </PaginationLink>
-                    </PaginationItem>
-                  )
-                }
-                if (
-                  (pageNumber === 2 && currentPage > 3) ||
-                  (pageNumber === totalPages - 1 && currentPage < totalPages - 2)
-                ) {
-                  return <PaginationItem key={`ellipsis-${pageNumber}`} className="text-white">...</PaginationItem>
-                }
-                return null
-              })}
-
-              <PaginationItem>
-                <PaginationNext
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  // disabled={currentPage === totalPages}
-                  className={currentPage === totalPages ? "opacity-50 cursor-not-allowed text-gray-600 hover:bg-transparent hover:text-gray-600" : "text-white hover:bg-[#4e4e4e]"}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
+      {/* Selected rows info */}
+      {selectedRows.size > 0 && (
+        <div className="flex items-center justify-between p-2 bg-muted text-muted-foreground rounded-md">
+          <p className="text-sm">{selectedRows.size} row(s) selected</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSelectedRows(new Set())}
+            className="bg-secondary text-secondary-foreground hover:bg-accent border-border"
+          >
+            Clear selection
+          </Button>
         </div>
       )}
-
-      <div className="text-sm text-center text-gray-400">
-        Showing {currentReceipts.length > 0 ? Math.min(filteredReceipts.length, 1 + (currentPage - 1) * ITEMS_PER_PAGE) : 0}-
-        {Math.min(filteredReceipts.length, currentPage * ITEMS_PER_PAGE)} of {filteredReceipts.length} receipts
-      </div>
     </div>
   )
 }
 
-function StatusBadge({ status }: { status: Receipt["status"] }) {
-  const variants: Record<Receipt["status"], string> = { // Added type annotation for variants
-    Pending: "bg-yellow-900/30 text-yellow-300 hover:bg-yellow-900/30 border-yellow-700",
-    Approved: "bg-green-900/30 text-green-300 hover:bg-green-900/30 border-green-700",
-    Rejected: "bg-red-900/30 text-red-300 hover:bg-red-900/30 border-red-700",
-  };
-
-  // The status prop itself will be capitalized (e.g., "Pending") due to the Receipt type.
-  // The text display `status.charAt(0).toUpperCase() + status.slice(1)` will still work fine.
-  return (
-    <Badge variant="outline" className={`${variants[status]} text-xs px-2 py-0.5`}>
-      {status}
-    </Badge>
-  )
-}
+export default ReceiptTable
