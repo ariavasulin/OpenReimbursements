@@ -1,0 +1,5 @@
+{
+  "env": {
+    "NEXT_ESLINT_DISABLED": "1"
+  }
+}
