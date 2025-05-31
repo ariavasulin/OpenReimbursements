@@ -3,41 +3,41 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
-import type { UserProfile } from '@/lib/types'; // Ensure this import is correct
-import ReceiptDashboard from "@/components/receipt-dashboard";
+import type { UserProfile } from '@/lib/types';
+import BatchReviewDashboard from "@/components/batch-review-dashboard";
 
-export default function DashboardPage() {
+export default function BatchReviewPage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    console.log('[Admin Dashboard] useEffect triggered');
+    console.log('[Batch Review Dashboard] useEffect triggered');
 
     const fetchUserAndCheckSession = async () => {
-      console.log('[Admin Dashboard] fetchUserAndCheckSession called');
+      console.log('[Batch Review Dashboard] fetchUserAndCheckSession called');
       setLoading(true);
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      console.log('[Admin Dashboard] getSession result:', { session, sessionError });
+
+      console.log('[Batch Review Dashboard] getSession result:', { session, sessionError });
 
       if (sessionError) {
-        console.error('[Admin Dashboard] getSession error:', sessionError);
+        console.error('[Batch Review Dashboard] getSession error:', sessionError);
         router.replace('/login');
         setLoading(false);
         return;
       }
-      
+
       if (!session) {
-        console.log('[Admin Dashboard] No session found by getSession, redirecting to login.');
+        console.log('[Batch Review Dashboard] No session found by getSession, redirecting to login.');
         router.replace('/login');
         setLoading(false);
         return;
       }
-      
+
       setUser(session.user);
-      console.log('[Admin Dashboard] Session found. User ID:', session.user.id);
+      console.log('[Batch Review Dashboard] Session found. User ID:', session.user.id);
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
@@ -46,17 +46,17 @@ export default function DashboardPage() {
         .single();
 
       if (profileError) {
-        console.error("[Admin Dashboard] Error fetching user profile:", profileError);
+        console.error("[Batch Review Dashboard] Error fetching user profile:", profileError);
+        setLoading(false); // Ensure loading is false before redirect
         router.replace('/login');
-        setLoading(false);
         return;
       }
 
       if (profile) {
-        console.log('[Admin Dashboard] Profile fetched:', profile);
+        console.log('[Batch Review Dashboard] Profile fetched:', profile);
         setUserProfile(profile);
         if (profile.role !== 'admin') {
-          console.log(`[Admin Dashboard] User role is ${profile.role}, redirecting.`);
+          console.log(`[Batch Review Dashboard] User role is ${profile.role}, redirecting.`);
           setLoading(false); // Ensure loading is false before redirect
           router.replace(profile.role === 'employee' ? '/employee' : '/login');
         } else {
@@ -64,7 +64,7 @@ export default function DashboardPage() {
           setLoading(false);
         }
       } else {
-        console.warn("[Admin Dashboard] User profile not found for user_id:", session.user.id);
+        console.warn("[Batch Review Dashboard] User profile not found for user_id:", session.user.id);
         setLoading(false); // Ensure loading is false before redirect
         router.replace('/login');
       }
@@ -74,13 +74,13 @@ export default function DashboardPage() {
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('[Admin Dashboard] onAuthStateChange event:', event, 'session:', session);
+        console.log('[Batch Review Dashboard] onAuthStateChange event:', event, 'session:', session);
         if (event === 'SIGNED_OUT' || !session) {
-          console.log('[Admin Dashboard] onAuthStateChange: SIGNED_OUT or no session, redirecting to login.');
+          console.log('[Batch Review Dashboard] onAuthStateChange: SIGNED_OUT or no session, redirecting to login.');
           setUser(null);
           setUserProfile(null);
           router.replace('/login');
-        } else if (session && session.user) { // Check if session.user exists
+        } else if (session && session.user) {
           setUser(session.user);
           const { data: profile, error: profileError } = await supabase
             .from('user_profiles')
@@ -94,16 +94,14 @@ export default function DashboardPage() {
               router.replace(profile.role === 'employee' ? '/employee' : '/login');
             }
           } else if (profileError) {
-             console.error("[Admin Dashboard] Error fetching profile on auth change:", profileError);
+             console.error("[Batch Review Dashboard] Error fetching profile on auth change:", profileError);
              router.replace('/login');
           } else {
-            console.warn("[Admin Dashboard] Profile not found on auth change for user_id:", session.user.id);
+            console.warn("[Batch Review Dashboard] Profile not found on auth change for user_id:", session.user.id);
             router.replace('/login');
           }
         } else if (session && !session.user && event !== 'INITIAL_SESSION') {
-            // This case might happen if session exists but user object is null,
-            // and it's not the initial_session event which might be handled by fetchUserAndCheckSession
-            console.log('[Admin Dashboard] onAuthStateChange: Session exists but no user, redirecting to login.');
+            console.log('[Batch Review Dashboard] onAuthStateChange: Session exists but no user, redirecting to login.');
             router.replace('/login');
         }
       }
@@ -115,30 +113,25 @@ export default function DashboardPage() {
   }, [router]);
 
   const handleLogout = async () => {
-    const prevLoading = loading; // Store previous loading state
+    const prevLoading = loading;
     setLoading(true);
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error logging out:', error);
-       setLoading(prevLoading); // Restore previous loading state on error
-      // Optionally show an error message to the user
+      setLoading(prevLoading);
     }
     // onAuthStateChange will handle redirect to /login
-    // setLoading(false); // Not needed here as redirect will occur
   };
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#2e2e2e] text-white">
-        <p className="text-lg">Loading dashboard...</p>
-        {/* You could add a spinner here */}
+        <p className="text-lg">Loading Batch Review...</p>
       </div>
     );
   }
 
   if (!user || !userProfile || userProfile.role !== 'admin') {
-    // This state should ideally be temporary as redirects handle it.
-    // Or it's shown if a non-admin somehow lands here without an immediate redirect.
     return (
         <div className="flex flex-col items-center justify-center min-h-screen bg-[#2e2e2e] text-white">
             <p className="text-lg mb-4">Access Denied or Redirecting to Login...</p>
@@ -146,12 +139,13 @@ export default function DashboardPage() {
     );
   }
 
-  // If user is admin
   return (
     <>
-      <ReceiptDashboard />
+      <BatchReviewDashboard />
       {/* Basic logout button for now, can be moved to a shared header later */}
-      <div className="absolute top-4 right-4">
+      {/* The BatchReviewDashboard itself has a "Back to Dashboard" link, so a logout button here might be redundant if main dashboard has it. */}
+      {/* For consistency with how dashboard/page.tsx was handled, adding it here too. */}
+      <div className="absolute top-4 right-4 z-50"> {/* Ensure z-index if it overlaps with dashboard content */}
         <button
           onClick={handleLogout}
           className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-[var(--destructive)] hover:brightness-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--destructive)]"
