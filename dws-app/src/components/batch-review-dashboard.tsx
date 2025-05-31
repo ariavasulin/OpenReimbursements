@@ -49,11 +49,11 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
 
         if (supabaseError) throw supabaseError
 
-        const mappedReceipts: Receipt[] = data.map((item: any) => ({
+        const mappedReceipts: Receipt[] = data.map((item: Record<string, any>) => ({
           id: item.id,
           employeeName: item.user_profiles?.full_name || "N/A",
           employeeId: item.user_profiles?.employee_id_internal || "N/A",
-          date: item.receipt_date,
+          receipt_date: item.receipt_date,
           amount: item.amount,
           category: item.categories?.name || "Uncategorized",
           description: item.description || "",
@@ -62,8 +62,8 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
           // jobCode: item.job_code || item.jobCode || "", // Removed
         }))
         setReceipts(mappedReceipts)
-      } catch (err: any) {
-        const errorMessage = err?.message || (typeof err === 'object' && err !== null ? JSON.stringify(err) : String(err));
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : (typeof err === 'object' && err !== null ? JSON.stringify(err) : String(err));
         setError(errorMessage);
         console.error("Error fetching pending receipts (processed):", errorMessage, "Original error:", err);
       } finally {
@@ -79,7 +79,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
 
   const handleApprove = () => {
     if (!currentReceipt) return;
-    const decision: "approved" = "approved";
+    const decision = "approved" as const;
     const newDecisions = { ...decisions, [currentReceipt.id]: decision }
     setDecisions(newDecisions)
     if (!Object.keys(decisions).includes(currentReceipt.id)) {
@@ -90,7 +90,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
 
   const handleReject = () => {
     if (!currentReceipt) return;
-    const decision: "rejected" = "rejected";
+    const decision = "rejected" as const;
     const newDecisions = { ...decisions, [currentReceipt.id]: decision }
     setDecisions(newDecisions)
     if (!Object.keys(decisions).includes(currentReceipt.id)) {
@@ -151,18 +151,19 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
           .eq("status", "Pending")
           .order("created_at", { ascending: true })
         if (supabaseError) throw supabaseError
-        setReceipts(data.map((item: any) => ({
+        setReceipts(data.map((item: Record<string, any>) => ({
             id: item.id, employeeName: item.user_profiles?.full_name || "N/A", employeeId: item.user_profiles?.employee_id_internal || "N/A",
-            date: item.receipt_date, amount: item.amount, category: item.categories?.name || "Uncategorized", description: item.description || "",
+            receipt_date: item.receipt_date, amount: item.amount, category: item.categories?.name || "Uncategorized", description: item.description || "",
             status: item.status.toLowerCase() as Receipt['status'], image_url: item.image_url ? supabase.storage.from('receipt-images').getPublicUrl(item.image_url).data.publicUrl : "",
             // jobCode: item.job_code || item.jobCode || "", // Removed
         })))
         setLoading(false)
       }
       fetchPendingReceipts()
-    } catch (err: any) {
-      setError(err.message)
-      alert(`Error submitting decisions: ${err.message}`)
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred during submission.";
+      setError(errorMessage)
+      alert(`Error submitting decisions: ${errorMessage}`)
       console.error("Error submitting decisions:", err)
     } finally {
       setIsSubmitting(false)
@@ -297,7 +298,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
                   </div>
                   <div>
                     <p className="text-gray-400 text-sm">Date</p>
-                    <p className="font-medium text-white">{new Date(currentReceipt.date).toLocaleDateString()}</p>
+                    <p className="font-medium text-white">{new Date(currentReceipt.receipt_date).toLocaleDateString()}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 text-sm">Amount</p>

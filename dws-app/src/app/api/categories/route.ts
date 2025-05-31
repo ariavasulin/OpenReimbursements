@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import type { Category } from '@/lib/types';
 
-export async function GET(request: Request) {
+export async function GET(_request: Request) {
   const supabase = await createSupabaseServerClient();
 
   // For fetching public categories, session check might be optional,

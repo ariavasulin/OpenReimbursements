@@ -14,9 +14,14 @@ try {
   const credentials = JSON.parse(credentialsJsonString);
   visionClient = new ImageAnnotatorClient({ credentials });
   console.log('OCR API: Google Vision Client initialized with explicit credentials.');
-} catch (e: any) {
-  visionClientError = e;
-  console.error('OCR API: FATAL - Failed to initialize Google Vision Client:', e.message);
+} catch (e: unknown) {
+  if (e instanceof Error) {
+    visionClientError = e;
+    console.error('OCR API: FATAL - Failed to initialize Google Vision Client:', e.message);
+  } else {
+    visionClientError = new Error('An unknown error occurred during Vision Client initialization.');
+    console.error('OCR API: FATAL - Failed to initialize Google Vision Client with an unknown error type:', e);
+  }
 }
 
 const newDateRegex = /(\d{4}-\d{2}-\d{2})|(\d{1,2}\/\d{1,2}\/\d{2,4})|(\d{1,2}-\d{1,2}-\d{2,4})|(\d{1,2}\.\d{1,2}\.\d{2,4})|((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s\d{1,2}(?:st|nd|rd|th)?(?:,)?\s\d{2,4})|(\d{1,2}(?:st|nd|rd|th)?\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?(?:,)?\s\d{2,4})|(\d{1,2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?-\d{2,4})/gi;
@@ -50,7 +55,7 @@ function parseAndSelectBestDate(fullText: string): string | null {
             break; 
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // Ignore parsing errors
       }
     }
@@ -209,8 +214,9 @@ export async function POST(request: NextRequest) {
       },
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('OCR API: Unexpected error:', error);
-    return NextResponse.json({ error: 'Internal server error', details: error.message }, { status: 500 });
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred in OCR processing.';
+    return NextResponse.json({ error: 'Internal server error', details: errorMessage }, { status: 500 });
   }
 }
