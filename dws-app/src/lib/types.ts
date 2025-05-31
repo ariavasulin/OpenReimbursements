@@ -11,7 +11,7 @@ export interface Receipt {
   description?: string; // From prototype
   notes?: string; // Corresponds to Supabase 'description' (text), kept for existing dws-app functionality
   image_url?: string; // Corresponds to Supabase 'image_url' (text) - stores path in Supabase Storage or a public URL. From prototype as imageUrl.
-  jobCode?: string; // From prototype
+  // jobCode?: string; // Removed as per user request
   // driveLink?: string; // From prototype, redundant.
   created_at?: string; // Corresponds to Supabase 'created_at'
   updated_at?: string; // Corresponds to Supabase 'updated_at'
