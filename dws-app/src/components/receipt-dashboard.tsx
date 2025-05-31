@@ -4,24 +4,54 @@ import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { supabase } from "@/lib/supabaseClient"
-import { Download, RefreshCw, ListChecks } from "lucide-react"
+import { Download, RefreshCw, ListChecks, LogOut } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DateRangePicker } from "@/components/date-range-picker"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import ReceiptTable from "@/components/receipt-table"
-import type { ColDef } from "ag-grid-community"
+// import type { ColDef } from "ag-grid-community" // Removed as ag-grid is not used
 import type { Receipt } from "@/lib/types"
 
-export default function ReceiptDashboard() {
+export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
+  const [activeTab, setActiveTab] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState<string>("")
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
     from: undefined,
     to: undefined,
   })
+
+  const handleDateChange = (selectedDateRange: import("react-day-picker").DateRange | undefined) => {
+    setDateRange({
+      from: selectedDateRange?.from,
+      to: selectedDateRange?.to,
+    });
+  };
+
+  const handleSelectedRowsChange = (newSelectedRows: Set<string>) => {
+    setSelectedRows(newSelectedRows)
+  }
+
+  const handleClearSelection = () => {
+    setSelectedRows(new Set())
+  }
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page)
+  }
+
+  const handlePageSizeChange = (newPageSize: number) => {
+    setPageSize(newPageSize)
+    setCurrentPage(1) // Reset to first page when changing page size
+  }
+
   const [receipts, setReceipts] = useState<Receipt[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
@@ -40,18 +70,13 @@ export default function ReceiptDashboard() {
             receipt_date,
             amount,
             status,
-            category,
-            notes,
-            image_url,
-            job_code,
-            user_profiles (
-              full_name,
-              employee_id_internal
-            )
+            category_id,
+            user_id,
+            categories!receipts_category_id_fkey (name),
+            description,
+            image_url
           `
           )
-          // Ensure user_profiles is not null, if it can be
-          // .not("user_profiles", "is", null)
 
         if (filterStatus !== "all") {
           // The 'status' in the DB might be capitalized as per types.ts for dws-app
@@ -60,11 +85,7 @@ export default function ReceiptDashboard() {
           query = query.eq("status", dbStatus)
         }
 
-        if (searchQuery) {
-          query = query.or(
-            `user_profiles.full_name.ilike.%${searchQuery}%,notes.ilike.%${searchQuery}%`
-          )
-        }
+        // Search filtering is handled client-side to avoid PostgREST parsing issues
 
         if (dateRange.from) {
           query = query.gte("receipt_date", dateRange.from.toISOString())
@@ -85,114 +106,100 @@ export default function ReceiptDashboard() {
           throw supabaseError
         }
 
-        const mappedReceipts: Receipt[] = data.map((item: any) => ({
-          id: item.id,
-          employeeName: item.user_profiles?.full_name || "N/A",
-          employeeId: item.user_profiles?.employee_id_internal || "N/A",
-          date: item.receipt_date, // This is a string (ISO date)
-          amount: item.amount,
-          category: item.category || "Uncategorized",
-          description: item.notes || "", // Map notes to description
-          status: item.status.toLowerCase() as Receipt['status'], // Assuming status from DB needs to be lowercased for prototype compatibility
-          imageUrl: item.image_url || "",
-          jobCode: item.job_code || item.jobCode || "", // job_code from DB, jobCode as fallback
-        }))
+        // Fetch user profiles separately
+        const userIds = [...new Set(data.map(item => item.user_id).filter(Boolean))]
+        
+        const { data: userProfiles, error: profilesError } = await supabase
+          .from("user_profiles")
+          .select("user_id, full_name, employee_id_internal")
+          .in("user_id", userIds)
+
+        if (profilesError) {
+          console.warn("Error fetching user profiles:", profilesError)
+        }
+
+        // Create a map of user profiles by user_id
+        const profilesMap = new Map()
+        if (userProfiles) {
+          userProfiles.forEach(profile => {
+            profilesMap.set(profile.user_id, profile)
+          })
+        }
+
+        const mappedReceipts: Receipt[] = data.map((item: any) => {
+          const userProfile = profilesMap.get(item.user_id)
+          return {
+            id: item.id,
+            employeeName: userProfile?.full_name || "N/A",
+            employeeId: userProfile?.employee_id_internal || "N/A",
+            date: item.receipt_date, // This is a string (ISO date)
+            amount: item.amount,
+            category: item.categories?.name || "Uncategorized",
+            description: item.description || "",
+            status: item.status.toLowerCase() as Receipt['status'],
+            image_url: item.image_url ? supabase.storage.from('receipt-images').getPublicUrl(item.image_url).data.publicUrl : "",
+            // jobCode: item.job_code || item.jobCode || "", // Removed
+          }
+        })
         setReceipts(mappedReceipts)
       } catch (err: any) {
-        setError(err.message)
-        console.error("Error fetching receipts:", err)
+        console.error("Full error object fetching receipts:", JSON.stringify(err, null, 2));
+        let errorMessage = "An unknown error occurred";
+        if (err && typeof err === 'object') {
+          if ('message' in err && typeof err.message === 'string') {
+            errorMessage = err.message;
+          } else if (Object.keys(err).length > 0) {
+            errorMessage = `Supabase error: ${JSON.stringify(err)}`;
+          }
+        } else if (typeof err === 'string') {
+          errorMessage = err;
+        }
+        setError(errorMessage);
+        console.error("Error fetching receipts (processed):", errorMessage);
       } finally {
         setLoading(false)
       }
     }
 
-    fetchReceipts()
-  }, [filterStatus, searchQuery, dateRange])
+    // Only fetch when both dates are selected, or when no dates are selected, or when only filterStatus/searchQuery changes
+    const shouldFetch = !dateRange.from || (dateRange.from && dateRange.to)
+    
+    if (shouldFetch) {
+      fetchReceipts()
+    }
+  }, [filterStatus, dateRange])
 
-  // filteredReceipts are now just the receipts state, as filtering is server-side
-  const filteredReceipts = receipts;
+  // Apply client-side search filtering since server-side search has PostgREST issues
+  const filteredReceipts = receipts.filter(receipt => {
+    if (!searchQuery) return true
+    
+    const searchLower = searchQuery.toLowerCase()
+    const employeeName = receipt.employeeName?.toLowerCase() || ''
+    const description = receipt.description?.toLowerCase() || ''
+    
+    return employeeName.includes(searchLower) || description.includes(searchLower)
+  })
 
-  const columnDefs: ColDef<Receipt>[] = [
-    {
-      field: "jobCode",
-      headerName: "Job Code",
-      sortable: true,
-      filter: true,
-    },
-    {
-      field: "date",
-      headerName: "Date",
-      sortable: true,
-      filter: true,
-      valueFormatter: (params) => {
-        // params.value is expected to be a string (ISO date) from Supabase
-        return params.value ? new Date(params.value).toLocaleDateString() : ""
-      },
-    },
-    {
-      field: "employeeName",
-      headerName: "Employee",
-      sortable: true,
-      filter: true,
-    },
-    {
-      field: "amount",
-      headerName: "Amount",
-      sortable: true,
-      filter: true,
-      valueFormatter: (params) => {
-        return params.value ? `$${params.value.toFixed(2)}` : ""
-      },
-    },
-    {
-      field: "category",
-      headerName: "Category",
-      sortable: true,
-      filter: true,
-    },
-    {
-      field: "description",
-      headerName: "Description",
-      sortable: true,
-      filter: true,
-      flex: 1.5,
-    },
-    {
-      field: "status",
-      headerName: "Status",
-      sortable: true,
-      filter: true,
-      width: 120,
-    },
-    {
-      field: "imageUrl",
-      headerName: "Image",
-      width: 120,
-    },
-  ]
+  // Calculate pagination info
+  const totalPages = Math.ceil(filteredReceipts.length / pageSize)
 
-  // Default column definition
-  const defaultColDef = {
-    flex: 1,
-    minWidth: 100,
-    resizable: true,
-  }
+  // const columnDefs: ColDef<Receipt>[] = [ ... ] // Removed as ReceiptTable handles its own columns
+  // const defaultColDef = { ... } // Removed
 
   // Function to download CSV
   const downloadCSV = () => {
-    const headers = ["Job Code", "Date", "Employee", "Amount", "Category", "Description", "Status", "Image URL"]
+    const headers = ["Date", "Employee", "Amount", "Category", "Description", "Status", "Image URL"] // Removed "Job Code"
     const csvData = filteredReceipts.map((receipt) => [
-      receipt.jobCode || "",
-      receipt.date ? new Date(receipt.date).toLocaleDateString() : "", // Corrected: was receipt.date.toLocaleDateString()
+      // receipt.jobCode || "", // Removed
+      receipt.date ? new Date(receipt.date).toLocaleDateString() : "",
       receipt.employeeName,
       `$${receipt.amount.toFixed(2)}`,
       receipt.category || "",
       receipt.description || "",
       receipt.status,
-      receipt.imageUrl || "",
+      receipt.image_url || "",
     ])
 
-    const csvContent = [headers.join(","), ...csvData.map((row) => row.join(","))].join("\n")
     const csvContent = [headers.join(","), ...csvData.map((row) => row.join(","))].join("\n")
 
     // Create download link
@@ -244,45 +251,62 @@ export default function ReceiptDashboard() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-background text-foreground">
+    <div className="flex flex-col h-screen bg-[#222222] text-white">
       {/* Header - Assuming this might be part of a larger app layout eventually */}
-      <div className="border-b border-border">
+      <div className="border-b border-[#444444]">
         <div className="flex h-16 items-center px-4 md:px-8">
           <div className="flex items-center"> {/* Assuming logo might come from a shared component or be static here */}
-            <Image src="/images/logo.png" alt="Company Logo" width={150} height={30} className="mr-3" /> {/* Adjusted size for typical header */}
+            <Image 
+              src="/images/logo.png" 
+              alt="Company Logo" 
+              width={150} 
+              height={30} 
+              className="mr-3"
+              priority
+              style={{ width: 'auto', height: 'auto' }}
+            /> {/* Adjusted size for typical header */}
           </div>
           <div className="ml-auto flex items-center space-x-4">
             <Link href="/batch-review">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 // Using theme variables for secondary button like elements
-                className="bg-secondary text-secondary-foreground hover:bg-muted"
+                className="bg-[#333333] text-white hover:bg-[#444444]"
               >
                 <ListChecks className="mr-2 h-4 w-4" />
                 Review Receipts
               </Button>
             </Link>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => window.location.reload()}
                // Using theme variables
-              className="bg-secondary text-secondary-foreground hover:bg-muted"
+              className="bg-[#333333] text-white hover:bg-[#444444]"
             >
               <RefreshCw className="mr-2 h-4 w-4" />
               Refresh
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onLogout}
+              className="bg-red-500 text-white hover:bg-red-600"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Logout
             </Button>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
+      <div className="flex-1 space-y-4 p-4 md:p-8 pt-6 overflow-y-auto">
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {/* Card with theme variables */}
-          <Card className="bg-card text-card-foreground border-border">
+          <Card className="bg-[#333333] text-white border-[#444444]">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Receipts</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-300">Total Receipts</CardTitle>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
@@ -291,20 +315,20 @@ export default function ReceiptDashboard() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth="2"
-                className="h-4 w-4 text-muted-foreground" // Theme variable for muted text
+                className="h-4 w-4 text-gray-400"
               >
                 <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
               </svg>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{totalReceipts}</div>
-              <p className="text-xs text-muted-foreground">Total amount: ${totalAmount.toFixed(2)}</p>
+              <div className="text-2xl font-bold text-white">{totalReceipts}</div>
+              <p className="text-xs text-gray-400">Total amount: ${totalAmount.toFixed(2)}</p>
             </CardContent>
           </Card>
 
-          <Card className="bg-card text-card-foreground border-border">
+          <Card className="bg-[#333333] text-white border-[#444444]">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Pending Review</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-300">Pending Review</CardTitle>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
@@ -313,7 +337,7 @@ export default function ReceiptDashboard() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth="2"
-                className="h-4 w-4 text-muted-foreground"
+                className="h-4 w-4 text-gray-400"
               >
                 <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
                 <circle cx="9" cy="7" r="4" />
@@ -321,16 +345,16 @@ export default function ReceiptDashboard() {
               </svg>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{pendingCount}</div>
-              <p className="text-xs text-muted-foreground">
+              <div className="text-2xl font-bold text-white">{pendingCount}</div>
+              <p className="text-xs text-gray-400">
                 {totalReceipts > 0 ? Math.round((pendingCount / totalReceipts) * 100) : 0}% of total receipts
               </p>
             </CardContent>
           </Card>
 
-          <Card className="bg-card text-card-foreground border-border">
+          <Card className="bg-[#333333] text-white border-[#444444]">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Approved</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-300">Approved</CardTitle>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
@@ -339,23 +363,23 @@ export default function ReceiptDashboard() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth="2"
-                className="h-4 w-4 text-muted-foreground"
+                className="h-4 w-4 text-gray-400"
               >
                 <rect width="20" height="14" x="2" y="5" rx="2" />
                 <path d="M2 10h20" />
               </svg>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{approvedCount}</div>
-              <p className="text-xs text-muted-foreground">
+              <div className="text-2xl font-bold text-white">{approvedCount}</div>
+              <p className="text-xs text-gray-400">
                 {totalReceipts > 0 ? Math.round((approvedCount / totalReceipts) * 100) : 0}% of total receipts
               </p>
             </CardContent>
           </Card>
 
-          <Card className="bg-card text-card-foreground border-border">
+          <Card className="bg-[#333333] text-white border-[#444444]">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Reimbursed</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-300">Reimbursed</CardTitle>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
@@ -364,14 +388,14 @@ export default function ReceiptDashboard() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 strokeWidth="2"
-                className="h-4 w-4 text-muted-foreground"
+                className="h-4 w-4 text-gray-400"
               >
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
               </svg>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{reimbursedCount}</div>
-              <p className="text-xs text-muted-foreground">
+              <div className="text-2xl font-bold text-white">{reimbursedCount}</div>
+              <p className="text-xs text-gray-400">
                 {totalReceipts > 0 ? Math.round((reimbursedCount / totalReceipts) * 100) : 0}% of total receipts
               </p>
             </CardContent>
@@ -379,55 +403,57 @@ export default function ReceiptDashboard() {
         </div>
 
         <div className="grid gap-4">
-          <Card className="bg-card text-card-foreground border-border">
+          <Card className="bg-[#333333] text-white border-[#444444]">
             <CardHeader>
               <CardTitle>Receipt Management</CardTitle>
-              <CardDescription className="text-muted-foreground">
+              <CardDescription className="text-gray-400">
                 Review and manage employee receipts for reimbursement.
               </CardDescription>
             </CardHeader>
+            {/* </CardHeader>  // Removed duplicate closing tag */}
             <CardContent>
-              <Tabs defaultValue="all" className="space-y-4">
+              <Tabs
+                value={activeTab}
+                onValueChange={(value) => {
+                  setActiveTab(value);
+                  setFilterStatus(value);
+                }}
+                className="space-y-4"
+              >
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
                   {/* TabsList using theme variables for secondary/muted background and foreground, active state uses primary or accent */}
-                  <TabsList className="bg-muted text-muted-foreground">
+                  <TabsList className="bg-[#444444] text-gray-300">
                     <TabsTrigger
                       value="all"
-                      onClick={() => setFilterStatus("all")}
-                      className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                      className="data-[state=active]:bg-[#2680FC] data-[state=active]:text-white"
                     >
                       All Receipts
                     </TabsTrigger>
                     <TabsTrigger
                       value="pending"
-                      onClick={() => setFilterStatus("pending")}
-                      className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                      className="data-[state=active]:bg-[#2680FC] data-[state=active]:text-white"
                     >
                       Pending
                     </TabsTrigger>
                     <TabsTrigger
                       value="approved"
-                      onClick={() => setFilterStatus("approved")}
-                      className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                      className="data-[state=active]:bg-[#2680FC] data-[state=active]:text-white"
                     >
                       Approved
                     </TabsTrigger>
                     <TabsTrigger
                       value="reimbursed"
-                      onClick={() => setFilterStatus("reimbursed")}
-                      className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                      className="data-[state=active]:bg-[#2680FC] data-[state=active]:text-white"
                     >
                       Reimbursed
                     </TabsTrigger>
                      <TabsTrigger
                       value="rejected"
-                      onClick={() => setFilterStatus("rejected")}
-                      className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                      className="data-[state=active]:bg-[#2680FC] data-[state=active]:text-white"
                     >
                       Rejected
                     </TabsTrigger>
                   </TabsList>
-
                   <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto">
                     <div className="flex items-center gap-2">
                       <Label htmlFor="search" className="sr-only">
@@ -437,19 +463,19 @@ export default function ReceiptDashboard() {
                       <Input
                         id="search"
                         placeholder="Search employee or description..."
-                        className="w-full md:w-[250px] bg-input text-foreground border-border focus:ring-ring focus:ring-offset-background"
+                        className="w-full md:w-[250px] bg-[#444444] text-white border-[#555555] placeholder:text-gray-500 focus:border-[#2680FC] focus:ring-[#2680FC]"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                       />
                     </div>
 
                     {/* DateRangePicker needs internal styling review too, but its trigger button style is handled here */}
-                    <DateRangePicker date={dateRange} onDateChange={setDateRange} />
+                    <DateRangePicker date={dateRange} onDateChange={handleDateChange} />
 
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       onClick={downloadCSV}
-                      className="bg-secondary text-secondary-foreground hover:bg-muted"
+                      className="bg-[#444444] text-white hover:bg-[#555555]"
                     >
                       <Download className="mr-2 h-4 w-4" />
                       Export CSV
@@ -467,9 +493,13 @@ export default function ReceiptDashboard() {
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        colDefs={columnDefs}
-                        defaultColDef={defaultColDef}
-                        rowSelection="multiRow"
+                        height="600px"
+                        selectedRows={selectedRows}
+                        onSelectedRowsChange={handleSelectedRowsChange}
+                        currentPage={currentPage}
+                        pageSize={pageSize}
+                        onPageChange={handlePageChange}
+                        onPageSizeChange={handlePageSizeChange}
                       />
                     )}
                   </div>
@@ -485,9 +515,13 @@ export default function ReceiptDashboard() {
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        colDefs={columnDefs}
-                        defaultColDef={defaultColDef}
-                        rowSelection="multiRow"
+                        height="600px"
+                        selectedRows={selectedRows}
+                        onSelectedRowsChange={handleSelectedRowsChange}
+                        currentPage={currentPage}
+                        pageSize={pageSize}
+                        onPageChange={handlePageChange}
+                        onPageSizeChange={handlePageSizeChange}
                       />
                     )}
                   </div>
@@ -503,9 +537,13 @@ export default function ReceiptDashboard() {
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        colDefs={columnDefs}
-                        defaultColDef={defaultColDef}
-                        rowSelection="multiRow"
+                        height="600px"
+                        selectedRows={selectedRows}
+                        onSelectedRowsChange={handleSelectedRowsChange}
+                        currentPage={currentPage}
+                        pageSize={pageSize}
+                        onPageChange={handlePageChange}
+                        onPageSizeChange={handlePageSizeChange}
                       />
                     )}
                   </div>
@@ -521,32 +559,111 @@ export default function ReceiptDashboard() {
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        colDefs={columnDefs}
-                        defaultColDef={defaultColDef}
-                        rowSelection="multiRow"
+                        height="600px"
+                        selectedRows={selectedRows}
+                        onSelectedRowsChange={handleSelectedRowsChange}
+                        currentPage={currentPage}
+                        pageSize={pageSize}
+                        onPageChange={handlePageChange}
+                        onPageSizeChange={handlePageSizeChange}
                       />
                     )}
                   </div>
                 </TabsContent>
                  <TabsContent value="rejected" className="space-y-4">
                   <div className="h-[600px] w-full">
-                    {filteredReceipts.length === 0 && !loading && (
+                    {loading ? null : filteredReceipts.length === 0 ? (
                        <div className="flex items-center justify-center h-full">
                          <p className="text-[#999999]">No rejected receipts found.</p>
                        </div>
-                    )}
-                    {filteredReceipts.length > 0 && (
+                    ) : (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                      colDefs={columnDefs}
-                      defaultColDef={defaultColDef}
-                      rowSelection="multiRow"
-                    />
+                        height="600px"
+                        selectedRows={selectedRows}
+                        onSelectedRowsChange={handleSelectedRowsChange}
+                        currentPage={currentPage}
+                        pageSize={pageSize}
+                        onPageChange={handlePageChange}
+                        onPageSizeChange={handlePageSizeChange}
+                      />
+                    )}
                   </div>
                 </TabsContent>
               </Tabs>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Selected rows info - positioned outside the Card component */}
+        {selectedRows.size > 0 && (
+          <div className="flex items-center justify-between p-3 bg-[#444444] text-gray-300 rounded-md border border-[#555555]">
+            <p className="text-sm">{selectedRows.size} row(s) selected</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearSelection}
+              className="bg-[#555555] text-white hover:bg-[#666666]"
+            >
+              Clear selection
+            </Button>
+          </div>
+        )}
+
+        {/* Pagination controls - positioned below selected rows info */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
+          <div className="flex items-center space-x-2">
+            <p className="text-sm text-gray-400">
+              Showing {Math.min((currentPage - 1) * pageSize + 1, filteredReceipts.length)} to{" "}
+              {Math.min(currentPage * pageSize, filteredReceipts.length)} of {filteredReceipts.length} entries
+            </p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
+            <div className="flex items-center space-x-2">
+              <p className="text-sm text-gray-400">Rows per page</p>
+              <Select
+                value={pageSize.toString()}
+                onValueChange={(value) => handlePageSizeChange(Number(value))}
+              >
+                <SelectTrigger className="h-8 w-[70px] bg-[#444444] text-white border-[#555555]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#333333] text-white border-[#444444]">
+                  <SelectItem value="10">10</SelectItem>
+                  <SelectItem value="25">25</SelectItem>
+                  <SelectItem value="50">50</SelectItem>
+                  <SelectItem value="100">100</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                disabled={currentPage === 1}
+                className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
+              >
+                Previous
+              </Button>
+              <div className="flex items-center space-x-1 px-3">
+                <p className="text-sm text-gray-400">
+                  Page {currentPage} of {totalPages}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage === totalPages}
+                className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
