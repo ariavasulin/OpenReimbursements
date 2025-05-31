@@ -17,10 +17,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid phone number format. Use E.164 format (e.g., +12223334444)' }, { status: 400 });
     }
 
-    // Basic OTP format validation (e.g., 6 digits)
-    const otpRegex = /^\d{6}$/;
+    // Basic OTP format validation (e.g., 4 digits)
+    const otpRegex = /^\d{4}$/;
     if (!otpRegex.test(token)) {
-      return NextResponse.json({ error: 'Invalid OTP format. Must be 6 digits.' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid OTP format. Must be 4 digits.' }, { status: 400 });
     }
 
     const { data, error } = await supabase.auth.verifyOtp({

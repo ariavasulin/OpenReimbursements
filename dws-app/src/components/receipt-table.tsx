@@ -68,10 +68,9 @@ export default function ReceiptTable({ receipts }: ReceiptTableProps) {
           </SelectTrigger>
           <SelectContent position="popper" className="bg-[#2e2e2e] text-white border-[#4e4e4e]">
             <SelectItem value="all" className="hover:bg-[#4e4e4e]">All</SelectItem>
-            <SelectItem value="pending" className="hover:bg-[#4e4e4e]">Pending</SelectItem>
-            <SelectItem value="approved" className="hover:bg-[#4e4e4e]">Approved</SelectItem>
-            {/* <SelectItem value="reimbursed">Reimbursed</SelectItem> // Removed as per type alignment */}
-            <SelectItem value="rejected" className="hover:bg-[#4e4e4e]">Rejected</SelectItem>
+            <SelectItem value="Pending" className="hover:bg-[#4e4e4e]">Pending</SelectItem>
+            <SelectItem value="Approved" className="hover:bg-[#4e4e4e]">Approved</SelectItem>
+            <SelectItem value="Rejected" className="hover:bg-[#4e4e4e]">Rejected</SelectItem>
           </SelectContent>
         </Select>
       </div>

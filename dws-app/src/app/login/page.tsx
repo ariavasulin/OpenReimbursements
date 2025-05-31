@@ -1,109 +1,100 @@
 // src/app/login/page.tsx
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
-import type { AuthChangeEvent, Session } from '@supabase/supabase-js'; // Import Session and AuthChangeEvent
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 
+// Utility function to format US phone numbers
+const formatUSPhoneNumber = (input: string): string => {
+  // Remove all non-digits
+  const digitsOnly = input.replace(/\D/g, '');
+  
+  // If it already starts with 1 and has 11 digits, use as-is
+  // If it has 10 digits and doesn't start with 1, add 1
+  // If it starts with 1 but has more than 11 digits, take first 11
+  let formattedNumber = digitsOnly;
+  
+  if (digitsOnly.length === 10) {
+    // 10 digits, add country code
+    formattedNumber = '1' + digitsOnly;
+  } else if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
+    // 11 digits starting with 1, use as-is
+    formattedNumber = digitsOnly;
+  } else if (digitsOnly.length > 11 && digitsOnly.startsWith('1')) {
+    // More than 11 digits starting with 1, take first 11
+    formattedNumber = digitsOnly.substring(0, 11);
+  } else if (digitsOnly.length > 10 && !digitsOnly.startsWith('1')) {
+    // More than 10 digits not starting with 1, take first 10 and add country code
+    formattedNumber = '1' + digitsOnly.substring(0, 10);
+  }
+  
+  return '+' + formattedNumber;
+};
+
 export default function LoginPage() {
-  // const [phone, setPhone] = useState(''); // phone state will be handled by phoneNumberInput
-  const [phoneNumberInput, setPhoneNumberInput] = useState(''); // For the input field
+  const [phoneNumberInput, setPhoneNumberInput] = useState('');
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [otpSent, setOtpSent] = useState(false);
   const router = useRouter();
-
-  // Redirect if already logged in
-  useEffect(() => { // Combined initial check and auth state listener
-    const processAuthSession = async (session: Session | null, eventType?: AuthChangeEvent | string) => {
-      console.log('[Login Page] processAuthSession. EventType:', eventType, 'Session object:', session);
-      if (session && session.user) {
-        console.log('[Login Page] Session and session.user confirmed. User ID:', session.user.id, 'Attempting profile fetch...');
-        // Restore original profile fetching logic, ensuring all router.replace calls are in setTimeout
-        try {
-          const { data: profile, error: profileError } = await supabase
-            .from('user_profiles')
-            .select('user_id, role, full_name')
-            .eq('user_id', session.user.id)
-            .single();
-
-          if (profileError) {
-            if (profileError.code === 'PGRST116') {
-              console.warn(`[Login Page] Profile not found for user ${session.user.id} (PGRST116). Defaulting to /employee.`);
-              setTimeout(() => {
-                console.log("[Login Page] Executing router.replace('/employee') due to PGRST116.");
-                router.replace('/employee');
-              }, 0);
-            } else {
-              console.error("[Login Page] Error fetching profile on auth change:", profileError.message);
-              // Stay on login page if there's an unexpected error fetching profile
-            }
-            return; // Important to return after handling profileError
-          }
-
-          if (profile) {
-            console.log("[Login Page] Profile fetched on auth change:", profile);
-            let targetPath = '/employee'; // Default
-            if (profile.role === 'employee') {
-              targetPath = '/employee';
-            } else if (profile.role === 'admin') {
-              targetPath = '/dashboard';
-            } else {
-              console.warn("[Login Page] Unknown user role:", profile.role, "- defaulting to /employee.");
-            }
-            console.log(`[Login Page] Attempting redirect to ${targetPath}...`);
-            setTimeout(() => {
-              console.log(`[Login Page] Executing router.replace('${targetPath}')`);
-              router.replace(targetPath);
-            }, 0);
-          } else {
-            // This case implies profileError was not 'PGRST116' but profile is still null.
-            console.warn("[Login Page] Profile data is null after fetch (and not PGRST116) for user:", session.user.id, "- defaulting to /employee.");
-            setTimeout(() => {
-              console.log("[Login Page] Executing router.replace('/employee') due to null profile.");
-              router.replace('/employee');
-            }, 0);
-          }
-        } catch (e) {
-          console.error("[Login Page] Exception during profile fetch in handleAuthChange:", e);
-          console.log("[Login Page] Exception caught, attempting redirect to /employee as fallback...");
-          setTimeout(() => {
-            console.log("[Login Page] Executing router.replace('/employee') due to exception.");
-            router.replace('/employee');
-          }, 0);
-        }
-      } // This closes the `if (session && session.user)` block
-      // If no session, or if session.user is null, this function implicitly returns undefined (which is fine for Promise<void>)
-    };
   
-      // Initial check
-      const checkInitialSession = async () => {
+  // Add refs for better state management
+  const mountedRef = useRef(true);
+  const redirectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isRedirectingRef = useRef(false);
+
+  // Redirect if already logged in - simplified version
+  useEffect(() => {
+    if (!mountedRef.current) return;
+
+    const checkInitialAuth = async () => {
+      try {
         const { data: { session } } = await supabase.auth.getSession();
-        await processAuthSession(session, 'INITIAL_SESSION_CHECKED');
-      };
-      checkInitialSession();
-  
-      // Listen for auth changes
-      const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-        // This wrapper is not async, satisfying onAuthStateChange's direct type expectation better.
-        // The actual async work is inside processAuthSession.
-        processAuthSession(session, event);
-      });
-  
-      return () => {
-        authListener?.subscription?.unsubscribe();
-      };
-    }, [router]); // Restored router to dependency array
-  // Removed the useEffect that was watching the `message` state for redirection.
-  // The main useEffect above now handles all redirection based on auth state and role.
+        
+        if (session && session.user) {
+          console.log("[Login Page] User already logged in, redirecting...");
+          window.location.replace('/employee');
+        }
+      } catch (err) {
+        console.error("[Login Page] Error checking initial session:", err);
+      }
+    };
+
+    checkInitialAuth();
+
+    // Minimal auth state listener
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        console.log('[Login Page] Auth state change:', event);
+        if (event === 'SIGNED_OUT') {
+          isRedirectingRef.current = false;
+        }
+      }
+    );
+
+    return () => {
+      authListener?.subscription?.unsubscribe();
+    };
+  }, [router]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (redirectTimeoutRef.current) {
+        clearTimeout(redirectTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSendOtp = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -112,20 +103,18 @@ export default function LoginPage() {
     setMessage(null);
 
     try {
+      const formattedPhone = formatUSPhoneNumber(phoneNumberInput);
       const response = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // Assuming US numbers for now, add country code logic later.
-        // The prototype doesn't have explicit country code handling, so we'll keep it simple.
-        // For production, a proper phone input library (e.g., react-phone-number-input) would be better.
-        body: JSON.stringify({ phone: `+1${phoneNumberInput.replace(/\D/g, '')}` }),
+        body: JSON.stringify({ phone: formattedPhone }),
       });
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to send OTP');
       }
-      setMessage('OTP sent successfully! Please check your phone.');
+      setMessage('Login code sent successfully! Please check your phone.');
       setOtpSent(true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
@@ -143,10 +132,12 @@ export default function LoginPage() {
     setMessage(null);
 
     try {
+      console.log('[Login Page] Starting OTP verification...');
+      const formattedPhone = formatUSPhoneNumber(phoneNumberInput);
       const response = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: `+1${phoneNumberInput.replace(/\D/g, '')}`, token: otp }),
+        body: JSON.stringify({ phone: formattedPhone, token: otp }),
       });
       const data = await response.json();
 
@@ -154,50 +145,48 @@ export default function LoginPage() {
         throw new Error(data.error || 'Failed to verify OTP');
       }
       
-      // The API route returned a session. We need to set it on the client-side Supabase instance.
+      console.log('[Login Page] OTP verification successful');
+      
+      // Set the session on the client-side Supabase instance
       if (data.session) {
         const { access_token, refresh_token } = data.session;
-        // Ensure access_token and refresh_token are strings, as setSession expects
+        
         if (typeof access_token === 'string' && typeof refresh_token === 'string') {
           const { error: setSessionError } = await supabase.auth.setSession({
             access_token,
             refresh_token,
           });
+          
           if (setSessionError) {
             console.error('[Login Page] Error setting client session:', setSessionError);
             setError('Failed to update session locally. Please try again.');
-            return; // Stop further processing if session can't be set
+            return;
           }
-          console.log('[Login Page] Client session manually set.');
+          
+          console.log('[Login Page] Session set successfully');
+          setMessage('Login successful! Redirecting...');
+          
+          // Simple direct redirect with minimal delay
+          setTimeout(() => {
+            console.log('[Login Page] Executing redirect...');
+            window.location.replace('/employee');
+          }, 500);
+          
         } else {
-          console.error('[Login Page] Invalid token types received from API for setSession.');
+          console.error('[Login Page] Invalid token types received from API.');
           setError('Received invalid session data. Please try again.');
           return;
         }
       } else {
-        console.error('[Login Page] No session returned from verify-otp API to set client-side.');
+        console.error('[Login Page] No session returned from verify-otp API.');
         setError('Login completed but session data was not received. Please try again.');
-        return; // Stop if no session data
+        return;
       }
       
-      setMessage('Login successful! Redirecting...');
-      
-      // Let's check the client-side session immediately AFTER setting it
-      const { data: clientSessionData, error: clientSessionError } = await supabase.auth.getSession();
-      console.log('[Login Page] Client session AFTER supabase.auth.setSession():', {
-        session: clientSessionData.session,
-        error: clientSessionError
-      });
-      console.log('[Login Page] API response data from verify-otp (for reference):', data);
-
-
-      // onAuthStateChange in the main useEffect should now pick up the new session and handle the redirect.
-      
     } catch (err) {
+      console.error('[Login Page] Error in handleVerifyOtp:', err);
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       setError(errorMessage);
-      console.error('Verify OTP error:', err);
-    } finally {
       setLoading(false);
     }
   };
@@ -208,7 +197,7 @@ export default function LoginPage() {
         <div className="flex flex-col items-center justify-center">
           <div className="mb-8 flex items-center justify-center">
             <Image
-              src="/images/logo.png" // Make sure this path is correct in dws-app/public
+              src="/images/logo.png"
               alt="Design Workshops Logo"
               width={300}
               height={300}
@@ -272,18 +261,18 @@ export default function LoginPage() {
                 id="otp"
                 type="text"
                 inputMode="numeric"
-                placeholder="Enter 6-digit code"
+                placeholder="Enter 4-digit code"
                 value={otp}
                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
                 required
                 className="bg-[#333333] border-[#444444] text-white placeholder:text-gray-500 focus:border-[#2680FC] focus:ring-[#2680FC]"
-                maxLength={6}
+                maxLength={4}
                 disabled={loading}
                 autoComplete="one-time-code"
               />
-              <p className="text-xs text-gray-400">We sent a code to +1{phoneNumberInput.replace(/\D/g, '')}</p>
+              <p className="text-xs text-gray-400">We sent a code to {formatUSPhoneNumber(phoneNumberInput)}</p>
             </div>
-            <Button type="submit" className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || otp.length !== 6}>
+            <Button type="submit" className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || otp.length !== 4}>
               {loading ? 'Verifying...' : 'Verify & Login'}
               {!loading && <ArrowRight className="ml-2 h-4 w-4" />}
             </Button>
