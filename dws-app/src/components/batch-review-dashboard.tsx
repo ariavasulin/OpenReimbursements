@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useMemo } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { ArrowLeft, Check, X, ChevronLeft, ChevronRight, LogOut } from "lucide-react"
@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import type { Receipt } from "@/lib/types"
 import { supabase } from "@/lib/supabaseClient"
-import { useEffect } from "react" // Ensure useEffect is imported
 
 export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   const [receipts, setReceipts] = useState<Receipt[]>([])
@@ -20,6 +19,9 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
+  const [showCompletionScreen, setShowCompletionScreen] = useState<boolean>(false)
+
+  const decisionsCount = useMemo(() => Object.keys(decisions).length, [decisions])
 
   useEffect(() => {
     const fetchPendingReceipts = async () => {
@@ -102,19 +104,27 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
   const moveNext = () => {
     if (currentIndex < receipts.length - 1) {
       setCurrentIndex(currentIndex + 1)
+    } else if (decisionsCount === receipts.length) {
+      // If at the end and all decisions made, show completion screen
+      setShowCompletionScreen(true)
     }
-    // reviewedCount is now updated in handleApprove/Reject
-    // to correctly reflect items actually decided upon, not just skipped
   }
 
   const movePrevious = () => {
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1)
     }
+    // Always show review UI when navigating backwards
+    setShowCompletionScreen(false)
+  }
+
+  const handleReviewDecisions = () => {
+    setCurrentIndex(0)
+    setShowCompletionScreen(false)
   }
 
   const handleSubmitAll = async () => {
-    if (Object.keys(decisions).length === 0) {
+    if (decisionsCount === 0) {
       alert("No decisions have been made to submit.")
       return
     }
@@ -140,6 +150,8 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
       setDecisions({})
       setReviewedCount(0)
       setCurrentIndex(0)
+      setShowCompletionScreen(false)
+
       // Refetch pending receipts
       const fetchPendingReceipts = async () => {
         setLoading(true)
@@ -168,6 +180,16 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
       setIsSubmitting(false)
     }
   }
+
+  // Check if all decisions are made and automatically show completion screen
+  useEffect(() => {
+    if (receipts.length > 0 && decisionsCount === receipts.length && !showCompletionScreen) {
+      // Only auto-show completion screen if user is at the end or beyond
+      if (currentIndex >= receipts.length - 1) {
+        setShowCompletionScreen(true)
+      }
+    }
+  }, [decisionsCount, receipts.length, currentIndex, showCompletionScreen])
 
   if (loading) {
     return (
@@ -267,8 +289,8 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
           <Progress value={progress} className="h-2 mt-2 bg-[#444444]" indicatorColor="bg-green-500" />
         </div>
 
-        {/* Show review UI if there are receipts and not all have had decisions made, or if all decided but user is still navigating them */}
-        {receipts.length > 0 && reviewedCount < receipts.length && currentReceipt ? (
+        {/* Show review UI if there are receipts and user is actively reviewing (not on completion screen) */}
+        {receipts.length > 0 && currentReceipt && !showCompletionScreen ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Receipt Details */}
             <Card className="bg-[#333333] text-white border-[#444444]">
@@ -315,43 +337,39 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
               </CardContent>
               <CardFooter className="flex justify-between border-t border-[#444444] pt-4">
                 <Button
-                  variant="outline"
                   size="sm"
                   onClick={movePrevious}
                   disabled={currentIndex === 0 || isSubmitting}
-                  className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
+                  className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50 border-0"
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
                 </Button>
                 <div className="flex space-x-2">
                   <Button
-                    variant="outline"
                     size="sm"
                     onClick={handleReject}
                     disabled={isSubmitting}
-                    className="bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                    className="bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 border-0"
                   >
                     <X className="h-4 w-4 mr-1" />
                     Reject
                   </Button>
                   <Button
-                    variant="outline"
                     size="sm"
                     onClick={handleApprove}
                     disabled={isSubmitting}
-                    className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                    className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 border-0"
                   >
                     <Check className="h-4 w-4 mr-1" />
                     Approve
                   </Button>
                 </div>
                 <Button
-                  variant="outline"
                   size="sm"
                   onClick={moveNext}
                   disabled={currentIndex === receipts.length - 1 || isSubmitting}
-                  className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
+                  className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50 border-0"
                 >
                   Next
                   <ChevronRight className="h-4 w-4 ml-1" />
@@ -381,7 +399,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
               </CardContent>
             </Card>
           </div>
-        ) : receipts.length > 0 && Object.keys(decisions).length >= receipts.length ? (
+        ) : receipts.length > 0 && showCompletionScreen ? (
            <Card className="bg-[#333333] text-white border-[#444444] mt-6">
             <CardHeader>
               <CardTitle className="text-white">All Pending Receipts Processed</CardTitle>
@@ -401,19 +419,18 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
             </CardContent>
             <CardFooter className="flex justify-between border-t border-[#444444] pt-4">
               <Button
-                variant="outline"
-                onClick={() => setCurrentIndex(0)}
+                onClick={handleReviewDecisions}
                 disabled={isSubmitting}
-                className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
+                className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50 border-0"
               >
                 Review My Decisions
               </Button>
               <Button
                 onClick={handleSubmitAll}
-                disabled={isSubmitting || Object.keys(decisions).length === 0}
-                className="bg-[#2680FC] text-white hover:bg-[#1a6fd8] disabled:opacity-50"
+                disabled={isSubmitting || decisionsCount === 0}
+                className="bg-[#2680FC] text-white hover:bg-[#1a6fd8] disabled:opacity-50 border-0"
               >
-                {isSubmitting ? "Submitting..." : `Submit ${Object.keys(decisions).length} Decisions`}
+                {isSubmitting ? "Submitting..." : `Submit ${decisionsCount} Decisions`}
               </Button>
             </CardFooter>
           </Card>
@@ -428,7 +445,10 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
                   {[0, 1, 2].map((index) => (
                     <button
                       key={index}
-                      onClick={() => setCurrentIndex(index)}
+                      onClick={() => {
+                        setCurrentIndex(index)
+                        setShowCompletionScreen(false)
+                      }}
                       disabled={isSubmitting}
                       className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                         index === currentIndex
@@ -449,7 +469,10 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
                         .map((index) => (
                           <button
                             key={index}
-                            onClick={() => setCurrentIndex(index)}
+                            onClick={() => {
+                              setCurrentIndex(index)
+                              setShowCompletionScreen(false)
+                            }}
                             disabled={isSubmitting}
                             className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                               index === currentIndex
@@ -468,7 +491,10 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
                   {[receipts.length - 3, receipts.length - 2, receipts.length - 1].map((index) => (
                     <button
                       key={index}
-                      onClick={() => setCurrentIndex(index)}
+                      onClick={() => {
+                        setCurrentIndex(index)
+                        setShowCompletionScreen(false)
+                      }}
                       disabled={isSubmitting}
                       className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                         index === currentIndex
@@ -486,7 +512,10 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
                 receipts.map((_, index) => (
                   <button
                     key={index}
-                    onClick={() => setCurrentIndex(index)}
+                    onClick={() => {
+                      setCurrentIndex(index)
+                      setShowCompletionScreen(false)
+                    }}
                     disabled={isSubmitting}
                     className={`w-8 h-8 rounded-full flex items-center justify-center disabled:opacity-50 ${
                       index === currentIndex
