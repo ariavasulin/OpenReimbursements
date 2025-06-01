@@ -41,13 +41,30 @@ function parseAndSelectBestDate(fullText: string): string | null {
     for (const fmt of dateFormats) {
       try {
         let parsedDate = parse(dateString, fmt, new Date());
+        console.log(`OCR DEBUG: Parsing '${dateString}' with format '${fmt}'. Initial parsed: ${parsedDate.toISOString()}, isValid: ${isValid(parsedDate)}`);
+
         if (isValid(parsedDate)) {
-          if ((fmt.includes('yy') && !fmt.includes('yyyy')) && getYear(parsedDate) < 1000) {
-            parsedDate = setYear(parsedDate, getYear(parsedDate) % 100 + 2000);
+          let yearCorrected = false;
+          const year = getYear(parsedDate);
+          console.log(`OCR DEBUG: Format '${fmt}'. Initial year for '${dateString}': ${year}`);
+
+          // If the parsed year is less than 2000, it's likely from a 2-digit year input
+          // or a misinterpretation by date-fns when matching a 'yyyy' format to a 'yy' input.
+          if (year < 2000) {
+            const originalDateBeforeCorrection = parsedDate.toISOString();
+            // Correct it to the 21st century. (e.g., 18 % 100 = 18; 18 + 2000 = 2018)
+            // (e.g., 1918 % 100 = 18; 18 + 2000 = 2018)
+            parsedDate = setYear(parsedDate, (year % 100) + 2000);
+            yearCorrected = true;
+            console.log(`OCR DEBUG: Corrected year for '${dateString}' (format '${fmt}'). Original: ${originalDateBeforeCorrection}, Corrected: ${parsedDate.toISOString()}`);
           }
+
           if (!isFuture(parsedDate)) {
             potentialDates.push(parsedDate);
-            break; 
+            console.log(`OCR DEBUG: Pushed to potentialDates: ${parsedDate.toISOString()} (year corrected: ${yearCorrected}) for format '${fmt}' from dateString '${dateString}'`);
+            break;
+          } else {
+            console.log(`OCR DEBUG: Date ${parsedDate.toISOString()} (from dateString '${dateString}', format '${fmt}') is in the future. Skipping.`);
           }
         }
       } catch (e) {
