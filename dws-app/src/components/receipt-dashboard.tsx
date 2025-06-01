@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { supabase } from "@/lib/supabaseClient"
-import { Download, RefreshCw, ListChecks, LogOut } from "lucide-react"
+import { Download, RefreshCw, ListChecks, LogOut, Search } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -459,14 +459,16 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                       <Label htmlFor="search" className="sr-only">
                         Search
                       </Label>
-                      {/* Input using theme variables */}
-                      <Input
-                        id="search"
-                        placeholder="Search employee or description..."
-                        className="w-full md:w-[250px] bg-[#444444] text-white border-[#555555] placeholder:text-gray-500 focus:border-[#2680FC] focus:ring-[#2680FC]"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                      />
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-white" />
+                        <Input
+                          id="search"
+                          placeholder="Search employee or description..."
+                          className="w-full md:w-[270px] bg-[#444444] text-white border-[#555555] placeholder:text-white focus:border-[#2680FC] focus:ring-[#2680FC] pl-10"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                      </div>
                     </div>
 
                     {/* DateRangePicker needs internal styling review too, but its trigger button style is handled here */}
@@ -484,16 +486,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 </div>
 
                 <TabsContent value="all" className="space-y-4">
-                  <div className="h-[600px] w-full">
+                  <div className="w-full">
                     {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-full">
+                       <div className="flex items-center justify-center h-64">
                          <p className="text-[#999999]">No receipts found for the current filters.</p>
                        </div>
                     )}
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        height="600px"
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
                         currentPage={currentPage}
@@ -506,16 +507,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 </TabsContent>
 
                 <TabsContent value="pending" className="space-y-4">
-                  <div className="h-[600px] w-full">
+                  <div className="w-full">
                      {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-full">
+                       <div className="flex items-center justify-center h-64">
                          <p className="text-[#999999]">No pending receipts found.</p>
                        </div>
                     )}
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        height="600px"
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
                         currentPage={currentPage}
@@ -528,16 +528,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 </TabsContent>
 
                 <TabsContent value="approved" className="space-y-4">
-                  <div className="h-[600px] w-full">
+                  <div className="w-full">
                     {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-full">
+                       <div className="flex items-center justify-center h-64">
                          <p className="text-[#999999]">No approved receipts found.</p>
                        </div>
                     )}
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        height="600px"
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
                         currentPage={currentPage}
@@ -550,16 +549,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 </TabsContent>
 
                 <TabsContent value="reimbursed" className="space-y-4">
-                  <div className="h-[600px] w-full">
+                  <div className="w-full">
                      {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-full">
+                       <div className="flex items-center justify-center h-64">
                          <p className="text-[#999999]">No reimbursed receipts found.</p>
                        </div>
                     )}
                     {filteredReceipts.length > 0 && (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        height="600px"
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
                         currentPage={currentPage}
@@ -571,15 +569,14 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                   </div>
                 </TabsContent>
                  <TabsContent value="rejected" className="space-y-4">
-                  <div className="h-[600px] w-full">
+                  <div className="w-full">
                     {loading ? null : filteredReceipts.length === 0 ? (
-                       <div className="flex items-center justify-center h-full">
+                       <div className="flex items-center justify-center h-64">
                          <p className="text-[#999999]">No rejected receipts found.</p>
                        </div>
                     ) : (
                        <ReceiptTable
                         rowData={filteredReceipts}
-                        height="600px"
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
                         currentPage={currentPage}

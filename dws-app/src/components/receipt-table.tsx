@@ -12,7 +12,7 @@ import type { Receipt } from "@/lib/types"
 
 interface ReceiptTableProps {
   rowData?: Receipt[]
-  height?: number | string
+  height?: number | string | "auto"
   selectedRows?: Set<string>
   onSelectedRowsChange?: (selectedRows: Set<string>) => void
   currentPage?: number
@@ -26,7 +26,7 @@ type SortDirection = "asc" | "desc" | null
 
 const ReceiptTable: React.FC<ReceiptTableProps> = ({ 
   rowData = [], 
-  height = 500, 
+  height = "auto", 
   selectedRows: controlledSelectedRows,
   onSelectedRowsChange,
   currentPage = 1,
@@ -157,10 +157,10 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
   }
 
   return (
-      <div className="rounded-md border border-[#444444] bg-[#333333]" style={{ height }}>
-        <div className="overflow-auto h-full">
+      <div className="rounded-md border border-[#444444] bg-[#333333]" style={{ height: height === "auto" ? "fit-content" : height }}>
+        <div className="overflow-visible">
           <Table>
-            <TableHeader className="sticky top-0 bg-[#444444] z-10">
+            <TableHeader className="bg-[#444444]">
             <TableRow className="border-[#444444] hover:bg-[#555555]">
               <TableHead className="w-12 text-center p-3">
                   <Checkbox
