@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { formatDate } from "@/lib/utils"
 import type { Receipt } from "@/lib/types"
 
 interface ReceiptTableProps {
@@ -228,7 +229,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                     className="border-white data-[state=checked]:border-white data-[state=checked]:bg-[#444444] data-[state=checked]:text-white"
                     />
                   </TableCell>
-                <TableCell className="text-left p-3">{new Date(receipt.date).toLocaleDateString()}</TableCell>
+                <TableCell className="text-left p-3">{formatDate(receipt.date)}</TableCell>
                 <TableCell className="text-left p-3">{receipt.employeeName}</TableCell>
                 <TableCell className="text-left p-3">${receipt.amount.toFixed(2)}</TableCell>
                 <TableCell className="text-left p-3">{receipt.category}</TableCell>
