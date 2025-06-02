@@ -3,11 +3,20 @@
 import { useState, useEffect, useMemo } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { ArrowLeft, Check, X, ChevronLeft, ChevronRight, LogOut } from "lucide-react"
+import { ArrowLeft, Check, X, ChevronLeft, ChevronRight, LogOut, AlertCircle } from "lucide-react"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
 import type { Receipt } from "@/lib/types"
 import { supabase } from "@/lib/supabaseClient"
@@ -21,6 +30,9 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [showCompletionScreen, setShowCompletionScreen] = useState<boolean>(false)
+  
+  // Confirmation dialog state
+  const [showConfirmDialog, setShowConfirmDialog] = useState<boolean>(false)
 
   const decisionsCount = useMemo(() => Object.keys(decisions).length, [decisions])
 
@@ -124,12 +136,17 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
     setShowCompletionScreen(false)
   }
 
-  const handleSubmitAll = async () => {
+  const handleSubmitAllClick = () => {
     if (decisionsCount === 0) {
-      alert("No decisions have been made to submit.")
+      toast.error("No decisions have been made to submit.")
       return
     }
+    setShowConfirmDialog(true)
+  }
+
+  const handleSubmitAll = async () => {
     setIsSubmitting(true)
+    setShowConfirmDialog(false)
     setError(null)
 
     const updatePromises = Object.entries(decisions).map(([id, status]) => {
@@ -146,7 +163,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
         throw new Error(`Some updates failed. First error: ${firstError}`)
       }
 
-      alert("All decisions submitted successfully!")
+      toast.success("All decisions submitted successfully!")
       // Reset state and refetch or filter out processed ones
       setDecisions({})
       setReviewedCount(0)
@@ -175,7 +192,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
       fetchPendingReceipts()
     } catch (err: any) {
       setError(err.message)
-      alert(`Error submitting decisions: ${err.message}`)
+      toast.error(`Failed to submit decisions: ${err.message}`)
       console.error("Error submitting decisions:", err)
     } finally {
       setIsSubmitting(false)
@@ -427,7 +444,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
                 Review My Decisions
               </Button>
               <Button
-                onClick={handleSubmitAll}
+                onClick={handleSubmitAllClick}
                 disabled={isSubmitting || decisionsCount === 0}
                 className="bg-[#2680FC] text-white hover:bg-[#1a6fd8] disabled:opacity-50 border-0"
               >
@@ -534,6 +551,60 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
           </div>
         )}
       </div>
+
+      {/* Confirmation Dialog */}
+      <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <DialogContent className="bg-[#333333] text-white border-[#444444]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-yellow-500" />
+              Confirm Batch Submission
+            </DialogTitle>
+            <DialogDescription className="text-gray-300">
+              Are you sure you want to submit {decisionsCount} decision{decisionsCount !== 1 ? 's' : ''}?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-2 space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-green-500"></div>
+              <span className="text-gray-300">{Object.values(decisions).filter((d) => d === "approved").length} receipt{Object.values(decisions).filter((d) => d === "approved").length !== 1 ? 's' : ''} will be approved</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-red-500"></div>
+              <span className="text-gray-300">{Object.values(decisions).filter((d) => d === "rejected").length} receipt{Object.values(decisions).filter((d) => d === "rejected").length !== 1 ? 's' : ''} will be rejected</span>
+            </div>
+          </div>
+          <div className="mt-2">
+            <span className="text-yellow-300 font-medium">This action cannot be undone.</span>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowConfirmDialog(false)}
+              className="bg-transparent border-[#555555] text-white hover:bg-[#555555]"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitAll}
+              disabled={isSubmitting}
+              className="bg-[#2680FC] text-white hover:bg-[#1a6fd8] disabled:opacity-50"
+            >
+              {isSubmitting ? (
+                <>
+                  <AlertCircle className="mr-2 h-4 w-4 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                <>
+                  <Check className="mr-2 h-4 w-4" />
+                  Confirm Submission
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

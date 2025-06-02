@@ -5,7 +5,7 @@ export interface Receipt {
   employeeId: string; // From prototype
   date: string; // From prototype (was receipt_date)
   amount: number; // Corresponds to Supabase 'amount' (numeric)
-  status: "Pending" | "Approved" | "Rejected" | "pending" | "approved" | "rejected" | "reimbursed"; // Merged, dws-app uses capitalized, prototype uses lowercase. Keeping both for now, will need to reconcile with components.
+  status: "Pending" | "Approved" | "Rejected" | "Reimbursed" | "pending" | "approved" | "rejected" | "reimbursed"; // Updated to include both cases
   category_id?: string; // Foreign key to categories.id
   category?: string; // For display or form input, maps to category_id. From prototype.
   description?: string; // From prototype
@@ -32,4 +32,12 @@ export interface UserProfile {
   employee_id_internal?: string;
   created_at?: string;
   updated_at?: string;
+}
+
+// For bulk update API responses
+export interface BulkUpdateResponse {
+  success: boolean;
+  message: string;
+  updatedCount: number;
+  error?: string;
 }
