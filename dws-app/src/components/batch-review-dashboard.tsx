@@ -8,6 +8,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
+import { formatDate } from "@/lib/utils"
 import type { Receipt } from "@/lib/types"
 import { supabase } from "@/lib/supabaseClient"
 
@@ -319,7 +320,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
                   </div>
                   <div>
                     <p className="text-gray-400 text-sm">Date</p>
-                    <p className="font-medium text-white">{new Date(currentReceipt.date).toLocaleDateString()}</p>
+                    <p className="font-medium text-white">{formatDate(currentReceipt.date)}</p>
                   </div>
                   <div>
                     <p className="text-gray-400 text-sm">Amount</p>
