@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { supabase } from "@/lib/supabaseClient"
-import { Download, RefreshCw, ListChecks, LogOut, Search } from "lucide-react"
+import { Download, RefreshCw, ListChecks, LogOut, Search, CheckCircle, AlertCircle } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -12,9 +12,18 @@ import { DateRangePicker } from "@/components/date-range-picker"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { toast } from "sonner"
 import ReceiptTable from "@/components/receipt-table"
 // import type { ColDef } from "ag-grid-community" // Removed as ag-grid is not used
-import type { Receipt } from "@/lib/types"
+import type { Receipt, BulkUpdateResponse } from "@/lib/types"
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -27,6 +36,11 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     from: undefined,
     to: undefined,
   })
+
+  // Bulk update states
+  const [isBulkUpdateLoading, setIsBulkUpdateLoading] = useState(false)
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
+  const [pendingBulkUpdateCount, setPendingBulkUpdateCount] = useState(0)
 
   const handleDateChange = (selectedDateRange: import("react-day-picker").DateRange | undefined) => {
     setDateRange({
@@ -212,6 +226,81 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+  }
+
+  // Function to get total approved receipts count (ignoring filters)
+  const getTotalApprovedCount = async () => {
+    try {
+      const { count, error } = await supabase
+        .from('receipts')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'Approved');
+      
+      if (error) {
+        console.error('Error counting approved receipts:', error);
+        return 0;
+      }
+      
+      return count || 0;
+    } catch (error) {
+      console.error('Error in getTotalApprovedCount:', error);
+      return 0;
+    }
+  }
+
+  // Function to handle bulk update confirmation
+  const handleBulkUpdateClick = async () => {
+    console.log('Reimburse button clicked!'); // Debug log
+    const count = await getTotalApprovedCount();
+    console.log('Approved count:', count); // Debug log
+    setPendingBulkUpdateCount(count);
+    
+    if (count === 0) {
+      toast.info("No approved receipts found to reimburse");
+      return;
+    }
+    
+    setShowConfirmDialog(true);
+  }
+
+  // Function to perform bulk update
+  const performBulkUpdate = async () => {
+    setIsBulkUpdateLoading(true);
+    setShowConfirmDialog(false);
+    
+    try {
+      const response = await fetch('/api/receipts/bulk-update', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fromStatus: 'Approved',
+          toStatus: 'Reimbursed'
+        }),
+      });
+
+      const result: BulkUpdateResponse = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update receipts');
+      }
+
+      if (result.success) {
+        toast.success(result.message);
+        // Refresh the receipts data
+        window.location.reload();
+      } else {
+        throw new Error(result.error || 'Update failed');
+      }
+
+    } catch (error) {
+      console.error('Bulk update error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'An error occurred during bulk update';
+      toast.error(`Failed to update receipts: ${errorMessage}`);
+    } finally {
+      setIsBulkUpdateLoading(false);
+    }
   }
 
   // Calculate summary statistics
@@ -476,6 +565,20 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
                     <Button
                       variant="ghost"
+                      onClick={handleBulkUpdateClick}
+                      disabled={isBulkUpdateLoading}
+                      className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {isBulkUpdateLoading ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                      )}
+                      {isBulkUpdateLoading ? "Processing..." : "Reimburse"}
+                    </Button>
+
+                    <Button
+                      variant="ghost"
                       onClick={downloadCSV}
                       className="bg-[#444444] text-white hover:bg-[#555555]"
                     >
@@ -663,6 +766,49 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
           </div>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <DialogContent className="bg-[#333333] text-white border-[#444444]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-yellow-500" />
+              Confirm Bulk Update
+            </DialogTitle>
+            <DialogDescription className="text-gray-300">
+              Are you sure you want to mark {pendingBulkUpdateCount} approved receipt{pendingBulkUpdateCount !== 1 ? 's' : ''} as reimbursed?
+              <br />
+              <span className="text-yellow-300 font-medium">This action cannot be undone.</span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowConfirmDialog(false)}
+              className="bg-transparent border-[#555555] text-white hover:bg-[#555555]"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={performBulkUpdate}
+              disabled={isBulkUpdateLoading}
+              className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+            >
+              {isBulkUpdateLoading ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  Confirm Update
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
