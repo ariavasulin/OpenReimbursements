@@ -23,7 +23,7 @@ export function DateRangePicker({ date, onDateChange, className }: DateRangePick
             id="date"
             variant={"outline"}
             className={cn(
-              "w-[250px] justify-start text-left font-normal border-[#3e3e3e] bg-[#3e3e3e] text-white hover:bg-[#4a4a4a] hover:text-white",
+              "w-[170px] justify-start text-left font-normal border-[#3e3e3e] bg-[#3e3e3e] text-white hover:bg-[#4a4a4a] hover:text-white",
               !date && "text-[#999999]",
             )}
           >
