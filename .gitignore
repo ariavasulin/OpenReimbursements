@@ -1,0 +1,47 @@
+# Google Cloud credentials and service account keys
+*.json
+!package*.json
+!tsconfig*.json
+!components.json
+!vercel.json
+!dws-app/package*.json
+!dws-app/tsconfig*.json
+!dws-app/components.json
+!dws-app/vercel.json
+google-cloud-key*.json
+*-key.json
+*-service-account*.json
+gen-lang-client*.json
+gcp-credentials*.json
+
+# Environment files
+.env*
+
+# Dependencies
+node_modules/
+dws-app/node_modules/
+
+# Build outputs
+dws-app/.next/
+dws-app/out/
+dws-app/build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# OS
+.DS_Store
+*.pem
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Misc
+.vercel 
