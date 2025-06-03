@@ -33,6 +33,18 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Google Cloud credentials and service account keys
+*.json
+!package*.json
+!tsconfig*.json
+!components.json
+!vercel.json
+google-cloud-key*.json
+*-key.json
+*-service-account*.json
+gen-lang-client*.json
+gcp-credentials*.json
+
 # vercel
 .vercel
 
