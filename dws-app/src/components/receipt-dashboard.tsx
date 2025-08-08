@@ -365,14 +365,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   // const rejectedCount = receipts.filter((r) => r.status === "rejected").length;
 
 
-  if (loading) {
-    return (
-      <div className="flex flex-col h-screen bg-[#2e2e2e] text-white items-center justify-center">
-        <RefreshCw className="animate-spin h-12 w-12 text-white" />
-        <p className="mt-4">Loading receipts...</p>
-      </div>
-    )
-  }
+  // Render immediately; do not gate the page behind a loading screen
 
   if (error) {
     return (
@@ -621,7 +614,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                       className="bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
                     >
                       {isBulkUpdateLoading ? (
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                        <RefreshCw className="mr-2 h-4 w-4" />
                       ) : (
                         <CheckCircle className="mr-2 h-4 w-4" />
                       )}
@@ -847,7 +840,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
             >
               {isBulkUpdateLoading ? (
                 <>
-                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  <RefreshCw className="mr-2 h-4 w-4" />
                   Processing...
                 </>
               ) : (

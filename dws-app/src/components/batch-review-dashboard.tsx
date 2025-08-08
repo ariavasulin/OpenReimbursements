@@ -592,7 +592,7 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
             >
               {isSubmitting ? (
                 <>
-                  <AlertCircle className="mr-2 h-4 w-4 animate-spin" />
+                  <AlertCircle className="mr-2 h-4 w-4" />
                   Submitting...
                 </>
               ) : (
