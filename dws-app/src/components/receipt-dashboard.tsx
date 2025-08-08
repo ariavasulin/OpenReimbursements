@@ -200,29 +200,80 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   // const columnDefs: ColDef<Receipt>[] = [ ... ] // Removed as ReceiptTable handles its own columns
   // const defaultColDef = { ... } // Removed
 
-  // Function to download CSV
-  const downloadCSV = () => {
-    const headers = ["Date", "Employee", "Amount", "Category", "Description", "Status", "Image URL"] // Removed "Job Code"
-    const csvData = filteredReceipts.map((receipt) => [
-      // receipt.jobCode || "", // Removed
-      receipt.date ? new Date(receipt.date).toLocaleDateString() : "",
-      receipt.employeeName,
-      `$${receipt.amount.toFixed(2)}`,
-      receipt.category || "",
-      receipt.description || "",
-      receipt.status,
-      receipt.image_url || "",
-    ])
+  // (Removed) Legacy CSV export function in favor of payroll-formatted CSV
 
-    const csvContent = [headers.join(","), ...csvData.map((row) => row.join(","))].join("\n")
+  // Helper to format Saturday of the current week as MM/DD/YYYY (zero-padded)
+  const getCurrentWeekEndingSaturday = (): string => {
+    const today = new Date()
+    // JavaScript: 0=Sun, 6=Sat. We want the Saturday of the current week.
+    const day = today.getDay()
+    const diffToSaturday = 6 - day
+    const saturday = new Date(today)
+    saturday.setHours(0, 0, 0, 0)
+    saturday.setDate(saturday.getDate() + diffToSaturday)
+    const mm = String(saturday.getMonth() + 1).padStart(2, '0')
+    const dd = String(saturday.getDate()).padStart(2, '0')
+    const yyyy = String(saturday.getFullYear())
+    return `${mm}/${dd}/${yyyy}`
+  }
 
-    // Create download link
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
+  // Helper to CSV-quote a value (wrap in double quotes and escape internal quotes)
+  const quoteCsv = (value: string): string => {
+    const escaped = value.replace(/"/g, '""')
+    return `"${escaped}"`
+  }
+
+  // Function to download Payroll-formatted CSV matching Time_5_20.csv
+  const downloadPayrollCSV = () => {
+    // Exact header order and quoting to match sample
+    const headers = [
+      '"WeekEnded"',
+      '"DeptCd"',
+      '"EmplCode"',
+      '"EarnDeduct"',
+      '"EarningCd"',
+      '"Dept"',
+      '"Project"',
+      '"Sheet"',
+      '"CostCode"',
+      '"Hours"',
+      '"CheckNo"',
+      '"SpecialRate"',
+    ]
+
+    const weekEnded = getCurrentWeekEndingSaturday() // e.g., 05/17/2025
+
+    const csvRows = filteredReceipts.map((receipt) => {
+      const emplCode = receipt.employeeId ?? ''
+      const hours = Number.isFinite(receipt.amount) ? receipt.amount.toFixed(2) : '0.00'
+
+      // Columns with required quoting per sample: WeekEnded, EmplCode, EarnDeduct, EarningCd, Dept, Project
+      const row = [
+        quoteCsv(weekEnded),      // WeekEnded
+        '30',                     // DeptCd (unquoted)
+        quoteCsv(emplCode),       // EmplCode
+        '"E"',                  // EarnDeduct
+        '"01"',                 // EarningCd
+        '"30"',                 // Dept
+        '"4053"',               // Project
+        '',                       // Sheet (empty)
+        '30',                     // CostCode (unquoted)
+        hours,                    // Hours (unquoted two-decimal)
+        '1',                      // CheckNo (unquoted)
+        '',                       // SpecialRate (empty)
+      ]
+
+      return row.join(',')
+    })
+
+    const csvContent = [headers.join(','), ...csvRows].join('\n')
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.setAttribute("href", url)
-    link.setAttribute("download", `receipts_export_${new Date().toISOString().split("T")[0]}.csv`)
-    link.style.visibility = "hidden"
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `payroll_export_${getCurrentWeekEndingSaturday().replaceAll('/', '-')}.csv`)
+    link.style.visibility = 'hidden'
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -579,7 +630,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
                     <Button
                       variant="ghost"
-                      onClick={downloadCSV}
+                      onClick={downloadPayrollCSV}
                       className="bg-[#444444] text-white hover:bg-[#555555]"
                     >
                       <Download className="mr-2 h-4 w-4" />
