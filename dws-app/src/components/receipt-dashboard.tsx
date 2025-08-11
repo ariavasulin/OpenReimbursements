@@ -69,6 +69,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const [receipts, setReceipts] = useState<Receipt[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
+  const [employeeIdToProfile, setEmployeeIdToProfile] = useState<Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }>>({})
 
   useEffect(() => {
     const fetchReceipts = async () => {
@@ -140,12 +141,27 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
           })
         }
 
+        // Also build a map keyed by employee_id_internal for export name resolution
+        const empIdMap: Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }> = {}
+        if (userProfiles) {
+          userProfiles.forEach((profile: any) => {
+            if (profile?.employee_id_internal) {
+              empIdMap[String(profile.employee_id_internal)] = {
+                full_name: profile.full_name,
+                preferred_name: profile.preferred_name,
+                employee_id_internal: profile.employee_id_internal,
+              }
+            }
+          })
+        }
+        setEmployeeIdToProfile(empIdMap)
+
         const mappedReceipts: Receipt[] = data.map((item: any) => {
           const userProfile = profilesMap.get(item.user_id)
           return {
             id: item.id,
             employeeName: userProfile?.preferred_name || userProfile?.full_name || "N/A",
-            employeeId: userProfile?.employee_id_internal || "N/A",
+            employeeId: userProfile?.employee_id_internal || "",
             date: item.receipt_date, // This is a string (ISO date)
             amount: item.amount,
             category: item.categories?.name || "Uncategorized",
@@ -223,56 +239,60 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     return `"${escaped}"`
   }
 
-  // Function to download Payroll-formatted CSV matching Time_5_20.csv
+  // Function to download grouped totals CSV: LastName, FirstName, EmployeeNumber, TotalAmount
   const downloadPayrollCSV = () => {
-    // Exact header order and quoting to match sample
-    const headers = [
-      '"WeekEnded"',
-      '"DeptCd"',
-      '"EmplCode"',
-      '"EarnDeduct"',
-      '"EarningCd"',
-      '"Dept"',
-      '"Project"',
-      '"Sheet"',
-      '"CostCode"',
-      '"Hours"',
-      '"CheckNo"',
-      '"SpecialRate"',
-    ]
+    const headers = ['LastName', 'FirstName', 'EmployeeNumber', 'TotalAmount']
 
-    const weekEnded = getCurrentWeekEndingSaturday() // e.g., 05/17/2025
+    // Aggregate totals by employee number (employee_id_internal). Include entries with empty employee number.
+    const totalsMap = new Map<string, { lastName: string; firstName: string; employeeNumber: string; total: number }>()
 
-    const csvRows = filteredReceipts.map((receipt) => {
-      const emplCode = receipt.employeeId ?? ''
-      const hours = Number.isFinite(receipt.amount) ? receipt.amount.toFixed(2) : '0.00'
+    const parseLastFirst = (fullName?: string, fallbackName?: string): { last: string; first: string } => {
+      if (fullName && fullName.includes(',')) {
+        const [l, f] = fullName.split(',')
+        return { last: (l || '').trim(), first: (f || '').trim() }
+      }
+      if (fallbackName && fallbackName.includes(',')) {
+        const [l, f] = fallbackName.split(',')
+        return { last: (l || '').trim(), first: (f || '').trim() }
+      }
+      return { last: '', first: (fallbackName || '').trim() }
+    }
 
-      // Columns with required quoting per sample: WeekEnded, EmplCode, EarnDeduct, EarningCd, Dept, Project
-      const row = [
-        quoteCsv(weekEnded),      // WeekEnded
-        '30',                     // DeptCd (unquoted)
-        quoteCsv(emplCode),       // EmplCode
-        '"E"',                  // EarnDeduct
-        '"01"',                 // EarningCd
-        '"30"',                 // Dept
-        '"4053"',               // Project
-        '',                       // Sheet (empty)
-        '30',                     // CostCode (unquoted)
-        hours,                    // Hours (unquoted two-decimal)
-        '1',                      // CheckNo (unquoted)
-        '',                       // SpecialRate (empty)
-      ]
+    for (const r of filteredReceipts) {
+      const employeeNumber = r.employeeId || ''
+      const profile = employeeIdToProfile[employeeNumber]
+      const { last, first } = parseLastFirst(profile?.full_name, r.employeeName)
+      const key = employeeNumber
+      const amount = typeof r.amount === 'number' ? r.amount : Number(r.amount) || 0
+      const existing = totalsMap.get(key)
+      if (existing) {
+        existing.total += amount
+      } else {
+        totalsMap.set(key, { lastName: last, firstName: first, employeeNumber, total: amount })
+      }
+    }
 
-      return row.join(',')
+    const rows = Array.from(totalsMap.values()).sort((a, b) => {
+      const ln = a.lastName.localeCompare(b.lastName)
+      return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName)
     })
 
-    const csvContent = [headers.join(','), ...csvRows].join('\n')
+    const csvLines = [
+      headers.join(','),
+      ...rows.map(r => [
+        quoteCsv(r.lastName || ''),
+        quoteCsv(r.firstName || ''),
+        quoteCsv(r.employeeNumber || ''),
+        (Number.isFinite(r.total) ? r.total.toFixed(2) : '0.00'),
+      ].join(','))
+    ]
 
+    const csvContent = csvLines.join('\n')
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.setAttribute('href', url)
-    link.setAttribute('download', `payroll_export_${getCurrentWeekEndingSaturday().replaceAll('/', '-')}.csv`)
+    link.setAttribute('download', `receipts_totals_${new Date().toISOString().split('T')[0]}.csv`)
     link.style.visibility = 'hidden'
     document.body.appendChild(link)
     link.click()
