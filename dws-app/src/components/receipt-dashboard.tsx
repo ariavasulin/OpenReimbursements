@@ -125,7 +125,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
         
         const { data: userProfiles, error: profilesError } = await supabase
           .from("user_profiles")
-          .select("user_id, full_name, employee_id_internal")
+          .select("user_id, full_name, preferred_name, employee_id_internal")
           .in("user_id", userIds)
 
         if (profilesError) {
@@ -144,7 +144,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
           const userProfile = profilesMap.get(item.user_id)
           return {
             id: item.id,
-            employeeName: userProfile?.full_name || "N/A",
+            employeeName: userProfile?.preferred_name || userProfile?.full_name || "N/A",
             employeeId: userProfile?.employee_id_internal || "N/A",
             date: item.receipt_date, // This is a string (ISO date)
             amount: item.amount,
