@@ -130,7 +130,7 @@ export default function EmployeePage() {
 
         const { data: profile, error: profileError } = await supabase
           .from('user_profiles')
-          .select('user_id, role, full_name, employee_id_internal')
+          .select('user_id, role, full_name, preferred_name, employee_id_internal')
           .eq('user_id', session.user.id)
           .single();
 
@@ -156,6 +156,7 @@ export default function EmployeePage() {
                 user_id: session.user.id,
                 role: 'employee',
                 full_name: session.user.phone || 'Employee',
+                preferred_name: null,
                 employee_id_internal: null
               })
               .select()
@@ -298,7 +299,12 @@ export default function EmployeePage() {
           priority
           className="h-auto w-32 md:w-40 object-contain mb-4"
         />
-        <p className="text-lg text-gray-300">Welcome, {userProfile.full_name || user.email || 'Employee'}!</p>
+        <p className="text-lg text-gray-300">Welcome, {(userProfile?.preferred_name
+            || userProfile?.full_name
+            || user?.user_metadata?.preferred_name
+            || user?.user_metadata?.full_name
+            || user?.email
+            || 'Employee')}!</p>
       </div>
       
       {/* Main content area - constrained width for better readability */}

@@ -29,6 +29,7 @@ export interface UserProfile {
   user_id: string;
   role: 'employee' | 'admin';
   full_name?: string;
+  preferred_name?: string;
   employee_id_internal?: string;
   created_at?: string;
   updated_at?: string;
