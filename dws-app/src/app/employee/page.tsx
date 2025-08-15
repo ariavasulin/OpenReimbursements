@@ -324,6 +324,17 @@ export default function EmployeePage() {
             Logout
           </Button>
         </div>
+
+        <div className="mt-8 text-center">
+          <a
+            href="https://form.typeform.com/to/b1XfPMaK"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#2680FC] hover:underline"
+          >
+            Give Feedback
+          </a>
+        </div>
       </div>
     </main>
   );
