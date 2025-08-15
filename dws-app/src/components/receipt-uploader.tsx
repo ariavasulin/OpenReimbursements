@@ -210,7 +210,9 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
         if (ocrResult.success && ocrResult.data) {
           sonnerToast.success("Details extracted!", { id: "ocr-toast", duration: 2000 })
           setExtractedData({
-            date: ocrResult.data.date || undefined,
+            // Prefer the canonical key used by the API and form
+            receipt_date: ocrResult.data.date || undefined,
+            // Keep amount as-is
             amount: ocrResult.data.amount !== null ? ocrResult.data.amount : undefined,
           })
         } else {
@@ -235,7 +237,7 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
       return
     }
     
-         if (!receiptData.date || receiptData.amount === undefined || !receiptData.category_id) {
+         if (!receiptData.receipt_date || receiptData.amount === undefined || !receiptData.category_id) {
        sonnerToast.error("Missing details", { description: "Please fill in Date, Amount, and Category." })
        return
      }

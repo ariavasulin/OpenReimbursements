@@ -42,8 +42,10 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
     return undefined;
   };
 
-  // Use receipt_date from initialData if available
-  const [date, setDate] = useState<Date | undefined>(parseDateString(initialData?.receipt_date));
+  // Initialize from canonical receipt_date; fallback to date (for robustness)
+  const [date, setDate] = useState<Date | undefined>(
+    parseDateString(initialData?.receipt_date ?? initialData?.date)
+  );
   const [amount, setAmount] = useState(initialData?.amount?.toString() || "");
   const [categoryId, setCategoryId] = useState<string>(initialData?.category_id || '');
   const [notes, setNotes] = useState(initialData?.notes || "");
@@ -52,6 +54,9 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
  
   useEffect(() => {
+    // Sync local state if parent provides new initialData (e.g., after OCR finishes)
+    const parsed = parseDateString(initialData?.receipt_date ?? initialData?.date);
+    setDate(parsed);
     const fetchCategories = async () => {
       setIsLoadingCategories(true);
       try {
@@ -88,7 +93,7 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
       }
     };
     fetchCategories();
-  }, [initialData?.category_id]); // Re-fetch if initialData.category_id changes (though unlikely here)
+  }, [initialData?.category_id, initialData?.receipt_date, initialData?.date]);
 
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -3,7 +3,8 @@ export interface Receipt {
   user_id?: string; // Foreign key to auth.users.id, will be added when saving
   employeeName: string; // From prototype
   employeeId: string; // From prototype
-  date: string; // From prototype (was receipt_date)
+  date: string; // From prototype (maps from receipt_date)
+  receipt_date?: string; // Canonical date string (YYYY-MM-DD) used by API/DB
   amount: number; // Corresponds to Supabase 'amount' (numeric)
   status: "Pending" | "Approved" | "Rejected" | "Reimbursed" | "pending" | "approved" | "rejected" | "reimbursed"; // Updated to include both cases
   category_id?: string; // Foreign key to categories.id
