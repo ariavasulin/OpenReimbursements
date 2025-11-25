@@ -77,101 +77,54 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
       setError(null)
 
       try {
-        let query = supabase
-          .from("receipts")
-          .select(
-            `
-            id,
-            receipt_date,
-            amount,
-            status,
-            category_id,
-            user_id,
-            categories!receipts_category_id_fkey (name),
-            description,
-            image_url
-          `
-          )
+        // Build query parameters for the admin API
+        const params = new URLSearchParams()
 
         if (filterStatus !== "all") {
-          // The 'status' in the DB might be capitalized as per types.ts for dws-app
-          // The prototype used lowercase. For now, assuming DB uses capitalized.
           const dbStatus = filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1)
-          query = query.eq("status", dbStatus)
+          params.append('status', dbStatus)
         }
 
-        // Search filtering is handled client-side to avoid PostgREST parsing issues
-
         if (dateRange.from) {
-          query = query.gte("receipt_date", dateRange.from.toISOString())
+          params.append('fromDate', dateRange.from.toISOString().split('T')[0])
         }
         if (dateRange.to) {
           // Add 1 day to 'to' date to make it inclusive for the whole day
           const toDate = new Date(dateRange.to)
           toDate.setDate(toDate.getDate() + 1)
-          query = query.lt("receipt_date", toDate.toISOString())
+          params.append('toDate', toDate.toISOString().split('T')[0])
         }
 
-        query = query.order('receipt_date', { ascending: false });
+        // Call the new admin API endpoint that includes phone numbers
+        const response = await fetch(`/api/admin/receipts?${params.toString()}`)
 
-
-        const { data, error: supabaseError } = await query
-
-        if (supabaseError) {
-          throw supabaseError
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || 'Failed to fetch receipts')
         }
 
-        // Fetch user profiles separately
-        const userIds = [...new Set(data.map(item => item.user_id).filter(Boolean))]
-        
-        const { data: userProfiles, error: profilesError } = await supabase
-          .from("user_profiles")
-          .select("user_id, full_name, preferred_name, employee_id_internal")
-          .in("user_id", userIds)
+        const { receipts: fetchedReceipts } = await response.json()
 
-        if (profilesError) {
-          console.warn("Error fetching user profiles:", profilesError)
-        }
-
-        // Create a map of user profiles by user_id
-        const profilesMap = new Map()
-        if (userProfiles) {
-          userProfiles.forEach(profile => {
-            profilesMap.set(profile.user_id, profile)
-          })
-        }
-
-        // Also build a map keyed by employee_id_internal for export name resolution
+        // Build employee ID map for export name resolution
         const empIdMap: Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }> = {}
-        if (userProfiles) {
-          userProfiles.forEach((profile: any) => {
-            if (profile?.employee_id_internal) {
-              empIdMap[String(profile.employee_id_internal)] = {
-                full_name: profile.full_name,
-                preferred_name: profile.preferred_name,
-                employee_id_internal: profile.employee_id_internal,
-              }
+        fetchedReceipts.forEach((receipt: Receipt) => {
+          if (receipt.employeeId) {
+            empIdMap[receipt.employeeId] = {
+              full_name: receipt.employeeName, // approximation, we don't have full_name separately
+              preferred_name: receipt.employeeName,
+              employee_id_internal: receipt.employeeId,
             }
-          })
-        }
-        setEmployeeIdToProfile(empIdMap)
-
-        const mappedReceipts: Receipt[] = data.map((item: any) => {
-          const userProfile = profilesMap.get(item.user_id)
-          return {
-            id: item.id,
-            employeeName: userProfile?.preferred_name || userProfile?.full_name || "N/A",
-            employeeId: userProfile?.employee_id_internal || "",
-            date: item.receipt_date, // This is a string (ISO date)
-            amount: item.amount,
-            category: item.categories?.name || "Uncategorized",
-            description: item.description || "",
-            status: item.status.toLowerCase() as Receipt['status'],
-            image_url: item.image_url ? supabase.storage.from('receipt-images').getPublicUrl(item.image_url).data.publicUrl : "",
-            // jobCode: item.job_code || item.jobCode || "", // Removed
           }
         })
-        setReceipts(mappedReceipts)
+        setEmployeeIdToProfile(empIdMap)
+
+        // Normalize status to lowercase for consistency with the rest of the app
+        const normalizedReceipts: Receipt[] = fetchedReceipts.map((receipt: Receipt) => ({
+          ...receipt,
+          status: receipt.status.toLowerCase() as Receipt['status'],
+        }))
+
+        setReceipts(normalizedReceipts)
       } catch (err: any) {
         console.error("Full error object fetching receipts:", JSON.stringify(err, null, 2));
         let errorMessage = "An unknown error occurred";
