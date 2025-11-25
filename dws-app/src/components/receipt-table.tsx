@@ -139,6 +139,25 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
   const isAllSelected = paginatedData.length > 0 && paginatedData.every((row) => selectedRows.has(row.id))
   const isIndeterminate = paginatedData.some((row) => selectedRows.has(row.id)) && !isAllSelected
 
+  const formatPhoneNumber = (phone: string | null | undefined) => {
+    if (!phone) return "N/A"
+
+    // Remove any non-digit characters
+    const cleaned = phone.replace(/\D/g, '')
+
+    // Check if it's a valid US number (11 digits starting with 1, or 10 digits)
+    if (cleaned.length === 11 && cleaned.startsWith('1')) {
+      // Format as +1 (XXX) XXX-XXXX
+      return `+1 (${cleaned.slice(1, 4)}) ${cleaned.slice(4, 7)}-${cleaned.slice(7)}`
+    } else if (cleaned.length === 10) {
+      // Format as (XXX) XXX-XXXX
+      return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`
+    }
+
+    // Return as-is if it doesn't match expected format
+    return phone
+  }
+
   const getStatusBadge = (status: string) => {
     const variants = {
       pending: "bg-yellow-500/30 text-yellow-300 border-yellow-500/30",
@@ -190,6 +209,15 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                 </TableHead>
               <TableHead className="text-white text-left p-3">
                 <div
+                    onClick={() => handleSort("phone")}
+                  className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
+                  >
+                    Phone
+                    {getSortIcon("phone")}
+                </div>
+                </TableHead>
+              <TableHead className="text-white text-left p-3">
+                <div
                     onClick={() => handleSort("amount")}
                   className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
@@ -231,6 +259,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                   </TableCell>
                 <TableCell className="text-left p-3">{formatDate(receipt.date)}</TableCell>
                 <TableCell className="text-left p-3">{receipt.employeeName}</TableCell>
+                <TableCell className="text-left p-3">{formatPhoneNumber(receipt.phone)}</TableCell>
                 <TableCell className="text-left p-3">${receipt.amount.toFixed(2)}</TableCell>
                 <TableCell className="text-left p-3">{receipt.category}</TableCell>
                 <TableCell className="text-left p-3">{receipt.description}</TableCell>
