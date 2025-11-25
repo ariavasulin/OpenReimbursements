@@ -3,6 +3,7 @@ export interface Receipt {
   user_id?: string; // Foreign key to auth.users.id, will be added when saving
   employeeName: string; // From prototype
   employeeId: string; // From prototype
+  phone?: string | null; // Phone number from auth.users (E.164 format)
   date: string; // From prototype (maps from receipt_date)
   receipt_date?: string; // Canonical date string (YYYY-MM-DD) used by API/DB
   amount: number; // Corresponds to Supabase 'amount' (numeric)
