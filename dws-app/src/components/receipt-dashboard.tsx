@@ -20,9 +20,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
 import ReceiptTable from "@/components/receipt-table"
-// import type { ColDef } from "ag-grid-community" // Removed as ag-grid is not used
+import { ReceiptDetailsCard } from "@/components/receipt-details-card"
+import { formatCurrency, formatDate } from "@/lib/utils"
 import type { Receipt, BulkUpdateResponse } from "@/lib/types"
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
@@ -41,6 +52,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const [isBulkUpdateLoading, setIsBulkUpdateLoading] = useState(false)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [pendingBulkUpdateCount, setPendingBulkUpdateCount] = useState(0)
+
+  // Edit/Delete states
+  const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null)
+  const [deletingReceipt, setDeletingReceipt] = useState<Receipt | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  // Refresh trigger for re-fetching receipts
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const triggerRefresh = () => setRefreshTrigger(prev => prev + 1)
 
   const handleDateChange = (selectedDateRange: import("react-day-picker").DateRange | undefined) => {
     setDateRange({
@@ -150,7 +170,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     if (shouldFetch) {
       fetchReceipts()
     }
-  }, [filterStatus, dateRange])
+  }, [filterStatus, dateRange, refreshTrigger])
 
   // Apply client-side search filtering since server-side search has PostgREST issues
   const filteredReceipts = receipts.filter(receipt => {
@@ -325,6 +345,37 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     } finally {
       setIsBulkUpdateLoading(false);
     }
+  }
+
+  // Delete handler for admin
+  const handleDeleteReceipt = async () => {
+    if (!deletingReceipt) return;
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/receipts?id=${deletingReceipt.id}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete receipt');
+      }
+
+      toast.success("Receipt deleted successfully");
+      setDeletingReceipt(null);
+      triggerRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete receipt");
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  // Edit success handler
+  const handleEditSuccess = (updatedReceipt: Receipt) => {
+    setEditingReceipt(null);
+    triggerRefresh();
+    toast.success("Receipt updated successfully");
   }
 
   // Calculate summary statistics
@@ -621,6 +672,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         pageSize={pageSize}
                         onPageChange={handlePageChange}
                         onPageSizeChange={handlePageSizeChange}
+                        onEdit={setEditingReceipt}
+                        onDelete={setDeletingReceipt}
                       />
                     )}
                   </div>
@@ -642,6 +695,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         pageSize={pageSize}
                         onPageChange={handlePageChange}
                         onPageSizeChange={handlePageSizeChange}
+                        onEdit={setEditingReceipt}
+                        onDelete={setDeletingReceipt}
                       />
                     )}
                   </div>
@@ -663,6 +718,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         pageSize={pageSize}
                         onPageChange={handlePageChange}
                         onPageSizeChange={handlePageSizeChange}
+                        onEdit={setEditingReceipt}
+                        onDelete={setDeletingReceipt}
                       />
                     )}
                   </div>
@@ -684,6 +741,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         pageSize={pageSize}
                         onPageChange={handlePageChange}
                         onPageSizeChange={handlePageSizeChange}
+                        onEdit={setEditingReceipt}
+                        onDelete={setDeletingReceipt}
                       />
                     )}
                   </div>
@@ -703,6 +762,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         pageSize={pageSize}
                         onPageChange={handlePageChange}
                         onPageSizeChange={handlePageSizeChange}
+                        onEdit={setEditingReceipt}
+                        onDelete={setDeletingReceipt}
                       />
                     )}
                   </div>
@@ -824,6 +885,61 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deletingReceipt} onOpenChange={(open) => !open && setDeletingReceipt(null)}>
+        <AlertDialogContent className="bg-[#333333] border-[#444444]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete Receipt?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-300">
+              Are you sure you want to delete this receipt from <span className="font-semibold">{deletingReceipt?.employeeName}</span> for {deletingReceipt?.amount ? formatCurrency(deletingReceipt.amount) : '$0.00'}?
+              <br /><br />
+              <span className="text-red-400 font-medium">This action cannot be undone.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={isDeleting}
+              className="bg-transparent border-[#555555] text-white hover:bg-[#555555]"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteReceipt}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isDeleting ? "Deleting..." : "Delete Receipt"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Edit Receipt Dialog */}
+      <Dialog open={!!editingReceipt} onOpenChange={(open) => !open && setEditingReceipt(null)}>
+        <DialogContent className="bg-transparent border-none p-0 max-w-md">
+          <DialogTitle className="sr-only">Edit Receipt</DialogTitle>
+          {editingReceipt && (
+            <ReceiptDetailsCard
+              mode="edit"
+              receiptId={editingReceipt.id}
+              initialData={{
+                receipt_date: editingReceipt.date,
+                amount: editingReceipt.amount,
+                category_id: editingReceipt.category_id,
+                notes: editingReceipt.notes || editingReceipt.description,
+              }}
+              onSubmit={() => {}} // Not used in edit mode
+              onCancel={() => setEditingReceipt(null)}
+              onEditSuccess={handleEditSuccess}
+              onDelete={() => {
+                setEditingReceipt(null);
+                triggerRefresh();
+              }}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>
