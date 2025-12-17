@@ -242,4 +242,150 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: `Error processing request: ${errorMessage}` }, { status: 500 });
   }
 }
-// GET handler will be added later for fetching receipts
+
+export async function PATCH(request: Request) {
+  console.log("PATCH /api/receipts: Handler called");
+  const supabase = await createSupabaseServerClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    console.error("PATCH /api/receipts: Session error:", sessionError);
+    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
+  }
+
+  if (!session) {
+    console.log("PATCH /api/receipts: No session, unauthorized");
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const userId = session.user.id;
+  console.log("PATCH /api/receipts: Authenticated user ID:", userId);
+
+  try {
+    const body = await request.json();
+    console.log("PATCH /api/receipts: Request body:", body);
+
+    const { id, receipt_date, amount, category_id, notes } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: 'Receipt ID is required' }, { status: 400 });
+    }
+
+    // Check if at least one field to update is provided
+    if (receipt_date === undefined && amount === undefined && category_id === undefined && notes === undefined) {
+      return NextResponse.json({ error: 'At least one field to update is required' }, { status: 400 });
+    }
+
+    // Fetch the existing receipt to verify ownership and status
+    const { data: existingReceipt, error: fetchError } = await supabase
+      .from('receipts')
+      .select('id, user_id, status')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingReceipt) {
+      console.error("PATCH /api/receipts: Receipt not found:", fetchError);
+      return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
+    }
+
+    // Check if user owns the receipt
+    if (existingReceipt.user_id !== userId) {
+      // Check if user is admin
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('user_id', userId)
+        .single();
+
+      if (!profile || profile.role !== 'admin') {
+        console.log("PATCH /api/receipts: User does not own receipt and is not admin");
+        return NextResponse.json({ error: 'You can only edit your own receipts' }, { status: 403 });
+      }
+    }
+
+    // Only allow editing receipts with "Pending" status
+    if (existingReceipt.status.toLowerCase() !== 'pending') {
+      console.log("PATCH /api/receipts: Cannot edit receipt with status:", existingReceipt.status);
+      return NextResponse.json({
+        error: `Cannot edit receipt with status "${existingReceipt.status}". Only pending receipts can be edited.`
+      }, { status: 400 });
+    }
+
+    // Build update object with only provided fields
+    const updateData: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (receipt_date !== undefined) updateData.receipt_date = receipt_date;
+    if (amount !== undefined) updateData.amount = amount;
+    if (category_id !== undefined) updateData.category_id = category_id;
+    if (notes !== undefined) updateData.description = notes;
+
+    console.log("PATCH /api/receipts: Updating receipt with data:", updateData);
+
+    // Update the receipt
+    const { data: updatedReceipt, error: updateError } = await supabase
+      .from('receipts')
+      .update(updateData)
+      .eq('id', id)
+      .select(`
+        id,
+        receipt_date,
+        amount,
+        status,
+        category_id,
+        user_id,
+        categories!receipts_category_id_fkey (name),
+        description,
+        image_url,
+        created_at,
+        updated_at
+      `)
+      .single();
+
+    if (updateError || !updatedReceipt) {
+      console.error("PATCH /api/receipts: Error updating receipt:", updateError);
+      return NextResponse.json({ error: updateError?.message || 'Failed to update receipt' }, { status: 500 });
+    }
+
+    // Generate public URL for the image
+    let publicImageUrl = updatedReceipt.image_url;
+    if (updatedReceipt.image_url) {
+      const { data: publicUrlData } = supabase.storage
+        .from('receipt-images')
+        .getPublicUrl(updatedReceipt.image_url);
+
+      if (publicUrlData?.publicUrl) {
+        publicImageUrl = publicUrlData.publicUrl;
+      }
+    }
+
+    // Map to frontend Receipt interface
+    const mappedReceipt = {
+      id: updatedReceipt.id,
+      user_id: updatedReceipt.user_id,
+      date: updatedReceipt.receipt_date,
+      amount: updatedReceipt.amount,
+      status: updatedReceipt.status.toLowerCase(),
+      category_id: updatedReceipt.category_id,
+      category: (updatedReceipt.categories as { name: string } | null)?.name || "Uncategorized",
+      description: updatedReceipt.description || "",
+      notes: updatedReceipt.description,
+      image_url: publicImageUrl,
+      created_at: updatedReceipt.created_at,
+      updated_at: updatedReceipt.updated_at,
+    };
+
+    console.log("PATCH /api/receipts: Successfully updated receipt:", mappedReceipt);
+    return NextResponse.json({ success: true, receipt: mappedReceipt }, { status: 200 });
+
+  } catch (error) {
+    console.error('PATCH /api/receipts: Unhandled error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    return NextResponse.json({ error: `Error processing request: ${errorMessage}` }, { status: 500 });
+  }
+}
