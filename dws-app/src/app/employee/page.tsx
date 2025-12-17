@@ -87,6 +87,11 @@ export default function EmployeePage() {
     fetchReceipts();
   };
 
+  const handleReceiptUpdated = (updatedReceipt: Receipt) => {
+    // Re-fetch receipts to ensure the list is up-to-date
+    fetchReceipts();
+  };
+
   // Main authentication and profile fetching logic
   useEffect(() => {
     console.log("EMPLOYEE_PAGE: Main auth/profile useEffect triggered.");
@@ -313,7 +318,7 @@ export default function EmployeePage() {
         
         {receiptsLoading && <p className="text-center">Loading receipts...</p>}
         {receiptsError && <p className="text-center text-red-500">Error loading receipts: {receiptsError}</p>}
-        {!receiptsLoading && !receiptsError && <EmployeeReceiptTable receipts={receipts} />}
+        {!receiptsLoading && !receiptsError && <EmployeeReceiptTable receipts={receipts} onReceiptUpdated={handleReceiptUpdated} />}
       
         <div className="mt-8 text-center">
           <Button

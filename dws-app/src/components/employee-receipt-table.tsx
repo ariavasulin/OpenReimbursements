@@ -3,10 +3,12 @@
 import { useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
 import type { Receipt } from "@/lib/types"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, Pencil } from "lucide-react"
 import {
   Pagination,
   PaginationContent,
@@ -15,16 +17,33 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
+import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 
 interface EmployeeReceiptTableProps {
   receipts: Receipt[]
+  onReceiptUpdated?: (updatedReceipt: Receipt) => void
 }
 
 const ITEMS_PER_PAGE = 10
 
-export default function EmployeeReceiptTable({ receipts }: EmployeeReceiptTableProps) {
+export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: EmployeeReceiptTableProps) {
   const [filter, setFilter] = useState<string>("all")
   const [currentPage, setCurrentPage] = useState(1)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null)
+
+  const handleEditClick = (receipt: Receipt) => {
+    setSelectedReceipt(receipt)
+    setEditDialogOpen(true)
+  }
+
+  const handleEditSuccess = (updatedReceipt: Receipt) => {
+    setEditDialogOpen(false)
+    setSelectedReceipt(null)
+    if (onReceiptUpdated) {
+      onReceiptUpdated(updatedReceipt)
+    }
+  }
 
   // Filter receipts based on status
   const filteredReceipts = filter === "all" ? receipts : receipts.filter((receipt) => {
@@ -82,6 +101,7 @@ export default function EmployeeReceiptTable({ receipts }: EmployeeReceiptTableP
               <TableHead className="text-white">Amount</TableHead>
               <TableHead className="text-white">Status</TableHead>
               <TableHead className="text-white">Photo</TableHead>
+              <TableHead className="text-white">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -107,11 +127,26 @@ export default function EmployeeReceiptTable({ receipts }: EmployeeReceiptTableP
                         <span className="text-gray-500">No photo</span>
                       )}
                     </TableCell>
+                    <TableCell>
+                      {receipt.status.toLowerCase() === 'pending' ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEditClick(receipt)}
+                          className="text-blue-400 hover:text-blue-300 hover:bg-[#4e4e4e] p-2"
+                          aria-label={`Edit receipt from ${receipt.date ? formatDate(receipt.date) : 'this date'}`}
+                        >
+                          <Pencil size={16} />
+                        </Button>
+                      ) : (
+                        <span className="text-gray-500 text-xs">-</span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))
               : (
                   <TableRow className="border-[#4e4e4e] hover:bg-[#383838]">
-                    <TableCell colSpan={4} className="text-center py-4 text-gray-400">
+                    <TableCell colSpan={5} className="text-center py-4 text-gray-400">
                       No receipts found
                     </TableCell>
                   </TableRow>
@@ -175,6 +210,27 @@ export default function EmployeeReceiptTable({ receipts }: EmployeeReceiptTableP
         Showing {currentReceipts.length > 0 ? Math.min(filteredReceipts.length, 1 + (currentPage - 1) * ITEMS_PER_PAGE) : 0}-
         {Math.min(filteredReceipts.length, currentPage * ITEMS_PER_PAGE)} of {filteredReceipts.length} receipts
       </div>
+
+      {/* Edit Receipt Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="bg-transparent border-none p-0 max-w-md">
+          {selectedReceipt && (
+            <ReceiptDetailsCard
+              mode="edit"
+              receiptId={selectedReceipt.id}
+              initialData={{
+                receipt_date: selectedReceipt.date,
+                amount: selectedReceipt.amount,
+                category_id: selectedReceipt.category_id,
+                notes: selectedReceipt.notes || selectedReceipt.description,
+              }}
+              onSubmit={() => {}} // Not used in edit mode
+              onCancel={() => setEditDialogOpen(false)}
+              onEditSuccess={handleEditSuccess}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

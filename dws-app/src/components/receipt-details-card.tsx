@@ -20,10 +20,21 @@ interface ReceiptDetailsCardProps {
   onSubmit: (receiptData: Partial<Receipt>) => void
   onCancel: () => void
   initialData?: Partial<Receipt> // initialData might contain category (name) or category_id
+  mode?: 'create' | 'edit' // 'create' for new receipts, 'edit' for existing
+  receiptId?: string // Required when mode is 'edit'
+  onEditSuccess?: (updatedReceipt: Receipt) => void // Callback after successful edit
 }
 
-export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptDetailsCardProps) {
+export function ReceiptDetailsCard({
+  onSubmit,
+  onCancel,
+  initialData,
+  mode = 'create',
+  receiptId,
+  onEditSuccess
+}: ReceiptDetailsCardProps) {
   const isMobile = useMobile();
+  const isEditMode = mode === 'edit';
   
   const parseDateString = (dateString: string | undefined | null): Date | undefined => {
     if (!dateString) return undefined;
@@ -103,7 +114,7 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
         sonnerToast.error("Missing details", { description: "Please fill in Date, Amount, and Category." });
         return;
     }
-    
+
     const currentReceiptData = {
       receipt_date: format(date, "yyyy-MM-dd"),
       amount: Number.parseFloat(amount),
@@ -112,6 +123,42 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
     };
 
     setIsCheckingDuplicate(true);
+
+    // Handle edit mode - call PATCH API directly
+    if (isEditMode && receiptId) {
+      try {
+        const response = await fetch('/api/receipts', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: receiptId,
+            ...currentReceiptData,
+          }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+          sonnerToast.error("Update Failed", { description: result.error || "Could not update receipt." });
+          setIsCheckingDuplicate(false);
+          return;
+        }
+
+        sonnerToast.success("Receipt Updated", { description: "Your receipt has been updated successfully." });
+        if (onEditSuccess && result.receipt) {
+          onEditSuccess(result.receipt);
+        }
+        onCancel(); // Close the dialog
+      } catch (error) {
+        console.error("Error updating receipt:", error);
+        sonnerToast.error("Error", { description: "An error occurred while updating the receipt." });
+      } finally {
+        setIsCheckingDuplicate(false);
+      }
+      return;
+    }
+
+    // Handle create mode - existing duplicate check logic
     try {
       const duplicateCheckResponse = await fetch('/api/receipts/check-duplicate', {
         method: 'POST',
@@ -149,7 +196,7 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
           return; // Stop submission
         }
       }
-      
+
       // If no duplicate concern or description is unique, proceed with actual submission
       onSubmit(currentReceiptData);
 
@@ -177,10 +224,7 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
   return (
     <Card className="w-full max-w-md bg-[#2e2e2e] text-white border-none">
       <CardHeader className="pb-0">
-      <h3 className="text-lg font-medium">Confirm Receipt Details</h3>
-      {/* These empty h3 tags were in the prototype, keeping them for now but they might be typos */}
-      <h3 className="text-lg font-medium"></h3>
-      <h3 className="text-lg font-medium"></h3>
+      <h3 className="text-lg font-medium">{isEditMode ? 'Edit Receipt Details' : 'Confirm Receipt Details'}</h3>
     </CardHeader>
     <CardContent>
       <form onSubmit={handleSubmit} id="receipt-form">
@@ -269,7 +313,7 @@ export function ReceiptDetailsCard({ onSubmit, onCancel, initialData }: ReceiptD
           Cancel
         </Button>
         <Button type="submit" form="receipt-form" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isCheckingDuplicate}>
-          {isCheckingDuplicate ? "Checking..." : "Submit Receipt"}
+          {isCheckingDuplicate ? (isEditMode ? "Saving..." : "Checking...") : (isEditMode ? "Save Changes" : "Submit Receipt")}
         </Button>
       </CardFooter>
     </Card>
