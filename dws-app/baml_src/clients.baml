@@ -1,6 +1,6 @@
 // Learn more about clients at https://docs.boundaryml.com/docs/snippets/clients/overview
 
-// GPT-4o-mini client via OpenRouter for receipt extraction
+// GPT-4.1 nano client via OpenRouter for receipt extraction
 // OpenRouter provides unified access to multiple model providers
 // Using openai-generic provider for non-OpenAI endpoints (as per BAML docs)
 client<llm> GPT4oMini {
@@ -8,7 +8,7 @@ client<llm> GPT4oMini {
   retry_policy Exponential
   options {
     base_url "https://openrouter.ai/api/v1"
-    model "openai/gpt-4o-mini"
+    model "openai/gpt-4.1-nano"
     api_key env.OPENROUTER_API_KEY
     headers {
       "HTTP-Referer" "https://dws-receipts.vercel.app"
