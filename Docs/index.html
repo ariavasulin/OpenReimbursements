@@ -6,51 +6,196 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Documentation for DWS Receipts application">
 
+  <!-- JetBrains Mono Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
   <!-- Theme -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify-themeable@0/dist/css/theme-simple-dark.min.css">
 
-  <!-- Custom styles -->
+  <!-- Gruvbox Terminal Theme -->
   <style>
     :root {
-      --base-background-color: #1a1a1a;
-      --sidebar-background: #222222;
-      --sidebar-nav-link-color: #e0e0e0;
-      --sidebar-nav-link-color--active: #60a5fa;
-      --sidebar-nav-link-border-color--active: #60a5fa;
-      --heading-color: #ffffff;
-      --strong-color: #f0f0f0;
-      --cover-background-color: #1a1a1a;
-      --cover-color: #ffffff;
-      --code-theme-background: #2d2d2d;
-      --link-color: #60a5fa;
-      --link-color--hover: #93c5fd;
-      --blockquote-border-color: #60a5fa;
-      --table-head-background: #2d2d2d;
-      --table-row-odd-background: #252525;
+      /* Gruvbox Dark Palette */
+      --gruvbox-bg-hard: #1d2021;
+      --gruvbox-bg: #282828;
+      --gruvbox-bg-soft: #32302f;
+      --gruvbox-bg1: #3c3836;
+      --gruvbox-bg2: #504945;
+      --gruvbox-bg3: #665c54;
+      --gruvbox-bg4: #7c6f64;
+      --gruvbox-fg0: #fbf1c7;
+      --gruvbox-fg: #ebdbb2;
+      --gruvbox-fg2: #d5c4a1;
+      --gruvbox-fg3: #bdae93;
+      --gruvbox-fg4: #a89984;
+
+      /* DWS App Colors */
+      --dws-blue: #60a5fa;
+      --dws-white: #ffffff;
+
+      /* Docsify Theme Variables */
+      --base-background-color: var(--gruvbox-bg-hard);
+      --sidebar-background: var(--gruvbox-bg);
+      --sidebar-nav-link-color: var(--gruvbox-fg2);
+      --sidebar-nav-link-color--active: var(--dws-blue);
+      --sidebar-nav-link-border-color--active: var(--dws-blue);
+      --heading-color: var(--gruvbox-fg0);
+      --strong-color: var(--gruvbox-fg);
+      --cover-background-color: var(--gruvbox-bg-hard);
+      --cover-color: var(--gruvbox-fg);
+      --code-theme-background: var(--gruvbox-bg1);
+      --link-color: var(--dws-blue);
+      --link-color--hover: var(--dws-white);
+      --blockquote-border-color: var(--dws-blue);
+      --table-head-background: var(--gruvbox-bg1);
+      --table-row-odd-background: var(--gruvbox-bg-soft);
+
+      /* Typography */
+      --base-font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+      --code-font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+      --base-font-size: 15px;
+      --base-line-height: 1.6;
+      --base-color: var(--gruvbox-fg);
+
+      /* Borders */
+      --sidebar-border-color: var(--gruvbox-bg2);
+      --table-cell-border-color: var(--gruvbox-bg2);
+    }
+
+    * {
+      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace !important;
+    }
+
+    body {
+      background-color: var(--gruvbox-bg-hard);
+      color: var(--gruvbox-fg);
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--gruvbox-bg2);
     }
 
     .sidebar-nav > ul > li > a {
       font-weight: 600;
+      color: var(--gruvbox-fg);
+    }
+
+    .sidebar-nav > ul > li > a:hover {
+      color: var(--dws-white);
+    }
+
+    .markdown-section {
+      color: var(--gruvbox-fg);
     }
 
     .markdown-section table {
       display: table;
       width: 100%;
+      border-collapse: collapse;
+    }
+
+    .markdown-section table th {
+      background: var(--gruvbox-bg1);
+      color: var(--dws-white);
+      border: 1px solid var(--gruvbox-bg2);
+    }
+
+    .markdown-section table td {
+      border: 1px solid var(--gruvbox-bg2);
     }
 
     .markdown-section code {
-      background: #2d2d2d;
-      color: #e0e0e0;
+      background: var(--gruvbox-bg1);
+      color: var(--dws-white);
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+
+    .markdown-section pre {
+      background: var(--gruvbox-bg) !important;
+      border: 1px solid var(--gruvbox-bg2);
+      border-radius: 4px;
+    }
+
+    .markdown-section pre code {
+      color: var(--gruvbox-fg);
+      background: transparent;
+    }
+
+    .markdown-section h1,
+    .markdown-section h2,
+    .markdown-section h3,
+    .markdown-section h4 {
+      color: var(--gruvbox-fg0);
+    }
+
+    .markdown-section h1 {
+      border-bottom: 2px solid var(--dws-blue);
+      padding-bottom: 0.5em;
+    }
+
+    .markdown-section h2 {
+      border-bottom: 1px solid var(--gruvbox-bg2);
+      padding-bottom: 0.3em;
+    }
+
+    .markdown-section a {
+      color: var(--dws-blue);
+      text-decoration: none;
+    }
+
+    .markdown-section a:hover {
+      color: var(--dws-white);
+      text-decoration: underline;
+    }
+
+    .markdown-section blockquote {
+      border-left: 4px solid var(--dws-blue);
+      background: var(--gruvbox-bg-soft);
+      color: var(--gruvbox-fg3);
+      padding: 1em;
+      margin: 1em 0;
     }
 
     .app-name-link img {
       max-width: 60px;
     }
 
-    /* Wikilink styling */
-    .markdown-section a[href^="[["],
-    .markdown-section a[href*="]]"] {
-      color: #60a5fa;
+    /* Search styling */
+    .search input {
+      background: var(--gruvbox-bg1) !important;
+      border: 1px solid var(--gruvbox-bg2) !important;
+      color: var(--gruvbox-fg) !important;
+    }
+
+    .search input::placeholder {
+      color: var(--gruvbox-fg4) !important;
+    }
+
+    .matching-post {
+      background: var(--gruvbox-bg-soft) !important;
+      border-bottom: 1px solid var(--gruvbox-bg2) !important;
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--gruvbox-bg-hard);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--gruvbox-bg3);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--gruvbox-bg4);
     }
   </style>
 </head>
@@ -59,7 +204,7 @@
 
   <script>
     window.$docsify = {
-      name: '📧 DWS Receipts',
+      name: 'DWS Receipts',
       repo: '',
       loadSidebar: true,
       subMaxLevel: 3,

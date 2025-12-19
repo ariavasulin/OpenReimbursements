@@ -17,6 +17,8 @@ Route: `/dashboard`
 
 Auth: Admin role required (redirects employees to `/employee`)
 
+<img src="screenshots/admin-dashboard.png" alt="Admin Dashboard" width="700">
+
 ### Features
 
 | Feature | Description |
@@ -82,6 +84,8 @@ Smith,Jane,EMP456,275.50
 Route: `/batch-review`
 
 Auth: Admin role required
+
+<img src="screenshots/admin-batch-review.png" alt="Batch Review" width="700">
 
 ### Purpose
 
@@ -158,6 +162,8 @@ await Promise.all(
 Route: `/users`
 
 Auth: Admin role required
+
+<img src="screenshots/admin-user-management.png" alt="User Management" width="700">
 
 ### Features
 
