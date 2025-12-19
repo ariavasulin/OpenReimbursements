@@ -19,6 +19,17 @@ DWS Receipts uses Supabase SMS OTP authentication. Users log in with their phone
    - admin → /dashboard
 ```
 
+<div style="display: flex; gap: 20px;">
+  <div>
+    <strong>Step 1: Phone Entry</strong><br>
+    <img src="screenshots/mobile-login-phone.png" alt="Login Phone" width="250">
+  </div>
+  <div>
+    <strong>Step 2: OTP Verification</strong><br>
+    <img src="screenshots/mobile-login-otp.png" alt="Login OTP" width="250">
+  </div>
+</div>
+
 ## Key Files
 
 | File | Purpose |
