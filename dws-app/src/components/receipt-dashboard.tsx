@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { supabase } from "@/lib/supabaseClient"
@@ -33,8 +33,9 @@ import {
 import { toast } from "sonner"
 import ReceiptTable from "@/components/receipt-table"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
-import { formatCurrency, formatDate } from "@/lib/utils"
+import { formatCurrency } from "@/lib/utils"
 import type { Receipt, BulkUpdateResponse } from "@/lib/types"
+import { useAdminReceipts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -57,11 +58,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null)
   const [deletingReceipt, setDeletingReceipt] = useState<Receipt | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
-
-  // Refresh trigger for re-fetching receipts
-  const [refreshTrigger, setRefreshTrigger] = useState(0)
-  const triggerRefresh = () => setRefreshTrigger(prev => prev + 1)
-
 
   const handleDateChange = (selectedDateRange: import("react-day-picker").DateRange | undefined) => {
     setDateRange({
@@ -87,125 +83,72 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     setCurrentPage(1) // Reset to first page when changing page size
   }
 
-  const [receipts, setReceipts] = useState<Receipt[]>([])
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string | null>(null)
-  const [employeeIdToProfile, setEmployeeIdToProfile] = useState<Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }>>({})
+  // Calculate toDate with +1 day for inclusive filtering
+  const toDateParam = dateRange.to ? (() => {
+    const toDate = new Date(dateRange.to)
+    toDate.setDate(toDate.getDate() + 1)
+    return toDate.toISOString().split('T')[0]
+  })() : undefined
 
-  useEffect(() => {
-    const fetchReceipts = async () => {
-      setLoading(true)
-      setError(null)
+  // Only fetch when both dates are selected, or when no dates are selected
+  const shouldFetch = !dateRange.from || (dateRange.from && dateRange.to)
 
-      try {
-        // Build query parameters for the admin API
-        const params = new URLSearchParams()
+  const {
+    data: rawReceipts = [],
+    isLoading: loading,
+    error: queryError,
+    refetch
+  } = useAdminReceipts({
+    // Always fetch all receipts - status filtering is done client-side for instant tab switching
+    fromDate: dateRange.from?.toISOString().split('T')[0],
+    toDate: toDateParam,
+    enabled: shouldFetch,
+  })
 
-        if (filterStatus !== "all") {
-          const dbStatus = filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1)
-          params.append('status', dbStatus)
-        }
+  const error = queryError?.message || null
+  const invalidateReceipts = useInvalidateAdminReceipts()
+  const deleteReceiptMutation = useDeleteReceipt()
 
-        if (dateRange.from) {
-          params.append('fromDate', dateRange.from.toISOString().split('T')[0])
-        }
-        if (dateRange.to) {
-          // Add 1 day to 'to' date to make it inclusive for the whole day
-          const toDate = new Date(dateRange.to)
-          toDate.setDate(toDate.getDate() + 1)
-          params.append('toDate', toDate.toISOString().split('T')[0])
-        }
+  // Normalize status to lowercase for consistency with the rest of the app
+  const receipts: Receipt[] = rawReceipts.map((receipt: Receipt) => ({
+    ...receipt,
+    status: receipt.status.toLowerCase() as Receipt['status'],
+  }))
 
-        // Call the new admin API endpoint that includes phone numbers
-        const response = await fetch(`/api/admin/receipts?${params.toString()}`)
+  // Build employee ID map for export name resolution
+  const employeeIdToProfile: Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }> = {}
+  receipts.forEach((receipt: Receipt) => {
+    if (receipt.employeeId) {
+      employeeIdToProfile[receipt.employeeId] = {
+        full_name: receipt.employeeName,
+        preferred_name: receipt.employeeName,
+        employee_id_internal: receipt.employeeId,
+      }
+    }
+  })
 
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || 'Failed to fetch receipts')
-        }
+  // Apply client-side filtering for status and search (enables instant tab switching)
+  const filteredReceipts = receipts.filter(receipt => {
+    // Status filter
+    if (filterStatus !== 'all' && receipt.status !== filterStatus) {
+      return false
+    }
 
-        const { receipts: fetchedReceipts } = await response.json()
-
-        // Build employee ID map for export name resolution
-        const empIdMap: Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }> = {}
-        fetchedReceipts.forEach((receipt: Receipt) => {
-          if (receipt.employeeId) {
-            empIdMap[receipt.employeeId] = {
-              full_name: receipt.employeeName, // approximation, we don't have full_name separately
-              preferred_name: receipt.employeeName,
-              employee_id_internal: receipt.employeeId,
-            }
-          }
-        })
-        setEmployeeIdToProfile(empIdMap)
-
-        // Normalize status to lowercase for consistency with the rest of the app
-        const normalizedReceipts: Receipt[] = fetchedReceipts.map((receipt: Receipt) => ({
-          ...receipt,
-          status: receipt.status.toLowerCase() as Receipt['status'],
-        }))
-
-        setReceipts(normalizedReceipts)
-      } catch (err: any) {
-        console.error("Full error object fetching receipts:", JSON.stringify(err, null, 2));
-        let errorMessage = "An unknown error occurred";
-        if (err && typeof err === 'object') {
-          if ('message' in err && typeof err.message === 'string') {
-            errorMessage = err.message;
-          } else if (Object.keys(err).length > 0) {
-            errorMessage = `Supabase error: ${JSON.stringify(err)}`;
-          }
-        } else if (typeof err === 'string') {
-          errorMessage = err;
-        }
-        setError(errorMessage);
-        console.error("Error fetching receipts (processed):", errorMessage);
-      } finally {
-        setLoading(false)
+    // Search filter
+    if (searchQuery) {
+      const searchLower = searchQuery.toLowerCase()
+      const employeeName = receipt.employeeName?.toLowerCase() || ''
+      const description = receipt.description?.toLowerCase() || ''
+      if (!employeeName.includes(searchLower) && !description.includes(searchLower)) {
+        return false
       }
     }
 
-    // Only fetch when both dates are selected, or when no dates are selected, or when only filterStatus/searchQuery changes
-    const shouldFetch = !dateRange.from || (dateRange.from && dateRange.to)
-    
-    if (shouldFetch) {
-      fetchReceipts()
-    }
-  }, [filterStatus, dateRange, refreshTrigger])
-
-  // Apply client-side search filtering since server-side search has PostgREST issues
-  const filteredReceipts = receipts.filter(receipt => {
-    if (!searchQuery) return true
-    
-    const searchLower = searchQuery.toLowerCase()
-    const employeeName = receipt.employeeName?.toLowerCase() || ''
-    const description = receipt.description?.toLowerCase() || ''
-    
-    return employeeName.includes(searchLower) || description.includes(searchLower)
+    return true
   })
 
   // Calculate pagination info
   const totalPages = Math.ceil(filteredReceipts.length / pageSize)
-
-  // const columnDefs: ColDef<Receipt>[] = [ ... ] // Removed as ReceiptTable handles its own columns
-  // const defaultColDef = { ... } // Removed
-
-  // (Removed) Legacy CSV export function in favor of payroll-formatted CSV
-
-  // Helper to format Saturday of the current week as MM/DD/YYYY (zero-padded)
-  const getCurrentWeekEndingSaturday = (): string => {
-    const today = new Date()
-    // JavaScript: 0=Sun, 6=Sat. We want the Saturday of the current week.
-    const day = today.getDay()
-    const diffToSaturday = 6 - day
-    const saturday = new Date(today)
-    saturday.setHours(0, 0, 0, 0)
-    saturday.setDate(saturday.getDate() + diffToSaturday)
-    const mm = String(saturday.getMonth() + 1).padStart(2, '0')
-    const dd = String(saturday.getDate()).padStart(2, '0')
-    const yyyy = String(saturday.getFullYear())
-    return `${mm}/${dd}/${yyyy}`
-  }
 
   // Helper to CSV-quote a value (wrap in double quotes and escape internal quotes)
   const quoteCsv = (value: string): string => {
@@ -334,7 +277,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
       if (result.success) {
         toast.success(result.message);
         // Refresh the receipts data
-        window.location.reload();
+        invalidateReceipts();
       } else {
         throw new Error(result.error || 'Update failed');
       }
@@ -353,18 +296,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     if (!deletingReceipt) return;
     setIsDeleting(true);
     try {
-      const response = await fetch(`/api/receipts?id=${deletingReceipt.id}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to delete receipt');
-      }
-
+      await deleteReceiptMutation.mutateAsync(deletingReceipt.id);
       toast.success("Receipt deleted successfully");
       setDeletingReceipt(null);
-      triggerRefresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to delete receipt");
     } finally {
@@ -373,9 +307,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   }
 
   // Edit success handler
-  const handleEditSuccess = (updatedReceipt: Receipt) => {
+  const handleEditSuccess = () => {
     setEditingReceipt(null);
-    triggerRefresh();
+    invalidateReceipts();
     toast.success("Receipt updated successfully");
   }
 
@@ -397,9 +331,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
       <div className="flex flex-col h-screen bg-[#2e2e2e] text-white items-center justify-center">
         <p className="text-red-500">Error loading receipts: {error}</p>
         <Button
-          onClick={() => { /* Consider a refetch function or just reload for simplicity */
-            window.location.reload();
-          }}
+          onClick={() => refetch()}
           className="mt-4"
         >
           Try Again
@@ -449,8 +381,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => window.location.reload()}
-               // Using theme variables
+              onClick={() => refetch()}
               className="bg-[#333333] text-white hover:bg-[#444444]"
             >
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -947,7 +878,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
               onEditSuccess={handleEditSuccess}
               onDelete={() => {
                 setEditingReceipt(null);
-                triggerRefresh();
+                invalidateReceipts();
               }}
             />
           )}
