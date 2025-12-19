@@ -52,5 +52,3 @@ gcp-credentials*.json
 *.tsbuildinfo
 next-env.d.ts
 
-# BAML generated files
-baml_client/
