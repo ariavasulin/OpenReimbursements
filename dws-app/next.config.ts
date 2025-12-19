@@ -4,7 +4,7 @@ import path from "path";
 const nextConfig: NextConfig = {
   serverExternalPackages: ['@boundaryml/baml'],
   webpack: (config) => {
-    config.resolve.alias['@baml'] = path.resolve(__dirname, 'baml_client');
+    config.resolve.alias['@baml'] = path.resolve(process.cwd(), 'baml_client');
     return config;
   },
   images: {
