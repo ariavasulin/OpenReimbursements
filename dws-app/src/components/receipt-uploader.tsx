@@ -3,16 +3,32 @@
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Upload, Camera, FileImage } from "lucide-react"
+import { Upload, FileImage } from "lucide-react"
 import { toast as sonnerToast } from "sonner"
 import { useMobile } from "@/hooks/use-mobile"
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
-import { v4 as uuidv4 } from "uuid"
 import type { Receipt } from "@/lib/types"
 
 interface ReceiptUploaderProps {
   onReceiptAdded?: (receipt: Receipt) => void
+}
+
+// OCR API response type
+interface OcrResponse {
+  success: boolean
+  data: {
+    date: string | null
+    amount: number | null
+    category: string | null
+    category_id: string | null
+  }
+  duplicate: {
+    isDuplicate: boolean
+    existingReceipts: { id: string; description: string }[]
+  }
+  canAutoSubmit: boolean
+  error?: string
 }
 
 export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps) {
@@ -205,29 +221,139 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
         const errorData = await ocrResponse.json()
         sonnerToast.error("OCR Failed", { id: "ocr-toast", description: errorData.error || "Could not extract details." })
         setExtractedData({})
+        setIsProcessingFile(false)
+        setShowDetailsCard(true)
+        return
+      }
+
+      const ocrResult: OcrResponse = await ocrResponse.json()
+
+      // Store extracted data for potential dialog use
+      const extractedReceiptData: Partial<Receipt> = {
+        receipt_date: ocrResult.data.date || undefined,
+        amount: ocrResult.data.amount !== null ? ocrResult.data.amount : undefined,
+        category_id: ocrResult.data.category_id || undefined,
+      }
+      setExtractedData(extractedReceiptData)
+
+      // Step 3: Decide whether to auto-submit or show dialog
+      if (ocrResult.canAutoSubmit && extractedReceiptData.receipt_date &&
+          extractedReceiptData.amount !== undefined && extractedReceiptData.category_id) {
+
+        // Auto-submit the receipt
+        sonnerToast.dismiss("ocr-toast")
+        await handleAutoSubmit(extractedReceiptData, tempFilePath)
+
       } else {
-        const ocrResult = await ocrResponse.json()
-        if (ocrResult.success && ocrResult.data) {
-          sonnerToast.success("Details extracted!", { id: "ocr-toast", duration: 2000 })
-          setExtractedData({
-            // Prefer the canonical key used by the API and form
-            receipt_date: ocrResult.data.date || undefined,
-            // Keep amount as-is
-            amount: ocrResult.data.amount !== null ? ocrResult.data.amount : undefined,
+        // Show confirmation dialog - either fields missing or duplicate detected
+        setIsProcessingFile(false)
+
+        if (ocrResult.duplicate?.isDuplicate) {
+          sonnerToast.warning("Potential duplicate detected", {
+            id: "ocr-toast",
+            description: "A receipt with the same date and amount exists. Please add a description to differentiate.",
+            duration: 5000
+          })
+        } else if (!ocrResult.data.date || ocrResult.data.amount === null || !ocrResult.data.category_id) {
+          sonnerToast.info("Please confirm details", {
+            id: "ocr-toast",
+            description: "Some fields couldn't be extracted automatically.",
+            duration: 3000
           })
         } else {
-          sonnerToast.warning("OCR: No details found", { id: "ocr-toast", description: ocrResult.error || "Could not find date or amount." })
-          setExtractedData({})
+          sonnerToast.success("Details extracted!", { id: "ocr-toast", duration: 2000 })
         }
+
+        setShowDetailsCard(true)
       }
+
     } catch (error) {
       console.error("Error during file processing or OCR:", error)
       const errorMessage = error instanceof Error ? error.message : "File processing error."
       sonnerToast.error("Processing Error", { id: "ocr-toast", description: errorMessage })
       setExtractedData({})
-    } finally {
       setIsProcessingFile(false)
       setShowDetailsCard(true)
+    }
+  }
+
+  // New function for auto-submit with undo toast
+  const handleAutoSubmit = async (receiptData: Partial<Receipt>, tempFilePath: string) => {
+    setIsSubmitting(true)
+
+    try {
+      const createReceiptPayload = {
+        receipt_date: receiptData.receipt_date,
+        amount: receiptData.amount,
+        category_id: receiptData.category_id,
+        notes: '', // Empty for auto-submit
+        tempFilePath,
+      }
+
+      const createReceiptResponse = await fetch("/api/receipts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createReceiptPayload),
+      })
+
+      if (!createReceiptResponse.ok) {
+        const errorData = await createReceiptResponse.json()
+        throw new Error(errorData.error || "Failed to create receipt record.")
+      }
+
+      const createReceiptResult = await createReceiptResponse.json()
+      if (!createReceiptResult.success || !createReceiptResult.receipt) {
+        throw new Error(createReceiptResult.error || "Receipt creation did not return a valid receipt.")
+      }
+
+      const createdReceipt = createReceiptResult.receipt
+
+      // Notify parent of new receipt
+      if (onReceiptAdded) {
+        onReceiptAdded(createdReceipt)
+      }
+
+      // Show success toast with Edit action
+      sonnerToast.success("Receipt submitted!", {
+        id: "auto-submit-toast",
+        description: `$${receiptData.amount?.toFixed(2)} on ${receiptData.receipt_date}`,
+        duration: 5000,
+        action: {
+          label: "Edit",
+          onClick: () => {
+            // Open the details card in edit mode with the created receipt
+            setExtractedData({
+              ...receiptData,
+              id: createdReceipt.id,
+            })
+            setShowDetailsCard(true)
+          }
+        }
+      })
+
+      // Reset uploader state
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+      setUploadedFile(null)
+      setTempFilePathState(null)
+      setExtractedData({})
+
+    } catch (error) {
+      console.error("Error during auto-submit:", error)
+      const errorMessage = error instanceof Error ? error.message : "Auto-submit failed."
+
+      // Fall back to showing dialog with extracted data
+      sonnerToast.error("Auto-submit failed", {
+        id: "auto-submit-toast",
+        description: `${errorMessage}. Please review and submit manually.`,
+        duration: 5000
+      })
+      setShowDetailsCard(true)
+
+    } finally {
+      setIsSubmitting(false)
+      setIsProcessingFile(false)
     }
   }
   
@@ -330,8 +456,20 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
             onSubmit={handleDetailsSubmit}
             onCancel={handleCancel}
             initialData={extractedData}
+            // If extractedData has an id, we're editing an auto-submitted receipt
+            mode={extractedData?.id ? 'edit' : 'create'}
+            receiptId={extractedData?.id as string | undefined}
+            onEditSuccess={(updatedReceipt) => {
+              if (onReceiptAdded) {
+                onReceiptAdded(updatedReceipt)
+              }
+              setShowDetailsCard(false)
+              setExtractedData({})
+            }}
           />
-          <DialogTitle className="sr-only">Confirm Receipt Details</DialogTitle>
+          <DialogTitle className="sr-only">
+            {extractedData?.id ? 'Edit Receipt Details' : 'Confirm Receipt Details'}
+          </DialogTitle>
         </DialogContent>
       </Dialog>
     </>
