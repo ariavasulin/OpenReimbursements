@@ -36,8 +36,12 @@ import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 import { formatCurrency } from "@/lib/utils"
 import type { Receipt, BulkUpdateResponse } from "@/lib/types"
 import { useAdminReceipts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
+import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
+  // Prefetch batch-review and users data in background after main content loads
+  useAdminPrefetch()
+
   const [activeTab, setActiveTab] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all")
   const [searchQuery, setSearchQuery] = useState<string>("")

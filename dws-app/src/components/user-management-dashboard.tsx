@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ import UserTable from "@/components/user-table"
 import { UserFormModal } from "@/components/user-form-modal"
 import { BanUserDialog } from "@/components/ban-user-dialog"
 import type { AdminUser } from "@/lib/types"
+import { useAdminUsers, useInvalidateAdminUsers } from "@/hooks/use-admin-users"
 
 interface UserManagementDashboardProps {
   currentUserId?: string
@@ -21,11 +22,13 @@ export default function UserManagementDashboard({
   currentUserId,
   onLogout,
 }: UserManagementDashboardProps) {
-  const [users, setUsers] = useState<AdminUser[]>([])
+  // Use React Query for cached data fetching
+  const { data: users = [], isLoading, error: queryError, refetch } = useAdminUsers()
+  const invalidateUsers = useInvalidateAdminUsers()
+  const error = queryError?.message || null
+
   const [filteredUsers, setFilteredUsers] = useState<AdminUser[]>([])
   const [searchQuery, setSearchQuery] = useState("")
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
 
   // Modal states
   const [showUserForm, setShowUserForm] = useState(false)
@@ -33,31 +36,6 @@ export default function UserManagementDashboard({
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null)
   const [showBanDialog, setShowBanDialog] = useState(false)
   const [userToBan, setUserToBan] = useState<AdminUser | null>(null)
-
-  const fetchUsers = useCallback(async () => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await fetch("/api/admin/users?perPage=1000")
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to fetch users")
-      }
-
-      setUsers(data.users || [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred")
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
-
-  // Fetch users on mount
-  useEffect(() => {
-    fetchUsers()
-  }, [fetchUsers])
 
   // Filter users based on search query
   useEffect(() => {
@@ -99,21 +77,20 @@ export default function UserManagementDashboard({
     setShowBanDialog(true)
   }
 
-  const handleFormSuccess = (user: AdminUser) => {
+  const handleFormSuccess = () => {
     if (formMode === "create") {
-      setUsers(prev => [...prev, user])
       toast.success("User created successfully")
     } else {
-      setUsers(prev => prev.map(u => u.id === user.id ? user : u))
       toast.success("User updated successfully")
     }
+    // Invalidate cache to refetch users
+    invalidateUsers()
   }
 
   const handleBanSuccess = () => {
-    if (userToBan) {
-      setUsers(prev => prev.filter(u => u.id !== userToBan.id))
-      toast.success("User has been banned")
-    }
+    toast.success("User has been banned")
+    // Invalidate cache to refetch users
+    invalidateUsers()
   }
 
   return (
@@ -171,7 +148,7 @@ export default function UserManagementDashboard({
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={fetchUsers}
+              onClick={() => refetch()}
               disabled={isLoading}
               className="bg-[#333333] border-[#444444] text-white hover:bg-[#444444]"
             >
