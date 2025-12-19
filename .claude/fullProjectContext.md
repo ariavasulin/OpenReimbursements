@@ -248,16 +248,6 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 - Supabase dashboard.
 - Browser dev tools.
 
-## Future Considerations (from original rules, verify current relevance)
-
-### Planned Features (Out of Scope for V1 - original list)
-- ~~OCR integration with Google Cloud Vision API~~ (Implemented)
-- Email notifications for status changes
-- Advanced reporting and analytics (Basic stats exist in Admin Dashboard)
-- Manager approval workflows
-- Direct accounting software integration
-- ~~Batch operations for admin users~~ (Batch Review and Bulk Reimburse are implemented)
-
 ## Security Best Practices
 
 ### Data Protection
@@ -302,4 +292,3 @@ npm start
 # Linting
 npm run lint
 ```
-This updated `.cursorrules` file aims to accurately reflect the current state and capabilities of the DWS Receipts application based on the codebase review. 

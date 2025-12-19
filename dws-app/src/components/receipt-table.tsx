@@ -2,12 +2,18 @@
 
 import type React from "react"
 import { useState, useMemo, useEffect } from "react"
-import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react"
+import { ChevronUp, ChevronDown, ChevronsUpDown, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { formatDate } from "@/lib/utils"
 import type { Receipt } from "@/lib/types"
 
@@ -20,20 +26,27 @@ interface ReceiptTableProps {
   pageSize?: number
   onPageChange?: (page: number) => void
   onPageSizeChange?: (pageSize: number) => void
+  // Action callbacks
+  onEdit?: (receipt: Receipt) => void
+  onDelete?: (receipt: Receipt) => void
+  showActions?: boolean  // default: true
 }
 
 type SortField = keyof Receipt
 type SortDirection = "asc" | "desc" | null
 
-const ReceiptTable: React.FC<ReceiptTableProps> = ({ 
-  rowData = [], 
-  height = "auto", 
+const ReceiptTable: React.FC<ReceiptTableProps> = ({
+  rowData = [],
+  height = "auto",
   selectedRows: controlledSelectedRows,
   onSelectedRowsChange,
   currentPage = 1,
   pageSize = 10,
   onPageChange,
-  onPageSizeChange
+  onPageSizeChange,
+  onEdit,
+  onDelete,
+  showActions = true,
 }) => {
   const [internalSelectedRows, setInternalSelectedRows] = useState<Set<string>>(new Set())
   const [sortField, setSortField] = useState<SortField | null>(null)
@@ -245,6 +258,9 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                 </TableHead>
               <TableHead className="text-white text-center p-3">Status</TableHead>
               <TableHead className="text-white text-center p-3">Image</TableHead>
+              {showActions && (
+                <TableHead className="text-white text-center p-3 w-20">Actions</TableHead>
+              )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -280,6 +296,33 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                       View
                     </Button>
                   </TableCell>
+                  {showActions && (
+                    <TableCell className="text-center p-3">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 hover:bg-[#555555]">
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-[#333333] border-[#444444]">
+                          <DropdownMenuItem
+                            onClick={() => onEdit?.(receipt)}
+                            className="text-white hover:bg-[#444444] cursor-pointer"
+                          >
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => onDelete?.(receipt)}
+                            className="text-red-400 hover:bg-[#444444] hover:text-red-300 cursor-pointer"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

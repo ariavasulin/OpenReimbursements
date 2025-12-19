@@ -7,9 +7,19 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CalendarIcon } from "lucide-react"
+import { CalendarIcon, Trash2 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { format, parseISO } from "date-fns" // Added parseISO
 import { toast as sonnerToast } from "sonner" // Import sonnerToast
 import { useState, useEffect } from "react" // Added useEffect
@@ -23,6 +33,8 @@ interface ReceiptDetailsCardProps {
   mode?: 'create' | 'edit' // 'create' for new receipts, 'edit' for existing
   receiptId?: string // Required when mode is 'edit'
   onEditSuccess?: (updatedReceipt: Receipt) => void // Callback after successful edit
+  onDelete?: () => void // Callback when delete succeeds
+  allowDelete?: boolean // Whether to show delete button (default: true in edit mode)
 }
 
 export function ReceiptDetailsCard({
@@ -31,7 +43,9 @@ export function ReceiptDetailsCard({
   initialData,
   mode = 'create',
   receiptId,
-  onEditSuccess
+  onEditSuccess,
+  onDelete,
+  allowDelete = true,
 }: ReceiptDetailsCardProps) {
   const isMobile = useMobile();
   const isEditMode = mode === 'edit';
@@ -63,6 +77,8 @@ export function ReceiptDetailsCard({
   const [categories, setCategories] = useState<CategoryType[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
  
   useEffect(() => {
     // Sync local state if parent provides new initialData (e.g., after OCR finishes)
@@ -147,8 +163,10 @@ export function ReceiptDetailsCard({
         sonnerToast.success("Receipt Updated", { description: "Your receipt has been updated successfully." });
         if (onEditSuccess && result.receipt) {
           onEditSuccess(result.receipt);
+        } else {
+          // Fallback: close dialog if no onEditSuccess handler
+          onCancel();
         }
-        onCancel(); // Close the dialog
       } catch (error) {
         console.error("Error updating receipt:", error);
         sonnerToast.error("Error", { description: "An error occurred while updating the receipt." });
@@ -207,7 +225,41 @@ export function ReceiptDetailsCard({
       setIsCheckingDuplicate(false);
     }
   };
- 
+
+  const handleDelete = async () => {
+    if (!receiptId) return;
+
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/receipts?id=${receiptId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to delete receipt');
+      }
+
+      sonnerToast.success("Receipt Deleted", {
+        description: "The receipt has been permanently deleted."
+      });
+
+      if (onDelete) {
+        onDelete();
+      } else {
+        // Fallback: close dialog if no onDelete handler
+        onCancel();
+      }
+    } catch (error) {
+      sonnerToast.error("Delete Failed", {
+        description: error instanceof Error ? error.message : "Failed to delete receipt"
+      });
+    } finally {
+      setIsDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   const handleDateChange = (selectedDate: Date | undefined | string) => {
     if (typeof selectedDate === 'string') {
       // From native date input (yyyy-MM-dd)
@@ -308,14 +360,60 @@ export function ReceiptDetailsCard({
           </div>
         </form>
       </CardContent>
-      <CardFooter className="flex justify-between">
-        <Button variant="outline" onClick={onCancel} className="border-[#3e3e3e] text-neutral-800 hover:bg-[#4e4e4e] hover:text-white" disabled={isCheckingDuplicate}>
+      <CardFooter className={`flex ${isEditMode && allowDelete ? 'justify-between' : 'justify-end'} gap-3`}>
+        {isEditMode && allowDelete && (
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => setShowDeleteConfirm(true)}
+            disabled={isCheckingDuplicate || isDeleting}
+            className="bg-red-600 hover:bg-red-700 flex-1"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          onClick={onCancel}
+          className={`border-[#3e3e3e] text-neutral-800 hover:bg-[#4e4e4e] hover:text-white ${isEditMode && allowDelete ? 'flex-1' : ''}`}
+          disabled={isCheckingDuplicate || isDeleting}
+        >
           Cancel
         </Button>
-        <Button type="submit" form="receipt-form" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isCheckingDuplicate}>
+        <Button
+          type="submit"
+          form="receipt-form"
+          className={`bg-blue-600 hover:bg-blue-700 text-white ${isEditMode && allowDelete ? 'flex-1' : ''}`}
+          disabled={isCheckingDuplicate || isDeleting}
+        >
           {isCheckingDuplicate ? (isEditMode ? "Saving..." : "Checking...") : (isEditMode ? "Save Changes" : "Submit Receipt")}
         </Button>
       </CardFooter>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent className="bg-[#333333] border-[#444444]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Delete Receipt?</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-300">
+              Are you sure you want to delete this receipt? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting} className="bg-transparent border-[#555555] text-white hover:bg-[#555555]">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isDeleting ? "Deleting..." : "Delete Receipt"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }

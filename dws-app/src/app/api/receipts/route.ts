@@ -292,8 +292,11 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
     }
 
-    // Check if user owns the receipt
-    if (existingReceipt.user_id !== userId) {
+    // Check if user owns the receipt and/or is admin
+    let userIsAdmin = false;
+    const isOwner = existingReceipt.user_id === userId;
+
+    if (!isOwner) {
       // Check if user is admin
       const { data: profile } = await supabase
         .from('user_profiles')
@@ -305,14 +308,23 @@ export async function PATCH(request: Request) {
         console.log("PATCH /api/receipts: User does not own receipt and is not admin");
         return NextResponse.json({ error: 'You can only edit your own receipts' }, { status: 403 });
       }
+      userIsAdmin = true;
+    } else {
+      // Owner - check if also admin (needed for status check)
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('user_id', userId)
+        .single();
+      userIsAdmin = profile?.role === 'admin';
     }
 
-    // Only allow editing receipts with "Pending" status
-    if (existingReceipt.status.toLowerCase() !== 'pending') {
-      console.log("PATCH /api/receipts: Cannot edit receipt with status:", existingReceipt.status);
+    // Only allow editing non-pending receipts if user is admin
+    if (existingReceipt.status.toLowerCase() !== 'pending' && !userIsAdmin) {
+      console.log("PATCH /api/receipts: Non-admin cannot edit receipt with status:", existingReceipt.status);
       return NextResponse.json({
-        error: `Cannot edit receipt with status "${existingReceipt.status}". Only pending receipts can be edited.`
-      }, { status: 400 });
+        error: `Cannot edit receipt with status "${existingReceipt.status}". Contact an admin.`
+      }, { status: 403 });
     }
 
     // Build update object with only provided fields
@@ -385,6 +397,107 @@ export async function PATCH(request: Request) {
 
   } catch (error) {
     console.error('PATCH /api/receipts: Unhandled error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    return NextResponse.json({ error: `Error processing request: ${errorMessage}` }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  console.log("DELETE /api/receipts: Handler called");
+  const supabase = await createSupabaseServerClient();
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    console.error("DELETE /api/receipts: Session error:", sessionError);
+    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
+  }
+
+  if (!session) {
+    console.log("DELETE /api/receipts: No session, unauthorized");
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const userId = session.user.id;
+  const { searchParams } = new URL(request.url);
+  const receiptId = searchParams.get('id');
+
+  if (!receiptId) {
+    return NextResponse.json({ error: 'Receipt ID is required' }, { status: 400 });
+  }
+
+  try {
+    // Fetch receipt to check ownership and status
+    const { data: receipt, error: fetchError } = await supabase
+      .from('receipts')
+      .select('id, user_id, status, image_url')
+      .eq('id', receiptId)
+      .single();
+
+    if (fetchError || !receipt) {
+      console.error("DELETE /api/receipts: Receipt not found:", fetchError);
+      return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
+    }
+
+    // Check permissions
+    const isOwner = receipt.user_id === userId;
+    const isPending = receipt.status.toLowerCase() === 'pending';
+
+    // Check if admin
+    let isAdmin = false;
+    if (!isOwner || !isPending) {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('user_id', userId)
+        .single();
+      isAdmin = profile?.role === 'admin';
+    }
+
+    // Employees can only delete their own pending receipts
+    // Admins can delete any receipt
+    if (!isAdmin && (!isOwner || !isPending)) {
+      if (!isOwner) {
+        console.log("DELETE /api/receipts: User does not own receipt and is not admin");
+        return NextResponse.json({ error: 'You can only delete your own receipts' }, { status: 403 });
+      }
+      console.log("DELETE /api/receipts: Cannot delete receipt with status:", receipt.status);
+      return NextResponse.json({
+        error: `Cannot delete receipt with status "${receipt.status}". Contact an admin.`
+      }, { status: 403 });
+    }
+
+    // Delete the image from storage first
+    if (receipt.image_url) {
+      console.log("DELETE /api/receipts: Deleting image from storage:", receipt.image_url);
+      const { error: storageError } = await supabase.storage
+        .from('receipt-images')
+        .remove([receipt.image_url]);
+      if (storageError) {
+        console.error('DELETE /api/receipts: Error deleting receipt image:', storageError);
+        // Continue with deletion even if image removal fails
+      }
+    }
+
+    // Delete the receipt record
+    const { error: deleteError } = await supabase
+      .from('receipts')
+      .delete()
+      .eq('id', receiptId);
+
+    if (deleteError) {
+      console.error("DELETE /api/receipts: Error deleting receipt:", deleteError);
+      return NextResponse.json({ error: 'Failed to delete receipt' }, { status: 500 });
+    }
+
+    console.log("DELETE /api/receipts: Successfully deleted receipt:", receiptId);
+    return NextResponse.json({ success: true }, { status: 200 });
+
+  } catch (error) {
+    console.error('DELETE /api/receipts: Unhandled error:', error);
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
     return NextResponse.json({ error: `Error processing request: ${errorMessage}` }, { status: 500 });
   }

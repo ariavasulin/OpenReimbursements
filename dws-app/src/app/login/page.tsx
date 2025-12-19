@@ -11,31 +11,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 
-// Utility function to format US phone numbers
+import { formatUSPhoneNumber as formatPhone, formatPhoneForDisplay } from '@/lib/phone';
+
+// Wrapper to maintain backwards compatibility - always returns a string
 const formatUSPhoneNumber = (input: string): string => {
-  // Remove all non-digits
-  const digitsOnly = input.replace(/\D/g, '');
-  
-  // If it already starts with 1 and has 11 digits, use as-is
-  // If it has 10 digits and doesn't start with 1, add 1
-  // If it starts with 1 but has more than 11 digits, take first 11
-  let formattedNumber = digitsOnly;
-  
-  if (digitsOnly.length === 10) {
-    // 10 digits, add country code
-    formattedNumber = '1' + digitsOnly;
-  } else if (digitsOnly.length === 11 && digitsOnly.startsWith('1')) {
-    // 11 digits starting with 1, use as-is
-    formattedNumber = digitsOnly;
-  } else if (digitsOnly.length > 11 && digitsOnly.startsWith('1')) {
-    // More than 11 digits starting with 1, take first 11
-    formattedNumber = digitsOnly.substring(0, 11);
-  } else if (digitsOnly.length > 10 && !digitsOnly.startsWith('1')) {
-    // More than 10 digits not starting with 1, take first 10 and add country code
-    formattedNumber = '1' + digitsOnly.substring(0, 10);
+  const result = formatPhone(input);
+  if (result) return result;
+
+  // For short test numbers (less than 10 digits), just add + prefix without country code
+  const digits = input.replace(/\D/g, '');
+  if (digits.length < 10) {
+    return `+${digits}`;
   }
-  
-  return '+' + formattedNumber;
+  return `+1${digits.slice(0, 10)}`;
 };
 
 export default function LoginPage() {

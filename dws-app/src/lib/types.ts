@@ -35,6 +35,22 @@ export interface UserProfile {
   employee_id_internal?: string;
   created_at?: string;
   updated_at?: string;
+  deleted_at?: string | null;
+}
+
+// For admin user management - combines auth.users data with user_profiles
+export interface AdminUser {
+  id: string;
+  phone: string;
+  created_at: string;
+  last_sign_in_at?: string;
+  banned_until?: string;
+  // From user_profiles join
+  role: 'employee' | 'admin';
+  full_name?: string;
+  preferred_name?: string;
+  employee_id_internal?: string;
+  deleted_at?: string | null;
 }
 
 // For bulk update API responses

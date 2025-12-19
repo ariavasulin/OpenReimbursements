@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { supabase } from "@/lib/supabaseClient"
-import { Download, RefreshCw, ListChecks, LogOut, Search, CheckCircle, AlertCircle } from "lucide-react"
+import { Download, RefreshCw, ListChecks, LogOut, Search, CheckCircle, AlertCircle, Users } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -61,6 +61,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   // Refresh trigger for re-fetching receipts
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const triggerRefresh = () => setRefreshTrigger(prev => prev + 1)
+
 
   const handleDateChange = (selectedDateRange: import("react-day-picker").DateRange | undefined) => {
     setDateRange({
@@ -424,6 +425,16 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
             /> {/* Adjusted size for typical header */}
           </div>
           <div className="ml-auto flex items-center space-x-4">
+            <Link href="/users">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="bg-[#333333] text-white hover:bg-[#444444]"
+              >
+                <Users className="mr-2 h-4 w-4" />
+                Manage Users
+              </Button>
+            </Link>
             <Link href="/batch-review">
               <Button
                 variant="ghost"
@@ -942,6 +953,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
           )}
         </DialogContent>
       </Dialog>
+
     </div>
   )
 }
