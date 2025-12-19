@@ -4,7 +4,16 @@ import { useState } from "react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import type { Receipt } from "@/lib/types"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -31,10 +40,16 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
   const [currentPage, setCurrentPage] = useState(1)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null)
+  const [contactAdminReceipt, setContactAdminReceipt] = useState<Receipt | null>(null)
 
   const handleEditClick = (receipt: Receipt) => {
-    setSelectedReceipt(receipt)
-    setEditDialogOpen(true)
+    if (receipt.status.toLowerCase() === 'pending') {
+      setSelectedReceipt(receipt)
+      setEditDialogOpen(true)
+    } else {
+      // Show contact admin dialog for processed receipts
+      setContactAdminReceipt(receipt)
+    }
   }
 
   const handleEditSuccess = (updatedReceipt: Receipt) => {
@@ -128,19 +143,15 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
                       )}
                     </TableCell>
                     <TableCell>
-                      {receipt.status.toLowerCase() === 'pending' ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditClick(receipt)}
-                          className="text-blue-400 hover:text-blue-300 hover:bg-[#4e4e4e] p-2"
-                          aria-label={`Edit receipt from ${receipt.date ? formatDate(receipt.date) : 'this date'}`}
-                        >
-                          <Pencil size={16} />
-                        </Button>
-                      ) : (
-                        <span className="text-gray-500 text-xs">-</span>
-                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleEditClick(receipt)}
+                        className="text-blue-400 hover:text-blue-300 hover:bg-[#4e4e4e] p-2"
+                        aria-label={`Edit receipt from ${receipt.date ? formatDate(receipt.date) : 'this date'}`}
+                      >
+                        <Pencil size={16} />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
@@ -214,6 +225,7 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
       {/* Edit Receipt Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent className="bg-transparent border-none p-0 max-w-md">
+          <DialogTitle className="sr-only">Edit Receipt</DialogTitle>
           {selectedReceipt && (
             <ReceiptDetailsCard
               mode="edit"
@@ -227,10 +239,35 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
               onSubmit={() => {}} // Not used in edit mode
               onCancel={() => setEditDialogOpen(false)}
               onEditSuccess={handleEditSuccess}
+              onDelete={() => {
+                // Close dialog and refresh list after delete
+                setEditDialogOpen(false)
+                setSelectedReceipt(null)
+                onReceiptUpdated?.({} as Receipt) // Trigger refresh
+              }}
             />
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Contact Admin Dialog */}
+      <AlertDialog open={!!contactAdminReceipt} onOpenChange={(open) => !open && setContactAdminReceipt(null)}>
+        <AlertDialogContent className="bg-[#333333] border-[#444444]">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-white">Cannot Edit Receipt</AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-300">
+              This receipt has been <span className="font-semibold capitalize">{contactAdminReceipt?.status}</span> and cannot be modified.
+              <br /><br />
+              Please contact your system administrator if you need to make changes to this receipt.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction className="bg-[#2680FC] hover:bg-[#1a6cd9]">
+              OK
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
