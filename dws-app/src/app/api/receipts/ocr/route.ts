@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const userId = session.user.id;
     const body = await request.json();
     const { tempFilePath } = body;
 
@@ -50,18 +51,69 @@ export async function POST(request: NextRequest) {
     // Create BAML Image from base64
     const image = Image.fromBase64(mediaType, base64);
 
-    // Call BAML extraction function
+    // Call BAML extraction function (categories are hardcoded in the prompt)
     console.log('OCR API: Calling BAML ExtractReceiptFromImage...');
     const extracted = await b.ExtractReceiptFromImage(image);
     console.log('OCR API: BAML extraction result:', extracted);
 
-    // Return extracted data in the expected format
+    // Map category name to category_id (single query)
+    let categoryId: string | null = null;
+    if (extracted.category) {
+      const { data: categoryMatch } = await supabase
+        .from('categories')
+        .select('id')
+        .ilike('name', extracted.category)
+        .single();
+
+      if (categoryMatch) {
+        categoryId = categoryMatch.id;
+      }
+    }
+
+    // Check for duplicates if we have date and amount
+    let isDuplicate = false;
+    let existingReceipts: { id: string; description: string }[] = [];
+
+    if (extracted.date && extracted.amount !== null && extracted.amount !== undefined) {
+      const { data: duplicates, error: dupError } = await supabase
+        .from('receipts')
+        .select('id, description')
+        .eq('user_id', userId)
+        .eq('receipt_date', extracted.date)
+        .eq('amount', extracted.amount);
+
+      if (!dupError && duplicates && duplicates.length > 0) {
+        isDuplicate = true;
+        existingReceipts = duplicates.map(r => ({
+          id: r.id,
+          description: r.description || ''
+        }));
+      }
+    }
+
+    // Determine if auto-submit is possible
+    const canAutoSubmit = !!(
+      extracted.date &&
+      extracted.amount !== null &&
+      extracted.amount !== undefined &&
+      categoryId &&
+      !isDuplicate
+    );
+
+    // Return extracted data with auto-submit guidance
     return NextResponse.json({
       success: true,
       data: {
         date: extracted.date || null,
-        amount: extracted.amount || null,
+        amount: extracted.amount ?? null,
+        category: extracted.category || null,
+        category_id: categoryId,
       },
+      duplicate: {
+        isDuplicate,
+        existingReceipts,
+      },
+      canAutoSubmit,
     });
 
   } catch (error: unknown) {
