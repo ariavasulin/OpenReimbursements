@@ -7,7 +7,7 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CalendarIcon, Trash2 } from "lucide-react"
+import { CalendarIcon } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar } from "@/components/ui/calendar"
 import {
@@ -369,7 +369,6 @@ export function ReceiptDetailsCard({
             disabled={isCheckingDuplicate || isDeleting}
             className="bg-red-600 hover:bg-red-700 flex-1"
           >
-            <Trash2 className="h-4 w-4 mr-2" />
             Delete
           </Button>
         )}
@@ -387,7 +386,7 @@ export function ReceiptDetailsCard({
           className={`bg-blue-600 hover:bg-blue-700 text-white ${isEditMode && allowDelete ? 'flex-1' : ''}`}
           disabled={isCheckingDuplicate || isDeleting}
         >
-          {isCheckingDuplicate ? (isEditMode ? "Saving..." : "Checking...") : (isEditMode ? "Save Changes" : "Submit Receipt")}
+          {isCheckingDuplicate ? (isEditMode ? "Saving..." : "Checking...") : (isEditMode ? "Save" : "Submit Receipt")}
         </Button>
       </CardFooter>
 

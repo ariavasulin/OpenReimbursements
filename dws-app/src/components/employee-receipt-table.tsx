@@ -6,6 +6,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import {
+  Drawer,
+  DrawerContent,
+  DrawerTitle,
+} from "@/components/ui/drawer"
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogContent,
@@ -15,7 +20,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import type { Receipt } from "@/lib/types"
-import { formatCurrency, formatDate } from "@/lib/utils"
+import { formatCurrency, formatDate, formatDateShort } from "@/lib/utils"
+import { useMobile } from "@/hooks/use-mobile"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExternalLink, Pencil } from "lucide-react"
 import {
@@ -41,6 +47,7 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null)
   const [contactAdminReceipt, setContactAdminReceipt] = useState<Receipt | null>(null)
+  const isMobile = useMobile()
 
   const handleEditClick = (receipt: Receipt) => {
     if (receipt.status.toLowerCase() === 'pending') {
@@ -112,52 +119,50 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
         <Table>
           <TableHeader className="bg-[#3e3e3e] hover:bg-[#3e3e3e]">
             <TableRow className="border-[#4e4e4e]">
-              <TableHead className="text-white">Date</TableHead>
-              <TableHead className="text-white">Amount</TableHead>
-              <TableHead className="text-white">Status</TableHead>
-              <TableHead className="text-white">Photo</TableHead>
-              <TableHead className="text-white">Actions</TableHead>
+              <TableHead className="text-white text-xs sm:text-sm px-1.5 sm:px-2">Date</TableHead>
+              <TableHead className="text-white text-xs sm:text-sm px-1.5 sm:px-2">Amount</TableHead>
+              <TableHead className="text-white text-xs sm:text-sm px-1.5 sm:px-2">Status</TableHead>
+              <TableHead className="text-white text-xs sm:text-sm px-1.5 sm:px-2 w-[1%] whitespace-nowrap">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {currentReceipts.length > 0
               ? currentReceipts.map((receipt) => (
                   <TableRow key={receipt.id} className="border-[#4e4e4e] hover:bg-[#383838]">
-                    <TableCell>{receipt.date ? formatDate(receipt.date) : 'N/A'}</TableCell>
-                    <TableCell>{formatCurrency(receipt.amount)}</TableCell>
-                    <TableCell><StatusBadge status={receipt.status} /></TableCell>
-                    <TableCell>
-                      {receipt.image_url ? (
-                        <a
-                          href={receipt.image_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center text-blue-400 hover:text-blue-300 transition-colors"
-                          aria-label={`View receipt photo for ${receipt.date ? formatDate(receipt.date) : 'this receipt'}`}
-                        >
-                          <span className="mr-1">View</span>
-                          <ExternalLink size={14} />
-                        </a>
-                      ) : (
-                        <span className="text-gray-500">No photo</span>
-                      )}
+                    <TableCell className="text-xs sm:text-sm px-1.5 sm:px-2">
+                      {receipt.date ? (isMobile ? formatDateShort(receipt.date) : formatDate(receipt.date)) : 'N/A'}
                     </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleEditClick(receipt)}
-                        className="text-blue-400 hover:text-blue-300 hover:bg-[#4e4e4e] p-2"
-                        aria-label={`Edit receipt from ${receipt.date ? formatDate(receipt.date) : 'this date'}`}
-                      >
-                        <Pencil size={16} />
-                      </Button>
+                    <TableCell className="text-xs sm:text-sm px-1.5 sm:px-2">{formatCurrency(receipt.amount)}</TableCell>
+                    <TableCell className="px-1.5 sm:px-2"><StatusBadge status={receipt.status} /></TableCell>
+                    <TableCell className="px-1.5 sm:px-2">
+                      <div className="flex items-center">
+                        {receipt.image_url && (
+                          <a
+                            href={receipt.image_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:text-blue-300 transition-colors p-1 sm:p-1.5"
+                            aria-label={`View receipt photo for ${receipt.date ? formatDate(receipt.date) : 'this receipt'}`}
+                          >
+                            <ExternalLink size={isMobile ? 14 : 16} />
+                          </a>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleEditClick(receipt)}
+                          className="text-blue-400 hover:text-blue-300 hover:bg-[#4e4e4e] p-1 sm:p-1.5 h-auto min-w-0"
+                          aria-label={`Edit receipt from ${receipt.date ? formatDate(receipt.date) : 'this date'}`}
+                        >
+                          <Pencil size={isMobile ? 14 : 16} />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
               : (
                   <TableRow className="border-[#4e4e4e] hover:bg-[#383838]">
-                    <TableCell colSpan={5} className="text-center py-4 text-gray-400">
+                    <TableCell colSpan={4} className="text-center py-4 text-gray-400">
                       No receipts found
                     </TableCell>
                   </TableRow>
@@ -222,33 +227,62 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
         {Math.min(filteredReceipts.length, currentPage * ITEMS_PER_PAGE)} of {filteredReceipts.length} receipts
       </div>
 
-      {/* Edit Receipt Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="bg-transparent border-none p-0 max-w-md">
-          <DialogTitle className="sr-only">Edit Receipt</DialogTitle>
-          {selectedReceipt && (
-            <ReceiptDetailsCard
-              mode="edit"
-              receiptId={selectedReceipt.id}
-              initialData={{
-                receipt_date: selectedReceipt.date,
-                amount: selectedReceipt.amount,
-                category_id: selectedReceipt.category_id,
-                notes: selectedReceipt.notes || selectedReceipt.description,
-              }}
-              onSubmit={() => {}} // Not used in edit mode
-              onCancel={() => setEditDialogOpen(false)}
-              onEditSuccess={handleEditSuccess}
-              onDelete={() => {
-                // Close dialog and refresh list after delete
-                setEditDialogOpen(false)
-                setSelectedReceipt(null)
-                onReceiptUpdated?.({} as Receipt) // Trigger refresh
-              }}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Edit Receipt - Drawer on mobile, Dialog on desktop */}
+      {isMobile ? (
+        <Drawer open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DrawerContent className="bg-[#2e2e2e] border-[#4e4e4e]">
+            <DrawerTitle className="sr-only">Edit Receipt</DrawerTitle>
+            <div className="pb-4">
+              {selectedReceipt && (
+                <ReceiptDetailsCard
+                  mode="edit"
+                  receiptId={selectedReceipt.id}
+                  initialData={{
+                    receipt_date: selectedReceipt.date,
+                    amount: selectedReceipt.amount,
+                    category_id: selectedReceipt.category_id,
+                    notes: selectedReceipt.notes || selectedReceipt.description,
+                  }}
+                  onSubmit={() => {}}
+                  onCancel={() => setEditDialogOpen(false)}
+                  onEditSuccess={handleEditSuccess}
+                  onDelete={() => {
+                    setEditDialogOpen(false)
+                    setSelectedReceipt(null)
+                    onReceiptUpdated?.({} as Receipt)
+                  }}
+                />
+              )}
+            </div>
+          </DrawerContent>
+        </Drawer>
+      ) : (
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="bg-transparent border-none p-0 max-w-md">
+            <DialogTitle className="sr-only">Edit Receipt</DialogTitle>
+            {selectedReceipt && (
+              <ReceiptDetailsCard
+                mode="edit"
+                receiptId={selectedReceipt.id}
+                initialData={{
+                  receipt_date: selectedReceipt.date,
+                  amount: selectedReceipt.amount,
+                  category_id: selectedReceipt.category_id,
+                  notes: selectedReceipt.notes || selectedReceipt.description,
+                }}
+                onSubmit={() => {}}
+                onCancel={() => setEditDialogOpen(false)}
+                onEditSuccess={handleEditSuccess}
+                onDelete={() => {
+                  setEditDialogOpen(false)
+                  setSelectedReceipt(null)
+                  onReceiptUpdated?.({} as Receipt)
+                }}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* Contact Admin Dialog */}
       <AlertDialog open={!!contactAdminReceipt} onOpenChange={(open) => !open && setContactAdminReceipt(null)}>
@@ -274,7 +308,7 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
 
 function StatusBadge({ status }: { status: Receipt["status"] }) {
   const normalizedStatus = status.toLowerCase()
-  
+
   const variants: Record<string, string> = {
     pending: "bg-yellow-900/30 text-yellow-300 hover:bg-yellow-900/30 border-yellow-700",
     approved: "bg-green-900/30 text-green-300 hover:bg-green-900/30 border-green-700",
@@ -286,7 +320,7 @@ function StatusBadge({ status }: { status: Receipt["status"] }) {
   const displayStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()
 
   return (
-    <Badge variant="outline" className={`${variants[normalizedStatus] || variants.pending} text-xs px-2 py-0.5`}>
+    <Badge variant="outline" className={`${variants[normalizedStatus] || variants.pending} text-[10px] sm:text-xs px-1.5 sm:px-2 py-0.5`}>
       {displayStatus}
     </Badge>
   )

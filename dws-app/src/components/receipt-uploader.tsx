@@ -7,6 +7,11 @@ import { Upload, FileImage } from "lucide-react"
 import { toast as sonnerToast } from "sonner"
 import { useMobile } from "@/hooks/use-mobile"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerTitle,
+} from "@/components/ui/drawer"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 import type { Receipt } from "@/lib/types"
 
@@ -314,22 +319,51 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
       }
 
       // Show success toast with Edit action
-      sonnerToast.success("Receipt submitted!", {
-        id: "auto-submit-toast",
-        description: `$${receiptData.amount?.toFixed(2)} on ${receiptData.receipt_date}`,
-        duration: 5000,
-        action: {
-          label: "Edit",
-          onClick: () => {
-            // Open the details card in edit mode with the created receipt
-            setExtractedData({
-              ...receiptData,
-              id: createdReceipt.id,
-            })
-            setShowDetailsCard(true)
-          }
+      const formatToastDate = (dateStr: string | undefined) => {
+        if (!dateStr) return "N/A"
+        try {
+          const date = new Date(dateStr)
+          const month = date.getMonth() + 1
+          const day = date.getDate()
+          const year = date.getFullYear().toString().slice(-2)
+          return `${month}/${day}/${year}`
+        } catch {
+          return dateStr
         }
-      })
+      }
+
+      sonnerToast.custom(
+        (t) => (
+          <div
+            className="flex items-center justify-between w-full bg-[#2e2e2e] border border-[#4e4e4e] rounded-lg p-4 shadow-lg cursor-pointer"
+            onClick={() => {
+              sonnerToast.dismiss(t)
+              setExtractedData({
+                ...receiptData,
+                id: createdReceipt.id,
+              })
+              setShowDetailsCard(true)
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-white font-medium text-sm">Receipt submitted!</p>
+                <p className="text-gray-400 text-xs">${receiptData.amount?.toFixed(2)} on {formatToastDate(receiptData.receipt_date)}</p>
+              </div>
+            </div>
+            <span className="text-blue-400 text-sm font-medium">Tap to edit</span>
+          </div>
+        ),
+        {
+          id: "auto-submit-toast",
+          duration: 5000,
+        }
+      )
 
       // Reset uploader state
       if (fileInputRef.current) {
@@ -450,28 +484,54 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
         </label>
       </div>
 
-      <Dialog open={showDetailsCard} onOpenChange={setShowDetailsCard}>
-        <DialogContent className="sm:max-w-md bg-[#2e2e2e] p-0 border-none">
-          <ReceiptDetailsCard
-            onSubmit={handleDetailsSubmit}
-            onCancel={handleCancel}
-            initialData={extractedData}
-            // If extractedData has an id, we're editing an auto-submitted receipt
-            mode={extractedData?.id ? 'edit' : 'create'}
-            receiptId={extractedData?.id as string | undefined}
-            onEditSuccess={(updatedReceipt) => {
-              if (onReceiptAdded) {
-                onReceiptAdded(updatedReceipt)
-              }
-              setShowDetailsCard(false)
-              setExtractedData({})
-            }}
-          />
-          <DialogTitle className="sr-only">
-            {extractedData?.id ? 'Edit Receipt Details' : 'Confirm Receipt Details'}
-          </DialogTitle>
-        </DialogContent>
-      </Dialog>
+      {/* Receipt Details - Drawer on mobile, Dialog on desktop */}
+      {isMobile ? (
+        <Drawer open={showDetailsCard} onOpenChange={setShowDetailsCard}>
+          <DrawerContent className="bg-[#2e2e2e] border-[#4e4e4e]">
+            <DrawerTitle className="sr-only">
+              {extractedData?.id ? 'Edit Receipt Details' : 'Confirm Receipt Details'}
+            </DrawerTitle>
+            <div className="pb-4">
+              <ReceiptDetailsCard
+                onSubmit={handleDetailsSubmit}
+                onCancel={handleCancel}
+                initialData={extractedData}
+                mode={extractedData?.id ? 'edit' : 'create'}
+                receiptId={extractedData?.id as string | undefined}
+                onEditSuccess={(updatedReceipt) => {
+                  if (onReceiptAdded) {
+                    onReceiptAdded(updatedReceipt)
+                  }
+                  setShowDetailsCard(false)
+                  setExtractedData({})
+                }}
+              />
+            </div>
+          </DrawerContent>
+        </Drawer>
+      ) : (
+        <Dialog open={showDetailsCard} onOpenChange={setShowDetailsCard}>
+          <DialogContent className="sm:max-w-md bg-[#2e2e2e] p-0 border-none">
+            <ReceiptDetailsCard
+              onSubmit={handleDetailsSubmit}
+              onCancel={handleCancel}
+              initialData={extractedData}
+              mode={extractedData?.id ? 'edit' : 'create'}
+              receiptId={extractedData?.id as string | undefined}
+              onEditSuccess={(updatedReceipt) => {
+                if (onReceiptAdded) {
+                  onReceiptAdded(updatedReceipt)
+                }
+                setShowDetailsCard(false)
+                setExtractedData({})
+              }}
+            />
+            <DialogTitle className="sr-only">
+              {extractedData?.id ? 'Edit Receipt Details' : 'Confirm Receipt Details'}
+            </DialogTitle>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   )
 }
