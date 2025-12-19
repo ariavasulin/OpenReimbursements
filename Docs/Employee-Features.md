@@ -6,21 +6,7 @@
 
 Employees access `/employee` to submit receipts via mobile-first interface with camera integration and OCR auto-fill.
 
-## Page Layout
-
-```
-┌─────────────────────────────┐
-│        DWS Logo             │
-│    Welcome, {name}!         │
-├─────────────────────────────┤
-│   [📷 Take Photo / Upload]  │
-├─────────────────────────────┤
-│     My Receipts Table       │
-│   (filter, pagination)      │
-├─────────────────────────────┤
-│   [Logout]  [Give Feedback] │
-└─────────────────────────────┘
-```
+<img src="screenshots/mobile-employee-dashboard.png" alt="Employee Dashboard" width="280">
 
 ## Receipt Submission Flow
 
@@ -68,6 +54,8 @@ User reviews and can edit:
 - Amount
 - Category (dropdown)
 - Notes/Description
+
+<img src="screenshots/mobile-edit-receipt.png" alt="Edit Receipt Form" width="280">
 
 Duplicate warning if matching date+amount exists.
 
