@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { ArrowLeft, Check, X, ChevronLeft, ChevronRight, LogOut, AlertCircle } from "lucide-react"
@@ -20,73 +20,24 @@ import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
 import type { Receipt } from "@/lib/types"
 import { supabase } from "@/lib/supabaseClient"
+import { usePendingReceipts, useInvalidatePendingReceipts } from "@/hooks/use-pending-receipts"
 
 export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
-  const [receipts, setReceipts] = useState<Receipt[]>([])
+  // Use React Query for cached data fetching
+  const { data: receipts = [], isLoading: loading, error: queryError } = usePendingReceipts()
+  const invalidatePendingReceipts = useInvalidatePendingReceipts()
+  const error = queryError?.message || null
+
   const [currentIndex, setCurrentIndex] = useState(0)
   const [reviewedCount, setReviewedCount] = useState(0)
   const [decisions, setDecisions] = useState<Record<string, "approved" | "rejected">>({})
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [showCompletionScreen, setShowCompletionScreen] = useState<boolean>(false)
-  
+
   // Confirmation dialog state
   const [showConfirmDialog, setShowConfirmDialog] = useState<boolean>(false)
 
   const decisionsCount = useMemo(() => Object.keys(decisions).length, [decisions])
-
-  useEffect(() => {
-    const fetchPendingReceipts = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const { data, error: supabaseError } = await supabase
-          .from("receipts")
-          .select(
-            `
-            id,
-            receipt_date,
-            amount,
-            status,
-            category_id,
-            categories!receipts_category_id_fkey (name),
-            description,
-            image_url,
-            user_profiles (
-              full_name,
-              employee_id_internal
-            )
-          `
-          )
-          .eq("status", "Pending") // Assuming DB stores status as "Pending"
-          .order("created_at", { ascending: true }) // Process oldest first
-
-        if (supabaseError) throw supabaseError
-
-        const mappedReceipts: Receipt[] = data.map((item: any) => ({
-          id: item.id,
-          employeeName: item.user_profiles?.full_name || "N/A",
-          employeeId: item.user_profiles?.employee_id_internal || "N/A",
-          date: item.receipt_date,
-          amount: item.amount,
-          category: item.categories?.name || "Uncategorized",
-          description: item.description || "",
-          status: item.status.toLowerCase() as Receipt['status'],
-          image_url: item.image_url ? supabase.storage.from('receipt-images').getPublicUrl(item.image_url).data.publicUrl : "",
-          // jobCode: item.job_code || item.jobCode || "", // Removed
-        }))
-        setReceipts(mappedReceipts)
-      } catch (err: any) {
-        const errorMessage = err?.message || (typeof err === 'object' && err !== null ? JSON.stringify(err) : String(err));
-        setError(errorMessage);
-        console.error("Error fetching pending receipts (processed):", errorMessage, "Original error:", err);
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchPendingReceipts()
-  }, [])
 
   const currentReceipt = receipts[currentIndex]
   const progress = receipts.length > 0 ? (reviewedCount / receipts.length) * 100 : 0
@@ -164,34 +115,15 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
       }
 
       toast.success("All decisions submitted successfully!")
-      // Reset state and refetch or filter out processed ones
+      // Reset state
       setDecisions({})
       setReviewedCount(0)
       setCurrentIndex(0)
       setShowCompletionScreen(false)
 
-      // Refetch pending receipts
-      const fetchPendingReceipts = async () => {
-        setLoading(true)
-        const { data, error: supabaseError } = await supabase
-          .from("receipts")
-          .select(
-            `id, receipt_date, amount, status, category_id, categories!receipts_category_id_fkey (name), description, image_url, user_profiles (full_name, employee_id_internal)`
-          )
-          .eq("status", "Pending")
-          .order("created_at", { ascending: true })
-        if (supabaseError) throw supabaseError
-        setReceipts(data.map((item: any) => ({
-            id: item.id, employeeName: item.user_profiles?.full_name || "N/A", employeeId: item.user_profiles?.employee_id_internal || "N/A",
-            date: item.receipt_date, amount: item.amount, category: item.categories?.name || "Uncategorized", description: item.description || "",
-            status: item.status.toLowerCase() as Receipt['status'], image_url: item.image_url ? supabase.storage.from('receipt-images').getPublicUrl(item.image_url).data.publicUrl : "",
-            // jobCode: item.job_code || item.jobCode || "", // Removed
-        })))
-        setLoading(false)
-      }
-      fetchPendingReceipts()
+      // Invalidate cache to refetch pending receipts
+      invalidatePendingReceipts()
     } catch (err: any) {
-      setError(err.message)
       toast.error(`Failed to submit decisions: ${err.message}`)
       console.error("Error submitting decisions:", err)
     } finally {
