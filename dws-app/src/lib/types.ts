@@ -13,6 +13,7 @@ export interface Receipt {
   description?: string; // From prototype
   notes?: string; // Corresponds to Supabase 'description' (text), kept for existing dws-app functionality
   image_url?: string; // Corresponds to Supabase 'image_url' (text) - stores path in Supabase Storage or a public URL. From prototype as imageUrl.
+  submission_source?: 'app' | 'email'; // How receipt was submitted: app (mobile) or email (AgentMail)
   // jobCode?: string; // Removed as per user request
   // driveLink?: string; // From prototype, redundant.
   created_at?: string; // Corresponds to Supabase 'created_at'
@@ -33,6 +34,7 @@ export interface UserProfile {
   full_name?: string;
   preferred_name?: string;
   employee_id_internal?: string;
+  email?: string; // Email address for AgentMail receipt submission identification
   created_at?: string;
   updated_at?: string;
   deleted_at?: string | null;
