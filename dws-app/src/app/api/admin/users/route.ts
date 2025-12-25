@@ -242,19 +242,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 500 });
     }
 
-    // Create user_profiles record
-    const { error: profileInsertError } = await supabaseAdmin
+    // Create or update user_profiles record
+    // Note: Database trigger on_auth_user_created may have already created a basic profile,
+    // so we use upsert to handle both cases (update existing or insert new)
+    const { error: profileUpsertError } = await supabaseAdmin
       .from('user_profiles')
-      .insert({
-        user_id: authData.user.id,
-        role,
-        full_name,
-        preferred_name: preferred_name || null,
-        employee_id_internal: employee_id_internal || null,
-      });
+      .upsert(
+        {
+          user_id: authData.user.id,
+          role,
+          full_name,
+          preferred_name: preferred_name || null,
+          employee_id_internal: employee_id_internal || null,
+        },
+        { onConflict: 'user_id' }
+      );
 
-    if (profileInsertError) {
-      console.error('POST /api/admin/users: Profile insert error:', profileInsertError);
+    if (profileUpsertError) {
+      console.error('POST /api/admin/users: Profile upsert error:', profileUpsertError);
       // User was created in auth but profile failed - try to clean up
       await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
       return NextResponse.json({ error: 'Failed to create user profile' }, { status: 500 });
