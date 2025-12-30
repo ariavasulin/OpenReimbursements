@@ -56,6 +56,10 @@ export async function POST(request: NextRequest) {
     const extracted = await b.ExtractReceiptFromImage(image);
     console.log('OCR API: BAML extraction result:', extracted);
 
+    // Extract date value and check year validation (must be 2025 or 2026)
+    const dateValue = extracted.date.value;
+    const isYearValid = extracted.date.checks.valid_year.status === 'succeeded';
+
     // Map category name to category_id (single query)
     let categoryId: string | null = null;
     if (extracted.category) {
@@ -74,12 +78,12 @@ export async function POST(request: NextRequest) {
     let isDuplicate = false;
     let existingReceipts: { id: string; description: string }[] = [];
 
-    if (extracted.date && extracted.amount !== null && extracted.amount !== undefined) {
+    if (dateValue && extracted.amount !== null && extracted.amount !== undefined) {
       const { data: duplicates, error: dupError } = await supabase
         .from('receipts')
         .select('id, description')
         .eq('user_id', userId)
-        .eq('receipt_date', extracted.date)
+        .eq('receipt_date', dateValue)
         .eq('amount', extracted.amount);
 
       if (!dupError && duplicates && duplicates.length > 0) {
@@ -91,9 +95,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Determine if auto-submit is possible
+    // Determine if auto-submit is possible (requires valid year 2025-2026)
     const canAutoSubmit = !!(
-      extracted.date &&
+      dateValue &&
+      isYearValid &&
       extracted.amount !== null &&
       extracted.amount !== undefined &&
       categoryId &&
@@ -104,7 +109,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       data: {
-        date: extracted.date || null,
+        date: dateValue || null,
         amount: extracted.amount ?? null,
         category: extracted.category || null,
         category_id: categoryId,
@@ -112,6 +117,9 @@ export async function POST(request: NextRequest) {
       duplicate: {
         isDuplicate,
         existingReceipts,
+      },
+      validation: {
+        isYearValid,
       },
       canAutoSubmit,
     });
