@@ -98,7 +98,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
   const handleSubmitAll = async () => {
     setIsSubmitting(true)
     setShowConfirmDialog(false)
-    setError(null)
 
     const updatePromises = Object.entries(decisions).map(([id, status]) => {
       const dbStatus = status.charAt(0).toUpperCase() + status.slice(1) // e.g. "Approved"
@@ -206,6 +205,17 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
             <Image src="/images/logo.png" alt="Company Logo" width={150} height={30} className="mr-3" />
           </div>
           <div className="ml-auto flex items-center space-x-4">
+            {decisionsCount > 0 && (
+              <Button
+                size="sm"
+                onClick={handleSubmitAllClick}
+                disabled={isSubmitting}
+                className="bg-[#2680FC] text-white hover:bg-[#1a6fd8] disabled:opacity-50"
+              >
+                <Check className="mr-2 h-4 w-4" />
+                Submit {decisionsCount} Decision{decisionsCount !== 1 ? 's' : ''}
+              </Button>
+            )}
             <Link href="/dashboard">
               <Button
                 variant="ghost"
