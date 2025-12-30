@@ -269,14 +269,14 @@ export async function PATCH(request: Request) {
     const body = await request.json();
     console.log("PATCH /api/receipts: Request body:", body);
 
-    const { id, receipt_date, amount, category_id, notes } = body;
+    const { id, receipt_date, amount, category_id, notes, status } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'Receipt ID is required' }, { status: 400 });
     }
 
     // Check if at least one field to update is provided
-    if (receipt_date === undefined && amount === undefined && category_id === undefined && notes === undefined) {
+    if (receipt_date === undefined && amount === undefined && category_id === undefined && notes === undefined && status === undefined) {
       return NextResponse.json({ error: 'At least one field to update is required' }, { status: 400 });
     }
 
@@ -336,6 +336,15 @@ export async function PATCH(request: Request) {
     if (amount !== undefined) updateData.amount = amount;
     if (category_id !== undefined) updateData.category_id = category_id;
     if (notes !== undefined) updateData.description = notes;
+    if (status !== undefined) {
+      // Validate status value
+      const validStatuses = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
+      const capitalizedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+      if (!validStatuses.includes(capitalizedStatus)) {
+        return NextResponse.json({ error: `Invalid status value. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 });
+      }
+      updateData.status = capitalizedStatus;
+    }
 
     console.log("PATCH /api/receipts: Updating receipt with data:", updateData);
 
