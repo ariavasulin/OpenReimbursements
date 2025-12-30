@@ -29,7 +29,7 @@ async function fetchPendingReceipts(): Promise<Receipt[]> {
     `
     )
     .eq("status", "Pending")
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
 
   if (error) throw error
 
