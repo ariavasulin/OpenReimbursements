@@ -7,9 +7,6 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { CalendarIcon } from "lucide-react"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar } from "@/components/ui/calendar"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,17 +21,17 @@ import { format, parseISO } from "date-fns" // Added parseISO
 import { toast as sonnerToast } from "sonner" // Import sonnerToast
 import { useState, useEffect } from "react" // Added useEffect
 import type { Receipt, Category as CategoryType } from "@/lib/types" // Added CategoryType
-import { useMobile } from "@/hooks/use-mobile" // Added useMobile hook
 
 interface ReceiptDetailsCardProps {
   onSubmit: (receiptData: Partial<Receipt>) => void
   onCancel: () => void
-  initialData?: Partial<Receipt> // initialData might contain category (name) or category_id
+  initialData?: Partial<Receipt> & { status?: string } // initialData might contain category (name) or category_id
   mode?: 'create' | 'edit' // 'create' for new receipts, 'edit' for existing
   receiptId?: string // Required when mode is 'edit'
   onEditSuccess?: (updatedReceipt: Receipt) => void // Callback after successful edit
   onDelete?: () => void // Callback when delete succeeds
   allowDelete?: boolean // Whether to show delete button (default: true in edit mode)
+  isAdmin?: boolean // Whether the user is an admin (shows status dropdown in edit mode)
 }
 
 export function ReceiptDetailsCard({
@@ -46,8 +43,8 @@ export function ReceiptDetailsCard({
   onEditSuccess,
   onDelete,
   allowDelete = true,
+  isAdmin = false,
 }: ReceiptDetailsCardProps) {
-  const isMobile = useMobile();
   const isEditMode = mode === 'edit';
   
   const parseDateString = (dateString: string | undefined | null): Date | undefined => {
@@ -74,6 +71,7 @@ export function ReceiptDetailsCard({
   const [amount, setAmount] = useState(initialData?.amount?.toString() || "");
   const [categoryId, setCategoryId] = useState<string>(initialData?.category_id || '');
   const [notes, setNotes] = useState(initialData?.notes || "");
+  const [status, setStatus] = useState<string>(initialData?.status || "pending");
   const [categories, setCategories] = useState<CategoryType[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -136,6 +134,7 @@ export function ReceiptDetailsCard({
       amount: Number.parseFloat(amount),
       category_id: categoryId,
       notes: notes.trim(), // Use trimmed notes for checks and submission
+      ...(isAdmin && isEditMode && { status }), // Only include status for admin edits
     };
 
     setIsCheckingDuplicate(true);
@@ -285,31 +284,13 @@ export function ReceiptDetailsCard({
             <Label htmlFor="date" className="text-white">
               Date of Purchase
             </Label>
-            {isMobile ? (
-              <Input
-                type="date"
-                id="date"
-                value={date ? format(date, "yyyy-MM-dd") : ""}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="appearance-none block w-full bg-[#3e3e3e] border-[#3e3e3e] text-white placeholder:text-gray-400"
-                // Mobile browsers usually show their own placeholder or "yyyy-mm-dd"
-              />
-            ) : (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="w-full justify-start text-left font-normal bg-[#3e3e3e] border-[#3e3e3e] text-white hover:bg-[#4e4e4e]"
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {date ? format(date, "PPP") : <span>Select date</span>}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0">
-                  <Calendar mode="single" selected={date} onSelect={handleDateChange} initialFocus />
-                </PopoverContent>
-              </Popover>
-            )}
+            <Input
+              type="date"
+              id="date"
+              value={date ? format(date, "yyyy-MM-dd") : ""}
+              onChange={(e) => handleDateChange(e.target.value)}
+              className="appearance-none block w-full bg-[#3e3e3e] border-[#3e3e3e] text-white placeholder:text-gray-400"
+            />
           </div>
           <div className="flex flex-col space-y-1.5">
             <Label htmlFor="amount" className="text-white">
@@ -357,6 +338,25 @@ export function ReceiptDetailsCard({
                 className="bg-[#3e3e3e] border-[#3e3e3e] text-white placeholder:text-gray-400"
               />
             </div>
+            {/* Status dropdown - only shown for admin in edit mode */}
+            {isAdmin && isEditMode && (
+              <div className="flex flex-col space-y-1.5">
+                <Label htmlFor="status" className="text-white">
+                  Status
+                </Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger id="status" className="w-full bg-[#3e3e3e] border-[#3e3e3e] text-white">
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent position="popper" className="bg-[#2e2e2e] text-white border-[#4e4e4e]">
+                    <SelectItem value="pending" className="hover:bg-[#4e4e4e]">Pending</SelectItem>
+                    <SelectItem value="approved" className="hover:bg-[#4e4e4e]">Approved</SelectItem>
+                    <SelectItem value="rejected" className="hover:bg-[#4e4e4e]">Rejected</SelectItem>
+                    <SelectItem value="reimbursed" className="hover:bg-[#4e4e4e]">Reimbursed</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         </form>
       </CardContent>

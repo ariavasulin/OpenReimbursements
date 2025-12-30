@@ -63,7 +63,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const [deletingReceipt, setDeletingReceipt] = useState<Receipt | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const handleDateChange = (selectedDateRange: import("react-day-picker").DateRange | undefined) => {
+  const handleDateChange = (selectedDateRange: { from: Date | undefined; to: Date | undefined }) => {
     setDateRange({
       from: selectedDateRange?.from,
       to: selectedDateRange?.to,
@@ -95,7 +95,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   })() : undefined
 
   // Only fetch when both dates are selected, or when no dates are selected
-  const shouldFetch = !dateRange.from || (dateRange.from && dateRange.to)
+  const shouldFetch = !dateRange.from || Boolean(dateRange.from && dateRange.to)
 
   const {
     data: rawReceipts = [],
@@ -876,6 +876,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 amount: editingReceipt.amount,
                 category_id: editingReceipt.category_id,
                 notes: editingReceipt.notes || editingReceipt.description,
+                status: editingReceipt.status,
               }}
               onSubmit={() => {}} // Not used in edit mode
               onCancel={() => setEditingReceipt(null)}
@@ -884,6 +885,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 setEditingReceipt(null);
                 invalidateReceipts();
               }}
+              isAdmin={true}
             />
           )}
         </DialogContent>
