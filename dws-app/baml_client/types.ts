@@ -48,7 +48,7 @@ export function get_checks<CheckName extends string>(checks: Record<CheckName, C
     return Object.values(checks)
 }
 export interface ExtractedReceipt {
-  date?: string | null
+  date: Checked<string | null,"valid_year">
   amount?: number | null
   category?: string | null
   

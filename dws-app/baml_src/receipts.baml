@@ -1,6 +1,6 @@
 // Receipt data extracted from image
 class ExtractedReceipt {
-  date string? @description("Receipt date in YYYY-MM-DD format. Extract the purchase/transaction date, not print date or expiry dates.")
+  date (string? @check(valid_year, {{ this|regex_match("^202[56]-") }})) @description("Receipt date in YYYY-MM-DD format. Extract the purchase/transaction date, not print date or expiry dates.")
   amount float? @description("Total amount paid after tax and tip. Look for TOTAL, GRAND TOTAL, AMOUNT DUE, or the final/largest amount.")
   category string? @description("The expense category. Must be exactly one of: Parking, Gas, Meals & Entertainment, Office Supplies, Other")
 }

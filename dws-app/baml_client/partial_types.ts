@@ -37,7 +37,7 @@ export interface StreamState<T> {
 
 export namespace partial_types {
     export interface ExtractedReceipt {
-      date?: string | null
+      date?: types.Checked<string,"valid_year"> | null
       amount?: number | null
       category?: string | null
     }
