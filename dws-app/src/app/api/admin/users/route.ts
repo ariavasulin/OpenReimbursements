@@ -7,11 +7,12 @@ import type { AdminUser } from '@/lib/types';
  * GET /api/admin/users
  *
  * Admin-only endpoint that returns all users with profile information.
+ * Uses server-side pagination and filtering via database RPC functions.
  *
  * Query parameters:
  * - page: Page number (default: 1)
  * - perPage: Results per page (default: 50, max: 1000)
- * - search: Search query for name, phone, employee ID
+ * - search: Search query for name, phone, employee ID (server-side ILIKE)
  * - includeDeleted: Include soft-deleted users (default: false)
  */
 export async function GET(request: Request) {
@@ -48,92 +49,69 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const perPage = Math.min(1000, Math.max(1, parseInt(searchParams.get('perPage') || '50', 10)));
-    const search = searchParams.get('search')?.toLowerCase() || '';
+    const search = searchParams.get('search') || null;
     const includeDeleted = searchParams.get('includeDeleted') === 'true';
 
-    // Fetch all auth users using admin API
-    // Note: Supabase Admin API pagination is 1-indexed
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers({
-      page,
-      perPage,
-    });
-
-    if (authError) {
-      console.error('GET /api/admin/users: Auth error:', authError);
-      return NextResponse.json({ error: authError.message }, { status: 500 });
-    }
-
-    const authUsers = authData.users || [];
-    const totalFromAuth = authData.total || authUsers.length;
-
-    if (authUsers.length === 0) {
-      return NextResponse.json({
-        users: [],
-        page,
-        perPage,
-        total: 0,
-      });
-    }
-
-    // Fetch user_profiles for all returned user IDs
-    const userIds = authUsers.map(u => u.id);
-    const { data: profiles, error: profilesError } = await supabaseAdmin
-      .from('user_profiles')
-      .select('user_id, role, full_name, preferred_name, employee_id_internal, deleted_at')
-      .in('user_id', userIds);
-
-    if (profilesError) {
-      console.error('GET /api/admin/users: Profiles error:', profilesError);
-      return NextResponse.json({ error: profilesError.message }, { status: 500 });
-    }
-
-    // Create a map of profiles by user_id
-    const profileMap = new Map(
-      (profiles || []).map(p => [p.user_id, p])
+    // Fetch paginated users with server-side filtering
+    const { data: users, error: usersError } = await supabaseAdmin.rpc(
+      'get_auth_users_for_admin',
+      {
+        page_num: page,
+        page_size: perPage,
+        search_query: search,
+        include_deleted: includeDeleted,
+      }
     );
 
-    // Merge auth data with profile data
-    let users: AdminUser[] = authUsers.map(authUser => {
-      const userProfile = profileMap.get(authUser.id);
-      return {
-        id: authUser.id,
-        phone: authUser.phone || '',
-        created_at: authUser.created_at,
-        last_sign_in_at: authUser.last_sign_in_at || undefined,
-        banned_until: authUser.banned_until || undefined,
-        role: userProfile?.role || 'employee',
-        full_name: userProfile?.full_name || undefined,
-        preferred_name: userProfile?.preferred_name || undefined,
-        employee_id_internal: userProfile?.employee_id_internal || undefined,
-        deleted_at: userProfile?.deleted_at || null,
-      };
-    });
-
-    // Filter out deleted users unless includeDeleted is true
-    if (!includeDeleted) {
-      users = users.filter(u => !u.deleted_at);
+    if (usersError) {
+      console.error('GET /api/admin/users: Users query error:', usersError);
+      return NextResponse.json({ error: usersError.message }, { status: 500 });
     }
 
-    // Apply search filter if provided (client-side since Admin API doesn't support server-side search)
-    if (search) {
-      users = users.filter(u => {
-        const fullName = (u.full_name || '').toLowerCase();
-        const preferredName = (u.preferred_name || '').toLowerCase();
-        const phone = (u.phone || '').toLowerCase();
-        const employeeId = (u.employee_id_internal || '').toLowerCase();
+    // Fetch total count for pagination
+    const { data: total, error: countError } = await supabaseAdmin.rpc(
+      'get_auth_users_count',
+      {
+        search_query: search,
+        include_deleted: includeDeleted,
+      }
+    );
 
-        return fullName.includes(search) ||
-               preferredName.includes(search) ||
-               phone.includes(search) ||
-               employeeId.includes(search);
-      });
+    if (countError) {
+      console.error('GET /api/admin/users: Count query error:', countError);
+      return NextResponse.json({ error: countError.message }, { status: 500 });
     }
+
+    // Map to AdminUser type (handle null values)
+    const mappedUsers: AdminUser[] = (users || []).map((u: {
+      id: string;
+      phone: string | null;
+      created_at: string;
+      last_sign_in_at: string | null;
+      banned_until: string | null;
+      role: string;
+      full_name: string | null;
+      preferred_name: string | null;
+      employee_id_internal: string | null;
+      deleted_at: string | null;
+    }) => ({
+      id: u.id,
+      phone: u.phone || '',
+      created_at: u.created_at,
+      last_sign_in_at: u.last_sign_in_at || undefined,
+      banned_until: u.banned_until || undefined,
+      role: u.role as 'employee' | 'admin',
+      full_name: u.full_name || undefined,
+      preferred_name: u.preferred_name || undefined,
+      employee_id_internal: u.employee_id_internal || undefined,
+      deleted_at: u.deleted_at || null,
+    }));
 
     return NextResponse.json({
-      users,
+      users: mappedUsers,
       page,
       perPage,
-      total: search ? users.length : totalFromAuth, // If searching, return filtered count
+      total: total || 0,
     });
 
   } catch (error) {
