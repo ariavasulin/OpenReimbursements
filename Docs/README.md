@@ -1,4 +1,4 @@
-# DWS Receipts Documentation
+# DWS Receipts
 
 > Receipt management app for Design Workshops employees and accounting staff.
 
