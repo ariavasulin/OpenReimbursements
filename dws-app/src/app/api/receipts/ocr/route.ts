@@ -9,7 +9,6 @@ export async function POST(request: NextRequest) {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
     if (sessionError || !session) {
-      console.error('OCR API: Unauthorized - Session error or no session', sessionError);
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -21,21 +20,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing or invalid tempFilePath' }, { status: 400 });
     }
 
-    // Download image from Supabase Storage
     const { data: fileData, error: downloadError } = await supabase.storage
       .from('receipt-images')
       .download(tempFilePath);
 
     if (downloadError || !fileData) {
-      console.error(`OCR API: Error downloading file from Supabase Storage: ${tempFilePath}`, downloadError);
       return NextResponse.json({ error: 'Failed to download image from storage', details: downloadError?.message }, { status: 500 });
     }
 
-    // Convert to base64 for BAML
     const arrayBuffer = await fileData.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');
 
-    // Determine media type from file extension
     const extension = tempFilePath.split('.').pop()?.toLowerCase() || 'jpeg';
     const mediaTypeMap: Record<string, string> = {
       'jpg': 'image/jpeg',
@@ -48,19 +43,13 @@ export async function POST(request: NextRequest) {
     };
     const mediaType = mediaTypeMap[extension] || 'image/jpeg';
 
-    // Create BAML Image from base64
     const image = Image.fromBase64(mediaType, base64);
 
-    // Call BAML extraction function (categories are hardcoded in the prompt)
-    console.log('OCR API: Calling BAML ExtractReceiptFromImage...');
     const extracted = await b.ExtractReceiptFromImage(image);
-    console.log('OCR API: BAML extraction result:', extracted);
 
-    // Extract date value and check year validation (must be 2025 or 2026)
     const dateValue = extracted.date.value;
     const isYearValid = extracted.date.checks.valid_year.status === 'succeeded';
 
-    // Map category name to category_id (single query)
     let categoryId: string | null = null;
     if (extracted.category) {
       const { data: categoryMatch } = await supabase
@@ -74,7 +63,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check for duplicates if we have date and amount
     let isDuplicate = false;
     let existingReceipts: { id: string; description: string }[] = [];
 
@@ -95,7 +83,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Determine if auto-submit is possible (requires valid year 2025-2026)
     const canAutoSubmit = !!(
       dateValue &&
       isYearValid &&
@@ -105,7 +92,6 @@ export async function POST(request: NextRequest) {
       !isDuplicate
     );
 
-    // Return extracted data with auto-submit guidance
     return NextResponse.json({
       success: true,
       data: {

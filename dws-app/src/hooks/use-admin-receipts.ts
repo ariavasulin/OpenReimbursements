@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Receipt } from '@/lib/types'
 
-// Types for query parameters
 interface AdminReceiptsParams {
   status?: string
   fromDate?: string
@@ -9,13 +8,11 @@ interface AdminReceiptsParams {
   enabled?: boolean
 }
 
-// Query key factory for consistent cache keys
 export const adminReceiptsKeys = {
   all: ['admin-receipts'] as const,
   list: (params: AdminReceiptsParams) => ['admin-receipts', params] as const,
 }
 
-// Fetch function
 async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[]> {
   const urlParams = new URLSearchParams()
 
@@ -45,7 +42,6 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[
     throw new Error(data.error || 'Failed to fetch receipts')
   }
 
-  // Normalize the data (matching existing logic in receipt-dashboard.tsx)
   return data.receipts.map((r: Receipt) => ({
     ...r,
     date: r.date || r.receipt_date,
@@ -53,7 +49,6 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[
   }))
 }
 
-// Main query hook
 export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsParams) {
   return useQuery({
     queryKey: adminReceiptsKeys.list(params),
@@ -62,7 +57,6 @@ export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsPar
   })
 }
 
-// Hook to invalidate all admin receipts queries (used after mutations)
 export function useInvalidateAdminReceipts() {
   const queryClient = useQueryClient()
 
@@ -71,7 +65,6 @@ export function useInvalidateAdminReceipts() {
   }
 }
 
-// Delete mutation hook
 export function useDeleteReceipt() {
   const queryClient = useQueryClient()
 
@@ -89,33 +82,6 @@ export function useDeleteReceipt() {
       return response.json()
     },
     onSuccess: () => {
-      // Invalidate all admin receipts queries to refetch
-      queryClient.invalidateQueries({ queryKey: adminReceiptsKeys.all })
-    },
-  })
-}
-
-// Update mutation hook
-export function useUpdateReceipt() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: Partial<Receipt> }) => {
-      const response = await fetch(`/api/receipts?id=${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || 'Failed to update receipt')
-      }
-
-      return response.json()
-    },
-    onSuccess: () => {
-      // Invalidate all admin receipts queries to refetch
       queryClient.invalidateQueries({ queryKey: adminReceiptsKeys.all })
     },
   })

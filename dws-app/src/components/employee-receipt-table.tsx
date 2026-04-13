@@ -54,7 +54,6 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
       setSelectedReceipt(receipt)
       setEditDialogOpen(true)
     } else {
-      // Show contact admin dialog for processed receipts
       setContactAdminReceipt(receipt)
     }
   }
@@ -67,24 +66,18 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
     }
   }
 
-  // Filter receipts based on status
   const filteredReceipts = filter === "all" ? receipts : receipts.filter((receipt) => {
-    // Handle both capitalized and lowercase statuses
     return receipt.status.toLowerCase() === filter.toLowerCase()
   })
 
-  // Calculate total pages
   const totalPages = Math.max(1, Math.ceil(filteredReceipts.length / ITEMS_PER_PAGE))
 
-  // Ensure current page is valid after filtering
   if (currentPage > totalPages && totalPages > 0) {
     setCurrentPage(totalPages)
   }
 
-  // Get current page receipts
   const currentReceipts = filteredReceipts.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
 
-  // Handle page change
   const handlePageChange = (page: number) => {
     if (page >= 1 && page <= totalPages) {
       setCurrentPage(page)
@@ -99,7 +92,7 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
           value={filter}
           onValueChange={(value) => {
             setFilter(value)
-            setCurrentPage(1) // Reset to first page when filter changes
+            setCurrentPage(1)
           }}
         >
           <SelectTrigger className="w-[130px] bg-[#3e3e3e] border-[#4e4e4e] text-white">
@@ -316,7 +309,6 @@ function StatusBadge({ status }: { status: Receipt["status"] }) {
     reimbursed: "bg-blue-900/30 text-blue-300 hover:bg-blue-900/30 border-blue-700",
   }
 
-  // Capitalize the first letter for display
   const displayStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase()
 
   return (

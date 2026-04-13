@@ -26,10 +26,9 @@ interface ReceiptTableProps {
   pageSize?: number
   onPageChange?: (page: number) => void
   onPageSizeChange?: (pageSize: number) => void
-  // Action callbacks
   onEdit?: (receipt: Receipt) => void
   onDelete?: (receipt: Receipt) => void
-  showActions?: boolean  // default: true
+  showActions?: boolean
 }
 
 type SortField = keyof Receipt
@@ -52,28 +51,22 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
   const [sortField, setSortField] = useState<SortField | null>(null)
   const [sortDirection, setSortDirection] = useState<SortDirection>(null)
 
-  // Use controlled or internal state
   const selectedRows = controlledSelectedRows !== undefined ? controlledSelectedRows : internalSelectedRows
 
-  // Notify parent when selected rows change (only for uncontrolled mode)
   useEffect(() => {
     if (controlledSelectedRows === undefined && onSelectedRowsChange) {
       onSelectedRowsChange(internalSelectedRows)
     }
   }, [internalSelectedRows, onSelectedRowsChange, controlledSelectedRows])
 
-  // Handle selection changes
   const handleSelectedRowsChange = (newSelectedRows: Set<string>) => {
     if (controlledSelectedRows !== undefined) {
-      // Controlled mode - notify parent
       onSelectedRowsChange?.(newSelectedRows)
     } else {
-      // Uncontrolled mode - update internal state
       setInternalSelectedRows(newSelectedRows)
     }
   }
 
-  // Sort data
   const sortedData = useMemo(() => {
     if (!sortField || !sortDirection) return rowData
 
@@ -96,7 +89,6 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
     })
   }, [rowData, sortField, sortDirection])
 
-  // Paginate data
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * pageSize
     return sortedData.slice(startIndex, startIndex + pageSize)
@@ -155,19 +147,14 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
   const formatPhoneNumber = (phone: string | null | undefined) => {
     if (!phone) return "N/A"
 
-    // Remove any non-digit characters
     const cleaned = phone.replace(/\D/g, '')
 
-    // Check if it's a valid US number (11 digits starting with 1, or 10 digits)
     if (cleaned.length === 11 && cleaned.startsWith('1')) {
-      // Format as +1 (XXX) XXX-XXXX
       return `+1 (${cleaned.slice(1, 4)}) ${cleaned.slice(4, 7)}-${cleaned.slice(7)}`
     } else if (cleaned.length === 10) {
-      // Format as (XXX) XXX-XXXX
       return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`
     }
 
-    // Return as-is if it doesn't match expected format
     return phone
   }
 

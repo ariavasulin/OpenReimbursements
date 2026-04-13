@@ -14,16 +14,13 @@ export default function UsersPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Create AbortController for this effect
     const abortController = new AbortController();
     let isCancelled = false;
 
     const checkAuth = async () => {
       try {
-        // Get current session
         const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
-        // Check if this effect was cancelled
         if (isCancelled || abortController.signal.aborted) {
           return;
         }
@@ -35,14 +32,12 @@ export default function UsersPage() {
           return;
         }
 
-        // Get user profile
         const { data: profile, error: profileError } = await supabase
           .from('user_profiles')
           .select('user_id, role, full_name')
           .eq('user_id', session.user.id)
           .single();
 
-        // Check again after async operation
         if (isCancelled || abortController.signal.aborted) {
           return;
         }
@@ -61,7 +56,6 @@ export default function UsersPage() {
           return;
         }
 
-        // Success - only update state if not cancelled
         if (!isCancelled && !abortController.signal.aborted) {
           setUser(session.user);
           setUserProfile(profile);
@@ -69,7 +63,6 @@ export default function UsersPage() {
         }
 
       } catch (err) {
-        console.error('[USERS] Auth error:', err);
         if (!isCancelled && !abortController.signal.aborted) {
           setError('Authentication failed');
           setLoading(false);
@@ -79,7 +72,6 @@ export default function UsersPage() {
 
     checkAuth();
 
-    // Auth state listener for sign out only
     const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') {
         if (!isCancelled) {
@@ -88,7 +80,6 @@ export default function UsersPage() {
       }
     });
 
-    // Cleanup function
     return () => {
       isCancelled = true;
       abortController.abort();

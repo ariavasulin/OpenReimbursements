@@ -39,7 +39,6 @@ import { useAdminReceipts, useDeleteReceipt, useInvalidateAdminReceipts } from "
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
-  // Prefetch batch-review and users data in background after main content loads
   useAdminPrefetch()
 
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -53,12 +52,10 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     to: undefined,
   })
 
-  // Bulk update states
   const [isBulkUpdateLoading, setIsBulkUpdateLoading] = useState(false)
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [pendingBulkUpdateCount, setPendingBulkUpdateCount] = useState(0)
 
-  // Edit/Delete states
   const [editingReceipt, setEditingReceipt] = useState<Receipt | null>(null)
   const [deletingReceipt, setDeletingReceipt] = useState<Receipt | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -84,7 +81,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
   const handlePageSizeChange = (newPageSize: number) => {
     setPageSize(newPageSize)
-    setCurrentPage(1) // Reset to first page when changing page size
+    setCurrentPage(1)
   }
 
   // Calculate toDate with +1 day for inclusive filtering
@@ -113,13 +110,11 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const invalidateReceipts = useInvalidateAdminReceipts()
   const deleteReceiptMutation = useDeleteReceipt()
 
-  // Normalize status to lowercase for consistency with the rest of the app
   const receipts: Receipt[] = rawReceipts.map((receipt: Receipt) => ({
     ...receipt,
     status: receipt.status.toLowerCase() as Receipt['status'],
   }))
 
-  // Build employee ID map for export name resolution
   const employeeIdToProfile: Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }> = {}
   receipts.forEach((receipt: Receipt) => {
     if (receipt.employeeId) {
@@ -133,12 +128,10 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
   // Apply client-side filtering for status and search (enables instant tab switching)
   const filteredReceipts = receipts.filter(receipt => {
-    // Status filter
     if (filterStatus !== 'all' && receipt.status !== filterStatus) {
       return false
     }
 
-    // Search filter
     if (searchQuery) {
       const searchLower = searchQuery.toLowerCase()
       const employeeName = receipt.employeeName?.toLowerCase() || ''
@@ -151,20 +144,16 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     return true
   })
 
-  // Calculate pagination info
   const totalPages = Math.ceil(filteredReceipts.length / pageSize)
 
-  // Helper to CSV-quote a value (wrap in double quotes and escape internal quotes)
   const quoteCsv = (value: string): string => {
     const escaped = value.replace(/"/g, '""')
     return `"${escaped}"`
   }
 
-  // Function to download grouped totals CSV: LastName, FirstName, EmployeeNumber, TotalAmount
   const downloadPayrollCSV = () => {
     const headers = ['LastName', 'FirstName', 'EmployeeNumber', 'TotalAmount']
 
-    // Aggregate totals by employee number (employee_id_internal). Include entries with empty employee number.
     const totalsMap = new Map<string, { lastName: string; firstName: string; employeeNumber: string; total: number }>()
 
     const parseLastFirst = (fullName?: string, fallbackName?: string): { last: string; first: string } => {
@@ -220,7 +209,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     document.body.removeChild(link)
   }
 
-  // Function to get total approved receipts count (ignoring filters)
   const getTotalApprovedCount = async () => {
     try {
       const { count, error } = await supabase
@@ -229,22 +217,17 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
         .eq('status', 'Approved');
       
       if (error) {
-        console.error('Error counting approved receipts:', error);
         return 0;
       }
       
       return count || 0;
     } catch (error) {
-      console.error('Error in getTotalApprovedCount:', error);
       return 0;
     }
   }
 
-  // Function to handle bulk update confirmation
   const handleBulkUpdateClick = async () => {
-    console.log('Reimburse button clicked!'); // Debug log
     const count = await getTotalApprovedCount();
-    console.log('Approved count:', count); // Debug log
     setPendingBulkUpdateCount(count);
     
     if (count === 0) {
@@ -255,7 +238,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     setShowConfirmDialog(true);
   }
 
-  // Function to perform bulk update
   const performBulkUpdate = async () => {
     setIsBulkUpdateLoading(true);
     setShowConfirmDialog(false);
@@ -280,14 +262,12 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
       if (result.success) {
         toast.success(result.message);
-        // Refresh the receipts data
         invalidateReceipts();
       } else {
         throw new Error(result.error || 'Update failed');
       }
 
     } catch (error) {
-      console.error('Bulk update error:', error);
       const errorMessage = error instanceof Error ? error.message : 'An error occurred during bulk update';
       toast.error(`Failed to update receipts: ${errorMessage}`);
     } finally {
@@ -295,7 +275,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     }
   }
 
-  // Delete handler for admin
   const handleDeleteReceipt = async () => {
     if (!deletingReceipt) return;
     setIsDeleting(true);
@@ -310,25 +289,17 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     }
   }
 
-  // Edit success handler
   const handleEditSuccess = () => {
     setEditingReceipt(null);
     invalidateReceipts();
     toast.success("Receipt updated successfully");
   }
 
-  // Calculate summary statistics
-  const totalReceipts = receipts.length // Use 'receipts' as filtering is server-side for the main list
+  const totalReceipts = receipts.length
   const totalAmount = receipts.reduce((sum, receipt) => sum + receipt.amount, 0)
-  // For counts, we can filter the already fetched 'receipts' or make separate aggregate queries if performance is an issue
   const pendingCount = receipts.filter((r) => r.status === "pending").length
   const approvedCount = receipts.filter((r) => r.status === "approved").length
   const reimbursedCount = receipts.filter((r) => r.status === "reimbursed").length
-  // Add other statuses if necessary, e.g., rejected
-  // const rejectedCount = receipts.filter((r) => r.status === "rejected").length;
-
-
-  // Render immediately; do not gate the page behind a loading screen
 
   if (error) {
     return (
@@ -346,10 +317,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
   return (
     <div className="flex flex-col h-screen bg-[#222222] text-white">
-      {/* Header - Assuming this might be part of a larger app layout eventually */}
       <div className="border-b border-[#444444]">
         <div className="flex h-16 items-center px-4 md:px-8">
-          <div className="flex items-center"> {/* Assuming logo might come from a shared component or be static here */}
+          <div className="flex items-center">
             <Image 
               src="/images/logo.png" 
               alt="Company Logo" 
@@ -358,7 +328,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
               className="mr-3"
               priority
               style={{ width: 'auto', height: 'auto' }}
-            /> {/* Adjusted size for typical header */}
+            />
           </div>
           <div className="ml-auto flex items-center space-x-4">
             <Link href="/users">
@@ -375,7 +345,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
               <Button
                 variant="ghost"
                 size="sm"
-                // Using theme variables for secondary button like elements
                 className="bg-[#333333] text-white hover:bg-[#444444]"
               >
                 <ListChecks className="mr-2 h-4 w-4" />
@@ -406,7 +375,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
       <div className="flex-1 space-y-4 p-4 md:p-8 pt-6 overflow-y-auto">
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {/* Card with theme variables */}
           <Card className="bg-[#333333] text-white border-[#444444]">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-gray-300">Total Receipts</CardTitle>
@@ -513,7 +481,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 Review and manage employee receipts for reimbursement.
               </CardDescription>
             </CardHeader>
-            {/* </CardHeader>  // Removed duplicate closing tag */}
             <CardContent>
               <Tabs
                 value={activeTab}
@@ -524,7 +491,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 className="space-y-4"
               >
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-                  {/* TabsList using theme variables for secondary/muted background and foreground, active state uses primary or accent */}
                   <TabsList className="bg-[#444444] text-gray-300">
                     <TabsTrigger
                       value="all"

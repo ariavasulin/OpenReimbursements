@@ -17,21 +17,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { format, parseISO } from "date-fns" // Added parseISO
-import { toast as sonnerToast } from "sonner" // Import sonnerToast
-import { useState, useEffect } from "react" // Added useEffect
-import type { Receipt, Category as CategoryType } from "@/lib/types" // Added CategoryType
+import { format, parseISO } from "date-fns"
+import { toast as sonnerToast } from "sonner"
+import { useState, useEffect } from "react"
+import type { Receipt, Category as CategoryType } from "@/lib/types"
 
 interface ReceiptDetailsCardProps {
   onSubmit: (receiptData: Partial<Receipt>) => void
   onCancel: () => void
-  initialData?: Partial<Receipt> & { status?: string } // initialData might contain category (name) or category_id
-  mode?: 'create' | 'edit' // 'create' for new receipts, 'edit' for existing
-  receiptId?: string // Required when mode is 'edit'
-  onEditSuccess?: (updatedReceipt: Receipt) => void // Callback after successful edit
-  onDelete?: () => void // Callback when delete succeeds
-  allowDelete?: boolean // Whether to show delete button (default: true in edit mode)
-  isAdmin?: boolean // Whether the user is an admin (shows status dropdown in edit mode)
+  initialData?: Partial<Receipt> & { status?: string }
+  mode?: 'create' | 'edit'
+  receiptId?: string
+  onEditSuccess?: (updatedReceipt: Receipt) => void
+  onDelete?: () => void
+  allowDelete?: boolean
+  isAdmin?: boolean
 }
 
 export function ReceiptDetailsCard({
@@ -49,22 +49,18 @@ export function ReceiptDetailsCard({
   
   const parseDateString = (dateString: string | undefined | null): Date | undefined => {
     if (!dateString) return undefined;
-    // dateString is expected to be "YYYY-MM-DD"
     const parts = dateString.split('-');
     if (parts.length === 3) {
       const year = parseInt(parts[0], 10);
-      const month = parseInt(parts[1], 10) - 1; // Month is 0-indexed for new Date()
+      const month = parseInt(parts[1], 10) - 1;
       const day = parseInt(parts[2], 10);
       if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
         return new Date(year, month, day);
       }
     }
-    // Fallback or warning if format is unexpected, though OCR API should provide YYYY-MM-DD
-    console.warn("ReceiptDetailsCard: Could not parse initial date string:", dateString);
     return undefined;
   };
 
-  // Initialize from canonical receipt_date; fallback to date (for robustness)
   const [date, setDate] = useState<Date | undefined>(
     parseDateString(initialData?.receipt_date ?? initialData?.date)
   );
@@ -79,7 +75,6 @@ export function ReceiptDetailsCard({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
  
   useEffect(() => {
-    // Sync local state if parent provides new initialData (e.g., after OCR finishes)
     const parsed = parseDateString(initialData?.receipt_date ?? initialData?.date);
     setDate(parsed);
     const fetchCategories = async () => {
@@ -92,27 +87,16 @@ export function ReceiptDetailsCard({
         const data = await response.json();
         if (data.success && data.categories) {
           setCategories(data.categories);
-          // If initialData had a category NAME, try to find its ID (less ideal)
-          // Or, if initialData.category_id is provided, set it.
-          // For now, if initialData.category_id is present, it's used by useState.
-          // If not, and initialData.category (name) was provided, we could try to match it.
-          // However, the `initialData.category` from ReceiptUploader was "other", which is a name.
-          // It's better if ReceiptUploader doesn't send a default category name.
           if (initialData?.category_id) {
              setCategoryId(initialData.category_id);
           } else if (data.categories.length > 0 && !initialData?.category_id && categoryId === '') {
-            // If no initial categoryId was provided and categoryId state is still empty,
-            // try to set "Parking" as the default.
             const parkingCategory = data.categories.find((cat: CategoryType) => cat.name.toLowerCase() === 'parking');
             if (parkingCategory) {
               setCategoryId(parkingCategory.id);
             }
-            // If "Parking" isn't found, it will remain '', and user must select.
           }
         }
       } catch (error) {
-        console.error("Error fetching categories:", error);
-        // Handle error (e.g., show a toast)
       } finally {
         setIsLoadingCategories(false);
       }
@@ -133,13 +117,12 @@ export function ReceiptDetailsCard({
       receipt_date: format(date, "yyyy-MM-dd"),
       amount: Number.parseFloat(amount),
       category_id: categoryId,
-      notes: notes.trim(), // Use trimmed notes for checks and submission
-      ...(isAdmin && isEditMode && { status }), // Only include status for admin edits
+      notes: notes.trim(),
+      ...(isAdmin && isEditMode && { status }),
     };
 
     setIsCheckingDuplicate(true);
 
-    // Handle edit mode - call PATCH API directly
     if (isEditMode && receiptId) {
       try {
         const response = await fetch('/api/receipts', {
@@ -163,11 +146,9 @@ export function ReceiptDetailsCard({
         if (onEditSuccess && result.receipt) {
           onEditSuccess(result.receipt);
         } else {
-          // Fallback: close dialog if no onEditSuccess handler
           onCancel();
         }
       } catch (error) {
-        console.error("Error updating receipt:", error);
         sonnerToast.error("Error", { description: "An error occurred while updating the receipt." });
       } finally {
         setIsCheckingDuplicate(false);
@@ -175,7 +156,6 @@ export function ReceiptDetailsCard({
       return;
     }
 
-    // Handle create mode - existing duplicate check logic
     try {
       const duplicateCheckResponse = await fetch('/api/receipts/check-duplicate', {
         method: 'POST',
@@ -214,11 +194,9 @@ export function ReceiptDetailsCard({
         }
       }
 
-      // If no duplicate concern or description is unique, proceed with actual submission
       onSubmit(currentReceiptData);
 
     } catch (error) {
-      console.error("Error during duplicate check:", error);
       sonnerToast.error("Error", { description: "An error occurred while checking for duplicates." });
     } finally {
       setIsCheckingDuplicate(false);
@@ -246,7 +224,6 @@ export function ReceiptDetailsCard({
       if (onDelete) {
         onDelete();
       } else {
-        // Fallback: close dialog if no onDelete handler
         onCancel();
       }
     } catch (error) {
@@ -261,13 +238,9 @@ export function ReceiptDetailsCard({
 
   const handleDateChange = (selectedDate: Date | undefined | string) => {
     if (typeof selectedDate === 'string') {
-      // From native date input (yyyy-MM-dd)
-      // Ensure time zone issues are handled if the string doesn't include time/offset
-      // parseISO will parse it as local time if no timezone offset is present.
       // Adding 'T00:00:00' makes it explicit to avoid potential UTC interpretation by new Date() in some browsers.
       setDate(parseISO(selectedDate + "T00:00:00"));
     } else {
-      // From Calendar component
       setDate(selectedDate);
     }
   };
@@ -338,7 +311,6 @@ export function ReceiptDetailsCard({
                 className="bg-[#3e3e3e] border-[#3e3e3e] text-white placeholder:text-gray-400"
               />
             </div>
-            {/* Status dropdown - only shown for admin in edit mode */}
             {isAdmin && isEditMode && (
               <div className="flex flex-col space-y-1.5">
                 <Label htmlFor="status" className="text-white">
@@ -390,7 +362,6 @@ export function ReceiptDetailsCard({
         </Button>
       </CardFooter>
 
-      {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent className="bg-[#333333] border-[#444444]">
           <AlertDialogHeader>

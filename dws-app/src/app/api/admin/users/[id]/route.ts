@@ -5,16 +5,10 @@ import type { AdminUser } from '@/lib/types';
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-/**
- * GET /api/admin/users/[id]
- *
- * Admin-only endpoint to get a single user by ID.
- */
 export async function GET(request: Request, { params }: RouteParams) {
   const { id: userId } = await params;
   const supabase = await createSupabaseServerClient();
 
-  // Verify authentication
   const {
     data: { session },
     error: sessionError,
@@ -28,7 +22,6 @@ export async function GET(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Verify admin role
   const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('role')
@@ -40,14 +33,12 @@ export async function GET(request: Request, { params }: RouteParams) {
   }
 
   try {
-    // Fetch auth user
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
 
     if (authError || !authData.user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Fetch user profile
     const { data: userProfile, error: userProfileError } = await supabaseAdmin
       .from('user_profiles')
       .select('role, full_name, preferred_name, employee_id_internal, deleted_at')
@@ -55,7 +46,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       .single();
 
     if (userProfileError && userProfileError.code !== 'PGRST116') {
-      console.error('GET /api/admin/users/[id]: Profile error:', userProfileError);
+      // Log only unexpected profile errors (not "no rows found")
     }
 
     const user: AdminUser = {
@@ -80,23 +71,10 @@ export async function GET(request: Request, { params }: RouteParams) {
   }
 }
 
-/**
- * PATCH /api/admin/users/[id]
- *
- * Admin-only endpoint to update a user.
- *
- * Request body (all optional):
- * - phone: Phone number
- * - full_name: Full name
- * - preferred_name: Preferred name
- * - employee_id_internal: Employee ID
- * - role: 'employee' | 'admin'
- */
 export async function PATCH(request: Request, { params }: RouteParams) {
   const { id: userId } = await params;
   const supabase = await createSupabaseServerClient();
 
-  // Verify authentication
   const {
     data: { session },
     error: sessionError,
@@ -110,7 +88,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Verify admin role
   const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('role')
@@ -125,7 +102,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     const body = await request.json();
     const { phone, full_name, preferred_name, employee_id_internal, role } = body;
 
-    // Fetch current auth user
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
 
     if (authError || !authData.user) {
@@ -135,7 +111,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     const currentPhone = authData.user.phone;
     let phoneChanged = false;
 
-    // Update phone in auth if changed
     if (phone && phone !== currentPhone) {
       const formattedPhone = formatUSPhoneNumber(phone);
       if (!formattedPhone) {
@@ -151,7 +126,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       });
 
       if (updateAuthError) {
-        console.error('PATCH /api/admin/users/[id]: Auth update error:', updateAuthError);
         if (updateAuthError.message?.includes('phone_exists') || updateAuthError.message?.includes('already been registered')) {
           return NextResponse.json(
             { error: 'Phone number already registered' },
@@ -164,7 +138,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       phoneChanged = true;
     }
 
-    // Update user_profiles if any profile fields provided
     const profileUpdates: Record<string, unknown> = {};
     if (full_name !== undefined) profileUpdates.full_name = full_name;
     if (preferred_name !== undefined) profileUpdates.preferred_name = preferred_name || null;
@@ -188,7 +161,6 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         .eq('user_id', userId);
 
       if (profileUpdateError) {
-        console.error('PATCH /api/admin/users/[id]: Profile update error:', profileUpdateError);
         return NextResponse.json({ error: 'Failed to update user profile' }, { status: 500 });
       }
     }
@@ -197,12 +169,10 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (phoneChanged) {
       const { error: signOutError } = await supabaseAdmin.auth.admin.signOut(userId, 'global');
       if (signOutError) {
-        console.error('PATCH /api/admin/users/[id]: Sign out error:', signOutError);
-        // Don't fail the request, just log the error
+        // Don't fail the request, just continue
       }
     }
 
-    // Fetch and return updated user
     const { data: updatedAuthData } = await supabaseAdmin.auth.admin.getUserById(userId);
     const { data: updatedProfile } = await supabaseAdmin
       .from('user_profiles')
@@ -235,20 +205,10 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 }
 
-/**
- * DELETE /api/admin/users/[id]
- *
- * Admin-only endpoint to ban (soft delete) a user.
- * - Admins cannot ban themselves
- * - Sets banned_until to ~100 years
- * - Sets deleted_at in user_profiles
- * - Signs out all user sessions
- */
 export async function DELETE(request: Request, { params }: RouteParams) {
   const { id: userId } = await params;
   const supabase = await createSupabaseServerClient();
 
-  // Verify authentication
   const {
     data: { session },
     error: sessionError,
@@ -262,7 +222,6 @@ export async function DELETE(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Verify admin role
   const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('role')
@@ -273,30 +232,25 @@ export async function DELETE(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
   }
 
-  // Prevent self-ban
   if (userId === session.user.id) {
     return NextResponse.json({ error: 'Cannot ban yourself' }, { status: 400 });
   }
 
   try {
-    // Verify user exists
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
 
     if (authError || !authData.user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Ban user for ~100 years (876000 hours)
     const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      ban_duration: '876000h',
+      ban_duration: '876000h', // ~100 years
     });
 
     if (banError) {
-      console.error('DELETE /api/admin/users/[id]: Ban error:', banError);
       return NextResponse.json({ error: 'Failed to ban user' }, { status: 500 });
     }
 
-    // Mark as deleted in user_profiles
     const { error: profileUpdateError } = await supabaseAdmin
       .from('user_profiles')
       .update({
@@ -306,14 +260,11 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       .eq('user_id', userId);
 
     if (profileUpdateError) {
-      console.error('DELETE /api/admin/users/[id]: Profile update error:', profileUpdateError);
       // Don't fail - the ban was successful
     }
 
-    // Sign out all sessions
     const { error: signOutError } = await supabaseAdmin.auth.admin.signOut(userId, 'global');
     if (signOutError) {
-      console.error('DELETE /api/admin/users/[id]: Sign out error:', signOutError);
       // Don't fail - the ban was successful
     }
 
@@ -326,9 +277,6 @@ export async function DELETE(request: Request, { params }: RouteParams) {
   }
 }
 
-/**
- * Formats a US phone number to E.164 format (+1XXXXXXXXXX)
- */
 function formatUSPhoneNumber(input: string): string | null {
   const digits = input.replace(/\D/g, '');
   if (digits.length === 10) {

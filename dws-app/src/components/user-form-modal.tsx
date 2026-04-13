@@ -50,11 +50,9 @@ export function UserFormModal({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Reset form when modal opens/closes or mode changes
   useEffect(() => {
     if (open) {
       if (mode === "edit" && user) {
-        // Strip +1 from phone for display
         const phoneDisplay = user.phone?.replace(/^\+1/, "") || ""
         setFormData({
           phone: phoneDisplay,
@@ -80,13 +78,11 @@ export function UserFormModal({
     e.preventDefault()
     setError(null)
 
-    // Validate required fields
     if (!formData.phone.trim() || !formData.full_name.trim()) {
       setError("Phone and full name are required")
       return
     }
 
-    // Validate phone format
     if (!isValidUSPhoneNumber(formData.phone)) {
       setError("Please enter a valid 10-digit US phone number")
       return
@@ -107,7 +103,6 @@ export function UserFormModal({
         role: formData.role,
       }
 
-      // Only include optional fields if they have values
       if (formData.preferred_name.trim()) {
         body.preferred_name = formData.preferred_name.trim()
       }

@@ -49,7 +49,7 @@ export default {
   serverExternalPackages: ['@boundaryml/baml'],  // BAML not bundled
   images: {
     remotePatterns: [{
-      hostname: '<REDACTED_PROJECT_ID>.supabase.co'  // Storage images
+      hostname: '<project-id>.supabase.co'  // Storage images
     }]
   },
   typescript: { ignoreBuildErrors: true },

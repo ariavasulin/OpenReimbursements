@@ -1,13 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AdminUser } from '@/lib/types'
 
-// Query key factory for consistent cache keys
 export const adminUsersKeys = {
   all: ['admin-users'] as const,
   list: () => ['admin-users', 'list'] as const,
 }
 
-// Fetch function
 async function fetchAdminUsers(): Promise<AdminUser[]> {
   const response = await fetch("/api/admin/users?perPage=1000")
   const data = await response.json()
@@ -19,7 +17,6 @@ async function fetchAdminUsers(): Promise<AdminUser[]> {
   return data.users || []
 }
 
-// Main query hook
 export function useAdminUsers({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: adminUsersKeys.list(),
@@ -28,7 +25,6 @@ export function useAdminUsers({ enabled = true }: { enabled?: boolean } = {}) {
   })
 }
 
-// Hook to invalidate admin users (used after create/update/delete)
 export function useInvalidateAdminUsers() {
   const queryClient = useQueryClient()
 
@@ -37,5 +33,4 @@ export function useInvalidateAdminUsers() {
   }
 }
 
-// Export fetch function for prefetching
 export { fetchAdminUsers }

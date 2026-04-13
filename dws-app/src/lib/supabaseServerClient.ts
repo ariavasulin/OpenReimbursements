@@ -1,10 +1,8 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 
-// Extend the lifetime of the auth cookies to ~6 months (in seconds)
-const SIX_MONTHS_SECONDS = 60 * 60 * 24 * 180; // 15,552,000 seconds
+const SIX_MONTHS_SECONDS = 60 * 60 * 24 * 180;
 
-// Helper to merge the caller-provided CookieOptions with our long-expiry defaults
 const withLongExpiry = (options: CookieOptions = {}): CookieOptions => {
   return {
     ...options,
@@ -17,8 +15,8 @@ const withLongExpiry = (options: CookieOptions = {}): CookieOptions => {
   };
 };
 
-export async function createSupabaseServerClient() { // Make function async
-  const cookieStore = await cookies(); // Await cookies()
+export async function createSupabaseServerClient() {
+  const cookieStore = await cookies();
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,

@@ -1,4 +1,3 @@
-// src/app/page.tsx
 "use client";
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -12,14 +11,12 @@ export default function HomePage() {
   const redirectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // Set a timeout to prevent infinite loading
     redirectTimeoutRef.current = setTimeout(() => {
       if (mountedRef.current && loading) {
-        console.error("ROOT_PAGE: Redirect timeout reached, forcing redirect to login");
         setLoading(false);
         router.replace('/login');
       }
-    }, 8000); // 8 second timeout
+    }, 8000);
 
     const checkSessionAndRedirect = async () => {
       if (!mountedRef.current) return;
@@ -31,14 +28,12 @@ export default function HomePage() {
         if (!mountedRef.current) return;
 
         if (sessionError) {
-          console.error("Error getting session in root page:", sessionError);
           setLoading(false);
           router.replace('/login');
           return;
         }
 
         if (session) {
-          // User is logged in, fetch their role
           const { data: profile, error: profileError } = await supabase
             .from('user_profiles')
             .select('role')
@@ -48,7 +43,6 @@ export default function HomePage() {
           if (!mountedRef.current) return;
 
           if (profileError) {
-            console.error("Error fetching user profile in root page:", profileError);
             setLoading(false);
             router.replace('/login');
             return;
@@ -60,19 +54,15 @@ export default function HomePage() {
             } else if (profile.role === 'admin') {
               router.replace('/dashboard');
             } else {
-              console.warn("Unknown user role:", profile.role);
               router.replace('/login');
             }
           } else {
-            console.warn("Profile not found for logged-in user:", session.user.id);
             router.replace('/login');
           }
         } else {
-          // No session, redirect to login
           router.replace('/login');
         }
       } catch (error) {
-        console.error("Critical error in root page session check:", error);
         if (mountedRef.current) {
           setLoading(false);
           router.replace('/login');
@@ -86,9 +76,7 @@ export default function HomePage() {
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mountedRef.current) return;
-        
-        console.log("ROOT_PAGE: Auth state change:", event);
-        
+
         // Only handle sign out - let each page handle its own auth validation
         if (event === 'SIGNED_OUT' || !session) {
           router.replace('/login');
@@ -98,7 +86,6 @@ export default function HomePage() {
     );
 
     return () => {
-      console.log("ROOT_PAGE: Cleaning up");
       mountedRef.current = false;
       if (redirectTimeoutRef.current) {
         clearTimeout(redirectTimeoutRef.current);
@@ -106,16 +93,6 @@ export default function HomePage() {
       authListener?.subscription?.unsubscribe();
     };
   }, [router]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      if (redirectTimeoutRef.current) {
-        clearTimeout(redirectTimeoutRef.current);
-      }
-    };
-  }, []);
 
   if (loading) {
     return (
@@ -128,6 +105,5 @@ export default function HomePage() {
     );
   }
 
-  // This should not be reached if redirection is working correctly
-  return null; 
+  return null;
 }

@@ -22,7 +22,6 @@ export default function UserManagementDashboard({
   currentUserId,
   onLogout,
 }: UserManagementDashboardProps) {
-  // Use React Query for cached data fetching
   const { data: users = [], isLoading, error: queryError, refetch } = useAdminUsers()
   const invalidateUsers = useInvalidateAdminUsers()
   const error = queryError?.message || null
@@ -30,14 +29,12 @@ export default function UserManagementDashboard({
   const [filteredUsers, setFilteredUsers] = useState<AdminUser[]>([])
   const [searchQuery, setSearchQuery] = useState("")
 
-  // Modal states
   const [showUserForm, setShowUserForm] = useState(false)
   const [formMode, setFormMode] = useState<"create" | "edit">("create")
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null)
   const [showBanDialog, setShowBanDialog] = useState(false)
   const [userToBan, setUserToBan] = useState<AdminUser | null>(null)
 
-  // Filter users based on search query
   useEffect(() => {
     if (!searchQuery.trim()) {
       setFilteredUsers(users)
@@ -83,19 +80,16 @@ export default function UserManagementDashboard({
     } else {
       toast.success("User updated successfully")
     }
-    // Invalidate cache to refetch users
     invalidateUsers()
   }
 
   const handleBanSuccess = () => {
     toast.success("User has been banned")
-    // Invalidate cache to refetch users
     invalidateUsers()
   }
 
   return (
     <div className="flex flex-col h-screen bg-[#222222] text-white">
-      {/* Header */}
       <div className="border-b border-[#444444]">
         <div className="flex h-16 items-center px-4 md:px-8">
           <div className="flex items-center">
@@ -125,7 +119,6 @@ export default function UserManagementDashboard({
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 p-4 md:p-8 pt-6 overflow-auto">
         <div className="mb-6">
           <h1 className="text-2xl font-bold mb-2">Manage Users</h1>
@@ -134,7 +127,6 @@ export default function UserManagementDashboard({
           </p>
         </div>
 
-        {/* Toolbar */}
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between mb-6">
           <div className="relative w-full sm:w-80">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -168,20 +160,17 @@ export default function UserManagementDashboard({
           </div>
         </div>
 
-        {/* Error message */}
         {error && (
           <div className="text-red-400 bg-red-900/30 p-3 rounded-md mb-4">
             {error}
           </div>
         )}
 
-        {/* User count */}
         <div className="text-sm text-gray-400 mb-4">
           {filteredUsers.length} user{filteredUsers.length !== 1 ? "s" : ""}
           {searchQuery && ` matching "${searchQuery}"`}
         </div>
 
-        {/* Table */}
         {isLoading && users.length === 0 ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
@@ -196,7 +185,6 @@ export default function UserManagementDashboard({
         )}
       </div>
 
-      {/* User form modal */}
       <UserFormModal
         open={showUserForm}
         onOpenChange={setShowUserForm}
@@ -205,7 +193,6 @@ export default function UserManagementDashboard({
         onSuccess={handleFormSuccess}
       />
 
-      {/* Ban confirmation dialog */}
       <BanUserDialog
         open={showBanDialog}
         onOpenChange={setShowBanDialog}

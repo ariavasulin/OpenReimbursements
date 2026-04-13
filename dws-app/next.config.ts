@@ -1,12 +1,14 @@
 import type { NextConfig } from "next";
 
+const supabaseHostname = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).hostname;
+
 const nextConfig: NextConfig = {
   serverExternalPackages: ['@boundaryml/baml'],
   images: {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "<REDACTED_PROJECT_ID>.supabase.co",
+        hostname: supabaseHostname,
         port: "",
         pathname: "/storage/v1/object/public/**",
       },

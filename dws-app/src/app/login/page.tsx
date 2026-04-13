@@ -1,30 +1,15 @@
-// src/app/login/page.tsx
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
-import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 
-import { formatUSPhoneNumber as formatPhone, formatPhoneForDisplay } from '@/lib/phone';
-
-// Wrapper to maintain backwards compatibility - always returns a string
-const formatUSPhoneNumber = (input: string): string => {
-  const result = formatPhone(input);
-  if (result) return result;
-
-  // For short test numbers (less than 10 digits), just add + prefix without country code
-  const digits = input.replace(/\D/g, '');
-  if (digits.length < 10) {
-    return `+${digits}`;
-  }
-  return `+1${digits.slice(0, 10)}`;
-};
+import { formatUSPhoneNumber } from '@/lib/phone';
 
 export default function LoginPage() {
   const [phoneNumberInput, setPhoneNumberInput] = useState('');
@@ -35,12 +20,8 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const router = useRouter();
   
-  // Add refs for better state management
   const mountedRef = useRef(true);
-  const redirectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isRedirectingRef = useRef(false);
 
-  // Redirect if already logged in - simplified version
   useEffect(() => {
     if (!mountedRef.current) return;
 
@@ -49,40 +30,23 @@ export default function LoginPage() {
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session && session.user) {
-          console.log("[Login Page] User already logged in, redirecting...");
           window.location.replace('/employee');
         }
       } catch (err) {
-        console.error("[Login Page] Error checking initial session:", err);
       }
     };
 
     checkInitialAuth();
 
-    // Minimal auth state listener
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        console.log('[Login Page] Auth state change:', event);
-        if (event === 'SIGNED_OUT') {
-          isRedirectingRef.current = false;
-        }
-      }
+      () => {}
     );
 
     return () => {
+      mountedRef.current = false;
       authListener?.subscription?.unsubscribe();
     };
   }, [router]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      if (redirectTimeoutRef.current) {
-        clearTimeout(redirectTimeoutRef.current);
-      }
-    };
-  }, []);
 
   const handleSendOtp = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -92,6 +56,11 @@ export default function LoginPage() {
 
     try {
       const formattedPhone = formatUSPhoneNumber(phoneNumberInput);
+      if (!formattedPhone) {
+        setError('Please enter a valid US phone number.');
+        setLoading(false);
+        return;
+      }
       const response = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -107,7 +76,6 @@ export default function LoginPage() {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       setError(errorMessage);
-      console.error('Send OTP error:', err);
     } finally {
       setLoading(false);
     }
@@ -120,8 +88,12 @@ export default function LoginPage() {
     setMessage(null);
 
     try {
-      console.log('[Login Page] Starting OTP verification...');
       const formattedPhone = formatUSPhoneNumber(phoneNumberInput);
+      if (!formattedPhone) {
+        setError('Please enter a valid US phone number.');
+        setLoading(false);
+        return;
+      }
       const response = await fetch('/api/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -133,9 +105,7 @@ export default function LoginPage() {
         throw new Error(data.error || 'Failed to verify OTP');
       }
       
-      console.log('[Login Page] OTP verification successful');
-      
-      // Set the session on the client-side Supabase instance
+      // Must manually set session on client-side Supabase instance after server-side OTP verify
       if (data.session) {
         const { access_token, refresh_token } = data.session;
         
@@ -146,33 +116,26 @@ export default function LoginPage() {
           });
           
           if (setSessionError) {
-            console.error('[Login Page] Error setting client session:', setSessionError);
             setError('Failed to update session locally. Please try again.');
             return;
           }
           
-          console.log('[Login Page] Session set successfully');
           setMessage('Login successful! Redirecting...');
           
-          // Simple direct redirect with minimal delay
           setTimeout(() => {
-            console.log('[Login Page] Executing redirect...');
             window.location.replace('/employee');
           }, 500);
           
         } else {
-          console.error('[Login Page] Invalid token types received from API.');
           setError('Received invalid session data. Please try again.');
           return;
         }
       } else {
-        console.error('[Login Page] No session returned from verify-otp API.');
         setError('Login completed but session data was not received. Please try again.');
         return;
       }
       
     } catch (err) {
-      console.error('[Login Page] Error in handleVerifyOtp:', err);
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       setError(errorMessage);
       setLoading(false);
@@ -258,7 +221,7 @@ export default function LoginPage() {
                 disabled={loading}
                 autoComplete="one-time-code"
               />
-              <p className="text-xs text-gray-400">We sent a code to {formatUSPhoneNumber(phoneNumberInput)}</p>
+              <p className="text-xs text-gray-400">We sent a code to {formatUSPhoneNumber(phoneNumberInput) || phoneNumberInput}</p>
             </div>
             <Button type="submit" className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || otp.length !== 4}>
               {loading ? 'Verifying...' : 'Verify & Login'}

@@ -23,7 +23,6 @@ import { supabase } from "@/lib/supabaseClient"
 import { usePendingReceipts, useInvalidatePendingReceipts } from "@/hooks/use-pending-receipts"
 
 export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
-  // Use React Query for cached data fetching
   const { data: receipts = [], isLoading: loading, error: queryError } = usePendingReceipts()
   const invalidatePendingReceipts = useInvalidatePendingReceipts()
   const error = queryError?.message || null
@@ -34,7 +33,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [showCompletionScreen, setShowCompletionScreen] = useState<boolean>(false)
 
-  // Confirmation dialog state
   const [showConfirmDialog, setShowConfirmDialog] = useState<boolean>(false)
 
   const decisionsCount = useMemo(() => Object.keys(decisions).length, [decisions])
@@ -69,7 +67,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
     if (currentIndex < receipts.length - 1) {
       setCurrentIndex(currentIndex + 1)
     } else if (decisionsCount === receipts.length) {
-      // If at the end and all decisions made, show completion screen
       setShowCompletionScreen(true)
     }
   }
@@ -78,7 +75,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
     if (currentIndex > 0) {
       setCurrentIndex(currentIndex - 1)
     }
-    // Always show review UI when navigating backwards
     setShowCompletionScreen(false)
   }
 
@@ -108,29 +104,24 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
       const results = await Promise.all(updatePromises)
       const anyError = results.some(result => result.error)
       if (anyError) {
-        // Attempt to find the first error message
         const firstError = results.find(result => result.error)?.error?.message || "An unknown error occurred during batch update."
         throw new Error(`Some updates failed. First error: ${firstError}`)
       }
 
       toast.success("All decisions submitted successfully!")
-      // Reset state
       setDecisions({})
       setReviewedCount(0)
       setCurrentIndex(0)
       setShowCompletionScreen(false)
 
-      // Invalidate cache to refetch pending receipts
       invalidatePendingReceipts()
     } catch (err: any) {
       toast.error(`Failed to submit decisions: ${err.message}`)
-      console.error("Error submitting decisions:", err)
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  // Check if all decisions are made and automatically show completion screen
   useEffect(() => {
     if (receipts.length > 0 && decisionsCount === receipts.length && !showCompletionScreen) {
       // Only auto-show completion screen if user is at the end or beyond
@@ -160,7 +151,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
   if (receipts.length === 0) {
     return (
       <div className="flex flex-col min-h-screen bg-[#222222] text-white">
-         {/* Header */}
         <div className="border-b border-[#444444]">
           <div className="flex h-16 items-center px-4 md:px-8">
             <div className="flex items-center">
@@ -196,9 +186,8 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
     )
   }
 
-  return ( // The error "Unexpected token div" was here. Ensuring proper return.
+  return (
     <div className="flex flex-col min-h-screen bg-[#222222] text-white">
-      {/* Header */}
       <div className="border-b border-[#444444]">
         <div className="flex h-16 items-center px-4 md:px-8">
           <div className="flex items-center">
@@ -239,7 +228,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 p-4 md:p-8 pt-6 text-white">
         <div className="mb-6">
           <h1 className="text-2xl font-bold mb-2 text-white">Batch Receipt Review</h1>
@@ -249,15 +237,12 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
           <Progress value={progress} className="h-2 mt-2 bg-[#444444]" indicatorColor="bg-green-500" />
         </div>
 
-        {/* Show review UI if there are receipts and user is actively reviewing (not on completion screen) */}
         {receipts.length > 0 && currentReceipt && !showCompletionScreen ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Receipt Details */}
             <Card className="bg-[#333333] text-white border-[#444444]">
               <CardHeader>
                 <div className="flex justify-between items-center">
                   <CardTitle className="text-white">Receipt {currentReceipt.id}</CardTitle>
-                  {/* Badge styling kept as is for now for status distinction */}
                   <Badge variant="outline" className={`capitalize ${
                     decisions[currentReceipt.id] === 'approved' ? 'bg-green-500/30 text-green-300 border-green-500/30' :
                     decisions[currentReceipt.id] === 'rejected' ? 'bg-red-500/30 text-red-300 border-red-500/30' :
@@ -337,7 +322,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
               </CardFooter>
             </Card>
 
-            {/* Receipt Image */}
             <Card className="bg-[#333333] text-white border-[#444444] flex flex-col">
               <CardHeader>
                 <CardTitle className="text-white">Receipt Image</CardTitle>
@@ -396,7 +380,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
           </Card>
         ) : null }
 
-        {/* Navigation between receipts */}
         {currentReceipt && receipts.length > 0 && (
           <div className="mt-6 flex justify-center">
             <div className="flex items-center space-x-2 bg-[#444444] rounded-lg p-2 overflow-x-auto max-w-full">
@@ -494,7 +477,6 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
         )}
       </div>
 
-      {/* Confirmation Dialog */}
       <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
         <DialogContent className="bg-[#333333] text-white border-[#444444]">
           <DialogHeader>

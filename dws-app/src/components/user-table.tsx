@@ -19,13 +19,12 @@ interface UserTableProps {
   users: AdminUser[]
   onEdit?: (user: AdminUser) => void
   onBan?: (user: AdminUser) => void
-  currentUserId?: string // To disable ban for self
+  currentUserId?: string
 }
 
 type SortField = keyof AdminUser
 type SortDirection = "asc" | "desc" | null
 
-// Test account phone numbers to hide
 const HIDDEN_TEST_PHONES = ["1234567", "7654321"]
 
 const UserTable: React.FC<UserTableProps> = ({
@@ -37,7 +36,6 @@ const UserTable: React.FC<UserTableProps> = ({
   const [sortField, setSortField] = useState<SortField | null>("full_name")
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
 
-  // Filter and sort data
   const sortedData = useMemo(() => {
     const filtered = users.filter(u => !HIDDEN_TEST_PHONES.some(p => u.phone.endsWith(p)))
 
@@ -113,7 +111,6 @@ const UserTable: React.FC<UserTableProps> = ({
 
   const getDisplayName = (user: AdminUser) => {
     if (!user.full_name) return "Unknown"
-    // Convert "Lastname, Firstname" to "Firstname Lastname"
     const parts = user.full_name.split(", ")
     if (parts.length === 2) {
       return `${parts[1]} ${parts[0]}`

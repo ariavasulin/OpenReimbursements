@@ -43,5 +43,27 @@ yarn-error.log*
 *.swp
 *.swo
 
+# AI tools
+.claude/
+CLAUDE.md
+thoughts/
+
+# Config
+.linear.toml
+
+# Sensitive data
+Assets/
+csv/
+
+# Prototype
+Prototypes/
+
+# Archive
+Docs/Archive/
+
+# Backups
+*.bak/
+hack.bak/
+
 # Misc
 .vercel 

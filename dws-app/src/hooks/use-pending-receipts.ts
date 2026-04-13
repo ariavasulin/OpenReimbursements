@@ -2,13 +2,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Receipt } from '@/lib/types'
 import { supabase } from '@/lib/supabaseClient'
 
-// Query key factory for consistent cache keys
 export const pendingReceiptsKeys = {
   all: ['pending-receipts'] as const,
   list: () => ['pending-receipts', 'list'] as const,
 }
 
-// Fetch function - queries Supabase directly for pending receipts
 async function fetchPendingReceipts(): Promise<Receipt[]> {
   const { data, error } = await supabase
     .from("receipts")
@@ -33,7 +31,6 @@ async function fetchPendingReceipts(): Promise<Receipt[]> {
 
   if (error) throw error
 
-  // Map to Receipt interface
   return (data || []).map((item: any) => ({
     id: item.id,
     employeeName: item.user_profiles?.full_name || "N/A",
@@ -49,7 +46,6 @@ async function fetchPendingReceipts(): Promise<Receipt[]> {
   }))
 }
 
-// Main query hook
 export function usePendingReceipts({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: pendingReceiptsKeys.list(),
@@ -58,7 +54,6 @@ export function usePendingReceipts({ enabled = true }: { enabled?: boolean } = {
   })
 }
 
-// Hook to invalidate pending receipts (used after batch submit)
 export function useInvalidatePendingReceipts() {
   const queryClient = useQueryClient()
 
@@ -67,5 +62,4 @@ export function useInvalidatePendingReceipts() {
   }
 }
 
-// Export fetch function for prefetching
 export { fetchPendingReceipts }
