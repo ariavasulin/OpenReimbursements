@@ -8,9 +8,24 @@ interface AdminReceiptsParams {
   enabled?: boolean
 }
 
+interface AdminReceiptCountsParams {
+  fromDate?: string
+  toDate?: string
+  enabled?: boolean
+}
+
+export interface AdminReceiptCounts {
+  pending: number
+  approved: number
+  rejected: number
+  reimbursed: number
+  total: number
+}
+
 export const adminReceiptsKeys = {
   all: ['admin-receipts'] as const,
   list: (params: AdminReceiptsParams) => ['admin-receipts', params] as const,
+  counts: (params: AdminReceiptCountsParams) => ['admin-receipts', 'counts', params] as const,
 }
 
 async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[]> {
@@ -53,6 +68,34 @@ export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsPar
   return useQuery({
     queryKey: adminReceiptsKeys.list(params),
     queryFn: () => fetchAdminReceipts(params),
+    enabled,
+  })
+}
+
+async function fetchAdminReceiptCounts(params: AdminReceiptCountsParams): Promise<AdminReceiptCounts> {
+  const urlParams = new URLSearchParams()
+  if (params.fromDate) urlParams.append('fromDate', params.fromDate)
+  if (params.toDate) urlParams.append('toDate', params.toDate)
+
+  const qs = urlParams.toString()
+  const response = await fetch(`/api/admin/receipts/status-counts${qs ? `?${qs}` : ''}`)
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}))
+    throw new Error(errorData.error || `Failed to fetch receipt counts: ${response.status}`)
+  }
+
+  const data = await response.json()
+  if (!data.success) {
+    throw new Error(data.error || 'Failed to fetch receipt counts')
+  }
+  return data.counts as AdminReceiptCounts
+}
+
+export function useAdminReceiptCounts({ enabled = true, ...params }: AdminReceiptCountsParams) {
+  return useQuery({
+    queryKey: adminReceiptsKeys.counts(params),
+    queryFn: () => fetchAdminReceiptCounts(params),
     enabled,
   })
 }

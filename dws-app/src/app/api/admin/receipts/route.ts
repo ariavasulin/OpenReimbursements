@@ -34,18 +34,47 @@ export async function GET(request: Request) {
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
 
-    const { data: receiptsData, error: queryError } = await supabase.rpc(
-      'get_admin_receipts_with_phone',
-      {
-        status_filter: statusFilter || null,
-        from_date: fromDate || null,
-        to_date: toDate || null,
-      }
-    );
+    // PostgREST caps RPC responses at ~1000 rows. We need the full result set
+    // for the admin dashboard's client-side counts/filters/CSV. Strategy:
+    // ask for the total count first, then fire one Range-based fetch per page
+    // in parallel. Two round-trips total, regardless of dataset size.
+    const PAGE_SIZE = 1000;
+    const MAX_ROWS = 100_000; // hard guard if the counts RPC ever returns wild values
 
-    if (queryError) {
-      return NextResponse.json({ error: queryError.message }, { status: 500 });
+    const { data: countsData, error: countsError } = await supabase.rpc(
+      'get_admin_receipt_status_counts',
+      { from_date: fromDate || null, to_date: toDate || null }
+    );
+    if (countsError) {
+      return NextResponse.json({ error: countsError.message }, { status: 500 });
     }
+    const totalMatching = (countsData ?? []).reduce(
+      (sum: number, row: { status: string; count: number | string }) => {
+        if (statusFilter && statusFilter !== 'all' && row.status !== statusFilter) {
+          return sum;
+        }
+        return sum + Number(row.count);
+      },
+      0
+    );
+    const expectedRows = Math.min(totalMatching, MAX_ROWS);
+    const pageCount = Math.max(1, Math.ceil(expectedRows / PAGE_SIZE));
+
+    const pageFetches = Array.from({ length: pageCount }, (_, i) =>
+      supabase
+        .rpc('get_admin_receipts_with_phone', {
+          status_filter: statusFilter || null,
+          from_date: fromDate || null,
+          to_date: toDate || null,
+        })
+        .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
+    );
+    const pageResults = await Promise.all(pageFetches);
+    const failedPage = pageResults.find((r) => r.error);
+    if (failedPage?.error) {
+      return NextResponse.json({ error: failedPage.error.message }, { status: 500 });
+    }
+    const receiptsData: any[] = pageResults.flatMap((r) => r.data ?? []);
 
     const mappedReceipts = (receiptsData || []).map((item: any) => {
       let publicImageUrl = item.image_url;

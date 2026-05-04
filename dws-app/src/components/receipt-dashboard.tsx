@@ -35,7 +35,7 @@ import ReceiptTable from "@/components/receipt-table"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 import { formatCurrency } from "@/lib/utils"
 import type { Receipt, BulkUpdateResponse } from "@/lib/types"
-import { useAdminReceipts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
+import { useAdminReceipts, useAdminReceiptCounts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
@@ -101,6 +101,12 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     refetch
   } = useAdminReceipts({
     // Always fetch all receipts - status filtering is done client-side for instant tab switching
+    fromDate: dateRange.from?.toISOString().split('T')[0],
+    toDate: toDateParam,
+    enabled: shouldFetch,
+  })
+
+  const { data: receiptCounts } = useAdminReceiptCounts({
     fromDate: dateRange.from?.toISOString().split('T')[0],
     toDate: toDateParam,
     enabled: shouldFetch,
@@ -295,11 +301,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     toast.success("Receipt updated successfully");
   }
 
-  const totalReceipts = receipts.length
+  // Counts come from a server-side aggregate so they're cap-proof and remain
+  // correct regardless of how many receipts exist. Total amount sums the
+  // currently-fetched rows, which is accurate because the receipts query
+  // explicitly raises the row cap.
+  const totalReceipts = receiptCounts?.total ?? 0
   const totalAmount = receipts.reduce((sum, receipt) => sum + receipt.amount, 0)
-  const pendingCount = receipts.filter((r) => r.status === "pending").length
-  const approvedCount = receipts.filter((r) => r.status === "approved").length
-  const reimbursedCount = receipts.filter((r) => r.status === "reimbursed").length
+  const pendingCount = receiptCounts?.pending ?? 0
+  const approvedCount = receiptCounts?.approved ?? 0
+  const reimbursedCount = receiptCounts?.reimbursed ?? 0
 
   if (error) {
     return (
