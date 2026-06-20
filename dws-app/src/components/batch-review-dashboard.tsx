@@ -18,8 +18,7 @@ import {
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
 import { formatDate } from "@/lib/utils"
-import type { Receipt } from "@/lib/types"
-import { supabase } from "@/lib/supabaseClient"
+import type { Receipt, BatchStatusResponse, ReceiptStatusValue } from "@/lib/types"
 import { usePendingReceipts, useInvalidatePendingReceipts } from "@/hooks/use-pending-receipts"
 
 export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
@@ -95,17 +94,22 @@ export default function BatchReviewDashboard({ onLogout }: { onLogout?: () => Pr
     setIsSubmitting(true)
     setShowConfirmDialog(false)
 
-    const updatePromises = Object.entries(decisions).map(([id, status]) => {
-      const dbStatus = status.charAt(0).toUpperCase() + status.slice(1) // e.g. "Approved"
-      return supabase.from("receipts").update({ status: dbStatus }).eq("id", id)
-    })
+    const batchDecisions = Object.entries(decisions).map(([id, status]) => ({
+      id,
+      status: (status.charAt(0).toUpperCase() + status.slice(1)) as ReceiptStatusValue, // e.g. "Approved"
+    }))
 
     try {
-      const results = await Promise.all(updatePromises)
-      const anyError = results.some(result => result.error)
-      if (anyError) {
-        const firstError = results.find(result => result.error)?.error?.message || "An unknown error occurred during batch update."
-        throw new Error(`Some updates failed. First error: ${firstError}`)
+      const response = await fetch("/api/receipts/batch-status", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decisions: batchDecisions }),
+      })
+
+      const result: BatchStatusResponse = await response.json()
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "An unknown error occurred during batch update.")
       }
 
       toast.success("All decisions submitted successfully!")

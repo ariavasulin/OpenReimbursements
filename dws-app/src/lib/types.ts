@@ -53,3 +53,20 @@ export interface BulkUpdateResponse {
   updatedCount: number;
   error?: string;
 }
+
+export type ReceiptStatusValue = "Pending" | "Approved" | "Rejected" | "Reimbursed";
+
+export interface BatchStatusDecision {
+  id: string;
+  status: ReceiptStatusValue;
+}
+
+export interface BatchStatusRequest {
+  decisions: BatchStatusDecision[];
+}
+
+export interface BatchStatusResponse {
+  success: boolean;
+  updatedCount?: number;
+  error?: string;
+}

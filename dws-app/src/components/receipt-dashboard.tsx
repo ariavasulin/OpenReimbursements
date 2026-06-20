@@ -3,7 +3,6 @@
 import { useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { supabase } from "@/lib/supabaseClient"
 import { Download, RefreshCw, ListChecks, LogOut, Search, CheckCircle, AlertCircle, Users } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -217,16 +216,14 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
   const getTotalApprovedCount = async () => {
     try {
-      const { count, error } = await supabase
-        .from('receipts')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'Approved');
-      
-      if (error) {
+      const response = await fetch('/api/admin/receipts/status-counts');
+
+      if (!response.ok) {
         return 0;
       }
-      
-      return count || 0;
+
+      const result = await response.json();
+      return result?.counts?.approved || 0;
     } catch (error) {
       return 0;
     }
