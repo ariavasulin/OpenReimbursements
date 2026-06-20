@@ -1,0 +1,45 @@
+# gitleaks configuration for OpenReimbursements (dws-app)
+#
+# Purpose: provide a repeatable, full-history secret scan as part of the
+# security-audit remediation (key-exposure workstream). Run from the repo root:
+#
+#   gitleaks detect --source . --config dws-app/.gitleaks.toml --no-banner
+#
+# This extends gitleaks' built-in ruleset and adds project-specific detectors
+# for the four secrets this app consumes (Supabase JWTs, OpenRouter key) plus
+# an allowlist for the known by-design / placeholder occurrences so the scan
+# stays signal-only.
+
+# Inherit the full default gitleaks ruleset, then layer the rules below on top.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "supabase-jwt"
+description = "Supabase JWT (anon / service_role / signed JWT secret)"
+# Supabase keys are JWTs: three base64url segments. The header segment for an
+# HS256 JWT (`{"alg":"HS256","typ":"JWT"}`) base64url-encodes to this prefix.
+regex = '''eyJhbGciOiJI[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'''
+keywords = ["eyJhbG"]
+
+[[rules]]
+id = "openrouter-api-key"
+description = "OpenRouter API key"
+regex = '''sk-or-v1-[a-f0-9]{32,}'''
+keywords = ["sk-or-"]
+
+[allowlist]
+description = "By-design and placeholder occurrences that are not live secrets"
+paths = [
+  # Local-only env file (gitignored, never committed) — present on disk only.
+  '''dws-app/\.env\.local''',
+  '''\.env\.local''',
+  # Lockfiles / vendored deps generate base64-looking integrity hashes.
+  '''package-lock\.json''',
+  '''node_modules/''',
+]
+regexes = [
+  # Documentation placeholders use truncated, non-secret stand-ins.
+  '''eyJ\.\.\.''',
+  '''sk-or-\.\.\.''',
+]

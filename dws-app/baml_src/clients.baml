@@ -8,7 +8,7 @@ client<llm> GPT4oMini {
   retry_policy Exponential
   options {
     base_url "https://openrouter.ai/api/v1"
-    model "openai/gpt-4.1-nano"
+    model "google/gemini-3.1-flash-lite"
     api_key env.OPENROUTER_API_KEY
     headers {
       "HTTP-Referer" "https://dws-receipts.vercel.app"

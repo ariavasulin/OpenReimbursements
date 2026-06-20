@@ -114,8 +114,12 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
       })
 
       if (!ocrResponse.ok) {
-        const errorData = await ocrResponse.json()
-        sonnerToast.error("OCR Failed", { id: "ocr-toast", description: errorData.error || "Could not extract details." })
+        // Extraction failed — degrade gracefully to manual entry instead of surfacing an error.
+        sonnerToast.info("Enter details manually", {
+          id: "ocr-toast",
+          description: "We couldn't read this receipt automatically.",
+          duration: 3000,
+        })
         setExtractedData({})
         setIsProcessingFile(false)
         setShowDetailsCard(true)
@@ -159,9 +163,14 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
         setShowDetailsCard(true)
       }
 
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "File processing error."
-      sonnerToast.error("Processing Error", { id: "ocr-toast", description: errorMessage })
+    } catch {
+      // Any failure in the upload/extract path degrades gracefully to manual entry —
+      // never surface a raw (e.g. WebKit) error message to the user.
+      sonnerToast.info("Enter details manually", {
+        id: "ocr-toast",
+        description: "We couldn't read this receipt automatically.",
+        duration: 3000,
+      })
       setExtractedData({})
       setIsProcessingFile(false)
       setShowDetailsCard(true)

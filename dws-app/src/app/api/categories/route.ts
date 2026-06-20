@@ -5,6 +5,19 @@ import type { Category } from '@/lib/types';
 export async function GET() {
   const supabase = await createSupabaseServerClient();
 
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) {
+    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
+  }
+
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { data: categories, error } = await supabase
       .from('categories')

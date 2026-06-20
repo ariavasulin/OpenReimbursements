@@ -67,3 +67,5 @@ hack.bak/
 
 # Misc
 .vercel 
+# Riptide artifacts (cloud-synced)
+.humanlayer/tasks/
