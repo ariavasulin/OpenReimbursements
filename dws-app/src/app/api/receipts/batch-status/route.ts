@@ -1,8 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
-import type { BatchStatusRequest } from '@/lib/types';
-
-const ALLOWED_STATUSES = ['Pending', 'Approved', 'Rejected', 'Reimbursed'] as const;
+import { RECEIPT_STATUS_VALUES, type BatchStatusRequest } from '@/lib/types';
 
 export async function PATCH(request: Request): Promise<NextResponse> {
   const supabase = await createSupabaseServerClient();
@@ -39,7 +37,7 @@ export async function PATCH(request: Request): Promise<NextResponse> {
     }
 
     for (const decision of decisions) {
-      if (!decision?.id || !decision?.status || !ALLOWED_STATUSES.includes(decision.status)) {
+      if (!decision?.id || !decision?.status || !RECEIPT_STATUS_VALUES.includes(decision.status)) {
         return NextResponse.json({ error: 'Each decision requires a valid id and status' }, { status: 400 });
       }
     }

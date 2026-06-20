@@ -7,9 +7,9 @@
 //   2. cd dws-app && npm run dev     (or `next dev`) in another shell
 //   3. node scripts/reproduce-receipt.mjs <path-to-image.jpg> [outDir]
 //
-// Auth: mints a real session autonomously via the service-role key (creates a throwaway
-// test user, signs in, serializes the @supabase/ssr cookie with the library itself so the
-// real route handlers' getUser()/getSession() accept it).
+// Auth: mints a real session autonomously via phone SMS OTP against a configured
+// TEST number (fixed OTP, no SMS sent), then serializes the @supabase/ssr cookie with
+// the library itself so the real route handlers' getUser()/getSession() accept it.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -19,9 +19,6 @@ import { createServerClient } from '@supabase/ssr';
 const BASE = process.env.REPRO_BASE_URL || 'http://localhost:3000';
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const TEST_EMAIL = process.env.REPRO_TEST_EMAIL || 'repro-harness@dws-receipts.test';
-const TEST_PW = process.env.REPRO_TEST_PW || 'Repro-Harness-Pw-123!';
 
 const imagePath = process.argv[2];
 const outDir = process.argv[3] || 'scripts/repro-fixtures/last-run';
@@ -34,9 +31,6 @@ function die(msg, extra) {
 
 if (!imagePath) die('pass an image path as arg 1');
 if (!URL || !ANON) die('missing Supabase env (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY) — load dws-app/.env.local');
-
-// Load env from dws-app/.env.local if the vars aren't already in process.env.
-// (Run via `node --env-file` if your Node supports it; otherwise rely on shell export.)
 
 // The app authenticates via phone SMS OTP. These are the project's configured
 // TEST phone numbers (fixed OTP, no SMS sent) — set REPRO_TEST_PHONE/REPRO_TEST_OTP to override.

@@ -54,7 +54,9 @@ export interface BulkUpdateResponse {
   error?: string;
 }
 
-export type ReceiptStatusValue = "Pending" | "Approved" | "Rejected" | "Reimbursed";
+export const RECEIPT_STATUS_VALUES = ["Pending", "Approved", "Rejected", "Reimbursed"] as const;
+
+export type ReceiptStatusValue = (typeof RECEIPT_STATUS_VALUES)[number];
 
 export interface BatchStatusDecision {
   id: string;
