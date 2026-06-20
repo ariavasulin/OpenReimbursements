@@ -74,7 +74,7 @@ export const supabaseAdmin = createClient(
 | created_at | timestamp | Auto-generated |
 | updated_at | timestamp | Auto-updated |
 
-**RLS**: Enabled. Users can only access their own receipts (unless admin).
+**RLS**: Enabled. Policies (`receipts_select`/`insert`/`update`/`delete`) allow a row when `user_id = auth.uid() OR public.is_admin()` — owners see/modify only their own rows; admins see/modify all. See `dws-app/db/enable-rls.sql`.
 
 ### categories
 
@@ -84,7 +84,7 @@ export const supabaseAdmin = createClient(
 | name | text | Category name (unique) |
 | created_at | timestamp | Auto-generated |
 
-**RLS**: Disabled (public data).
+**RLS**: Enabled — authenticated read, admin write. `categories_select` allows `SELECT` to any `authenticated` user; `categories_insert`/`update`/`delete` require `public.is_admin()`. See `dws-app/db/enable-rls.sql`.
 
 **Default Categories**: Parking, Gas, Meals & Entertainment, Office Supplies, Other
 
@@ -156,6 +156,31 @@ $$;
 ```
 
 Called via: `supabase.rpc('get_admin_receipts_with_phone', { ... })`
+
+### is_admin()
+
+`SECURITY DEFINER` helper used by the `receipts` and `categories` RLS policies to
+encode the same admin semantics as the inline `user_profiles.role = 'admin'`
+check copy-pasted across the admin API routes. Defined in
+`dws-app/db/enable-rls.sql`.
+
+```sql
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.user_profiles up
+    WHERE up.user_id = auth.uid() AND up.role = 'admin'
+  );
+$$;
+```
+
+`SECURITY DEFINER` so the `user_profiles` lookup is not itself blocked by RLS on
+that table; `search_path` is locked to `public` to prevent search-path hijacking.
 
 ## Storage
 
