@@ -84,6 +84,7 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
     setUploadedFile(file)
     setExtractedData({})
 
+    let uploadedPath: string | null = null
     try {
       const formData = new FormData()
       formData.append("file", file)
@@ -94,8 +95,8 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
       })
 
       if (!uploadResponse.ok) {
-        const errorData = await uploadResponse.json()
-        throw new Error(errorData.error || "Failed to pre-upload image for OCR.")
+        const errorData = await uploadResponse.json().catch(() => ({}))
+        throw new Error(errorData.error || "Failed to upload image. Please try again.")
       }
 
       const uploadResult = await uploadResponse.json()
@@ -104,6 +105,7 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
       }
 
       const tempFilePath = uploadResult.tempFilePath
+      uploadedPath = tempFilePath
       setTempFilePathState(tempFilePath)
 
       sonnerToast.info("Extracting receipt details...", { id: "ocr-toast" })
@@ -163,9 +165,19 @@ export default function ReceiptUploader({ onReceiptAdded }: ReceiptUploaderProps
         setShowDetailsCard(true)
       }
 
-    } catch {
-      // Any failure in the upload/extract path degrades gracefully to manual entry —
-      // never surface a raw (e.g. WebKit) error message to the user.
+    } catch (error) {
+      console.error("Receipt processing failed:", error)
+
+      if (!uploadedPath) {
+        // Upload never produced a temp path, so manual entry would dead-end at submit
+        // (handleDetailsSubmit requires tempFilePathState). Surface the sanitized upload
+        // error — never the raw (e.g. WebKit) message — so the user can act on it.
+        const errorMessage = error instanceof Error ? error.message : "File processing error."
+        sonnerToast.error("Upload failed", { id: "ocr-toast", description: errorMessage })
+        setIsProcessingFile(false)
+        return
+      }
+
       sonnerToast.info("Enter details manually", {
         id: "ocr-toast",
         description: "We couldn't read this receipt automatically.",
