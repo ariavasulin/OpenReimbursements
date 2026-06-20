@@ -7,7 +7,7 @@ class ExtractedReceipt {
 
 // Main extraction function
 function ExtractReceiptFromImage(img: image) -> ExtractedReceipt {
-  client GPT4oMini
+  client OcrExtractor
   prompt #"
     {{_.role("user")}}
 

@@ -1,15 +1,15 @@
 // Faithful reproduction harness for the receipt OCR pipeline.
 // Drives the REAL /api/receipts/upload -> /api/receipts/ocr routes (no reimplementation)
-// against a given receipt image, capturing the genuine OCR envelope + raw ExtractedReceipt.
+// against a given receipt image, capturing the genuine OCR envelope.
 //
 // Usage:
 //   1. cp .env dws-app/.env.local   (Supabase + OpenRouter keys)
 //   2. cd dws-app && npm run dev     (or `next dev`) in another shell
-//   3. node scripts/reproduce-receipt.mjs <path-to-image.jpg> [outDir]
+//   3. node --env-file=.env.local scripts/reproduce-receipt.mjs <path-to-image.jpg> [outDir]
 //
-// Auth: mints a real session autonomously via phone SMS OTP against a configured
-// TEST number (fixed OTP, no SMS sent), then serializes the @supabase/ssr cookie with
-// the library itself so the real route handlers' getUser()/getSession() accept it.
+// Auth: mints a real session via the project's configured phone-SMS OTP test numbers
+// (fixed OTP, no SMS sent), then serializes the @supabase/ssr cookie with the library
+// itself so the real route handlers' getUser()/getSession() accept it.
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -105,7 +105,6 @@ async function main() {
 
   console.log('\n=== OCR ENVELOPE ===');
   console.log(JSON.stringify(ocrJson, null, 2));
-  console.log(`\n(Raw ExtractedReceipt is in the dev-server log: grep "[REPRO] RAW EXTRACTED")`);
   console.log(`Saved: ${outFile}`);
 }
 

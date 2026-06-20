@@ -1,9 +1,9 @@
 // Learn more about clients at https://docs.boundaryml.com/docs/snippets/clients/overview
 
-// GPT-4.1 nano client via OpenRouter for receipt extraction
-// OpenRouter provides unified access to multiple model providers
-// Using openai-generic provider for non-OpenAI endpoints (as per BAML docs)
-client<llm> GPT4oMini {
+// Receipt OCR extraction client — Gemini Flash Lite via OpenRouter.
+// OpenRouter provides unified access to multiple model providers; using the
+// openai-generic provider for non-OpenAI endpoints (as per BAML docs).
+client<llm> OcrExtractor {
   provider openai-generic
   retry_policy Exponential
   options {
