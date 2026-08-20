@@ -17,11 +17,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  createResumableUpload,
   uploadOne,
   type FinalizePayload,
   type UploadDeps,
   type UploadResult,
 } from "@/lib/photos/upload";
+import UploadProgress, {
+  type UploadItem,
+} from "@/components/photos/upload-progress";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 
 // Batch details form: one job + one optional sheet + one set of tags for the
@@ -64,6 +68,19 @@ function buildUploadDeps(): UploadDeps {
         return { error };
       },
     },
+    // Originals over 6 MB go browser -> storage over resumable TUS (they can
+    // be multi-GB videos; plain uploads and API routes can't carry that).
+    resumableUpload: createResumableUpload({
+      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      getAccessToken: async () => {
+        // getSession() refreshes an expired token — called per chunk, so a
+        // token that expires an hour into a big upload doesn't 401 it.
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        return session?.access_token ?? null;
+      },
+    }),
     async finalize(payload: FinalizePayload) {
       const response = await fetch("/api/photos", {
         method: "POST",
@@ -77,8 +94,6 @@ function buildUploadDeps(): UploadDeps {
     },
   };
 }
-
-type FileStatus = "pending" | "uploading" | "done" | "failed";
 
 interface UploadSheetProps {
   files: File[];
@@ -102,7 +117,7 @@ export default function UploadSheet({
   const [sheetNumber, setSheetNumber] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
-  const [statuses, setStatuses] = useState<FileStatus[]>([]);
+  const [items, setItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const anyUploadedRef = useRef(false);
 
@@ -124,7 +139,13 @@ export default function UploadSheet({
       setSheetNumber("");
       setTags([]);
       setTagInput("");
-      setStatuses(files.map(() => "pending"));
+      setItems(
+        files.map((file) => ({
+          status: "pending",
+          sentBytes: 0,
+          totalBytes: file.size,
+        }))
+      );
       anyUploadedRef.current = false;
     }
   }, [open, files, defaultJobId]);
@@ -158,10 +179,10 @@ export default function UploadSheet({
     setTagInput("");
   };
 
-  const setStatus = (index: number, status: FileStatus) =>
-    setStatuses((previous) => {
+  const patchItem = (index: number, patch: Partial<UploadItem>) =>
+    setItems((previous) => {
       const next = [...previous];
-      next[index] = status;
+      next[index] = { ...next[index], ...patch };
       return next;
     });
 
@@ -191,10 +212,21 @@ export default function UploadSheet({
     const results: UploadResult[] = [];
     for (let i = 0; i < batchFiles.length; i++) {
       const fileIndex = indices[i];
-      setStatus(fileIndex, "uploading");
-      const result = await uploadOne(batchFiles[i], meta, deps);
+      patchItem(fileIndex, {
+        status: "uploading",
+        sentBytes: 0,
+        totalBytes: batchFiles[i].size,
+        error: undefined,
+      });
+      const result = await uploadOne(
+        batchFiles[i],
+        meta,
+        deps,
+        (sentBytes, totalBytes) =>
+          patchItem(fileIndex, { sentBytes, totalBytes })
+      );
       results.push(result);
-      setStatus(fileIndex, result.status);
+      patchItem(fileIndex, { status: result.status, error: result.error });
       if (result.status === "done") anyUploadedRef.current = true;
     }
     setUploading(false);
@@ -215,13 +247,14 @@ export default function UploadSheet({
     }
   };
 
-  const failedIndices = statuses
-    .map((status, index) => (status === "failed" ? index : -1))
+  const failedIndices = items
+    .map((item, index) => (item.status === "failed" ? index : -1))
     .filter((index) => index >= 0);
-  const pendingIndices = statuses
-    .map((status, index) => (status === "pending" ? index : -1))
+  const pendingIndices = items
+    .map((item, index) => (item.status === "pending" ? index : -1))
     .filter((index) => index >= 0);
-  const doneCount = statuses.filter((status) => status === "done").length;
+  const doneCount = items.filter((item) => item.status === "done").length;
+  const uploadStarted = items.some((item) => item.status !== "pending");
 
   const handleOpenChange = (next: boolean) => {
     if (!next && uploading) return; // don't lose an in-flight batch
@@ -249,17 +282,17 @@ export default function UploadSheet({
                 {file.name}
               </div>
             )}
-            {statuses[index] === "uploading" && (
+            {items[index]?.status === "uploading" && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/55 text-[9px] font-semibold text-white">
                 ...
               </div>
             )}
-            {statuses[index] === "done" && (
+            {items[index]?.status === "done" && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/55 text-xs font-semibold text-[#4ade80]">
                 Done
               </div>
             )}
-            {statuses[index] === "failed" && (
+            {items[index]?.status === "failed" && (
               <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/65 text-[10px] font-semibold text-red-400">
                 Failed
               </div>
@@ -267,6 +300,15 @@ export default function UploadSheet({
           </div>
         ))}
       </div>
+
+      {uploadStarted && (
+        <UploadProgress
+          files={files}
+          items={items}
+          onRetry={(index) => runUpload([index])}
+          retryDisabled={uploading}
+        />
+      )}
 
       <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
       <Select value={jobId} onValueChange={setJobId} disabled={uploading}>

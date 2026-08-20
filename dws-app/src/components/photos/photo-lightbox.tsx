@@ -6,11 +6,12 @@ import { toast } from "sonner";
 import { X } from "lucide-react";
 import Lightbox from "yet-another-react-lightbox";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
+import Video from "yet-another-react-lightbox/plugins/video";
 import Counter from "yet-another-react-lightbox/plugins/counter";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/counter.css";
 import { supabase } from "@/lib/supabaseClient";
-import { downloadUrl, previewUrl } from "@/lib/photos/urls";
+import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoJobSummary, PhotoRow } from "@/lib/photos/types";
 
 // Zoomable lightbox over the current filtered set (whatever grid you opened
@@ -342,11 +343,29 @@ export default function PhotoLightbox({
       close={onClose}
       index={index}
       on={{ view: ({ index: viewIndex }) => onIndexChange(viewIndex) }}
-      slides={photos.map((item) => ({
-        src: previewUrl(item) ?? "",
-        alt: item.original_name ?? "",
-      }))}
-      plugins={[Zoom, Counter]}
+      slides={photos.map((item) =>
+        item.kind === "video"
+          ? {
+              // Playback streams the original (storage serves range requests;
+              // there's no transcode) behind the generated poster frame.
+              type: "video" as const,
+              poster: previewUrl(item) ?? undefined,
+              controls: true,
+              playsInline: true,
+              preload: "none",
+              sources: [
+                {
+                  src: publicUrl(item.original_path),
+                  type: item.mime_type ?? "video/mp4",
+                },
+              ],
+            }
+          : {
+              src: previewUrl(item) ?? "",
+              alt: item.original_name ?? "",
+            }
+      )}
+      plugins={[Zoom, Video, Counter]}
       zoom={{ maxZoomPixelRatio: 4, doubleTapDelay: 300 }}
       carousel={{ finite: false }}
       controller={{ closeOnBackdropClick: false }}

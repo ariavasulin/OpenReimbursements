@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { makeDerivatives, THUMB_MAX_DIM, PREVIEW_MAX_DIM } from "./derivatives";
+import {
+  makeDerivatives,
+  POSTER_SEEK_SECS,
+  THUMB_MAX_DIM,
+  PREVIEW_MAX_DIM,
+} from "./derivatives";
 
-// createImageBitmap / OffscreenCanvas don't exist in Node — the decode and
-// canvas layers are mocked (per the TDD's test plan) and the tests assert the
-// orchestration: orientation option, scaling math, undecodable -> null.
+// createImageBitmap / OffscreenCanvas / <video> don't exist in Node — the
+// decode and canvas layers are mocked (per the TDD's test plan) and the tests
+// assert the orchestration: orientation option, scaling math, video poster
+// seek + duration, undecodable -> null.
 
 interface FakeCanvas {
   width: number;
@@ -129,6 +135,149 @@ describe("makeDerivatives", () => {
     // No createImageBitmap stub (Node default).
     const file = new File([new Uint8Array(8)], "photo.jpg", {
       type: "image/jpeg",
+    });
+    expect(await makeDerivatives(file)).toBeNull();
+  });
+});
+
+// --- Video posters -----------------------------------------------------
+
+/** Emulates just enough <video> for the poster flow: metadata fires after
+ * src is set, seeked fires after currentTime is set (or "error" instead). */
+class FakeVideo {
+  muted = false;
+  playsInline = false;
+  preload = "";
+  videoWidth = 1920;
+  videoHeight = 1080;
+  duration = 42.5;
+  seekedTo: number | null = null;
+  failWith: "metadata" | "seek" | null = null;
+
+  private listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, fn: () => void) {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type)!.add(fn);
+  }
+  removeEventListener(type: string, fn: () => void) {
+    this.listeners.get(type)?.delete(fn);
+  }
+  removeAttribute() {}
+  private emit(type: string) {
+    for (const fn of [...(this.listeners.get(type) ?? [])]) fn();
+  }
+
+  set src(_value: string) {
+    queueMicrotask(() =>
+      this.emit(this.failWith === "metadata" ? "error" : "loadedmetadata")
+    );
+  }
+  set currentTime(value: number) {
+    this.seekedTo = value;
+    queueMicrotask(() =>
+      this.emit(this.failWith === "seek" ? "error" : "seeked")
+    );
+  }
+}
+
+function installVideoMocks(video: FakeVideo) {
+  const canvases: FakeCanvas[] = [];
+  const revoked: string[] = [];
+
+  vi.stubGlobal("document", {
+    createElement: (tag: string) => {
+      if (tag !== "video") throw new Error(`unexpected createElement(${tag})`);
+      return video;
+    },
+  });
+  vi.stubGlobal("URL", {
+    createObjectURL: vi.fn(() => "blob:fake-video"),
+    revokeObjectURL: vi.fn((url: string) => revoked.push(url)),
+  });
+  // The poster frame is grabbed via createImageBitmap(videoElement).
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn(async (source: unknown) => {
+      const fake = source as FakeVideo;
+      return { width: fake.videoWidth, height: fake.videoHeight, close: vi.fn() };
+    })
+  );
+
+  class OffscreenCanvasMock {
+    width: number;
+    height: number;
+    constructor(width: number, height: number) {
+      this.width = width;
+      this.height = height;
+      canvases.push(this);
+    }
+    getContext(kind: string) {
+      return kind === "2d" ? { drawImage: () => {} } : null;
+    }
+    async convertToBlob(options?: { type?: string }) {
+      return new Blob([`${this.width}x${this.height}`], {
+        type: options?.type ?? "image/png",
+      });
+    }
+  }
+  vi.stubGlobal("OffscreenCanvas", OffscreenCanvasMock);
+
+  return { canvases, revoked };
+}
+
+describe("makeDerivatives (video)", () => {
+  it("captures a poster ~1s in, scaled like any image, plus the duration", async () => {
+    const video = new FakeVideo();
+    const { canvases, revoked } = installVideoMocks(video);
+    const file = new File([new Uint8Array(8)], "clip.mp4", {
+      type: "video/mp4",
+    });
+
+    const result = await makeDerivatives(file);
+
+    expect(result).not.toBeNull();
+    expect(result!.durationSecs).toBe(42.5);
+    expect(result!.thumb.type).toBe("image/webp");
+    expect(result!.preview.type).toBe("image/webp");
+    expect(video.seekedTo).toBe(POSTER_SEEK_SECS);
+    // 1920x1080 poster -> 400x225 thumb; preview is never upscaled.
+    expect(canvases[0]).toMatchObject({ width: THUMB_MAX_DIM, height: 225 });
+    expect(canvases[1]).toMatchObject({ width: 1920, height: 1080 });
+    expect(revoked).toEqual(["blob:fake-video"]);
+  });
+
+  it("seeks to the midpoint of clips shorter than the 1s target", async () => {
+    const video = new FakeVideo();
+    video.duration = 1.2;
+    installVideoMocks(video);
+    const file = new File([new Uint8Array(8)], "short.mp4", {
+      type: "video/mp4",
+    });
+
+    const result = await makeDerivatives(file);
+
+    expect(result).not.toBeNull();
+    expect(result!.durationSecs).toBe(1.2);
+    expect(video.seekedTo).toBeCloseTo(0.6);
+  });
+
+  it("returns null (and still revokes the object URL) when the codec can't decode", async () => {
+    const video = new FakeVideo();
+    video.failWith = "metadata";
+    const { revoked } = installVideoMocks(video);
+    const file = new File([new Uint8Array(8)], "weird.mov", {
+      type: "video/quicktime",
+    });
+
+    expect(await makeDerivatives(file)).toBeNull();
+    expect(revoked).toEqual(["blob:fake-video"]);
+  });
+
+  it("returns null in an environment without <video> at all", async () => {
+    // Node default: no document / no createImageBitmap.
+    const file = new File([new Uint8Array(8)], "clip.mp4", {
+      type: "video/mp4",
     });
     expect(await makeDerivatives(file)).toBeNull();
   });

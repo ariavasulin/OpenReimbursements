@@ -4,7 +4,13 @@
 // leaves only repairable states (row-less original / row without derivatives),
 // which the repair loop converges. Storage and API clients are injected so
 // the logic is testable without a browser or network.
+//
+// Originals over 6 MB go up via resumable TUS (Supabase's
+// /storage/v1/upload/resumable endpoint) so a multi-GB jobsite-LTE video
+// survives drops and resumes instead of restarting. Derivatives are always
+// small plain uploads.
 
+import { Upload as TusUpload, type UploadOptions, type DetailedError } from "tus-js-client";
 import { extractCapturedAt as defaultExtractCapturedAt } from "./exif";
 import {
   makeDerivatives as defaultMakeDerivatives,
@@ -46,10 +52,26 @@ export interface PhotoStorage {
   ): Promise<{ error: { message: string } | null }>;
 }
 
+/** Byte-level progress for one file (only TUS uploads report mid-file). */
+export type ByteProgress = (sentBytes: number, totalBytes: number) => void;
+
+/**
+ * Resumable upload for big originals. Same result contract as
+ * PhotoStorage.upload so uploadOne treats both paths identically.
+ */
+export type ResumableUpload = (
+  path: string,
+  file: File,
+  options: { contentType: string; onProgress?: ByteProgress }
+) => Promise<{ error: { message: string } | null }>;
+
 export interface UploadDeps {
   storage: PhotoStorage;
   /** POST /api/photos; must throw on failure. */
   finalize: (payload: FinalizePayload) => Promise<void>;
+  /** TUS path for originals over RESUMABLE_THRESHOLD_BYTES (optional: tests
+   * and environments without TUS fall back to plain uploads). */
+  resumableUpload?: ResumableUpload;
   extractCapturedAt?: (file: File) => Promise<Date | null>;
   makeDerivatives?: (file: File) => Promise<Derivatives | null>;
   generateId?: () => string;
@@ -66,8 +88,115 @@ export interface UploadResult {
 
 export type UploadProgress =
   | { type: "start"; file: File; index: number; total: number }
+  | {
+      type: "progress";
+      file: File;
+      index: number;
+      total: number;
+      sentBytes: number;
+      totalBytes: number;
+    }
   | { type: "done"; file: File; index: number; total: number }
   | { type: "failed"; file: File; index: number; total: number; error: string };
+
+/** Plain .upload() is for <=6 MB; anything bigger goes resumable (TUS). */
+export const RESUMABLE_THRESHOLD_BYTES = 6 * 1024 * 1024;
+/** Supabase's TUS endpoint requires chunks of EXACTLY 6 MB. */
+export const TUS_CHUNK_BYTES = 6 * 1024 * 1024;
+
+const PHOTOS_BUCKET = "photos";
+
+/** Minimal structural view of tus-js-client's Upload, so tests inject fakes. */
+export interface TusUploadLike {
+  start(): void;
+  findPreviousUploads(): Promise<unknown[]>;
+  resumeFromPreviousUpload(previousUpload: unknown): void;
+}
+
+export type TusUploadCtor = new (
+  file: File,
+  options: UploadOptions
+) => TusUploadLike;
+
+export interface ResumableUploadConfig {
+  /** e.g. process.env.NEXT_PUBLIC_SUPABASE_URL */
+  supabaseUrl: string;
+  /**
+   * Called before EVERY chunk request — access tokens expire (~1 h) while a
+   * multi-GB LTE upload is still running, so each chunk re-reads the current
+   * token (supabase.auth.getSession() refreshes an expired one).
+   */
+  getAccessToken: () => Promise<string | null>;
+  /** Test seam; defaults to the real tus-js-client Upload. */
+  UploadCtor?: TusUploadCtor;
+}
+
+/**
+ * Build the ResumableUpload dep: browser -> Supabase Storage directly over
+ * TUS (originals can be multi-GB; they never pass through a Next.js route).
+ */
+export function createResumableUpload(
+  config: ResumableUploadConfig
+): ResumableUpload {
+  const UploadCtor: TusUploadCtor =
+    config.UploadCtor ?? (TusUpload as unknown as TusUploadCtor);
+
+  return (path, file, options) =>
+    new Promise((resolve) => {
+      let settled = false;
+      const settle = (error: { message: string } | null) => {
+        if (!settled) {
+          settled = true;
+          resolve({ error });
+        }
+      };
+
+      const upload = new UploadCtor(file, {
+        endpoint: `${config.supabaseUrl}/storage/v1/upload/resumable`,
+        chunkSize: TUS_CHUNK_BYTES,
+        retryDelays: [0, 3000, 5000, 10000, 20000],
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        headers: { "x-upsert": "true" },
+        metadata: {
+          bucketName: PHOTOS_BUCKET,
+          objectName: path,
+          contentType: options.contentType,
+          cacheControl: "3600",
+        },
+        // Fresh token on every request — this is what lets a chunk sent an
+        // hour into an upload (or a resume after a kill) still authorize.
+        onBeforeRequest: async (req) => {
+          const token = await config.getAccessToken();
+          if (!token) throw new Error("Signed out — sign in and retry");
+          req.setHeader("Authorization", `Bearer ${token}`);
+        },
+        onShouldRetry: (error) => {
+          const status =
+            (error as DetailedError).originalResponse?.getStatus() ?? 0;
+          // Connection drops (0) and server errors are retryable; 401 too —
+          // onBeforeRequest refreshes the token on the next attempt. Other
+          // 4xx (403 wrong prefix, 413 too big) won't heal by retrying.
+          return (
+            status === 0 || status >= 500 || status === 401 || status === 409 || status === 423
+          );
+        },
+        onProgress: (sent, total) => options.onProgress?.(sent, total),
+        onError: (error) => settle({ message: error.message }),
+        onSuccess: () => settle(null),
+      });
+
+      // Resume a previous attempt of this same file when one exists (TUS
+      // fingerprints file+endpoint; upload URLs stay valid for 24 h).
+      upload
+        .findPreviousUploads()
+        .then((previous) => {
+          if (previous.length > 0) upload.resumeFromPreviousUpload(previous[0]);
+          upload.start();
+        })
+        .catch(() => upload.start());
+    });
+}
 
 /** Storage keys must be safe ASCII; the true filename lives in original_name. */
 export function sanitizeFilename(name: string): string {
@@ -102,12 +231,10 @@ export function storagePaths(uploaderId: string, photoId: string, filename: stri
 export async function uploadOne(
   file: File,
   meta: UploadMeta,
-  deps: UploadDeps
+  deps: UploadDeps,
+  onBytes?: ByteProgress
 ): Promise<UploadResult> {
   const generateId = deps.generateId ?? (() => crypto.randomUUID());
-  const extractCapturedAt = deps.extractCapturedAt ?? defaultExtractCapturedAt;
-  const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
-
   const photoId = generateId();
   const failed = (error: string): UploadResult => ({
     file,
@@ -117,20 +244,49 @@ export async function uploadOne(
     error,
   });
 
+  try {
+    return await uploadOneSteps(file, meta, deps, photoId, failed, onBytes);
+  } catch (error) {
+    // A storage client that THROWS (network drop, killed connection) must
+    // not take the rest of the batch down — per-file independence.
+    return failed(error instanceof Error ? error.message : "Upload failed");
+  }
+}
+
+async function uploadOneSteps(
+  file: File,
+  meta: UploadMeta,
+  deps: UploadDeps,
+  photoId: string,
+  failed: (error: string) => UploadResult,
+  onBytes?: ByteProgress
+): Promise<UploadResult> {
+  const extractCapturedAt = deps.extractCapturedAt ?? defaultExtractCapturedAt;
+  const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
+
   const capturedAt = await extractCapturedAt(file).catch(() => null);
   const derivatives = await makeDerivatives(file).catch(() => null);
   const paths = storagePaths(meta.uploaderId, photoId, file.name);
 
   // 1. Original, byte-for-byte, ALWAYS first — a kill after this point
-  // leaves a repairable state, never orphan derivatives.
-  const { error: originalError } = await deps.storage.upload(
-    paths.original,
-    file,
-    { contentType: file.type || "application/octet-stream", upsert: true }
-  );
+  // leaves a repairable state, never orphan derivatives. Over the plain
+  // upload ceiling the original goes resumable (TUS) so it survives drops.
+  const contentType = file.type || "application/octet-stream";
+  const useResumable =
+    Boolean(deps.resumableUpload) && file.size > RESUMABLE_THRESHOLD_BYTES;
+  const { error: originalError } = useResumable
+    ? await deps.resumableUpload!(paths.original, file, {
+        contentType,
+        onProgress: onBytes,
+      })
+    : await deps.storage.upload(paths.original, file, {
+        contentType,
+        upsert: true,
+      });
   if (originalError) {
     return failed(`Upload failed: ${originalError.message}`);
   }
+  onBytes?.(file.size, file.size);
 
   // 2. Derivatives (small, best-effort). If one fails the row still lands
   // with null paths — exactly the state the repair loop fills.
@@ -167,7 +323,7 @@ export async function uploadOne(
     original_name: file.name,
     thumb_path: thumbPath,
     preview_path: previewPath,
-    duration_secs: null,
+    duration_secs: derivatives?.durationSecs ?? null,
   };
 
   try {
@@ -191,7 +347,16 @@ export async function uploadBatch(
   for (let index = 0; index < files.length; index++) {
     const file = files[index];
     onProgress?.({ type: "start", file, index, total: files.length });
-    const result = await uploadOne(file, meta, deps);
+    const result = await uploadOne(file, meta, deps, (sentBytes, totalBytes) =>
+      onProgress?.({
+        type: "progress",
+        file,
+        index,
+        total: files.length,
+        sentBytes,
+        totalBytes,
+      })
+    );
     results.push(result);
     if (result.status === "done") {
       onProgress?.({ type: "done", file, index, total: files.length });

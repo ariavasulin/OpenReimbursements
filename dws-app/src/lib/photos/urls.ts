@@ -22,13 +22,21 @@ export function downloadUrl(photo: PhotoRow): string {
   return data.publicUrl;
 }
 
-/** The lightbox renders previews only — never originals. */
+/** The lightbox renders previews only — never originals (videos stream the
+ * original for playback; there's no transcode, but the poster is a preview). */
 export function previewUrl(photo: PhotoRow): string | null {
   const path = photo.preview_path ?? photo.thumb_path;
   return path ? publicUrl(path) : null;
 }
 
-/** Can this photo open in the lightbox? (Videos wait for Phase 4 playback.) */
+/**
+ * Can this photo open in the lightbox? Images and videos with a rendered
+ * derivative do; companion files (and derivative-less rows awaiting repair)
+ * show as labeled file tiles with download instead.
+ */
 export function isOpenable(photo: PhotoRow): boolean {
-  return photo.kind === "image" && Boolean(photo.preview_path ?? photo.thumb_path);
+  return (
+    (photo.kind === "image" || photo.kind === "video") &&
+    Boolean(photo.preview_path ?? photo.thumb_path)
+  );
 }
