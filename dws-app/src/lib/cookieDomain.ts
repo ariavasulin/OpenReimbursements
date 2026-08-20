@@ -1,0 +1,23 @@
+// Auth-cookie domain scoping so one login covers both products:
+// receipts at www.dws-receipts.com and photos at photos.dws-receipts.com
+// share the apex, so the Supabase auth cookie is scoped to `.dws-receipts.com`.
+//
+// The domain is only applied when the request host actually belongs to the
+// apex — on localhost and *.vercel.app previews a `.dws-receipts.com` cookie
+// would be rejected by the browser and break login entirely.
+
+export const AUTH_COOKIE_APEX = "dws-receipts.com";
+
+export function cookieDomainForHost(
+  host: string | null | undefined
+): string | undefined {
+  if (!host) return undefined;
+  const hostname = host.split(":")[0].toLowerCase();
+  if (
+    hostname === AUTH_COOKIE_APEX ||
+    hostname.endsWith(`.${AUTH_COOKIE_APEX}`)
+  ) {
+    return `.${AUTH_COOKIE_APEX}`;
+  }
+  return undefined;
+}
