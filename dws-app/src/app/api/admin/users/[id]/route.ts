@@ -54,7 +54,8 @@ export async function GET(request: Request, { params }: RouteParams) {
       phone: authData.user.phone || '',
       created_at: authData.user.created_at,
       last_sign_in_at: authData.user.last_sign_in_at || undefined,
-      banned_until: authData.user.banned_until || undefined,
+      // banned_until is returned by the admin API but missing from supabase-js's User type
+      banned_until: (authData.user as { banned_until?: string }).banned_until || undefined,
       role: userProfile?.role || 'employee',
       full_name: userProfile?.full_name || undefined,
       preferred_name: userProfile?.preferred_name || undefined,
@@ -185,7 +186,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       phone: updatedAuthData?.user?.phone || '',
       created_at: updatedAuthData?.user?.created_at || '',
       last_sign_in_at: updatedAuthData?.user?.last_sign_in_at || undefined,
-      banned_until: updatedAuthData?.user?.banned_until || undefined,
+      banned_until: (updatedAuthData?.user as { banned_until?: string } | undefined)?.banned_until || undefined,
       role: updatedProfile?.role || 'employee',
       full_name: updatedProfile?.full_name || undefined,
       preferred_name: updatedProfile?.preferred_name || undefined,
