@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 
@@ -16,7 +17,10 @@ export default function JobCard({ job }: { job: PhotoJobSummary }) {
   const remainder = job.photo_count - thumbs.length;
 
   return (
-    <div className="rounded-[10px] border border-[#4e4e4e] bg-[#2e2e2e] p-3">
+    <Link
+      href={`/photos/${job.id}`}
+      className="block rounded-[10px] border border-[#4e4e4e] bg-[#2e2e2e] p-3 hover:border-[#2680FC]"
+    >
       <div className="mb-2 flex items-baseline justify-between gap-2">
         <div className="min-w-0 truncate text-[15px] font-semibold">
           <span className="text-[#2680FC]">#{job.job_number}</span>
@@ -53,6 +57,6 @@ export default function JobCard({ job }: { job: PhotoJobSummary }) {
           {job.location ? `${job.location} · ` : ""}No photos yet
         </div>
       )}
-    </div>
+    </Link>
   );
 }
