@@ -157,6 +157,26 @@ export function createResumableUpload(
         retryDelays: [0, 3000, 5000, 10000, 20000],
         uploadDataDuringCreation: true,
         removeFingerprintOnSuccess: true,
+        // tus-js-client's default fingerprint is [name, type, size,
+        // lastModified, endpoint] — the objectName is NOT part of it. A retry
+        // of a failed file generates a NEW photoId (so a new objectName), but
+        // the default fingerprint still matches the dead attempt's localStorage
+        // entry, and resuming PATCHes that attempt's upload URL — whose
+        // objectName was fixed at TUS creation. The bytes would complete under
+        // the OLD path while the finalized row records the NEW one: a row-less
+        // orphan the repair cron deletes, and a row whose original 404s.
+        // Including the objectName makes "fingerprint matches" imply "same
+        // storage path", so a resume can only ever continue THIS object.
+        fingerprint: async () =>
+          [
+            "tus-sb",
+            PHOTOS_BUCKET,
+            path,
+            file.name,
+            file.type,
+            file.size,
+            file.lastModified,
+          ].join("-"),
         headers: { "x-upsert": "true" },
         metadata: {
           bucketName: PHOTOS_BUCKET,
@@ -186,8 +206,9 @@ export function createResumableUpload(
         onSuccess: () => settle(null),
       });
 
-      // Resume a previous attempt of this same file when one exists (TUS
-      // fingerprints file+endpoint; upload URLs stay valid for 24 h).
+      // Resume a previous attempt of this same file AND same objectName when
+      // one exists (the custom fingerprint above scopes matches to the exact
+      // storage path; upload URLs stay valid for 24 h).
       upload
         .findPreviousUploads()
         .then((previous) => {

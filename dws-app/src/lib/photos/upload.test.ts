@@ -439,6 +439,45 @@ describe("createResumableUpload", () => {
     ]);
   });
 
+  it("scopes the resume fingerprint to the objectName — a retry's NEW photoId path never matches an old attempt", async () => {
+    // tus-js-client's default fingerprint is [name,type,size,lastModified,
+    // endpoint]; without the objectName in it, a retry (new photoId => new
+    // path) would resume the dead attempt's upload URL and finish the bytes
+    // under the OLD path while the row records the NEW one.
+    FakeTusUpload.reset();
+    const upload = createResumableUpload({
+      ...CONFIG,
+      getAccessToken: async () => "token",
+    });
+    const file = bigFile(1);
+
+    await upload("originals/u1/old-id/big.mp4", file, {
+      contentType: "video/mp4",
+    });
+    await upload("originals/u1/new-id/big.mp4", file, {
+      contentType: "video/mp4",
+    });
+
+    const [first, second] = FakeTusUpload.instances;
+    const firstFingerprint = await first.options.fingerprint!(
+      file,
+      first.options
+    );
+    const secondFingerprint = await second.options.fingerprint!(
+      file,
+      second.options
+    );
+    // Same file, different objectName => different fingerprints (no resume);
+    // and each fingerprint is pinned to its exact storage path.
+    expect(firstFingerprint).toContain("originals/u1/old-id/big.mp4");
+    expect(secondFingerprint).toContain("originals/u1/new-id/big.mp4");
+    expect(firstFingerprint).not.toBe(secondFingerprint);
+    // Same file, SAME objectName => stable fingerprint (legitimate resume).
+    expect(
+      await first.options.fingerprint!(file, first.options)
+    ).toBe(firstFingerprint);
+  });
+
   it("resumes a previous upload of the same file when one exists", async () => {
     FakeTusUpload.reset();
     const upload = createResumableUpload({
