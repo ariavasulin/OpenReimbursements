@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabaseClient";
 import JobCard from "@/components/photos/job-card";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 
 // Photos home: searchable job list (one card per job, newest activity first).
+// The search box filters jobs as you type; Enter (or the link under it) runs
+// the same text as a cross-job photo search — tags and people land there.
 // Guard is session-only — deliberately NO role gate: admins use this page too.
 
 async function fetchJobs(q: string): Promise<PhotoJobSummary[]> {
@@ -21,6 +25,7 @@ async function fetchJobs(q: string): Promise<PhotoJobSummary[]> {
 }
 
 export default function PhotosHomePage() {
+  const router = useRouter();
   const [ready, setReady] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -120,9 +125,25 @@ export default function PhotosHomePage() {
         type="search"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search jobs..."
-        className="mb-3 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && search.trim()) {
+            router.push(`/photos/search?q=${encodeURIComponent(search.trim())}`);
+          }
+        }}
+        placeholder="Search jobs, people, or tags..."
+        className="mb-2 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
       />
+
+      {debouncedSearch ? (
+        <Link
+          href={`/photos/search?q=${encodeURIComponent(debouncedSearch)}`}
+          className="mb-3 block text-xs text-[#2680FC] hover:text-[#1a6fd8]"
+        >
+          Search all photos for &ldquo;{debouncedSearch}&rdquo; ›
+        </Link>
+      ) : (
+        <div className="mb-1" />
+      )}
 
       {isLoading && (
         <p className="py-8 text-center text-sm text-[#a0a0a0]">

@@ -1,9 +1,10 @@
 // Shared types for the DWS Photos hub.
 
-/** One photos row as returned by GET /api/photos (uploader name embedded). */
+/** One photos row as returned by GET /api/photos (uploader + job embedded). */
 export interface PhotoRow {
   id: string;
   job_id: string;
+  uploader_id: string;
   kind: "image" | "video" | "file";
   sheet_number: string | null;
   tags: string[];
@@ -18,6 +19,8 @@ export interface PhotoRow {
   duration_secs: number | null;
   created_at: string;
   uploader: { full_name: string | null } | null;
+  /** Embedded job, for cross-job grids (search results grouped by job). */
+  job: { id: string; job_number: string; name: string } | null;
 }
 
 /** One job card on the photos home screen / job dropdown. */

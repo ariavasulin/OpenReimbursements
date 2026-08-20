@@ -1,78 +1,75 @@
 "use client";
 
 import { Download, FileText, Video } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { groupPhotos, type GroupBy } from "@/lib/photos/group";
+import { downloadUrl, isOpenable, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
 
-// Date-grouped photo grid (newest first). Every tile carries a
-// Download-original control: a Supabase `?download=<original_name>` URL —
-// a bare <a download> attribute is ignored cross-origin, so the
-// Content-Disposition header (which Supabase sets from ?download=) is what
-// makes iPhones save the exact original with its real filename.
+// The one photo grid every view shares: grouped sections (date / sheet / job),
+// image tiles that open the lightbox, and labeled file tiles (name + download)
+// for uploads that can't render — odd formats never show as holes.
 
-function publicUrl(path: string): string {
-  return supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
-}
-
-export function downloadUrl(photo: PhotoRow): string {
-  const { data } = supabase.storage
-    .from("photos")
-    .getPublicUrl(photo.original_path, {
-      download: photo.original_name || true,
-    });
-  return data.publicUrl;
-}
-
-export interface PhotoGroup {
-  label: string;
+interface PhotoGridProps {
   photos: PhotoRow[];
+  groupBy?: GroupBy;
+  /** Tapping an image tile — the page opens the lightbox at this photo. */
+  onOpenPhoto?: (photo: PhotoRow) => void;
+  /**
+   * Display rule, not a special flag: when set (e.g. "professional") and
+   * grouping by date, photos carrying the tag get a pinned section on top.
+   */
+  pinnedTag?: string;
+  pinnedLabel?: string;
+  /** Tapping the pinned header — the page filters to the pinned tag. */
+  onExpandPinned?: () => void;
 }
 
-/** Group photos (already sorted newest-first) by local capture date. */
-export function groupPhotosByDate(photos: PhotoRow[]): PhotoGroup[] {
-  const groups: PhotoGroup[] = [];
-  let currentKey: string | null = null;
-  for (const photo of photos) {
-    const date = new Date(photo.captured_at);
-    const key = Number.isNaN(date.getTime())
-      ? "Unknown date"
-      : date.toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        });
-    if (key !== currentKey) {
-      groups.push({ label: key, photos: [] });
-      currentKey = key;
-    }
-    groups[groups.length - 1].photos.push(photo);
-  }
-  return groups;
+function formatBytes(bytes: number | null): string | null {
+  if (bytes == null || !Number.isFinite(bytes)) return null;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
 }
 
-function Tile({ photo }: { photo: PhotoRow }) {
-  return (
-    <div className="group relative aspect-square overflow-hidden rounded-md bg-[#2e2e2e]">
-      {photo.thumb_path ? (
-        // eslint-disable-next-line @next/next/no-img-element
+function Tile({
+  photo,
+  onOpen,
+}: {
+  photo: PhotoRow;
+  onOpen?: (photo: PhotoRow) => void;
+}) {
+  if (isOpenable(photo) && photo.thumb_path) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen?.(photo)}
+        className="group relative aspect-square overflow-hidden rounded-md bg-[#2e2e2e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={publicUrl(photo.thumb_path)}
           alt={photo.original_name ?? ""}
           loading="lazy"
           className="h-full w-full object-cover"
         />
+      </button>
+    );
+  }
+
+  // Labeled file tile: video (until Phase 4 playback) or a non-displayable
+  // companion file (XMP sidecar, RAW) — named, sized, downloadable.
+  const size = formatBytes(photo.original_bytes);
+  return (
+    <div className="relative flex aspect-square flex-col items-center justify-center gap-1 overflow-hidden rounded-md border border-[#4e4e4e] bg-[#2e2e2e] px-2 text-center">
+      {photo.kind === "video" ? (
+        <Video className="h-5 w-5 text-[#a0a0a0]" />
       ) : (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 border border-[#4e4e4e] px-2 text-center">
-          {photo.kind === "video" ? (
-            <Video className="h-5 w-5 text-[#a0a0a0]" />
-          ) : (
-            <FileText className="h-5 w-5 text-[#a0a0a0]" />
-          )}
-          <span className="w-full truncate text-[10px] text-[#a0a0a0]">
-            {photo.original_name ?? photo.kind}
-          </span>
-        </div>
+        <FileText className="h-5 w-5 text-[#a0a0a0]" />
       )}
+      <span className="w-full truncate text-[10px] text-[#a0a0a0]">
+        {photo.original_name ?? photo.kind}
+      </span>
+      {size && <span className="text-[9px] text-[#7e7e7e]">{size}</span>}
       <a
         href={downloadUrl(photo)}
         aria-label={`Download ${photo.original_name ?? "original"}`}
@@ -84,19 +81,63 @@ function Tile({ photo }: { photo: PhotoRow }) {
   );
 }
 
-export default function PhotoGrid({ photos }: { photos: PhotoRow[] }) {
-  const groups = groupPhotosByDate(photos);
+function TileGrid({
+  photos,
+  onOpen,
+}: {
+  photos: PhotoRow[];
+  onOpen?: (photo: PhotoRow) => void;
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
+      {photos.map((photo) => (
+        <Tile key={photo.id} photo={photo} onOpen={onOpen} />
+      ))}
+    </div>
+  );
+}
+
+export default function PhotoGrid({
+  photos,
+  groupBy = "date",
+  onOpenPhoto,
+  pinnedTag,
+  pinnedLabel,
+  onExpandPinned,
+}: PhotoGridProps) {
+  const pinned =
+    pinnedTag && groupBy === "date"
+      ? photos.filter((photo) => photo.tags.includes(pinnedTag))
+      : [];
+  const groups = groupPhotos(photos, groupBy);
 
   return (
     <div>
+      {pinned.length > 0 && (
+        <section>
+          <button
+            type="button"
+            onClick={onExpandPinned}
+            className="mb-1.5 mt-3 block text-xs font-semibold text-[#2680FC] hover:text-[#1a6fd8]"
+          >
+            {pinnedLabel ?? pinnedTag} · {pinned.length} ›
+          </button>
+          <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpenPhoto} />
+        </section>
+      )}
       {groups.map((group) => (
-        <section key={group.label}>
-          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0]">{group.label}</h2>
-          <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
-            {group.photos.map((photo) => (
-              <Tile key={photo.id} photo={photo} />
-            ))}
-          </div>
+        <section key={group.key}>
+          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0]">
+            {group.label}
+            {groupBy !== "date" && (
+              <span className="text-[#7e7e7e]">
+                {" "}
+                · {group.photos.length}{" "}
+                {group.photos.length === 1 ? "photo" : "photos"}
+              </span>
+            )}
+          </h2>
+          <TileGrid photos={group.photos} onOpen={onOpenPhoto} />
         </section>
       ))}
     </div>

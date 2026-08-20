@@ -1,22 +1,17 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { cleanTags, PHOTO_COLUMNS, UUID_RE } from '@/lib/photos/apiShared';
 import type { PhotoRow } from '@/lib/photos/types';
 
-// GET  /api/photos?job=&cursor=&limit= — photos for one job, newest capture
-//      first, keyset-paginated on (captured_at, id).
+// GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
+//      Filtered photo list, newest capture first, keyset-paginated on
+//      (captured_at, id). `q` searches across job number/name, uploader name,
+//      and tag membership (ILIKE — no search infrastructure at DWS scale).
 // POST /api/photos — finalize an upload: insert the row for files the browser
 //      already put in storage. The row existing is what makes a photo "in".
 
-const PHOTO_COLUMNS =
-  'id, job_id, kind, sheet_number, tags, captured_at, original_path, ' +
-  'original_bytes, mime_type, original_name, thumb_path, preview_path, ' +
-  'duration_secs, created_at, uploader:user_profiles(full_name)';
-
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function encodeCursor(capturedAt: string, id: string): string {
   return Buffer.from(JSON.stringify([capturedAt, id])).toString('base64url');
@@ -39,6 +34,75 @@ function decodeCursor(cursor: string): { capturedAt: string; id: string } | null
   }
 }
 
+/** Escape ILIKE wildcards and strip PostgREST or()-syntax characters. */
+function escapeForIlike(raw: string): string {
+  return raw
+    .replace(/[%_\\]/g, (m) => `\\${m}`)
+    .replace(/[,()]/g, ' ')
+    .trim();
+}
+
+/**
+ * Resolve a free-text query into a PostgREST or() filter over photos:
+ * matching job ids, matching uploader ids, and overlapping tags.
+ * Returns null when nothing matches (the result set is empty).
+ */
+type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+
+async function buildSearchFilter(
+  supabase: ServerClient,
+  q: string
+): Promise<string | null> {
+  const escaped = escapeForIlike(q);
+  if (!escaped) return null;
+  const pattern = `%${escaped}%`;
+
+  const [jobsResult, uploadersResult, tagRowsResult] = await Promise.all([
+    supabase
+      .from('jobs')
+      .select('id')
+      .or(`job_number.ilike.${pattern},name.ilike.${pattern}`)
+      .limit(200),
+    supabase
+      .from('user_profiles')
+      .select('user_id')
+      .ilike('full_name', pattern)
+      .limit(200),
+    supabase.from('photos').select('tags').limit(10000),
+  ]);
+
+  const firstError =
+    jobsResult.error ?? uploadersResult.error ?? tagRowsResult.error;
+  if (firstError) throw new Error(firstError.message);
+
+  const parts: string[] = [];
+
+  const jobIds = (jobsResult.data ?? []).map((row) => row.id);
+  if (jobIds.length > 0) parts.push(`job_id.in.(${jobIds.join(',')})`);
+
+  const uploaderIds = (uploadersResult.data ?? []).map((row) => row.user_id);
+  if (uploaderIds.length > 0) {
+    parts.push(`uploader_id.in.(${uploaderIds.join(',')})`);
+  }
+
+  const query = q.trim().toLowerCase();
+  const matchedTags = new Set<string>();
+  for (const row of tagRowsResult.data ?? []) {
+    for (const tag of row.tags ?? []) {
+      if (typeof tag === 'string' && tag.toLowerCase().includes(query)) {
+        // Tags with or()/array syntax characters can't be embedded safely;
+        // the UI never produces them, so skipping is the safe trade.
+        if (!/[,(){}"\\]/.test(tag)) matchedTags.add(tag);
+      }
+    }
+  }
+  if (matchedTags.size > 0) {
+    parts.push(`tags.ov.{${[...matchedTags].join(',')}}`);
+  }
+
+  return parts.length > 0 ? parts.join(',') : null;
+}
+
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -50,9 +114,23 @@ export async function GET(request: Request) {
 
   const params = new URL(request.url).searchParams;
   const job = params.get('job');
-  if (!job || !UUID_RE.test(job)) {
+  const sheet = params.get('sheet')?.trim() || null;
+  const uploader = params.get('uploader');
+  const tags = (params.get('tags') ?? '')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+  const q = params.get('q')?.trim() || null;
+
+  if (job && !UUID_RE.test(job)) {
+    return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
+  }
+  if (uploader && !UUID_RE.test(uploader)) {
+    return NextResponse.json({ error: 'Invalid uploader id' }, { status: 400 });
+  }
+  if (!job && !q && !uploader && tags.length === 0) {
     return NextResponse.json(
-      { error: 'A valid job id is required' },
+      { error: 'Provide at least one of job, q, uploader, or tags' },
       { status: 400 }
     );
   }
@@ -65,10 +143,30 @@ export async function GET(request: Request) {
   let query = supabase
     .from('photos')
     .select(PHOTO_COLUMNS)
-    .eq('job_id', job)
     .order('captured_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(limit + 1);
+
+  if (job) query = query.eq('job_id', job);
+  if (uploader) query = query.eq('uploader_id', uploader);
+  if (sheet) query = query.eq('sheet_number', sheet);
+  for (const tag of tags) query = query.contains('tags', [tag]);
+
+  if (q) {
+    let searchFilter: string | null;
+    try {
+      searchFilter = await buildSearchFilter(supabase, q);
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Search failed' },
+        { status: 500 }
+      );
+    }
+    if (!searchFilter) {
+      return NextResponse.json({ success: true, photos: [], nextCursor: null });
+    }
+    query = query.or(searchFilter);
+  }
 
   const rawCursor = params.get('cursor');
   if (rawCursor) {
@@ -76,6 +174,7 @@ export async function GET(request: Request) {
     if (!cursor) {
       return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
     }
+    // Separate or() calls are ANDed by PostgREST, so this composes with q.
     query = query.or(
       `captured_at.lt.${cursor.capturedAt},and(captured_at.eq.${cursor.capturedAt},id.lt.${cursor.id})`
     );
@@ -96,8 +195,6 @@ export async function GET(request: Request) {
 }
 
 const KINDS = new Set(['image', 'video', 'file']);
-const MAX_TAGS = 20;
-const MAX_TAG_LENGTH = 64;
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -164,17 +261,6 @@ export async function POST(request: Request) {
     }
   }
 
-  const cleanTags = Array.isArray(tags)
-    ? [
-        ...new Set(
-          tags
-            .filter((tag): tag is string => typeof tag === 'string')
-            .map((tag) => tag.trim().slice(0, MAX_TAG_LENGTH))
-            .filter(Boolean)
-        ),
-      ].slice(0, MAX_TAGS)
-    : [];
-
   const capturedAtDate =
     typeof captured_at === 'string' && !Number.isNaN(Date.parse(captured_at))
       ? new Date(captured_at)
@@ -191,7 +277,7 @@ export async function POST(request: Request) {
         typeof sheet_number === 'string' && sheet_number.trim()
           ? sheet_number.trim()
           : null,
-      tags: cleanTags,
+      tags: cleanTags(tags),
       // EXIF capture time when the client found one; upload time as fallback.
       captured_at: (capturedAtDate ?? new Date()).toISOString(),
       original_path,
