@@ -23,6 +23,7 @@ import {
   type UploadDeps,
   type UploadResult,
 } from "@/lib/photos/upload";
+import { extractCapturedAt } from "@/lib/photos/exif";
 import UploadProgress, {
   type UploadItem,
 } from "@/components/photos/upload-progress";
@@ -58,8 +59,12 @@ async function fetchTags(): Promise<string[]> {
   return (await response.json()).tags as string[];
 }
 
-function buildUploadDeps(): UploadDeps {
+function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
   return {
+    // In-app camera shots are canvas JPEGs with no EXIF — their shutter time
+    // rides along as an override; everything else reads EXIF as usual.
+    extractCapturedAt: async (file: File) =>
+      capturedAtOverrides?.get(file) ?? extractCapturedAt(file),
     storage: {
       async upload(path, body, options) {
         const { error } = await supabase.storage
@@ -103,6 +108,12 @@ interface UploadSheetProps {
   defaultJobId?: string;
   /** Called after at least one file lands, so grids can refetch. */
   onUploaded(): void;
+  /**
+   * Per-file captured_at overrides, keyed by File identity — the in-app
+   * camera's shots are canvas JPEGs with no EXIF, so their shutter times
+   * arrive here instead.
+   */
+  capturedAtOverrides?: Map<File, Date>;
 }
 
 export default function UploadSheet({
@@ -111,6 +122,7 @@ export default function UploadSheet({
   onOpenChange,
   defaultJobId,
   onUploaded,
+  capturedAtOverrides,
 }: UploadSheetProps) {
   const isMobile = useMobile();
   const [jobId, setJobId] = useState(defaultJobId ?? "");
@@ -206,7 +218,7 @@ export default function UploadSheet({
       sheetNumber: sheetNumber || null,
       tags: tagInput.trim() ? [...tags, tagInput.trim()] : tags,
     };
-    const deps = buildUploadDeps();
+    const deps = buildUploadDeps(capturedAtOverrides);
     const batchFiles = indices.map((index) => files[index]);
 
     const results: UploadResult[] = [];

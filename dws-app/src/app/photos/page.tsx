@@ -3,14 +3,21 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabaseClient";
 import JobCard from "@/components/photos/job-card";
+import MultiShotCamera, {
+  useHasCamera,
+  type CameraShot,
+} from "@/components/photos/multi-shot-camera";
+import UploadSheet, { pickerAccept } from "@/components/photos/upload-sheet";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 
 // Photos home: searchable job list (one card per job, newest activity first).
 // The search box filters jobs as you type; Enter (or the link under it) runs
 // the same text as a cross-job photo search — tags and people land there.
+// Take Photos (in-app multi-shot camera) and Upload (native picker) sit at
+// the bottom; both end at the batch details sheet, where the job is picked.
 // Guard is session-only — deliberately NO role gate: admins use this page too.
 
 async function fetchJobs(q: string): Promise<PhotoJobSummary[]> {
@@ -26,9 +33,18 @@ async function fetchJobs(q: string): Promise<PhotoJobSummary[]> {
 
 export default function PhotosHomePage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const hasCamera = useHasCamera();
   const [ready, setReady] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [pickedFiles, setPickedFiles] = useState<File[]>([]);
+  const [capturedAtOverrides, setCapturedAtOverrides] = useState<
+    Map<File, Date>
+  >(new Map());
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const mountedRef = useRef(true);
 
   // Session guard + missing-profile fallback (a DB trigger normally creates
@@ -96,6 +112,33 @@ export default function PhotosHomePage() {
     enabled: ready,
   });
 
+  const handleFilesPicked = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = ""; // allow re-picking the same files
+    if (files.length > 0) {
+      setPickedFiles(files);
+      setCapturedAtOverrides(new Map());
+      setSheetOpen(true);
+    }
+  };
+
+  const handleShotsDone = (shots: CameraShot[]) => {
+    const overrides = new Map<File, Date>();
+    for (const shot of shots) {
+      if (shot.capturedAt) overrides.set(shot.file, shot.capturedAt);
+    }
+    setPickedFiles(shots.map((shot) => shot.file));
+    setCapturedAtOverrides(overrides);
+    setCameraOpen(false);
+    setSheetOpen(true);
+  };
+
+  const refetchAfterUpload = () => {
+    queryClient.invalidateQueries({ queryKey: ["photo-jobs"] });
+    queryClient.invalidateQueries({ queryKey: ["photos"] });
+    queryClient.invalidateQueries({ queryKey: ["photo-tags"] });
+  };
+
   if (!ready) {
     return (
       <div className="flex min-h-full items-center justify-center px-4 py-8">
@@ -108,7 +151,7 @@ export default function PhotosHomePage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 pb-10 pt-5">
+    <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-5">
       <header className="relative mb-3 text-center">
         <div className="text-[15px] font-semibold tracking-wide">
           DWS <span className="text-[#2680FC]">Photos</span>
@@ -166,6 +209,52 @@ export default function PhotosHomePage() {
       <div className="space-y-2.5">
         {jobs?.map((job) => <JobCard key={job.id} job={job} />)}
       </div>
+
+      <div className="fixed bottom-4 left-0 right-0 mx-auto flex w-full max-w-2xl gap-2 px-4">
+        <input
+          ref={fileInputRef}
+          id="photos-home-upload-input"
+          type="file"
+          multiple
+          accept={pickerAccept()}
+          onChange={handleFilesPicked}
+          className="sr-only"
+        />
+        {hasCamera && (
+          <button
+            type="button"
+            onClick={() => setCameraOpen(true)}
+            className="flex-1 rounded-lg bg-[#2680FC] py-3 text-sm font-medium text-white shadow-lg hover:bg-[#1a6fd8]"
+          >
+            Take Photos
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className={`flex-1 rounded-lg py-3 text-sm font-medium text-white shadow-lg ${
+            hasCamera
+              ? "border border-[#4e4e4e] bg-[#2e2e2e] hover:border-[#2680FC]"
+              : "bg-[#2680FC] hover:bg-[#1a6fd8]"
+          }`}
+        >
+          Upload
+        </button>
+      </div>
+
+      <MultiShotCamera
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onDone={handleShotsDone}
+      />
+
+      <UploadSheet
+        files={pickedFiles}
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        onUploaded={refetchAfterUpload}
+        capturedAtOverrides={capturedAtOverrides}
+      />
     </main>
   );
 }

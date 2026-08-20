@@ -16,6 +16,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import MultiShotCamera, {
+  useHasCamera,
+  type CameraShot,
+} from "@/components/photos/multi-shot-camera";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
 import UploadSheet, { pickerAccept } from "@/components/photos/upload-sheet";
@@ -132,9 +136,14 @@ function FilterChip({
 export default function JobPhotosPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const queryClient = useQueryClient();
+  const hasCamera = useHasCamera();
   const [ready, setReady] = useState(false);
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
+  const [capturedAtOverrides, setCapturedAtOverrides] = useState<
+    Map<File, Date>
+  >(new Map());
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [groupBy, setGroupBy] = useState<"date" | "sheet">("date");
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -249,8 +258,20 @@ export default function JobPhotosPage() {
     event.target.value = ""; // allow re-picking the same files
     if (files.length > 0) {
       setPickedFiles(files);
+      setCapturedAtOverrides(new Map());
       setSheetOpen(true);
     }
+  };
+
+  const handleShotsDone = (shots: CameraShot[]) => {
+    const overrides = new Map<File, Date>();
+    for (const shot of shots) {
+      if (shot.capturedAt) overrides.set(shot.file, shot.capturedAt);
+    }
+    setPickedFiles(shots.map((shot) => shot.file));
+    setCapturedAtOverrides(overrides);
+    setCameraOpen(false);
+    setSheetOpen(true);
   };
 
   const refetchPhotos = () => {
@@ -410,7 +431,7 @@ export default function JobPhotosPage() {
         </button>
       )}
 
-      <div className="fixed bottom-4 left-0 right-0 mx-auto w-full max-w-3xl px-4">
+      <div className="fixed bottom-4 left-0 right-0 mx-auto flex w-full max-w-3xl gap-2 px-4">
         <input
           ref={fileInputRef}
           id="photos-upload-input"
@@ -420,14 +441,33 @@ export default function JobPhotosPage() {
           onChange={handleFilesPicked}
           className="sr-only"
         />
+        {hasCamera && (
+          <button
+            type="button"
+            onClick={() => setCameraOpen(true)}
+            className="flex-1 rounded-lg bg-[#2680FC] py-3 text-sm font-medium text-white shadow-lg hover:bg-[#1a6fd8]"
+          >
+            Take Photos
+          </button>
+        )}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="w-full rounded-lg bg-[#2680FC] py-3 text-sm font-medium text-white shadow-lg hover:bg-[#1a6fd8]"
+          className={`flex-1 rounded-lg py-3 text-sm font-medium text-white shadow-lg ${
+            hasCamera
+              ? "border border-[#4e4e4e] bg-[#2e2e2e] hover:border-[#2680FC]"
+              : "bg-[#2680FC] hover:bg-[#1a6fd8]"
+          }`}
         >
           Upload
         </button>
       </div>
+
+      <MultiShotCamera
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onDone={handleShotsDone}
+      />
 
       <UploadSheet
         files={pickedFiles}
@@ -435,6 +475,7 @@ export default function JobPhotosPage() {
         onOpenChange={setSheetOpen}
         defaultJobId={jobId}
         onUploaded={refetchPhotos}
+        capturedAtOverrides={capturedAtOverrides}
       />
 
       <PhotoLightbox
