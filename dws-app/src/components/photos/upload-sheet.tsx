@@ -8,13 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import JobCombobox from "@/components/photos/job-combobox";
 import {
   createResumableUpload,
   uploadOne,
@@ -266,18 +260,12 @@ export default function UploadSheet({
       )}
 
       <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
-      <Select value={jobId} onValueChange={setJobId} disabled={uploading}>
-        <SelectTrigger className="mb-3.5 w-full border-[#3e3e3e] bg-[#3e3e3e] text-white">
-          <SelectValue placeholder="Pick a job..." />
-        </SelectTrigger>
-        <SelectContent className="border-[#4e4e4e] bg-[#2e2e2e] text-white">
-          {(jobs ?? []).map((job) => (
-            <SelectItem key={job.id} value={job.id}>
-              #{job.job_number} · {job.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <JobCombobox
+        jobs={jobs ?? []}
+        value={jobId}
+        onChange={setJobId}
+        disabled={uploading}
+      />
 
       <label className="mb-1.5 block text-xs text-[#a0a0a0]">
         Sheet # (optional)
