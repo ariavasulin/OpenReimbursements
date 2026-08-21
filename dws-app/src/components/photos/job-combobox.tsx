@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { filterJobs } from "@/lib/photos/job-filter";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 
 // Text-field job picker for the upload sheet. Suggestions render inline
 // below the field (no floating popover: inside a Drawer on iOS those bled
-// off-screen). Focus shows the active jobs; typing narrows them.
+// off-screen).
 
 interface JobComboboxProps {
   jobs: PhotoJobSummary[];
@@ -29,6 +29,8 @@ export default function JobCombobox({
 }: JobComboboxProps) {
   const [query, setQuery] = useState("");
   const [focused, setFocused] = useState(false);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(blurTimer.current ?? undefined), []);
 
   const selected = useMemo(
     () => jobs.find((job) => job.id === value) ?? null,
@@ -64,9 +66,14 @@ export default function JobCombobox({
           value={selected ? jobLabel(selected) : query}
           readOnly={Boolean(selected)}
           onChange={(event) => setQuery(event.target.value)}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            clearTimeout(blurTimer.current ?? undefined);
+            setFocused(true);
+          }}
           // Delay so a tap on a suggestion registers before the list hides.
-          onBlur={() => setTimeout(() => setFocused(false), 150)}
+          onBlur={() => {
+            blurTimer.current = setTimeout(() => setFocused(false), 150);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !selected && suggestions.length > 0) {
               event.preventDefault();

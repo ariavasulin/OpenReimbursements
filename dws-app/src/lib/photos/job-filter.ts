@@ -1,8 +1,5 @@
 import type { PhotoJobSummary } from "./types";
 
-// Ranks active jobs for the upload sheet's job typeahead. Pure, so it is
-// unit-tested; the combobox only renders what this returns.
-
 /** Lower is better; null means "not a match". */
 function rank(job: PhotoJobSummary, query: string, words: string[]): number | null {
   const number = job.job_number.toLowerCase();

@@ -37,11 +37,9 @@ export default function PhotosHomePage() {
   });
 
   // The auth cookie is apex-scoped (.dws-receipts.com), so this signs out of
-  // Receipts too — intended: one account. useSessionGuard also redirects on
-  // SIGNED_OUT; the explicit replace covers the case where it has not fired.
+  // Receipts too — intended: one account. useSessionGuard handles the redirect.
   const handleSignOut = async () => {
     await supabase.auth.signOut();
-    router.replace("/login?next=%2Fphotos");
   };
 
   if (!ready) return <AuthLoading />;

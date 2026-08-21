@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
 import { formatBytes } from "@/lib/photos/format";
 
 // Full-screen look at one pending file before it uploads. Nested Radix
 // Dialog so it stacks above the sheet (Drawer or Dialog) without the outer
-// layer treating taps here as "outside" clicks. No upload logic lives here.
+// layer treating taps here as "outside" clicks.
 
 const SWIPE_PX = 40;
 
@@ -33,39 +33,30 @@ export default function BatchPreview({
   onRemove,
   removeDisabled,
 }: BatchPreviewProps) {
-  const open = index !== null && index >= 0 && index < files.length;
+  const open = index !== null && index < files.length;
   const file = open ? files[index] : null;
   const count = files.length;
   const touchStartX = useRef<number | null>(null);
 
   const isVideo = !!file && file.type.startsWith("video/");
   // Videos have no strip preview (the strip shows a name tile), so mint a
-  // URL here just for playback and drop it when the file changes.
-  const videoUrl = useMemo(
-    () => (isVideo && file ? URL.createObjectURL(file) : null),
-    [isVideo, file]
-  );
+  // URL here just for playback. Minted in an effect, not a memo, so a
+  // discarded render can't leak one.
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   useEffect(() => {
+    if (!isVideo || !file) return;
+    const url = URL.createObjectURL(file);
+    setVideoUrl(url);
     return () => {
-      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      URL.revokeObjectURL(url);
+      setVideoUrl(null);
     };
-  }, [videoUrl]);
+  }, [isVideo, file]);
 
   const go = (delta: number) => {
     if (!open || count <= 1) return;
     onIndexChange((index + delta + count) % count);
   };
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "ArrowLeft") go(-1);
-      else if (event.key === "ArrowRight") go(1);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, index, count]);
 
   const size = file ? formatBytes(file.size) : null;
   const imageUrl = open ? previews[index] : null;
@@ -83,6 +74,10 @@ export default function BatchPreview({
           data-vaul-no-drag
           aria-describedby={undefined}
           className="fixed inset-0 z-[60] flex flex-col bg-black text-white focus:outline-none"
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") go(-1);
+            else if (event.key === "ArrowRight") go(1);
+          }}
           onTouchStart={(event) => {
             touchStartX.current = event.touches[0]?.clientX ?? null;
           }}

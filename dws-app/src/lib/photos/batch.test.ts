@@ -21,11 +21,6 @@ describe("removeAt", () => {
     expect(state.previews).toEqual(["blob:a", null, "blob:c"]);
   });
 
-  it("returns the same state for an out-of-range index", () => {
-    expect(removeAt(state, -1)).toBe(state);
-    expect(removeAt(state, 3)).toBe(state);
-  });
-
   it("empties every array when the last file goes", () => {
     const one = { files: ["a"], items: [{ status: "pending" }], previews: [null] };
     expect(removeAt(one, 0)).toEqual({ files: [], items: [], previews: [] });

@@ -28,8 +28,7 @@ import { plural } from "@/lib/photos/format";
 import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
-// The batch is copied into local state so files can be removed before upload;
-// `files`, `items`, and `previews` are index-aligned (see lib/photos/batch).
+// The batch is copied into local state so files can be removed before upload.
 
 function makePreviews(files: File[]): (string | null)[] {
   return files.map((file) =>
@@ -143,8 +142,11 @@ export default function UploadSheet({
     return () => revokePreviews(previewsRef.current);
   }, []);
 
+  const removableAt = (index: number) =>
+    !uploading && !!items[index] && canRemove(items[index].status);
+
   const removeFile = (index: number) => {
-    if (uploading || !items[index] || !canRemove(items[index].status)) return;
+    if (!removableAt(index)) return;
     const url = previews[index];
     if (url) URL.revokeObjectURL(url);
     const next = removeAt({ files, items, previews }, index);
@@ -267,8 +269,7 @@ export default function UploadSheet({
 
       <div className="mb-3.5 flex gap-1.5 overflow-x-auto p-1">
         {files.map((file, index) => {
-          const removable =
-            !uploading && !!items[index] && canRemove(items[index].status);
+          const removable = removableAt(index);
           return (
             <div key={index} className="relative shrink-0">
               <button
@@ -393,12 +394,7 @@ export default function UploadSheet({
       onIndexChange={setPreviewIndex}
       onClose={() => setPreviewIndex(null)}
       onRemove={removeFile}
-      removeDisabled={
-        uploading ||
-        previewIndex === null ||
-        !items[previewIndex] ||
-        !canRemove(items[previewIndex].status)
-      }
+      removeDisabled={previewIndex === null || !removableAt(previewIndex)}
     />
   );
 
