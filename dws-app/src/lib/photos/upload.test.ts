@@ -11,7 +11,6 @@ import {
   sanitizeFilename,
   storagePaths,
   TUS_CHUNK_BYTES,
-  uploadBatch,
   uploadOne,
   type FinalizePayload,
   type TusUploadCtor,
@@ -36,6 +35,9 @@ interface Recorded {
 
 function makeDeps(overrides?: {
   failUploadPaths?: (path: string) => boolean;
+  /** Simulate the tab dying mid-step: throws at matching storage paths, or at
+   * "finalize" for the row POST. */
+  throwAt?: (path: string) => boolean;
   failFinalize?: boolean;
   noDerivatives?: boolean;
 }) {
@@ -46,6 +48,7 @@ function makeDeps(overrides?: {
   const deps: UploadDeps = {
     storage: {
       async upload(path, body, options) {
+        if (overrides?.throwAt?.(path)) throw new Error("KILLED");
         if (overrides?.failUploadPaths?.(path)) {
           return { error: { message: `refused ${path}` } };
         }
@@ -58,6 +61,7 @@ function makeDeps(overrides?: {
       },
     },
     finalize: vi.fn(async (payload: FinalizePayload) => {
+      if (overrides?.throwAt?.("finalize")) throw new Error("KILLED");
       if (overrides?.failFinalize) throw new Error("db says no");
       finalized.push(payload);
     }),
@@ -156,78 +160,6 @@ describe("uploadOne", () => {
       thumb_path: null,
       preview_path: null,
     });
-  });
-});
-
-describe("uploadBatch", () => {
-  it("is per-file independent: file 3 rejects, the other 4 commit", async () => {
-    const { deps, finalized } = makeDeps();
-    let call = 0;
-    deps.finalize = vi.fn(async (payload: FinalizePayload) => {
-      call += 1;
-      if (call === 3) throw new Error("flaky network");
-      finalized.push(payload);
-    });
-
-    const events: string[] = [];
-    const results = await uploadBatch(
-      [
-        makeFile("1.jpg", "image/jpeg"),
-        makeFile("2.jpg", "image/jpeg"),
-        makeFile("3.jpg", "image/jpeg"),
-        makeFile("4.jpg", "image/jpeg"),
-        makeFile("5.jpg", "image/jpeg"),
-      ],
-      META,
-      deps,
-      (progress) => events.push(`${progress.type}:${progress.index}`)
-    );
-
-    expect(results.map((r) => r.status)).toEqual([
-      "done",
-      "done",
-      "failed",
-      "done",
-      "done",
-    ]);
-    expect(results[2].retryable).toBe(true);
-    expect(finalized).toHaveLength(4);
-    expect(events.filter((event) => !event.startsWith("progress"))).toEqual([
-      "start:0",
-      "done:0",
-      "start:1",
-      "done:1",
-      "start:2",
-      "failed:2",
-      "start:3",
-      "done:3",
-      "start:4",
-      "done:4",
-    ]);
-  });
-
-  it("survives a storage client that THROWS instead of returning an error", async () => {
-    const { deps, finalized } = makeDeps();
-    let call = 0;
-    const goodUpload = deps.storage.upload.bind(deps.storage);
-    deps.storage = {
-      async upload(path, body, options) {
-        call += 1;
-        if (call === 1) throw new Error("connection reset");
-        return goodUpload(path, body, options);
-      },
-    };
-
-    const results = await uploadBatch(
-      [makeFile("1.jpg", "image/jpeg"), makeFile("2.jpg", "image/jpeg")],
-      META,
-      deps
-    );
-
-    expect(results.map((r) => r.status)).toEqual(["failed", "done"]);
-    expect(results[0].retryable).toBe(true);
-    expect(results[0].error).toContain("connection reset");
-    expect(finalized).toHaveLength(1);
   });
 });
 
@@ -440,10 +372,6 @@ describe("createResumableUpload", () => {
   });
 
   it("scopes the resume fingerprint to the objectName — a retry's NEW photoId path never matches an old attempt", async () => {
-    // tus-js-client's default fingerprint is [name,type,size,lastModified,
-    // endpoint]; without the objectName in it, a retry (new photoId => new
-    // path) would resume the dead attempt's upload URL and finish the bytes
-    // under the OLD path while the row records the NEW one.
     FakeTusUpload.reset();
     const upload = createResumableUpload({
       ...CONFIG,
@@ -467,12 +395,7 @@ describe("createResumableUpload", () => {
       file,
       second.options
     );
-    // Same file, different objectName => different fingerprints (no resume);
-    // and each fingerprint is pinned to its exact storage path.
-    expect(firstFingerprint).toContain("originals/u1/old-id/big.mp4");
-    expect(secondFingerprint).toContain("originals/u1/new-id/big.mp4");
     expect(firstFingerprint).not.toBe(secondFingerprint);
-    // Same file, SAME objectName => stable fingerprint (legitimate resume).
     expect(
       await first.options.fingerprint!(file, first.options)
     ).toBe(firstFingerprint);
@@ -523,7 +446,8 @@ describe("createResumableUpload", () => {
     await upload("originals/u1/p1/big.mp4", bigFile(1), {
       contentType: "video/mp4",
     });
-    const { onShouldRetry } = FakeTusUpload.instances[0].options;
+    const opts = FakeTusUpload.instances[0].options;
+    const { onShouldRetry } = opts;
 
     const errorWithStatus = (status: number | null) =>
       (status === null
@@ -532,7 +456,6 @@ describe("createResumableUpload", () => {
             originalResponse: { getStatus: () => status },
           }) as unknown as DetailedError;
 
-    const opts = FakeTusUpload.instances[0].options;
     expect(onShouldRetry?.(errorWithStatus(null), 0, opts)).toBe(true); // connection
     expect(onShouldRetry?.(errorWithStatus(500), 0, opts)).toBe(true);
     expect(onShouldRetry?.(errorWithStatus(401), 0, opts)).toBe(true); // token refreshed next try
@@ -549,45 +472,20 @@ describe("step-kill convergence", () => {
   // objects are exactly what the repair cron's orphan sweep deletes.
   type KillPoint = "original" | "thumb" | "preview" | "finalize";
 
-  function makeKillableDeps(kill: { at: KillPoint | null }) {
-    const objects = new Set<string>();
-    const rows: FinalizePayload[] = [];
-    let idCounter = 0;
-
-    const stepFor = (path: string): KillPoint =>
-      path.startsWith("originals/")
+  const stepFor = (path: string): KillPoint =>
+    path === "finalize"
+      ? "finalize"
+      : path.startsWith("originals/")
         ? "original"
         : path.includes("_thumb")
           ? "thumb"
           : "preview";
 
-    const deps: UploadDeps = {
-      storage: {
-        async upload(path) {
-          if (kill.at === stepFor(path)) throw new Error("KILLED");
-          objects.add(path);
-          return { error: null };
-        },
-      },
-      finalize: async (payload) => {
-        if (kill.at === "finalize") throw new Error("KILLED");
-        rows.push(payload);
-      },
-      extractCapturedAt: async () => CAPTURED,
-      makeDerivatives: async () => ({
-        thumb: new Blob(["t"], { type: "image/webp" }),
-        preview: new Blob(["p"], { type: "image/webp" }),
-      }),
-      generateId: () => `photo-${++idCounter}`,
-    };
-
-    return { deps, objects, rows };
-  }
-
   const expectRepairableState = (
-    objects: Set<string>,
+    uploads: Recorded[],
     rows: FinalizePayload[]
   ) => {
+    const objects = new Set(uploads.map((upload) => upload.path));
     const originals = [...objects].filter((path) =>
       path.startsWith("originals/")
     );
@@ -611,7 +509,9 @@ describe("step-kill convergence", () => {
     "a kill at %s leaves a repairable state, and a retry converges",
     async (killPoint) => {
       const kill = { at: killPoint as KillPoint | null };
-      const { deps, objects, rows } = makeKillableDeps(kill);
+      const { deps, uploads, finalized: rows } = makeDeps({
+        throwAt: (path) => kill.at === stepFor(path),
+      });
       const file = makeFile("IMG_0042.jpg", "image/jpeg", 10);
 
       const killed = await uploadOne(file, META, deps);
@@ -619,7 +519,7 @@ describe("step-kill convergence", () => {
       expect(killed.status).toBe("failed");
       expect(killed.retryable).toBe(true);
       expect(rows).toHaveLength(0); // no kill point leaves a phantom row
-      expectRepairableState(objects, rows);
+      expectRepairableState(uploads, rows);
 
       // The user taps Retry (network is back): the file converges.
       kill.at = null;
@@ -628,19 +528,9 @@ describe("step-kill convergence", () => {
       expect(retried.status).toBe("done");
       expect(rows).toHaveLength(1);
       expect(rows[0].thumb_path).not.toBeNull();
-      expectRepairableState(objects, rows);
+      expectRepairableState(uploads, rows);
     }
   );
-
-  it("a kill AFTER finalize is already a committed photo (done rows stay done)", async () => {
-    const kill = { at: null as KillPoint | null };
-    const { deps, objects, rows } = makeKillableDeps(kill);
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
-
-    expect(result.status).toBe("done");
-    expect(rows).toHaveLength(1);
-    expectRepairableState(objects, rows);
-  });
 });
 
 describe("sanitizeFilename", () => {

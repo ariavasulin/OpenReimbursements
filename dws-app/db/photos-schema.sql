@@ -1,5 +1,4 @@
 -- DWS Photos hub schema: jobs + photos tables, RLS, storage own-prefix INSERT policy.
--- Applied to production as migration `create_photos_schema` (2026-08-19) via Supabase MCP.
 -- Strictly additive: no existing table, bucket, or policy is altered.
 --
 -- Prerequisite (storage, applied separately — not table DDL):
@@ -9,7 +8,7 @@
 --
 -- NOTE: user_profiles already has an authenticated-SELECT policy
 -- (user_profiles_select_policy, qual: auth.uid() is not null) — deliberately
--- NOT duplicated here. See .artifacts/add-photo-gallery/06-research-implementation-env.md.
+-- NOT duplicated here.
 
 create table if not exists public.jobs (
   id          uuid primary key default gen_random_uuid(),
@@ -80,7 +79,3 @@ create policy photos_storage_insert on storage.objects
     and (storage.foldername(name))[1] in ('originals', 'derived')
     and (storage.foldername(name))[2] = auth.uid()::text
   );
-
--- Verification:
--- select tablename, policyname from pg_policies where tablename in ('jobs','photos');
--- select policyname from pg_policies where schemaname = 'storage' and policyname = 'photos_storage_insert';

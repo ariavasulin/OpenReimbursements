@@ -37,6 +37,6 @@ export function previewUrl(photo: PhotoRow): string | null {
 export function isOpenable(photo: PhotoRow): boolean {
   return (
     (photo.kind === "image" || photo.kind === "video") &&
-    Boolean(photo.preview_path ?? photo.thumb_path)
+    previewUrl(photo) !== null
   );
 }

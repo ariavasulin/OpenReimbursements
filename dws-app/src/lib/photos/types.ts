@@ -1,11 +1,13 @@
 // Shared types for the DWS Photos hub.
 
+export type PhotoKind = "image" | "video" | "file";
+
 /** One photos row as returned by GET /api/photos (uploader + job embedded). */
 export interface PhotoRow {
   id: string;
   job_id: string;
   uploader_id: string;
-  kind: "image" | "video" | "file";
+  kind: PhotoKind;
   sheet_number: string | null;
   tags: string[];
   /** Never null after finalize: EXIF capture time, or upload time fallback. */

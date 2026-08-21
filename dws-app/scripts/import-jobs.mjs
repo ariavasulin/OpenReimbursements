@@ -8,8 +8,7 @@
 //   node scripts/import-jobs.mjs --projects <tblProject.csv> --jobs <tblMas90JobMasterOpen.csv>            # dry run
 //   node scripts/import-jobs.mjs --projects <tblProject.csv> --jobs <tblMas90JobMasterOpen.csv> --execute  # write
 //
-// NOTE: tblProject.csv contains quoted embedded commas/newlines — parsed with
-// csv-parse, NOT the naive splitter used by onboard-users.mjs.
+// NOTE: csv-parse handles tblProject.csv's quoted embedded commas/newlines.
 import fs from 'fs'
 import { parse } from 'csv-parse/sync'
 import { createClient } from '@supabase/supabase-js'
@@ -84,7 +83,6 @@ async function main() {
   if (archivedDropped) console.log(`Dropped (archived in tblProject): ${archivedDropped}`)
   if (unmatched.length) {
     console.warn(`WARNING: ${unmatched.length} open JobNo(s) have NO tblProject row and are NOT imported: ${unmatched.join(', ')}`)
-    console.warn('(The tblProject dump appears older than the open-jobs dump — product call whether these need placeholder rows.)')
   }
 
   if (!args.execute) {

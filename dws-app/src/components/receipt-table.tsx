@@ -74,7 +74,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
       const aValue = a[sortField];
       const bValue = b[sortField];
 
-      // Handle null/undefined values by treating them as "lesser" or provide specific logic
+      // Handle null/undefined values: treat null/undefined as lesser
       if (aValue == null && bValue == null) return 0;
       if (aValue == null) return sortDirection === "asc" ? -1 : 1;
       if (bValue == null) return sortDirection === "asc" ? 1 : -1;

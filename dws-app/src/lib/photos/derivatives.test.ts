@@ -6,10 +6,7 @@ import {
   PREVIEW_MAX_DIM,
 } from "./derivatives";
 
-// createImageBitmap / OffscreenCanvas / <video> don't exist in Node — the
-// decode and canvas layers are mocked (per the TDD's test plan) and the tests
-// assert the orchestration: orientation option, scaling math, video poster
-// seek + duration, undecodable -> null.
+// Browser decode/canvas APIs are stubbed; Node has none.
 
 interface FakeCanvas {
   width: number;

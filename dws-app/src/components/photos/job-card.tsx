@@ -1,16 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { supabase } from "@/lib/supabaseClient";
+import { publicUrl } from "@/lib/photos/urls";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 
 // One job card on the photos home screen: job number (accent), project name,
-// photo count, and a strip of up to 4 newest thumbnails. Matches the mockup
-// (#2e2e2e card, #4e4e4e border).
-
-function thumbUrl(path: string): string {
-  return supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
-}
+// photo count, and a strip of up to 4 newest thumbnails.
 
 export default function JobCard({ job }: { job: PhotoJobSummary }) {
   const thumbs = job.thumb_paths.slice(0, 4);
@@ -39,7 +34,7 @@ export default function JobCard({ job }: { job: PhotoJobSummary }) {
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={thumbUrl(path)}
+                src={publicUrl(path)}
                 alt=""
                 loading="lazy"
                 className="h-full w-full object-cover"

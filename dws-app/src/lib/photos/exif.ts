@@ -4,7 +4,7 @@ import exifr from "exifr";
 // file has no usable EXIF (videos, PNGs, canvas JPEGs, ...) — the server
 // falls back to upload time when finalizing the row.
 export async function extractCapturedAt(file: File | Blob): Promise<Date | null> {
-  const mime = "type" in file ? file.type : "";
+  const mime = file.type;
   // exifr only reads photo metadata; skip videos and other non-images outright
   // (never pull a multi-GB video into memory looking for EXIF it can't have).
   if (mime && !mime.startsWith("image/")) return null;

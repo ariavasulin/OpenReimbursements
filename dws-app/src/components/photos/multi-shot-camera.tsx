@@ -3,17 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
-// Multi-shot in-app camera: tap the shutter repeatedly, shots stack in the
-// corner with a counter, then Done hands the whole batch to the upload sheet.
-// This fixes the "take one photo, upload, go back, take another" problem —
-// the native iPhone camera input only captures one shot at a time.
-//
-// iOS mechanics (per the TDD): getUserMedia requires a secure context (the
-// deployed HTTPS URL — it silently fails on `next dev` over a LAN IP), the
-// stream must start from a user gesture (opening this component IS the tap),
-// and the <video> needs playsinline + muted or iOS hijacks it fullscreen.
-// When the camera is unavailable or denied, a native
-// <input type="file" capture> fallback renders instead. No upload logic here.
+// iOS mechanics: getUserMedia requires a secure context (the deployed HTTPS
+// URL — it silently fails on `next dev` over a LAN IP), the stream must start
+// from a user gesture (opening this component IS the tap), and the <video>
+// needs playsinline + muted or iOS hijacks it fullscreen.
 
 export interface CameraShot {
   file: File;

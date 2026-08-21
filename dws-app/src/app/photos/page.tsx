@@ -1,68 +1,38 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabaseClient";
+import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import JobCard from "@/components/photos/job-card";
-import MultiShotCamera, {
-  useHasCamera,
-  type CameraShot,
-} from "@/components/photos/multi-shot-camera";
-import UploadSheet, { pickerAccept } from "@/components/photos/upload-sheet";
-import type { PhotoJobSummary } from "@/lib/photos/types";
+import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
+import UploadSheet from "@/components/photos/upload-sheet";
+import { fetchJobs, invalidatePhotoCaches } from "@/lib/photos/api";
 
-// Photos home: searchable job list (one card per job, newest activity first).
-// The search box filters jobs as you type; Enter (or the link under it) runs
-// the same text as a cross-job photo search — tags and people land there.
-// Take Photos (in-app multi-shot camera) and Upload (native picker) sit at
-// the bottom; both end at the batch details sheet, where the job is picked.
-// Guard is session-only — deliberately NO role gate: admins use this page too.
-
-async function fetchJobs(q: string): Promise<PhotoJobSummary[]> {
-  const params = q ? `?q=${encodeURIComponent(q)}` : "";
-  const response = await fetch(`/api/photo-jobs${params}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => null);
-    throw new Error(data?.error || `Failed to load jobs (${response.status})`);
-  }
-  const data = await response.json();
-  return data.jobs as PhotoJobSummary[];
-}
+// Photos home: searchable job list plus the Take Photos / Upload bar. The
+// guard is session-only — deliberately NO role gate: admins use this page too.
 
 export default function PhotosHomePage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const hasCamera = useHasCamera();
+  const sessionReady = useSessionGuard("/photos");
   const [ready, setReady] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [pickedFiles, setPickedFiles] = useState<File[]>([]);
-  const [capturedAtOverrides, setCapturedAtOverrides] = useState<
-    Map<File, Date>
-  >(new Map());
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const mountedRef = useRef(true);
+  const batch = useCaptureBatch();
 
-  // Session guard + missing-profile fallback (a DB trigger normally creates
-  // the profile row at signup; this covers accounts that predate it).
+  // Missing-profile fallback (a DB trigger normally creates the profile row
+  // at signup; this covers accounts that predate it).
   useEffect(() => {
-    mountedRef.current = true;
-
-    const guard = async () => {
+    if (!sessionReady) return;
+    let cancelled = false;
+    const ensureProfile = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-
-      if (!mountedRef.current) return;
-
-      if (!session) {
-        window.location.replace("/login?next=/photos");
-        return;
-      }
+      if (!session || cancelled) return;
 
       const { error: profileError } = await supabase
         .from("user_profiles")
@@ -78,24 +48,13 @@ export default function PhotosHomePage() {
         });
       }
 
-      if (mountedRef.current) setReady(true);
+      if (!cancelled) setReady(true);
     };
-
-    guard();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (event === "SIGNED_OUT" || !session) {
-          window.location.replace("/login?next=/photos");
-        }
-      }
-    );
-
+    ensureProfile();
     return () => {
-      mountedRef.current = false;
-      authListener?.subscription?.unsubscribe();
+      cancelled = true;
     };
-  }, []);
+  }, [sessionReady]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -112,43 +71,7 @@ export default function PhotosHomePage() {
     enabled: ready,
   });
 
-  const handleFilesPicked = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = ""; // allow re-picking the same files
-    if (files.length > 0) {
-      setPickedFiles(files);
-      setCapturedAtOverrides(new Map());
-      setSheetOpen(true);
-    }
-  };
-
-  const handleShotsDone = (shots: CameraShot[]) => {
-    const overrides = new Map<File, Date>();
-    for (const shot of shots) {
-      if (shot.capturedAt) overrides.set(shot.file, shot.capturedAt);
-    }
-    setPickedFiles(shots.map((shot) => shot.file));
-    setCapturedAtOverrides(overrides);
-    setCameraOpen(false);
-    setSheetOpen(true);
-  };
-
-  const refetchAfterUpload = () => {
-    queryClient.invalidateQueries({ queryKey: ["photo-jobs"] });
-    queryClient.invalidateQueries({ queryKey: ["photos"] });
-    queryClient.invalidateQueries({ queryKey: ["photo-tags"] });
-  };
-
-  if (!ready) {
-    return (
-      <div className="flex min-h-full items-center justify-center px-4 py-8">
-        <div className="text-center">
-          <p className="mb-2 text-lg">Loading...</p>
-          <p className="text-sm text-gray-400">Verifying authentication</p>
-        </div>
-      </div>
-    );
-  }
+  if (!ready) return <AuthLoading />;
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-5">
@@ -210,50 +133,18 @@ export default function PhotosHomePage() {
         {jobs?.map((job) => <JobCard key={job.id} job={job} />)}
       </div>
 
-      <div className="fixed bottom-4 left-0 right-0 mx-auto flex w-full max-w-2xl gap-2 px-4">
-        <input
-          ref={fileInputRef}
-          id="photos-home-upload-input"
-          type="file"
-          multiple
-          accept={pickerAccept()}
-          onChange={handleFilesPicked}
-          className="sr-only"
-        />
-        {hasCamera && (
-          <button
-            type="button"
-            onClick={() => setCameraOpen(true)}
-            className="flex-1 rounded-lg bg-[#2680FC] py-3 text-sm font-medium text-white shadow-lg hover:bg-[#1a6fd8]"
-          >
-            Take Photos
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className={`flex-1 rounded-lg py-3 text-sm font-medium text-white shadow-lg ${
-            hasCamera
-              ? "border border-[#4e4e4e] bg-[#2e2e2e] hover:border-[#2680FC]"
-              : "bg-[#2680FC] hover:bg-[#1a6fd8]"
-          }`}
-        >
-          Upload
-        </button>
-      </div>
-
-      <MultiShotCamera
-        open={cameraOpen}
-        onClose={() => setCameraOpen(false)}
-        onDone={handleShotsDone}
+      <CaptureBar
+        batch={batch}
+        maxWidthClass="max-w-2xl"
+        inputId="photos-home-upload-input"
       />
 
       <UploadSheet
-        files={pickedFiles}
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-        onUploaded={refetchAfterUpload}
-        capturedAtOverrides={capturedAtOverrides}
+        files={batch.pickedFiles}
+        open={batch.sheetOpen}
+        onOpenChange={batch.setSheetOpen}
+        onUploaded={() => invalidatePhotoCaches(queryClient)}
+        capturedAtOverrides={batch.capturedAtOverrides}
       />
     </main>
   );

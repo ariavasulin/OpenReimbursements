@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 
 import { formatUSPhoneNumber } from '@/lib/phone';
+import { isPhotosHost } from '@/lib/cookieDomain';
 
 // Where to land after login: an explicit ?next= path wins (so deep links like
 // /capture survive the login round-trip), then the hostname picks the product
@@ -20,14 +21,7 @@ function getPostLoginPath(): string {
   if (next && next.startsWith('/') && !next.startsWith('//')) {
     return next;
   }
-  const photosHost = process.env.NEXT_PUBLIC_PHOTOS_HOSTNAME;
-  if (
-    photosHost &&
-    window.location.hostname.toLowerCase() === photosHost.toLowerCase()
-  ) {
-    return '/photos';
-  }
-  return '/employee';
+  return isPhotosHost(window.location.hostname) ? '/photos' : '/employee';
 }
 
 // One-time name prompt: fires when the user has no profile row, an empty
@@ -52,7 +46,8 @@ async function needsNamePrompt(user: {
   const name = (profile?.full_name ?? '').trim();
   if (!name) return true;
   if (name === 'Employee') return true;
-  const phone = user.phone ?? ''; // E.164 digits without the leading +
+  // Supabase stores phone without "+"; compare both forms
+  const phone = user.phone ?? '';
   if (phone && (name === phone || name === `+${phone}`)) return true;
   return false;
 }
@@ -71,12 +66,7 @@ export default function LoginPage() {
   const mountedRef = useRef(true);
 
   const routeSignedInUser = async (user: { id: string; phone?: string | null }) => {
-    let promptForName = false;
-    try {
-      promptForName = await needsNamePrompt(user);
-    } catch {
-      // On unexpected failure, proceed without the prompt.
-    }
+    const promptForName = await needsNamePrompt(user);
 
     if (!mountedRef.current) return;
 

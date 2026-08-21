@@ -27,11 +27,9 @@ import { extractCapturedAt } from "@/lib/photos/exif";
 import UploadProgress, {
   type UploadItem,
 } from "@/components/photos/upload-progress";
-import type { PhotoJobSummary } from "@/lib/photos/types";
+import { fetchJobs, fetchTags } from "@/lib/photos/api";
 
-// Batch details form: one job + one optional sheet + one set of tags for the
-// whole batch (per-photo tagging at upload was rejected as friction). Drawer
-// on mobile / Dialog on desktop, per the receipt-uploader convention.
+// One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
 
 /**
  * File-picker accept attribute: generic `image/*,video/*` on iOS ONLY —
@@ -45,18 +43,6 @@ export function pickerAccept(): string | undefined {
   return /iPad|iPhone|iPod/.test(navigator.userAgent)
     ? "image/*,video/*"
     : undefined;
-}
-
-async function fetchJobs(): Promise<PhotoJobSummary[]> {
-  const response = await fetch("/api/photo-jobs");
-  if (!response.ok) throw new Error("Failed to load jobs");
-  return (await response.json()).jobs as PhotoJobSummary[];
-}
-
-async function fetchTags(): Promise<string[]> {
-  const response = await fetch("/api/photo-tags");
-  if (!response.ok) throw new Error("Failed to load tags");
-  return (await response.json()).tags as string[];
 }
 
 function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
@@ -135,12 +121,12 @@ export default function UploadSheet({
 
   const { data: jobs } = useQuery({
     queryKey: ["photo-jobs", ""],
-    queryFn: fetchJobs,
+    queryFn: () => fetchJobs(),
     enabled: open,
   });
   const { data: knownTags } = useQuery({
     queryKey: ["photo-tags"],
-    queryFn: fetchTags,
+    queryFn: () => fetchTags(),
     enabled: open,
   });
 
@@ -235,7 +221,12 @@ export default function UploadSheet({
         meta,
         deps,
         (sentBytes, totalBytes) =>
-          patchItem(fileIndex, { sentBytes, totalBytes })
+          setItems((previous) => {
+            if (previous[fileIndex]?.sentBytes === sentBytes) return previous;
+            const next = [...previous];
+            next[fileIndex] = { ...next[fileIndex], sentBytes, totalBytes };
+            return next;
+          })
       );
       results.push(result);
       patchItem(fileIndex, { status: result.status, error: result.error });
@@ -267,6 +258,7 @@ export default function UploadSheet({
     .filter((index) => index >= 0);
   const doneCount = items.filter((item) => item.status === "done").length;
   const uploadStarted = items.some((item) => item.status !== "pending");
+  const retrying = failedIndices.length > 0;
 
   const handleOpenChange = (next: boolean) => {
     if (!next && uploading) return; // don't lose an in-flight batch
@@ -281,7 +273,7 @@ export default function UploadSheet({
 
       <div className="mb-3.5 flex gap-1.5 overflow-x-auto">
         {files.map((file, index) => (
-          <div key={index} className="relative shrink-0">
+          <div key={index} className="shrink-0">
             {previews[index] ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -292,21 +284,6 @@ export default function UploadSheet({
             ) : (
               <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
                 {file.name}
-              </div>
-            )}
-            {items[index]?.status === "uploading" && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/55 text-[9px] font-semibold text-white">
-                ...
-              </div>
-            )}
-            {items[index]?.status === "done" && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/55 text-xs font-semibold text-[#4ade80]">
-                Done
-              </div>
-            )}
-            {items[index]?.status === "failed" && (
-              <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/65 text-[10px] font-semibold text-red-400">
-                Failed
               </div>
             )}
           </div>
@@ -402,29 +379,20 @@ export default function UploadSheet({
       )}
 
       <div className="mt-3">
-        {failedIndices.length > 0 ? (
-          <Button
-            onClick={() => runUpload(failedIndices)}
-            disabled={uploading}
-            className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
-            size="lg"
-          >
-            {uploading
+        <Button
+          onClick={() => runUpload(retrying ? failedIndices : pendingIndices)}
+          disabled={uploading || (!retrying && pendingIndices.length === 0)}
+          className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
+          size="lg"
+        >
+          {uploading
+            ? retrying
               ? "Uploading..."
-              : `Retry ${failedIndices.length} failed`}
-          </Button>
-        ) : (
-          <Button
-            onClick={() => runUpload(pendingIndices)}
-            disabled={uploading || pendingIndices.length === 0}
-            className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
-            size="lg"
-          >
-            {uploading
-              ? `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
+              : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
+            : retrying
+              ? `Retry ${failedIndices.length} failed`
               : `Upload ${pendingIndices.length} ${pendingIndices.length === 1 ? "file" : "files"}`}
-          </Button>
-        )}
+        </Button>
       </div>
     </div>
   );

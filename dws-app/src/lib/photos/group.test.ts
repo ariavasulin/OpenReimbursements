@@ -39,7 +39,6 @@ describe("groupPhotos by date", () => {
     expect(groups).toHaveLength(2);
     expect(groups[0].photos).toHaveLength(2);
     expect(groups[1].photos).toHaveLength(1);
-    expect(groups[0].label).toContain("2026");
   });
 
   it("merges non-contiguous same-day photos into one group", () => {

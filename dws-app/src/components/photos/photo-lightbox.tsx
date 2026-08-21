@@ -11,15 +11,17 @@ import Counter from "yet-another-react-lightbox/plugins/counter";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/counter.css";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchJobs } from "@/lib/photos/api";
+import { formatBytes } from "@/lib/photos/format";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
-import type { PhotoJobSummary, PhotoRow } from "@/lib/photos/types";
+import type { PhotoRow } from "@/lib/photos/types";
 
 // Zoomable lightbox over the current filtered set (whatever grid you opened
 // from is the set you flip through). Zoom/swipe run on the screen-quality
 // preview, never the original — "Download original" streams the untouched
 // file. The bottom bar keeps the evidence metadata (capture time, uploader,
 // job, tags) always visible, plus Edit tags (anyone) and Delete (uploader or
-// admin only — mirrored from RLS, which is what actually enforces it).
+// admin only).
 
 interface PhotoLightboxProps {
   /** Openable photos in display order (the current filtered/grouped set). */
@@ -30,12 +32,6 @@ interface PhotoLightboxProps {
   onClose(): void;
   /** Fired after a successful edit or delete so grids refetch. */
   onChanged(): void;
-}
-
-async function fetchJobs(): Promise<PhotoJobSummary[]> {
-  const response = await fetch("/api/photo-jobs");
-  if (!response.ok) throw new Error("Failed to load jobs");
-  return (await response.json()).jobs as PhotoJobSummary[];
 }
 
 function formatCaptured(iso: string): string {
@@ -52,10 +48,8 @@ function formatCaptured(iso: string): string {
 
 function formatFileInfo(photo: PhotoRow): string | null {
   const parts: string[] = [];
-  if (photo.original_bytes != null && photo.original_bytes > 0) {
-    const mb = photo.original_bytes / (1024 * 1024);
-    parts.push(mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(photo.original_bytes / 1024)} KB`);
-  }
+  const size = photo.original_bytes ? formatBytes(photo.original_bytes) : null;
+  if (size) parts.push(size);
   const ext = photo.original_name?.includes(".")
     ? photo.original_name.split(".").pop()
     : photo.mime_type?.split("/")[1];
@@ -105,7 +99,7 @@ export default function PhotoLightbox({
 
   const { data: jobs } = useQuery({
     queryKey: ["photo-jobs", ""],
-    queryFn: fetchJobs,
+    queryFn: () => fetchJobs(),
     enabled: open && editing,
   });
 
@@ -116,8 +110,8 @@ export default function PhotoLightbox({
   }, [index, open]);
 
   const canDelete =
-    Boolean(photo && me) &&
-    (photo!.uploader_id === me!.id || me!.role === "admin");
+    !!photo && !!me && (photo.uploader_id === me.id || me.role === "admin");
+  const fileInfo = photo ? formatFileInfo(photo) : null;
 
   const startEditing = () => {
     if (!photo) return;
@@ -207,7 +201,7 @@ export default function PhotoLightbox({
           Taken {formatCaptured(photo.captured_at)}
           {photo.uploader?.full_name &&
             ` · Uploaded by ${photo.uploader.full_name}`}
-          {formatFileInfo(photo) && ` · ${formatFileInfo(photo)}`}
+          {fileInfo && ` · ${fileInfo}`}
         </div>
         <div className="mt-3 flex gap-2">
           <a

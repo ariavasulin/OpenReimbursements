@@ -19,10 +19,6 @@ const withLongExpiry = (options: CookieOptions = {}): CookieOptions => {
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
   const headerStore = await headers();
-  // Scope the auth cookie to the shared apex (`.dws-receipts.com`) so one
-  // login covers both the receipts and photos domains. On other hosts
-  // (localhost, *.vercel.app previews) no domain is set — a mismatched
-  // domain would make browsers reject the cookie.
   const cookieDomain = cookieDomainForHost(headerStore.get('host'));
 
   return createServerClient(

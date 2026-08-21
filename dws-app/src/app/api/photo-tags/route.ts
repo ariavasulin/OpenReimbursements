@@ -1,12 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { UUID_RE } from '@/lib/photos/apiShared';
 
 // GET /api/photo-tags?job=&q= — distinct tags in use (optionally scoped to a
 // job, optionally prefix-filtered), for the Tags filter and upload type-ahead.
-// Distinct-unnest is done in the route; trivially fast at DWS scale.
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// TODO: aggregate in SQL (view/RPC)
 
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();

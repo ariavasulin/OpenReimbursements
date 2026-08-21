@@ -8,11 +8,23 @@
 
 export const AUTH_COOKIE_APEX = "dws-receipts.com";
 
+/** Lower-cased hostname without a port ("Host:443" -> "host"). */
+export function normalizeHostname(host: string): string {
+  return host.split(":")[0].toLowerCase();
+}
+
+/** Is this request host the photos product (NEXT_PUBLIC_PHOTOS_HOSTNAME)? */
+export function isPhotosHost(host: string | null | undefined): boolean {
+  const photosHostname = process.env.NEXT_PUBLIC_PHOTOS_HOSTNAME;
+  if (!photosHostname || !host) return false;
+  return normalizeHostname(host) === normalizeHostname(photosHostname);
+}
+
 export function cookieDomainForHost(
   host: string | null | undefined
 ): string | undefined {
   if (!host) return undefined;
-  const hostname = host.split(":")[0].toLowerCase();
+  const hostname = normalizeHostname(host);
   if (
     hostname === AUTH_COOKIE_APEX ||
     hostname.endsWith(`.${AUTH_COOKIE_APEX}`)

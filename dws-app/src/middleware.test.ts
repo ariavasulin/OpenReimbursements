@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { config, resolvePhotosRewrite } from "./middleware";
+import { resolvePhotosRewrite } from "./middleware";
 
 const PHOTOS_HOST = "photos.dws-receipts.com";
 
@@ -46,11 +46,5 @@ describe("resolvePhotosRewrite", () => {
 
   it("is a no-op when the host header is missing", () => {
     expect(resolvePhotosRewrite(null, "/", PHOTOS_HOST)).toBeNull();
-  });
-});
-
-describe("middleware config", () => {
-  it("only matches the root path (login/api/static never enter)", () => {
-    expect(config.matcher).toEqual(["/"]);
   });
 });

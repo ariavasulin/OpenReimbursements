@@ -4,9 +4,8 @@ import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 import { cleanTags, PHOTO_COLUMNS, UUID_RE } from '@/lib/photos/apiShared';
 
 // PATCH  /api/photos/:id — fix organizational metadata (job / sheet / tags).
-//        Any signed-in user: keeping the hub clean is everyone's job, so a PM
-//        who spots a mis-filed photo fixes it on the spot. The editable
-//        columns are whitelisted here; RLS allows the update itself.
+//        Any signed-in user. The editable columns are whitelisted here; RLS
+//        allows the update itself.
 // DELETE /api/photos/:id — uploader or admin only (photos are evidence).
 //        Enforced by RLS (photos_delete: uploader_id = auth.uid() or
 //        is_admin()); the route reports 403 when RLS deleted nothing.
@@ -36,7 +35,6 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  // Whitelist: job, sheet, tags — nothing else is editable after upload.
   const updates: Record<string, unknown> = {};
 
   if ('job_id' in body) {
@@ -146,10 +144,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     existing.preview_path,
   ].filter((path): path is string => Boolean(path));
   if (paths.length > 0) {
-    await supabaseAdmin.storage
-      .from('photos')
-      .remove(paths)
-      .catch(() => undefined);
+    await supabaseAdmin.storage.from('photos').remove(paths);
   }
 
   return NextResponse.json({ success: true });

@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 
 // PATCH /api/profile — set the signed-in user's own full_name.
-// Used by the one-time name prompt on first login. Scoped to auth.uid():
-// the update targets only the caller's row (RLS enforces the same).
+// Used by the one-time name prompt on first login.
 export async function PATCH(request: Request) {
   const supabase = await createSupabaseServerClient();
 

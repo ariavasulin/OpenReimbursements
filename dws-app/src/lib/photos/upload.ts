@@ -1,9 +1,6 @@
-// Upload orchestration: per-file independent, sequential (a partial batch
-// keeps its successes). Each file: uuid -> exif -> derivatives -> upload the
-// ORIGINAL FIRST, then derivatives, then POST the row. A mid-flight kill
-// leaves only repairable states (row-less original / row without derivatives),
-// which the repair loop converges. Storage and API clients are injected so
-// the logic is testable without a browser or network.
+// Upload orchestration: per file, original FIRST, then derivatives, then POST
+// the row. Storage and API clients are injected so the logic is testable
+// without a browser or network.
 //
 // Originals over 6 MB go up via resumable TUS (Supabase's
 // /storage/v1/upload/resumable endpoint) so a multi-GB jobsite-LTE video
@@ -16,8 +13,7 @@ import {
   makeDerivatives as defaultMakeDerivatives,
   type Derivatives,
 } from "./derivatives";
-
-export type PhotoKind = "image" | "video" | "file";
+import type { PhotoKind } from "./types";
 
 export interface UploadMeta {
   jobId: string;
@@ -86,19 +82,6 @@ export interface UploadResult {
   error?: string;
 }
 
-export type UploadProgress =
-  | { type: "start"; file: File; index: number; total: number }
-  | {
-      type: "progress";
-      file: File;
-      index: number;
-      total: number;
-      sentBytes: number;
-      totalBytes: number;
-    }
-  | { type: "done"; file: File; index: number; total: number }
-  | { type: "failed"; file: File; index: number; total: number; error: string };
-
 /** Plain .upload() is for <=6 MB; anything bigger goes resumable (TUS). */
 export const RESUMABLE_THRESHOLD_BYTES = 6 * 1024 * 1024;
 /** Supabase's TUS endpoint requires chunks of EXACTLY 6 MB. */
@@ -143,13 +126,7 @@ export function createResumableUpload(
 
   return (path, file, options) =>
     new Promise((resolve) => {
-      let settled = false;
-      const settle = (error: { message: string } | null) => {
-        if (!settled) {
-          settled = true;
-          resolve({ error });
-        }
-      };
+      const settle = (error: { message: string } | null) => resolve({ error });
 
       const upload = new UploadCtor(file, {
         endpoint: `${config.supabaseUrl}/storage/v1/upload/resumable`,
@@ -194,9 +171,9 @@ export function createResumableUpload(
         onShouldRetry: (error) => {
           const status =
             (error as DetailedError).originalResponse?.getStatus() ?? 0;
-          // Connection drops (0) and server errors are retryable; 401 too —
-          // onBeforeRequest refreshes the token on the next attempt. Other
-          // 4xx (403 wrong prefix, 413 too big) won't heal by retrying.
+          // Connection drops (0), 5xx, 409/423 (storage lock contention), and
+          // 401 (onBeforeRequest refreshes the token on the next attempt) are
+          // retryable. Other 4xx (403 wrong prefix, 413 too big) won't heal.
           return (
             status === 0 || status >= 500 || status === 401 || status === 409 || status === 423
           );
@@ -285,18 +262,20 @@ async function uploadOneSteps(
   const extractCapturedAt = deps.extractCapturedAt ?? defaultExtractCapturedAt;
   const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
 
-  const capturedAt = await extractCapturedAt(file).catch(() => null);
-  const derivatives = await makeDerivatives(file).catch(() => null);
+  const [capturedAt, derivatives] = await Promise.all([
+    extractCapturedAt(file).catch(() => null),
+    makeDerivatives(file).catch(() => null),
+  ]);
   const paths = storagePaths(meta.uploaderId, photoId, file.name);
 
   // 1. Original, byte-for-byte, ALWAYS first — a kill after this point
   // leaves a repairable state, never orphan derivatives. Over the plain
   // upload ceiling the original goes resumable (TUS) so it survives drops.
   const contentType = file.type || "application/octet-stream";
-  const useResumable =
-    Boolean(deps.resumableUpload) && file.size > RESUMABLE_THRESHOLD_BYTES;
-  const { error: originalError } = useResumable
-    ? await deps.resumableUpload!(paths.original, file, {
+  const resumable =
+    file.size > RESUMABLE_THRESHOLD_BYTES ? deps.resumableUpload : undefined;
+  const { error: originalError } = resumable
+    ? await resumable(paths.original, file, {
         contentType,
         onProgress: onBytes,
       })
@@ -314,16 +293,16 @@ async function uploadOneSteps(
   let thumbPath: string | null = null;
   let previewPath: string | null = null;
   if (derivatives) {
-    const [thumbResult, previewResult] = [
-      await deps.storage.upload(paths.thumb, derivatives.thumb, {
+    const [thumbResult, previewResult] = await Promise.all([
+      deps.storage.upload(paths.thumb, derivatives.thumb, {
         contentType: derivatives.thumb.type || "image/webp",
         upsert: true,
       }),
-      await deps.storage.upload(paths.preview, derivatives.preview, {
+      deps.storage.upload(paths.preview, derivatives.preview, {
         contentType: derivatives.preview.type || "image/webp",
         upsert: true,
       }),
-    ];
+    ]);
     if (!thumbResult.error && !previewResult.error) {
       thumbPath = paths.thumb;
       previewPath = paths.preview;
@@ -335,7 +314,7 @@ async function uploadOneSteps(
     id: photoId,
     job_id: meta.jobId,
     kind: kindFromMime(file.type || ""),
-    sheet_number: meta.sheetNumber?.trim() ? meta.sheetNumber.trim() : null,
+    sheet_number: meta.sheetNumber?.trim() || null,
     tags: meta.tags ?? [],
     captured_at: capturedAt ? capturedAt.toISOString() : null,
     original_path: paths.original,
@@ -356,40 +335,4 @@ async function uploadOneSteps(
   }
 
   return { file, photoId, status: "done", retryable: false };
-}
-
-export async function uploadBatch(
-  files: File[],
-  meta: UploadMeta,
-  deps: UploadDeps,
-  onProgress?: (progress: UploadProgress) => void
-): Promise<UploadResult[]> {
-  const results: UploadResult[] = [];
-  for (let index = 0; index < files.length; index++) {
-    const file = files[index];
-    onProgress?.({ type: "start", file, index, total: files.length });
-    const result = await uploadOne(file, meta, deps, (sentBytes, totalBytes) =>
-      onProgress?.({
-        type: "progress",
-        file,
-        index,
-        total: files.length,
-        sentBytes,
-        totalBytes,
-      })
-    );
-    results.push(result);
-    if (result.status === "done") {
-      onProgress?.({ type: "done", file, index, total: files.length });
-    } else {
-      onProgress?.({
-        type: "failed",
-        file,
-        index,
-        total: files.length,
-        error: result.error ?? "Upload failed",
-      });
-    }
-  }
-  return results;
 }

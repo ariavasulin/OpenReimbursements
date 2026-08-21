@@ -13,8 +13,6 @@ if (!supabaseAnonKey) {
 
 // Lazily create the browser client only when running in the browser so that
 // server-side rendering doesn't attempt to touch window/localStorage.
-// The auth cookie is scoped to the shared apex (`.dws-receipts.com`) so a
-// login on the receipts domain also signs the user into the photos domain.
 const createClient = () =>
   createBrowserClient(supabaseUrl, supabaseAnonKey, {
     cookieOptions: {

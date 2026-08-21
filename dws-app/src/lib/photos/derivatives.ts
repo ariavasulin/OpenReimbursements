@@ -98,8 +98,6 @@ async function makeVideoDerivatives(
 ): Promise<Derivatives | null> {
   if (
     typeof document === "undefined" ||
-    typeof URL === "undefined" ||
-    typeof URL.createObjectURL !== "function" ||
     typeof createImageBitmap === "undefined"
   ) {
     return null;

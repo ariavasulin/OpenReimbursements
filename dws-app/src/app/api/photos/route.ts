@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
-import { cleanTags, PHOTO_COLUMNS, UUID_RE } from '@/lib/photos/apiShared';
+import {
+  cleanTags,
+  escapeForIlike,
+  PHOTO_COLUMNS,
+  UUID_RE,
+} from '@/lib/photos/apiShared';
 import type { PhotoRow } from '@/lib/photos/types';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
@@ -34,21 +39,13 @@ function decodeCursor(cursor: string): { capturedAt: string; id: string } | null
   }
 }
 
-/** Escape ILIKE wildcards and strip PostgREST or()-syntax characters. */
-function escapeForIlike(raw: string): string {
-  return raw
-    .replace(/[%_\\]/g, (m) => `\\${m}`)
-    .replace(/[,()]/g, ' ')
-    .trim();
-}
+type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
 /**
  * Resolve a free-text query into a PostgREST or() filter over photos:
  * matching job ids, matching uploader ids, and overlapping tags.
  * Returns null when nothing matches (the result set is empty).
  */
-type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
-
 async function buildSearchFilter(
   supabase: ServerClient,
   q: string

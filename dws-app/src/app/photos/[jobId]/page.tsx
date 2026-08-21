@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -9,27 +9,30 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
-import { supabase } from "@/lib/supabaseClient";
+import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import MultiShotCamera, {
-  useHasCamera,
-  type CameraShot,
-} from "@/components/photos/multi-shot-camera";
+import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
+import GroupByToggle from "@/components/photos/group-by-toggle";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
-import UploadSheet, { pickerAccept } from "@/components/photos/upload-sheet";
+import UploadSheet from "@/components/photos/upload-sheet";
+import {
+  fetchJobs,
+  fetchJson,
+  fetchTags,
+  invalidatePhotoCaches,
+} from "@/lib/photos/api";
 import { groupPhotos } from "@/lib/photos/group";
 import { isOpenable } from "@/lib/photos/urls";
-import type { PhotoJobSummary, PhotoRow } from "@/lib/photos/types";
+import type { PhotoRow } from "@/lib/photos/types";
 
-// One job's photos: grouped grid (date default, sheet regroup), filter chips
-// (sheet / uploader / tags — the "subfolders", implemented as filters), the
-// pinned Professional Photography section, the lightbox, and the Upload flow.
+// One job's photos: grouped grid, filter chips, the pinned Professional
+// Photography section, the lightbox, and the Upload flow.
 // Guard is session-only — no role gate (admins use this page too).
 
 const PINNED_TAG = "professional";
@@ -57,24 +60,12 @@ async function fetchPhotosPage(
   if (filters.uploader) params.set("uploader", filters.uploader.id);
   if (filters.tag) params.set("tags", filters.tag);
   if (cursor) params.set("cursor", cursor);
-  const response = await fetch(`/api/photos?${params}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => null);
-    throw new Error(data?.error || `Failed to load photos (${response.status})`);
-  }
-  return (await response.json()) as PhotosPage;
+  return fetchJson<PhotosPage>(`/api/photos?${params}`, "Failed to load photos");
 }
 
-async function fetchJobs(): Promise<PhotoJobSummary[]> {
-  const response = await fetch("/api/photo-jobs");
-  if (!response.ok) throw new Error("Failed to load job");
-  return (await response.json()).jobs as PhotoJobSummary[];
-}
-
-async function fetchJobTags(jobId: string): Promise<string[]> {
-  const response = await fetch(`/api/photo-tags?job=${jobId}`);
-  if (!response.ok) throw new Error("Failed to load tags");
-  return (await response.json()).tags as string[];
+interface SeenOptions {
+  sheets: Set<string>;
+  uploaders: Map<string, string>;
 }
 
 function FilterChip({
@@ -136,63 +127,29 @@ function FilterChip({
 export default function JobPhotosPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const queryClient = useQueryClient();
-  const hasCamera = useHasCamera();
-  const [ready, setReady] = useState(false);
-  const [pickedFiles, setPickedFiles] = useState<File[]>([]);
-  const [capturedAtOverrides, setCapturedAtOverrides] = useState<
-    Map<File, Date>
-  >(new Map());
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [cameraOpen, setCameraOpen] = useState(false);
+  const ready = useSessionGuard(`/photos/${jobId}`);
+  const batch = useCaptureBatch();
   const [groupBy, setGroupBy] = useState<"date" | "sheet">("date");
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const mountedRef = useRef(true);
 
   // Filter options accumulate from every page of photos seen for this job,
   // so picking a filter doesn't shrink the menus to the filtered set.
-  const seenSheetsRef = useRef(new Set<string>());
-  const seenUploadersRef = useRef(new Map<string, string>());
-
-  useEffect(() => {
-    mountedRef.current = true;
-    const guard = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!mountedRef.current) return;
-      if (!session) {
-        window.location.replace(`/login?next=/photos/${jobId}`);
-        return;
-      }
-      setReady(true);
-    };
-    guard();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (event === "SIGNED_OUT" || !session) {
-          window.location.replace(`/login?next=/photos/${jobId}`);
-        }
-      }
-    );
-    return () => {
-      mountedRef.current = false;
-      authListener?.subscription?.unsubscribe();
-    };
-  }, [jobId]);
+  const [seen, setSeen] = useState<SeenOptions>(() => ({
+    sheets: new Set(),
+    uploaders: new Map(),
+  }));
 
   const { data: jobs } = useQuery({
     queryKey: ["photo-jobs", ""],
-    queryFn: fetchJobs,
+    queryFn: () => fetchJobs(),
     enabled: ready,
   });
   const job = jobs?.find((candidate) => candidate.id === jobId);
 
   const { data: jobTags } = useQuery({
     queryKey: ["photo-tags", jobId],
-    queryFn: () => fetchJobTags(jobId),
+    queryFn: () => fetchTags(jobId),
     enabled: ready && Boolean(jobId),
   });
 
@@ -224,20 +181,30 @@ export default function JobPhotosPage() {
 
   // Remember every sheet/uploader we've seen on this job for the chip menus.
   useEffect(() => {
-    for (const photo of photos) {
-      if (photo.sheet_number?.trim()) {
-        seenSheetsRef.current.add(photo.sheet_number.trim());
+    setSeen((previous) => {
+      let changed = false;
+      const sheets = new Set(previous.sheets);
+      const uploaders = new Map(previous.uploaders);
+      for (const photo of photos) {
+        const sheet = photo.sheet_number?.trim();
+        if (sheet && !sheets.has(sheet)) {
+          sheets.add(sheet);
+          changed = true;
+        }
+        const name = photo.uploader?.full_name;
+        if (name && uploaders.get(photo.uploader_id) !== name) {
+          uploaders.set(photo.uploader_id, name);
+          changed = true;
+        }
       }
-      if (photo.uploader?.full_name) {
-        seenUploadersRef.current.set(photo.uploader_id, photo.uploader.full_name);
-      }
-    }
+      return changed ? { sheets, uploaders } : previous;
+    });
   }, [photos]);
 
-  const sheetOptions = [...seenSheetsRef.current]
+  const sheetOptions = [...seen.sheets]
     .sort((a, b) => Number(b) - Number(a) || a.localeCompare(b))
     .map((sheet) => ({ value: sheet, label: `Sheet ${sheet}` }));
-  const uploaderOptions = [...seenUploadersRef.current.entries()]
+  const uploaderOptions = [...seen.uploaders.entries()]
     .sort((a, b) => a[1].localeCompare(b[1]))
     .map(([id, name]) => ({ value: id, label: name }));
   const tagOptions = (jobTags ?? []).map((tag) => ({ value: tag, label: tag }));
@@ -253,43 +220,9 @@ export default function JobPhotosPage() {
 
   const noFiltersActive = !filters.sheet && !filters.uploader && !filters.tag;
 
-  const handleFilesPicked = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = ""; // allow re-picking the same files
-    if (files.length > 0) {
-      setPickedFiles(files);
-      setCapturedAtOverrides(new Map());
-      setSheetOpen(true);
-    }
-  };
+  const refetchPhotos = () => invalidatePhotoCaches(queryClient);
 
-  const handleShotsDone = (shots: CameraShot[]) => {
-    const overrides = new Map<File, Date>();
-    for (const shot of shots) {
-      if (shot.capturedAt) overrides.set(shot.file, shot.capturedAt);
-    }
-    setPickedFiles(shots.map((shot) => shot.file));
-    setCapturedAtOverrides(overrides);
-    setCameraOpen(false);
-    setSheetOpen(true);
-  };
-
-  const refetchPhotos = () => {
-    queryClient.invalidateQueries({ queryKey: ["photos"] });
-    queryClient.invalidateQueries({ queryKey: ["photo-jobs"] });
-    queryClient.invalidateQueries({ queryKey: ["photo-tags"] });
-  };
-
-  if (!ready) {
-    return (
-      <div className="flex min-h-full items-center justify-center px-4 py-8">
-        <div className="text-center">
-          <p className="mb-2 text-lg">Loading...</p>
-          <p className="text-sm text-gray-400">Verifying authentication</p>
-        </div>
-      </div>
-    );
-  }
+  if (!ready) return <AuthLoading />;
 
   return (
     <main className="mx-auto w-full max-w-3xl px-4 pb-28 pt-5">
@@ -350,7 +283,7 @@ export default function JobPhotosPage() {
               ...previous,
               uploader: {
                 id: value,
-                name: seenUploadersRef.current.get(value) ?? "Uploader",
+                name: seen.uploaders.get(value) ?? "Uploader",
               },
             }))
           }
@@ -369,22 +302,11 @@ export default function JobPhotosPage() {
         />
       </div>
 
-      <div className="mb-1 flex overflow-hidden rounded-lg border border-[#4e4e4e] bg-[#2e2e2e]">
-        {(["date", "sheet"] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => setGroupBy(mode)}
-            className={`flex-1 py-1.5 text-xs capitalize ${
-              groupBy === mode
-                ? "bg-[#3e3e3e] font-semibold text-white"
-                : "text-[#a0a0a0]"
-            }`}
-          >
-            {mode}
-          </button>
-        ))}
-      </div>
+      <GroupByToggle
+        modes={["date", "sheet"] as const}
+        value={groupBy}
+        onChange={(mode) => setGroupBy(mode)}
+      />
 
       {isLoading && (
         <p className="py-8 text-center text-sm text-[#a0a0a0]">
@@ -431,51 +353,19 @@ export default function JobPhotosPage() {
         </button>
       )}
 
-      <div className="fixed bottom-4 left-0 right-0 mx-auto flex w-full max-w-3xl gap-2 px-4">
-        <input
-          ref={fileInputRef}
-          id="photos-upload-input"
-          type="file"
-          multiple
-          accept={pickerAccept()}
-          onChange={handleFilesPicked}
-          className="sr-only"
-        />
-        {hasCamera && (
-          <button
-            type="button"
-            onClick={() => setCameraOpen(true)}
-            className="flex-1 rounded-lg bg-[#2680FC] py-3 text-sm font-medium text-white shadow-lg hover:bg-[#1a6fd8]"
-          >
-            Take Photos
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className={`flex-1 rounded-lg py-3 text-sm font-medium text-white shadow-lg ${
-            hasCamera
-              ? "border border-[#4e4e4e] bg-[#2e2e2e] hover:border-[#2680FC]"
-              : "bg-[#2680FC] hover:bg-[#1a6fd8]"
-          }`}
-        >
-          Upload
-        </button>
-      </div>
-
-      <MultiShotCamera
-        open={cameraOpen}
-        onClose={() => setCameraOpen(false)}
-        onDone={handleShotsDone}
+      <CaptureBar
+        batch={batch}
+        maxWidthClass="max-w-3xl"
+        inputId="photos-upload-input"
       />
 
       <UploadSheet
-        files={pickedFiles}
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
+        files={batch.pickedFiles}
+        open={batch.sheetOpen}
+        onOpenChange={batch.setSheetOpen}
         defaultJobId={jobId}
         onUploaded={refetchPhotos}
-        capturedAtOverrides={capturedAtOverrides}
+        capturedAtOverrides={batch.capturedAtOverrides}
       />
 
       <PhotoLightbox

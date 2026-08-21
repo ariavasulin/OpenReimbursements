@@ -1,20 +1,20 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/lib/supabaseClient";
+import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
+import GroupByToggle from "@/components/photos/group-by-toggle";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
+import { fetchJson, invalidatePhotoCaches } from "@/lib/photos/api";
 import { groupPhotos, type GroupBy } from "@/lib/photos/group";
 import { isOpenable } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
 
-// Cross-job search results: one grid cutting across all jobs, grouped by job
-// by default (regroupable by date or sheet). A tag or person search — e.g.
-// "professional", "Marco" — lands here; job searches usually resolve on the
-// home screen's job list instead.
+// Cross-job search results grouped by job by default (regroupable by date or
+// sheet).
 
 interface PhotosPage {
   photos: PhotoRow[];
@@ -27,54 +27,17 @@ async function fetchSearchPage(
 ): Promise<PhotosPage> {
   const params = new URLSearchParams({ q });
   if (cursor) params.set("cursor", cursor);
-  const response = await fetch(`/api/photos?${params}`);
-  if (!response.ok) {
-    const data = await response.json().catch(() => null);
-    throw new Error(data?.error || `Search failed (${response.status})`);
-  }
-  return (await response.json()) as PhotosPage;
+  return fetchJson<PhotosPage>(`/api/photos?${params}`, "Search failed");
 }
 
 function SearchResults() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const q = useSearchParams().get("q")?.trim() ?? "";
-  const [ready, setReady] = useState(false);
+  const ready = useSessionGuard(`/photos/search?q=${q}`);
   const [input, setInput] = useState(q);
   const [groupBy, setGroupBy] = useState<GroupBy>("job");
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const mountedRef = useRef(true);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    const guard = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!mountedRef.current) return;
-      if (!session) {
-        window.location.replace(
-          `/login?next=${encodeURIComponent(`/photos/search?q=${q}`)}`
-        );
-        return;
-      }
-      setReady(true);
-    };
-    guard();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (event === "SIGNED_OUT" || !session) {
-          window.location.replace("/login?next=/photos");
-        }
-      }
-    );
-    return () => {
-      mountedRef.current = false;
-      authListener?.subscription?.unsubscribe();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => setInput(q), [q]);
 
@@ -114,16 +77,7 @@ function SearchResults() {
     if (next) router.replace(`/photos/search?q=${encodeURIComponent(next)}`);
   };
 
-  if (!ready) {
-    return (
-      <div className="flex min-h-full items-center justify-center px-4 py-8">
-        <div className="text-center">
-          <p className="mb-2 text-lg">Loading...</p>
-          <p className="text-sm text-gray-400">Verifying authentication</p>
-        </div>
-      </div>
-    );
-  }
+  if (!ready) return <AuthLoading />;
 
   return (
     <main className="mx-auto w-full max-w-3xl px-4 pb-10 pt-5">
@@ -155,22 +109,11 @@ function SearchResults() {
         </p>
       )}
 
-      <div className="mb-1 flex overflow-hidden rounded-lg border border-[#4e4e4e] bg-[#2e2e2e]">
-        {(["job", "date", "sheet"] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => setGroupBy(mode)}
-            className={`flex-1 py-1.5 text-xs capitalize ${
-              groupBy === mode
-                ? "bg-[#3e3e3e] font-semibold text-white"
-                : "text-[#a0a0a0]"
-            }`}
-          >
-            {mode}
-          </button>
-        ))}
-      </div>
+      <GroupByToggle
+        modes={["job", "date", "sheet"] as const}
+        value={groupBy}
+        onChange={(mode) => setGroupBy(mode)}
+      />
 
       {!q && (
         <p className="py-8 text-center text-sm text-[#a0a0a0]">
@@ -214,12 +157,7 @@ function SearchResults() {
         index={lightboxIndex ?? 0}
         onIndexChange={setLightboxIndex}
         onClose={() => setLightboxIndex(null)}
-        onChanged={() => {
-          queryClient.invalidateQueries({ queryKey: ["photo-search"] });
-          queryClient.invalidateQueries({ queryKey: ["photos"] });
-          queryClient.invalidateQueries({ queryKey: ["photo-jobs"] });
-          queryClient.invalidateQueries({ queryKey: ["photo-tags"] });
-        }}
+        onChanged={() => invalidatePhotoCaches(queryClient)}
       />
     </main>
   );

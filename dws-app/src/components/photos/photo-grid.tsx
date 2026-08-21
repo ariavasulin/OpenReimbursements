@@ -1,6 +1,8 @@
 "use client";
 
+import { useMemo } from "react";
 import { Download, FileText, Play, Video } from "lucide-react";
+import { formatBytes, formatDuration } from "@/lib/photos/format";
 import { groupPhotos, type GroupBy } from "@/lib/photos/group";
 import { downloadUrl, isOpenable, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
@@ -23,25 +25,6 @@ interface PhotoGridProps {
   pinnedLabel?: string;
   /** Tapping the pinned header — the page filters to the pinned tag. */
   onExpandPinned?: () => void;
-}
-
-/** 42 -> "0:42", 727 -> "12:07", 3672 -> "1:01:12". */
-export function formatDuration(secs: number): string {
-  const total = Math.max(0, Math.round(secs));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  const two = (n: number) => String(n).padStart(2, "0");
-  return hours > 0
-    ? `${hours}:${two(minutes)}:${two(seconds)}`
-    : `${minutes}:${two(seconds)}`;
-}
-
-function formatBytes(bytes: number | null): string | null {
-  if (bytes == null || !Number.isFinite(bytes)) return null;
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
 }
 
 function Tile({
@@ -77,9 +60,6 @@ function Tile({
     );
   }
 
-  // Labeled file tile: a non-displayable companion file (XMP sidecar, RAW)
-  // or a video whose poster hasn't been generated — named, sized,
-  // downloadable, never a hole.
   const size = formatBytes(photo.original_bytes);
   return (
     <div className="relative flex aspect-square flex-col items-center justify-center gap-1 overflow-hidden rounded-md border border-[#4e4e4e] bg-[#2e2e2e] px-2 text-center">
@@ -131,7 +111,7 @@ export default function PhotoGrid({
     pinnedTag && groupBy === "date"
       ? photos.filter((photo) => photo.tags.includes(pinnedTag))
       : [];
-  const groups = groupPhotos(photos, groupBy);
+  const groups = useMemo(() => groupPhotos(photos, groupBy), [photos, groupBy]);
 
   return (
     <div>

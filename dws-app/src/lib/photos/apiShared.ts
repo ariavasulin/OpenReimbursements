@@ -10,6 +10,14 @@ export const PHOTO_COLUMNS =
   'preview_path, duration_secs, created_at, ' +
   'uploader:user_profiles(full_name), job:jobs(id, job_number, name)';
 
+/** Escape ILIKE wildcards and strip PostgREST or()-syntax characters. */
+export function escapeForIlike(raw: string): string {
+  return raw
+    .replace(/[%_\\]/g, (m) => `\\${m}`)
+    .replace(/[,()]/g, ' ')
+    .trim();
+}
+
 export const MAX_TAGS = 20;
 export const MAX_TAG_LENGTH = 64;
 

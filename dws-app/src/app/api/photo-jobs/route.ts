@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { escapeForIlike } from '@/lib/photos/apiShared';
 import type { PhotoJobSummary } from '@/lib/photos/types';
 
 // GET /api/photo-jobs?q= — job cards for the photos home screen and the
@@ -26,12 +27,7 @@ export async function GET(request: Request) {
     .eq('is_active', true);
 
   if (q) {
-    // Escape ILIKE wildcards, and strip PostgREST or() syntax characters
-    // (commas/parens) which cannot be escaped inside an or() filter string.
-    const escaped = q
-      .replace(/[%_\\]/g, (m) => `\\${m}`)
-      .replace(/[,()]/g, ' ')
-      .trim();
+    const escaped = escapeForIlike(q);
     if (escaped) {
       jobsQuery = jobsQuery.or(
         `job_number.ilike.%${escaped}%,name.ilike.%${escaped}%`
@@ -45,8 +41,7 @@ export async function GET(request: Request) {
   }
 
   // Newest-first photo rows; aggregated per job below (count, latest upload,
-  // first 4 thumbnails). Fine at DWS scale; revisit with SQL aggregation if
-  // the photos table ever gets large enough to matter.
+  // first 4 thumbnails). TODO: aggregate in SQL (view/RPC)
   const { data: photoRows, error: photosError } = await supabase
     .from('photos')
     .select('job_id, thumb_path, created_at')

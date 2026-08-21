@@ -1,6 +1,7 @@
 "use client";
 
 import { RotateCw } from "lucide-react";
+import { formatBytes } from "@/lib/photos/format";
 
 // Per-file progress list for a running (or partially failed) batch. Failed
 // rows get an unmissable Retry; done rows stay done — a partial batch keeps
@@ -23,12 +24,6 @@ interface UploadProgressProps {
   retryDisabled?: boolean;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${bytes} B`;
-}
-
 function percent(item: UploadItem): number {
   if (item.status === "done") return 100;
   if (item.totalBytes <= 0) return 0;
@@ -44,11 +39,7 @@ export default function UploadProgress({
   return (
     <div className="mb-3.5 flex max-h-48 flex-col gap-1.5 overflow-y-auto">
       {files.map((file, index) => {
-        const item = items[index] ?? {
-          status: "pending" as const,
-          sentBytes: 0,
-          totalBytes: file.size,
-        };
+        const item = items[index];
         const value = percent(item);
         return (
           <div

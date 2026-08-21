@@ -88,8 +88,5 @@ export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] 
     });
   }
 
-  // Date and job groups keep encounter order: the input is newest-first, so
-  // date sections run newest → oldest and job sections lead with the job
-  // holding the newest match.
   return groups;
 }
