@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useMobile } from "@/hooks/use-mobile";
@@ -8,7 +8,9 @@ import { supabase } from "@/lib/supabaseClient";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { X } from "lucide-react";
 import JobCombobox from "@/components/photos/job-combobox";
+import BatchPreview from "@/components/photos/batch-preview";
 import {
   createResumableUpload,
   uploadOne,
@@ -23,8 +25,21 @@ import UploadProgress, {
 import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
 import { fetchJobs, fetchJson, fetchTags } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
+import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
+// The batch is copied into local state so files can be removed before upload;
+// `files`, `items`, and `previews` are index-aligned (see lib/photos/batch).
+
+function makePreviews(files: File[]): (string | null)[] {
+  return files.map((file) =>
+    file.type.startsWith("image/") ? URL.createObjectURL(file) : null
+  );
+}
+
+function revokePreviews(previews: (string | null)[]) {
+  for (const url of previews) if (url) URL.revokeObjectURL(url);
+}
 
 function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
   return {
@@ -58,6 +73,7 @@ function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
 }
 
 interface UploadSheetProps {
+  /** The picked/shot batch; the sheet keeps its own editable copy. */
   files: File[];
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -70,7 +86,7 @@ interface UploadSheetProps {
 }
 
 export default function UploadSheet({
-  files,
+  files: initialFiles,
   open,
   onOpenChange,
   defaultJobId,
@@ -82,6 +98,10 @@ export default function UploadSheet({
   const [sheetNumber, setSheetNumber] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
+  const [files, setFiles] = useState<File[]>(initialFiles);
+  const [previews, setPreviews] = useState<(string | null)[]>([]);
+  const previewsRef = useRef<(string | null)[]>([]);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [items, setItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
 
@@ -103,28 +123,42 @@ export default function UploadSheet({
       setSheetNumber("");
       setTags([]);
       setTagInput("");
+      setPreviewIndex(null);
+      setFiles(initialFiles);
       setItems(
-        files.map((file) => ({
+        initialFiles.map((file) => ({
           status: "pending",
           sentBytes: 0,
           totalBytes: file.size,
         }))
       );
+      revokePreviews(previewsRef.current);
+      const next = makePreviews(initialFiles);
+      previewsRef.current = next;
+      setPreviews(next);
     }
-  }, [open, files, defaultJobId]);
-
-  const previews = useMemo(
-    () =>
-      files.map((file) =>
-        file.type.startsWith("image/") ? URL.createObjectURL(file) : null
-      ),
-    [files]
-  );
+  }, [open, initialFiles, defaultJobId]);
+  // Object URLs outlive React state, so release whatever is current on unmount.
   useEffect(() => {
-    return () => {
-      for (const url of previews) if (url) URL.revokeObjectURL(url);
-    };
-  }, [previews]);
+    return () => revokePreviews(previewsRef.current);
+  }, []);
+
+  const removeFile = (index: number) => {
+    if (uploading || !items[index] || !canRemove(items[index].status)) return;
+    const url = previews[index];
+    if (url) URL.revokeObjectURL(url);
+    const next = removeAt({ files, items, previews }, index);
+    setFiles(next.files);
+    setItems(next.items);
+    previewsRef.current = next.previews;
+    setPreviews(next.previews);
+    setPreviewIndex((current) =>
+      current === null
+        ? null
+        : nextPreviewIndex(current, index, next.files.length)
+    );
+    if (next.files.length === 0) onOpenChange(false);
+  };
 
   const tagSuggestions = useMemo(() => {
     const query = tagInput.trim().toLowerCase();
@@ -231,23 +265,44 @@ export default function UploadSheet({
         Add {plural(files.length, "file")}
       </div>
 
-      <div className="mb-3.5 flex gap-1.5 overflow-x-auto">
-        {files.map((file, index) => (
-          <div key={index} className="shrink-0">
-            {previews[index] ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previews[index]}
-                alt={file.name}
-                className="h-14 w-14 rounded-lg object-cover"
-              />
-            ) : (
-              <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
-                {file.name}
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="mb-3.5 flex gap-1.5 overflow-x-auto p-1">
+        {files.map((file, index) => {
+          const removable =
+            !uploading && !!items[index] && canRemove(items[index].status);
+          return (
+            <div key={index} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setPreviewIndex(index)}
+                aria-label={`Preview ${file.name}`}
+                className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
+              >
+                {previews[index] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={previews[index]}
+                    alt={file.name}
+                    className="h-14 w-14 rounded-lg object-cover"
+                  />
+                ) : (
+                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
+                    {file.name}
+                  </div>
+                )}
+              </button>
+              {removable && (
+                <button
+                  type="button"
+                  onClick={() => removeFile(index)}
+                  aria-label={`Remove ${file.name}`}
+                  className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {uploadStarted && (
@@ -330,12 +385,30 @@ export default function UploadSheet({
 
   const title = "Upload photos";
 
+  const preview = (
+    <BatchPreview
+      files={files}
+      previews={previews}
+      index={previewIndex}
+      onIndexChange={setPreviewIndex}
+      onClose={() => setPreviewIndex(null)}
+      onRemove={removeFile}
+      removeDisabled={
+        uploading ||
+        previewIndex === null ||
+        !items[previewIndex] ||
+        !canRemove(items[previewIndex].status)
+      }
+    />
+  );
+
   if (isMobile) {
     return (
       <Drawer open={open} onOpenChange={handleOpenChange}>
         <DrawerContent className="border-[#4e4e4e] bg-[#2e2e2e]">
           <DrawerTitle className="sr-only">{title}</DrawerTitle>
           {body}
+          {preview}
         </DrawerContent>
       </Drawer>
     );
@@ -346,6 +419,7 @@ export default function UploadSheet({
       <DialogContent className="border-none bg-[#2e2e2e] p-0 sm:max-w-md">
         <DialogTitle className="sr-only">{title}</DialogTitle>
         {body}
+        {preview}
       </DialogContent>
     </Dialog>
   );
