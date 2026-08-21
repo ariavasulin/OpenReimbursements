@@ -19,7 +19,7 @@ export default function SearchInput({
         if (event.key === "Enter") onSubmit();
       }}
       placeholder="Search jobs, people, or tags..."
-      className="mb-2 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
+      className="mb-2 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white md:text-sm placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
     />
   );
 }

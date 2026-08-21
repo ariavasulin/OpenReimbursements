@@ -273,7 +273,7 @@ export default function PhotoLightbox({
           value={editJobId}
           onChange={(event) => setEditJobId(event.target.value)}
           disabled={busy}
-          className="mb-3 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white focus:border-[#2680FC] focus:outline-none"
+          className="mb-3 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white focus:border-[#2680FC] focus:outline-none md:text-sm"
         >
           {(jobs ?? []).map((job) => (
             <option key={job.id} value={job.id}>
@@ -295,7 +295,7 @@ export default function PhotoLightbox({
           onChange={(event) => setEditSheet(event.target.value)}
           placeholder="e.g. 12"
           disabled={busy}
-          className="mb-3 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
+          className="mb-3 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
         />
 
         <label className="mb-1.5 block text-xs text-[#a0a0a0]">Tags</label>

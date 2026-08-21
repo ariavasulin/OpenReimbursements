@@ -289,7 +289,7 @@ export default function UploadSheet({
         onChange={(event) => setSheetNumber(event.target.value)}
         placeholder="e.g. 12"
         disabled={uploading}
-        className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
+        className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
       />
 
       <label className="mb-1.5 block text-xs text-[#a0a0a0]">

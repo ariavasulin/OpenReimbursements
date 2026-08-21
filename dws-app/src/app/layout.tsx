@@ -24,9 +24,13 @@ export const metadata: Metadata = {
   },
 };
 
+// viewportFit + themeColor: mobile Safari paints the status-bar and toolbar
+// regions in the app background instead of white (both apps use #222222).
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1.0,
+  viewportFit: "cover",
+  themeColor: "#222222",
 };
 
 export default function RootLayout({
