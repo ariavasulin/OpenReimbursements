@@ -26,13 +26,11 @@ export async function GET(request: Request) {
     .select('id, job_number, name, location')
     .eq('is_active', true);
 
-  if (q) {
-    const escaped = escapeForIlike(q);
-    if (escaped) {
-      jobsQuery = jobsQuery.or(
-        `job_number.ilike.%${escaped}%,name.ilike.%${escaped}%`
-      );
-    }
+  const escaped = escapeForIlike(q);
+  if (escaped) {
+    jobsQuery = jobsQuery.or(
+      `job_number.ilike.%${escaped}%,name.ilike.%${escaped}%`
+    );
   }
 
   const { data: jobs, error: jobsError } = await jobsQuery;
@@ -68,29 +66,30 @@ export async function GET(request: Request) {
     }
   }
 
-  const summaries: PhotoJobSummary[] = (jobs ?? []).map((job) => {
+  const ranked = (jobs ?? []).map((job) => {
     const agg = byJob.get(job.id);
-    return {
+    const summary: PhotoJobSummary = {
       id: job.id,
       job_number: job.job_number,
       name: job.name,
       location: job.location,
       photo_count: agg?.count ?? 0,
-      latest_upload_at: agg?.latest ?? null,
       thumb_paths: agg?.thumbs ?? [],
     };
+    return { summary, latest: agg?.latest ?? null };
   });
 
-  summaries.sort((a, b) => {
-    if (a.latest_upload_at && b.latest_upload_at) {
-      return a.latest_upload_at < b.latest_upload_at ? 1 : -1;
-    }
-    if (a.latest_upload_at) return -1;
-    if (b.latest_upload_at) return 1;
-    return b.job_number.localeCompare(a.job_number, undefined, {
+  ranked.sort((a, b) => {
+    if (a.latest && b.latest) return a.latest < b.latest ? 1 : -1;
+    if (a.latest) return -1;
+    if (b.latest) return 1;
+    return b.summary.job_number.localeCompare(a.summary.job_number, undefined, {
       numeric: true,
     });
   });
 
-  return NextResponse.json({ success: true, jobs: summaries });
+  return NextResponse.json({
+    success: true,
+    jobs: ranked.map((entry) => entry.summary),
+  });
 }

@@ -2,21 +2,22 @@
 
 import { useMemo } from "react";
 import { Download, FileText, Play, Video } from "lucide-react";
-import { formatBytes, formatDuration } from "@/lib/photos/format";
-import { groupPhotos, type GroupBy } from "@/lib/photos/group";
-import { downloadUrl, isOpenable, publicUrl } from "@/lib/photos/urls";
+import { formatBytes, formatDuration, plural } from "@/lib/photos/format";
+import {
+  isOpenable,
+  openableInDisplayOrder,
+  type GroupBy,
+  type PhotoGroup,
+} from "@/lib/photos/group";
+import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
 
-// The one photo grid every view shares: grouped sections (date / sheet / job),
-// image/video tiles that open the lightbox (videos carry a duration badge),
-// and labeled file tiles (name + download) for uploads that can't render —
-// odd formats never show as holes.
-
 interface PhotoGridProps {
-  photos: PhotoRow[];
+  /** Precomputed via groupPhotos — the page shares them with the lightbox. */
+  groups: PhotoGroup[];
   groupBy?: GroupBy;
-  /** Tapping an image tile — the page opens the lightbox at this photo. */
-  onOpenPhoto?: (photo: PhotoRow) => void;
+  /** Tapping an image tile — its index in openableInDisplayOrder(groups). */
+  onOpenPhoto?: (index: number) => void;
   /**
    * Display rule, not a special flag: when set (e.g. "professional") and
    * grouping by date, photos carrying the tag get a pinned section on top.
@@ -27,13 +28,9 @@ interface PhotoGridProps {
   onExpandPinned?: () => void;
 }
 
-function Tile({
-  photo,
-  onOpen,
-}: {
-  photo: PhotoRow;
-  onOpen?: (photo: PhotoRow) => void;
-}) {
+type OnOpen = (photo: PhotoRow) => void;
+
+function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
   if (isOpenable(photo) && photo.thumb_path) {
     return (
       <button
@@ -83,13 +80,7 @@ function Tile({
   );
 }
 
-function TileGrid({
-  photos,
-  onOpen,
-}: {
-  photos: PhotoRow[];
-  onOpen?: (photo: PhotoRow) => void;
-}) {
+function TileGrid({ photos, onOpen }: { photos: PhotoRow[]; onOpen?: OnOpen }) {
   return (
     <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
       {photos.map((photo) => (
@@ -100,18 +91,30 @@ function TileGrid({
 }
 
 export default function PhotoGrid({
-  photos,
+  groups,
   groupBy = "date",
   onOpenPhoto,
   pinnedTag,
   pinnedLabel,
   onExpandPinned,
 }: PhotoGridProps) {
-  const pinned =
-    pinnedTag && groupBy === "date"
-      ? photos.filter((photo) => photo.tags.includes(pinnedTag))
-      : [];
-  const groups = useMemo(() => groupPhotos(photos, groupBy), [photos, groupBy]);
+  const { pinned, openIndex } = useMemo(() => {
+    const photos = groups.flatMap((group) => group.photos);
+    return {
+      pinned:
+        pinnedTag && groupBy === "date"
+          ? photos.filter((photo) => photo.tags.includes(pinnedTag))
+          : [],
+      openIndex: new Map(
+        openableInDisplayOrder(groups).map((photo, index) => [photo.id, index])
+      ),
+    };
+  }, [groups, groupBy, pinnedTag]);
+
+  const onOpen: OnOpen = (photo) => {
+    const index = openIndex.get(photo.id);
+    if (index !== undefined) onOpenPhoto?.(index);
+  };
 
   return (
     <div>
@@ -124,7 +127,7 @@ export default function PhotoGrid({
           >
             {pinnedLabel ?? pinnedTag} · {pinned.length} ›
           </button>
-          <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpenPhoto} />
+          <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpen} />
         </section>
       )}
       {groups.map((group) => (
@@ -134,12 +137,11 @@ export default function PhotoGrid({
             {groupBy !== "date" && (
               <span className="text-[#7e7e7e]">
                 {" "}
-                · {group.photos.length}{" "}
-                {group.photos.length === 1 ? "photo" : "photos"}
+                · {plural(group.photos.length, "photo")}
               </span>
             )}
           </h2>
-          <TileGrid photos={group.photos} onOpen={onOpenPhoto} />
+          <TileGrid photos={group.photos} onOpen={onOpen} />
         </section>
       ))}
     </div>

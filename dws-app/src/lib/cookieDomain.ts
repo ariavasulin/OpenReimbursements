@@ -14,8 +14,10 @@ export function normalizeHostname(host: string): string {
 }
 
 /** Is this request host the photos product (NEXT_PUBLIC_PHOTOS_HOSTNAME)? */
-export function isPhotosHost(host: string | null | undefined): boolean {
-  const photosHostname = process.env.NEXT_PUBLIC_PHOTOS_HOSTNAME;
+export function isPhotosHost(
+  host: string | null | undefined,
+  photosHostname: string | undefined = process.env.NEXT_PUBLIC_PHOTOS_HOSTNAME
+): boolean {
   if (!photosHostname || !host) return false;
   return normalizeHostname(host) === normalizeHostname(photosHostname);
 }

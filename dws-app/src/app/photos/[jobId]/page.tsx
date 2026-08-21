@@ -23,24 +23,17 @@ import PhotoLightbox from "@/components/photos/photo-lightbox";
 import UploadSheet from "@/components/photos/upload-sheet";
 import {
   fetchJobs,
-  fetchJson,
+  fetchPhotosPage,
   fetchTags,
   invalidatePhotoCaches,
 } from "@/lib/photos/api";
-import { groupPhotos } from "@/lib/photos/group";
-import { isOpenable } from "@/lib/photos/urls";
-import type { PhotoRow } from "@/lib/photos/types";
+import { plural } from "@/lib/photos/format";
+import { groupPhotos, openableInDisplayOrder } from "@/lib/photos/group";
 
 // One job's photos: grouped grid, filter chips, the pinned Professional
 // Photography section, the lightbox, and the Upload flow.
-// Guard is session-only — no role gate (admins use this page too).
 
 const PINNED_TAG = "professional";
-
-interface PhotosPage {
-  photos: PhotoRow[];
-  nextCursor: string | null;
-}
 
 interface Filters {
   sheet: string | null;
@@ -50,18 +43,12 @@ interface Filters {
 
 const NO_FILTERS: Filters = { sheet: null, uploader: null, tag: null };
 
-async function fetchPhotosPage(
-  jobId: string,
-  filters: Filters,
-  cursor: string | null
-): Promise<PhotosPage> {
-  const params = new URLSearchParams({ job: jobId });
-  if (filters.sheet) params.set("sheet", filters.sheet);
-  if (filters.uploader) params.set("uploader", filters.uploader.id);
-  if (filters.tag) params.set("tags", filters.tag);
-  if (cursor) params.set("cursor", cursor);
-  return fetchJson<PhotosPage>(`/api/photos?${params}`, "Failed to load photos");
-}
+const chipClass = (active: boolean) =>
+  `rounded-full border px-3 py-1.5 text-xs ${
+    active
+      ? "border-[#2680FC] bg-[#2680FC] text-white"
+      : "border-[#4e4e4e] bg-[#2e2e2e] text-[#d0d0d0]"
+  }`;
 
 interface SeenOptions {
   sheets: Set<string>;
@@ -86,11 +73,7 @@ function FilterChip({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className={`flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs ${
-            active
-              ? "border-[#2680FC] bg-[#2680FC] text-white"
-              : "border-[#4e4e4e] bg-[#2e2e2e] text-[#d0d0d0]"
-          }`}
+          className={`flex items-center gap-1 ${chipClass(Boolean(active))}`}
         >
           {active ?? label}
           <ChevronDown className="h-3 w-3" />
@@ -150,7 +133,7 @@ export default function JobPhotosPage() {
   const { data: jobTags } = useQuery({
     queryKey: ["photo-tags", jobId],
     queryFn: () => fetchTags(jobId),
-    enabled: ready && Boolean(jobId),
+    enabled: ready,
   });
 
   const {
@@ -168,10 +151,17 @@ export default function JobPhotosPage() {
       filters.uploader?.id ?? null,
       filters.tag,
     ],
-    queryFn: ({ pageParam }) => fetchPhotosPage(jobId, filters, pageParam),
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ job: jobId });
+      if (filters.sheet) params.set("sheet", filters.sheet);
+      if (filters.uploader) params.set("uploader", filters.uploader.id);
+      if (filters.tag) params.set("tags", filters.tag);
+      if (pageParam) params.set("cursor", pageParam);
+      return fetchPhotosPage(params);
+    },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: ready && Boolean(jobId),
+    enabled: ready,
   });
 
   const photos = useMemo(
@@ -209,14 +199,10 @@ export default function JobPhotosPage() {
     .map(([id, name]) => ({ value: id, label: name }));
   const tagOptions = (jobTags ?? []).map((tag) => ({ value: tag, label: tag }));
 
+  const groups = useMemo(() => groupPhotos(photos, groupBy), [photos, groupBy]);
   // The lightbox flips through the set as displayed: grouped order, images
   // with previews only (file tiles download instead).
-  const openablePhotos = useMemo(() => {
-    const flattened = groupPhotos(photos, groupBy).flatMap(
-      (group) => group.photos
-    );
-    return flattened.filter(isOpenable);
-  }, [photos, groupBy]);
+  const openablePhotos = useMemo(() => openableInDisplayOrder(groups), [groups]);
 
   const noFiltersActive = !filters.sheet && !filters.uploader && !filters.tag;
 
@@ -245,7 +231,7 @@ export default function JobPhotosPage() {
       </h1>
       <p className="mb-3 text-xs text-[#a0a0a0]">
         {job
-          ? `${job.photo_count === 1 ? "1 photo" : `${job.photo_count} photos`}${
+          ? `${plural(job.photo_count, "photo")}${
               job.location ? ` · ${job.location}` : ""
             }`
           : " "}
@@ -255,11 +241,7 @@ export default function JobPhotosPage() {
         <button
           type="button"
           onClick={() => setFilters(NO_FILTERS)}
-          className={`rounded-full border px-3 py-1.5 text-xs ${
-            noFiltersActive
-              ? "border-[#2680FC] bg-[#2680FC] text-white"
-              : "border-[#4e4e4e] bg-[#2e2e2e] text-[#d0d0d0]"
-          }`}
+          className={chipClass(noFiltersActive)}
         >
           All
         </button>
@@ -327,14 +309,9 @@ export default function JobPhotosPage() {
       )}
 
       <PhotoGrid
-        photos={photos}
+        groups={groups}
         groupBy={groupBy}
-        onOpenPhoto={(photo) => {
-          const index = openablePhotos.findIndex(
-            (candidate) => candidate.id === photo.id
-          );
-          if (index >= 0) setLightboxIndex(index);
-        }}
+        onOpenPhoto={setLightboxIndex}
         pinnedTag={noFiltersActive ? PINNED_TAG : undefined}
         pinnedLabel="Professional Photography"
         onExpandPinned={() =>

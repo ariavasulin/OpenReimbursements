@@ -1,26 +1,49 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import MultiShotCamera, {
   useHasCamera,
   type CameraShot,
 } from "@/components/photos/multi-shot-camera";
-import { pickerAccept } from "@/components/photos/upload-sheet";
+
+/**
+ * File-picker accept attribute: generic `image/*,video/*` on iOS ONLY —
+ * explicitly listing image/heic defeats Safari's automatic HEIC→JPEG
+ * conversion (the receipt app makes this mistake; don't copy it). Everywhere
+ * else the picker stays unrestricted so companion files (XMP sidecars, RAW)
+ * remain pickable.
+ */
+export function pickerAccept(): string | undefined {
+  if (typeof navigator === "undefined") return undefined;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    ? "image/*,video/*"
+    : undefined;
+}
+
+/** The picked files; resets the input so the same files can be re-picked. */
+export function readPickedFiles(
+  event: React.ChangeEvent<HTMLInputElement>
+): File[] {
+  const files = Array.from(event.target.files ?? []);
+  event.target.value = "";
+  return files;
+}
 
 // The shared "get files into a batch" state: the native picker and the in-app
 // multi-shot camera both end with pickedFiles + capturedAtOverrides and the
 // upload sheet open.
-export function useCaptureBatch() {
+export function useCaptureBatch(initialCameraOpen = false) {
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
+  /** Shutter times for in-app camera shots (see CameraShot). */
   const [capturedAtOverrides, setCapturedAtOverrides] = useState<
     Map<File, Date>
   >(new Map());
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(initialCameraOpen);
 
   const handleFilesPicked = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = ""; // allow re-picking the same files
+    const files = readPickedFiles(event);
     if (files.length > 0) {
       setPickedFiles(files);
       setCapturedAtOverrides(new Map());
@@ -78,25 +101,25 @@ export function CaptureBar({ batch, maxWidthClass, inputId }: CaptureBarProps) {
           className="sr-only"
         />
         {hasCamera && (
-          <button
-            type="button"
+          <Button
+            size="lg"
             onClick={() => batch.setCameraOpen(true)}
-            className="flex-1 rounded-lg bg-[#2680FC] py-3 text-sm font-medium text-white shadow-lg hover:bg-[#1a6fd8]"
+            className="h-auto flex-1 rounded-lg bg-[#2680FC] py-3 text-white shadow-lg hover:bg-[#1a6fd8]"
           >
             Take Photos
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
+        <Button
+          size="lg"
           onClick={() => fileInputRef.current?.click()}
-          className={`flex-1 rounded-lg py-3 text-sm font-medium text-white shadow-lg ${
+          className={`h-auto flex-1 rounded-lg py-3 text-white shadow-lg ${
             hasCamera
-              ? "border border-[#4e4e4e] bg-[#2e2e2e] hover:border-[#2680FC]"
+              ? "border border-[#4e4e4e] bg-[#2e2e2e] hover:border-[#2680FC] hover:bg-[#2e2e2e]"
               : "bg-[#2680FC] hover:bg-[#1a6fd8]"
           }`}
         >
           Upload
-        </button>
+        </Button>
       </div>
 
       <MultiShotCamera

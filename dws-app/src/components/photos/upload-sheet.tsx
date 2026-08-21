@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X } from "lucide-react";
 import { useMobile } from "@/hooks/use-mobile";
 import { supabase } from "@/lib/supabaseClient";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -27,28 +26,14 @@ import { extractCapturedAt } from "@/lib/photos/exif";
 import UploadProgress, {
   type UploadItem,
 } from "@/components/photos/upload-progress";
-import { fetchJobs, fetchTags } from "@/lib/photos/api";
+import TagInput from "@/components/photos/tag-input";
+import { fetchJobs, fetchJson, fetchTags } from "@/lib/photos/api";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
 
-/**
- * File-picker accept attribute: generic `image/*,video/*` on iOS ONLY —
- * explicitly listing image/heic defeats Safari's automatic HEIC→JPEG
- * conversion (the receipt app makes this mistake; don't copy it). Everywhere
- * else the picker stays unrestricted so companion files (XMP sidecars, RAW)
- * remain pickable.
- */
-export function pickerAccept(): string | undefined {
-  if (typeof navigator === "undefined") return undefined;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent)
-    ? "image/*,video/*"
-    : undefined;
-}
-
+/** @param capturedAtOverrides Shutter times for in-app camera shots (see CameraShot). */
 function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
   return {
-    // In-app camera shots are canvas JPEGs with no EXIF — their shutter time
-    // rides along as an override; everything else reads EXIF as usual.
     extractCapturedAt: async (file: File) =>
       capturedAtOverrides?.get(file) ?? extractCapturedAt(file),
     storage: {
@@ -59,13 +44,9 @@ function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
         return { error };
       },
     },
-    // Originals over 6 MB go browser -> storage over resumable TUS (they can
-    // be multi-GB videos; plain uploads and API routes can't carry that).
     resumableUpload: createResumableUpload({
       supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
       getAccessToken: async () => {
-        // getSession() refreshes an expired token — called per chunk, so a
-        // token that expires an hour into a big upload doesn't 401 it.
         const {
           data: { session },
         } = await supabase.auth.getSession();
@@ -73,15 +54,11 @@ function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
       },
     }),
     async finalize(payload: FinalizePayload) {
-      const response = await fetch("/api/photos", {
+      await fetchJson("/api/photos", "Saving failed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        throw new Error(data?.error || `Saving failed (${response.status})`);
-      }
     },
   };
 }
@@ -94,11 +71,7 @@ interface UploadSheetProps {
   defaultJobId?: string;
   /** Called after at least one file lands, so grids can refetch. */
   onUploaded(): void;
-  /**
-   * Per-file captured_at overrides, keyed by File identity — the in-app
-   * camera's shots are canvas JPEGs with no EXIF, so their shutter times
-   * arrive here instead.
-   */
+  /** Shutter times for in-app camera shots (see CameraShot). */
   capturedAtOverrides?: Map<File, Date>;
 }
 
@@ -117,7 +90,6 @@ export default function UploadSheet({
   const [tagInput, setTagInput] = useState("");
   const [items, setItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
-  const anyUploadedRef = useRef(false);
 
   const { data: jobs } = useQuery({
     queryKey: ["photo-jobs", ""],
@@ -144,7 +116,6 @@ export default function UploadSheet({
           totalBytes: file.size,
         }))
       );
-      anyUploadedRef.current = false;
     }
   }, [open, files, defaultJobId]);
 
@@ -205,19 +176,18 @@ export default function UploadSheet({
       tags: tagInput.trim() ? [...tags, tagInput.trim()] : tags,
     };
     const deps = buildUploadDeps(capturedAtOverrides);
-    const batchFiles = indices.map((index) => files[index]);
 
     const results: UploadResult[] = [];
-    for (let i = 0; i < batchFiles.length; i++) {
-      const fileIndex = indices[i];
+    for (const fileIndex of indices) {
+      const file = files[fileIndex];
       patchItem(fileIndex, {
         status: "uploading",
         sentBytes: 0,
-        totalBytes: batchFiles[i].size,
+        totalBytes: file.size,
         error: undefined,
       });
       const result = await uploadOne(
-        batchFiles[i],
+        file,
         meta,
         deps,
         (sentBytes, totalBytes) =>
@@ -230,12 +200,11 @@ export default function UploadSheet({
       );
       results.push(result);
       patchItem(fileIndex, { status: result.status, error: result.error });
-      if (result.status === "done") anyUploadedRef.current = true;
     }
     setUploading(false);
 
     const failed = results.filter((result) => result.status === "failed");
-    if (anyUploadedRef.current) onUploaded();
+    if (results.some((result) => result.status === "done")) onUploaded();
     if (failed.length === 0) {
       toast.success(
         results.length === 1
@@ -329,40 +298,17 @@ export default function UploadSheet({
       <label className="mb-1.5 block text-xs text-[#a0a0a0]">
         Tags (optional)
       </label>
-      <div className="mb-1 flex flex-wrap items-center gap-1.5 rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-2.5 py-2">
-        {tags.map((tag) => (
-          <span
-            key={tag}
-            className="flex items-center gap-1 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-white"
-          >
-            {tag}
-            <button
-              type="button"
-              aria-label={`Remove tag ${tag}`}
-              onClick={() =>
-                setTags((previous) => previous.filter((t) => t !== tag))
-              }
-              disabled={uploading}
-            >
-              <X className="h-3 w-3 text-[#a0a0a0]" />
-            </button>
-          </span>
-        ))}
-        <input
-          type="text"
-          value={tagInput}
-          onChange={(event) => setTagInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === ",") {
-              event.preventDefault();
-              addTag(tagInput);
-            }
-          }}
-          placeholder={tags.length === 0 ? "Add a tag..." : ""}
-          disabled={uploading}
-          className="min-w-[90px] flex-1 bg-transparent py-0.5 text-sm text-white placeholder:text-[#a0a0a0] focus:outline-none"
-        />
-      </div>
+      <TagInput
+        className="mb-1"
+        tags={tags}
+        input={tagInput}
+        onInputChange={setTagInput}
+        onAdd={addTag}
+        onRemove={(tag) =>
+          setTags((previous) => previous.filter((t) => t !== tag))
+        }
+        disabled={uploading}
+      />
       {tagSuggestions.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {tagSuggestions.map((tag) => (

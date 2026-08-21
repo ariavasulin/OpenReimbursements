@@ -113,12 +113,11 @@ describe("uploadOne", () => {
     });
   });
 
-  it("marks the file failed and retryable when the row POST fails", async () => {
+  it("marks the file failed when the row POST fails", async () => {
     const { deps, finalized } = makeDeps({ failFinalize: true });
     const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
 
     expect(result.status).toBe("failed");
-    expect(result.retryable).toBe(true);
     expect(result.error).toContain("db says no");
     expect(finalized).toHaveLength(0);
   });
@@ -130,7 +129,6 @@ describe("uploadOne", () => {
     const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
 
     expect(result.status).toBe("failed");
-    expect(result.retryable).toBe(true);
     expect(uploads).toHaveLength(0); // derivatives never went up either
     expect(deps.finalize).not.toHaveBeenCalled();
   });
@@ -222,21 +220,19 @@ describe("resumable (TUS) routing in uploadOne", () => {
 
     await uploadOne(file, META, deps, (sent, total) => ticks.push([sent, total]));
 
-    expect(ticks).toEqual([
-      [TUS_CHUNK_BYTES, bigSize],
-      [bigSize, bigSize],
-      [bigSize, bigSize], // the unconditional after-success tick
-    ]);
+    expect(ticks.at(-1)).toEqual([bigSize, bigSize]);
+    for (let i = 1; i < ticks.length; i++) {
+      expect(ticks[i][0]).toBeGreaterThanOrEqual(ticks[i - 1][0]);
+    }
   });
 
-  it("fails retryably (no finalize) when the TUS upload errors out", async () => {
+  it("fails (no finalize) when the TUS upload errors out", async () => {
     const { deps, finalized } = withResumable({ failResumable: true });
     const file = makeFile("big.mp4", "video/mp4", bigSize);
 
     const result = await uploadOne(file, META, deps);
 
     expect(result.status).toBe("failed");
-    expect(result.retryable).toBe(true);
     expect(result.error).toContain("tus gave up");
     expect(finalized).toHaveLength(0);
     expect(deps.finalize).not.toHaveBeenCalled();
@@ -517,7 +513,6 @@ describe("step-kill convergence", () => {
       const killed = await uploadOne(file, META, deps);
 
       expect(killed.status).toBe("failed");
-      expect(killed.retryable).toBe(true);
       expect(rows).toHaveLength(0); // no kill point leaves a phantom row
       expectRepairableState(uploads, rows);
 

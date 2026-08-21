@@ -44,8 +44,10 @@ async function makeImageDerivatives(
   }
 
   try {
-    const thumb = await scaleToWebp(bitmap, THUMB_MAX_DIM);
-    const preview = await scaleToWebp(bitmap, PREVIEW_MAX_DIM);
+    const [thumb, preview] = await Promise.all([
+      scaleToWebp(bitmap, THUMB_MAX_DIM),
+      scaleToWebp(bitmap, PREVIEW_MAX_DIM),
+    ]);
     if (!thumb || !preview) return null;
     return { thumb, preview, durationSecs: null };
   } catch {
@@ -131,8 +133,10 @@ async function makeVideoDerivatives(
     await seeked;
 
     bitmap = await createImageBitmap(video);
-    const thumb = await scaleToWebp(bitmap, THUMB_MAX_DIM);
-    const preview = await scaleToWebp(bitmap, PREVIEW_MAX_DIM);
+    const [thumb, preview] = await Promise.all([
+      scaleToWebp(bitmap, THUMB_MAX_DIM),
+      scaleToWebp(bitmap, PREVIEW_MAX_DIM),
+    ]);
     if (!thumb || !preview) return null;
     return { thumb, preview, durationSecs: duration };
   } catch {
@@ -156,7 +160,7 @@ async function scaleToWebp(
   if (typeof OffscreenCanvas !== "undefined") {
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext("2d");
-    if (ctx && typeof canvas.convertToBlob === "function") {
+    if (ctx) {
       ctx.drawImage(bitmap, 0, 0, width, height);
       // Note: a browser that can't encode WebP may hand back another type
       // (e.g. PNG); callers use blob.type as the upload content type.

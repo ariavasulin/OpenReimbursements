@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { readPickedFiles } from "@/components/photos/capture-bar";
 
 // iOS mechanics: getUserMedia requires a secure context (the deployed HTTPS
 // URL — it silently fails on `next dev` over a LAN IP), the stream must start
@@ -173,8 +174,7 @@ export default function MultiShotCamera({
   };
 
   const handleFallbackFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
+    const files = readPickedFiles(event);
     if (files.length > 0) onDone(files.map((file) => ({ file })));
   };
 

@@ -1,19 +1,31 @@
-// Client-side fetch helpers shared by the photos pages and components.
-
 import type { QueryClient } from "@tanstack/react-query";
-import type { PhotoJobSummary } from "./types";
+import type { PhotoJobSummary, PhotoRow } from "./types";
 
 /** fetch + JSON; a non-OK response throws the server's `error` message. */
 export async function fetchJson<T>(
   url: string,
-  fallbackMessage: string
+  fallbackMessage: string,
+  init?: RequestInit
 ): Promise<T> {
-  const response = await fetch(url);
+  const response = await fetch(url, init);
   if (!response.ok) {
     const data = await response.json().catch(() => null);
     throw new Error(data?.error || `${fallbackMessage} (${response.status})`);
   }
   return (await response.json()) as T;
+}
+
+/** One page of GET /api/photos (keyset-paginated). */
+export interface PhotosPage {
+  photos: PhotoRow[];
+  nextCursor: string | null;
+}
+
+export function fetchPhotosPage(
+  params: URLSearchParams,
+  fallbackMessage = "Failed to load photos"
+): Promise<PhotosPage> {
+  return fetchJson<PhotosPage>(`/api/photos?${params}`, fallbackMessage);
 }
 
 export async function fetchJobs(q = ""): Promise<PhotoJobSummary[]> {

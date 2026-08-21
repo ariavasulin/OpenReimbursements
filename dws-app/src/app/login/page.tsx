@@ -44,12 +44,9 @@ async function needsNamePrompt(user: {
   }
 
   const name = (profile?.full_name ?? '').trim();
-  if (!name) return true;
-  if (name === 'Employee') return true;
   // Supabase stores phone without "+"; compare both forms
   const phone = user.phone ?? '';
-  if (phone && (name === phone || name === `+${phone}`)) return true;
-  return false;
+  return !name || name === 'Employee' || name === phone || name === `+${phone}`;
 }
 
 export default function LoginPage() {

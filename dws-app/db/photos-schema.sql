@@ -49,9 +49,7 @@ drop policy if exists jobs_select on public.jobs;
 create policy jobs_select on public.jobs
   for select to authenticated using (true);
 
--- photos: any signed-in user reads; insert only as yourself;
--- any signed-in user updates (the "anyone fixes tags" rule — routes whitelist columns);
--- delete only uploader or admin
+-- photos_update is open to every signed-in user (the "anyone fixes tags" rule); routes whitelist columns
 drop policy if exists photos_select on public.photos;
 create policy photos_select on public.photos
   for select to authenticated using (true);

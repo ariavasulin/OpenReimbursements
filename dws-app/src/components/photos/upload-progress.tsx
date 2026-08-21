@@ -2,19 +2,26 @@
 
 import { RotateCw } from "lucide-react";
 import { formatBytes } from "@/lib/photos/format";
+import type { UploadResult } from "@/lib/photos/upload";
 
 // Per-file progress list for a running (or partially failed) batch. Failed
 // rows get an unmissable Retry; done rows stay done — a partial batch keeps
 // its successes (4 of 5 photos landing on jobsite LTE is a success to keep).
 
-export type UploadItemStatus = "pending" | "uploading" | "done" | "failed";
-
 export interface UploadItem {
-  status: UploadItemStatus;
+  status: UploadResult["status"] | "pending" | "uploading";
   sentBytes: number;
   totalBytes: number;
   error?: string;
 }
+
+const STATUS_COLORS: Record<UploadItem["status"], { text: string; bar: string }> =
+  {
+    done: { text: "text-[#4ade80]", bar: "bg-[#4ade80]" },
+    failed: { text: "text-red-400", bar: "bg-red-500" },
+    pending: { text: "text-[#a0a0a0]", bar: "bg-[#2680FC]" },
+    uploading: { text: "text-[#a0a0a0]", bar: "bg-[#2680FC]" },
+  };
 
 interface UploadProgressProps {
   files: File[];
@@ -41,6 +48,7 @@ export default function UploadProgress({
       {files.map((file, index) => {
         const item = items[index];
         const value = percent(item);
+        const colors = STATUS_COLORS[item.status];
         return (
           <div
             key={index}
@@ -56,15 +64,7 @@ export default function UploadProgress({
                   <span className="truncate text-xs text-white">
                     {file.name}
                   </span>
-                  <span
-                    className={`shrink-0 text-[10px] ${
-                      item.status === "done"
-                        ? "text-[#4ade80]"
-                        : item.status === "failed"
-                          ? "text-red-400"
-                          : "text-[#a0a0a0]"
-                    }`}
-                  >
+                  <span className={`shrink-0 text-[10px] ${colors.text}`}>
                     {item.status === "done" && "Done"}
                     {item.status === "pending" && "Waiting"}
                     {item.status === "failed" && "Failed"}
@@ -76,13 +76,7 @@ export default function UploadProgress({
                 </div>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#222222]">
                   <div
-                    className={`h-full rounded-full transition-[width] duration-300 ${
-                      item.status === "done"
-                        ? "bg-[#4ade80]"
-                        : item.status === "failed"
-                          ? "bg-red-500"
-                          : "bg-[#2680FC]"
-                    }`}
+                    className={`h-full rounded-full transition-[width] duration-300 ${colors.bar}`}
                     style={{ width: `${value}%` }}
                   />
                 </div>

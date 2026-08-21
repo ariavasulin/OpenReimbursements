@@ -74,11 +74,7 @@ export interface UploadDeps {
 }
 
 export interface UploadResult {
-  file: File;
-  photoId: string;
   status: "done" | "failed";
-  /** Failed uploads are retryable: re-running uploadOne overwrites cleanly. */
-  retryable: boolean;
   error?: string;
 }
 
@@ -183,9 +179,7 @@ export function createResumableUpload(
         onSuccess: () => settle(null),
       });
 
-      // Resume a previous attempt of this same file AND same objectName when
-      // one exists (the custom fingerprint above scopes matches to the exact
-      // storage path; upload URLs stay valid for 24 h).
+      // Upload URLs stay valid for 24 h.
       upload
         .findPreviousUploads()
         .then((previous) => {
@@ -234,105 +228,88 @@ export async function uploadOne(
 ): Promise<UploadResult> {
   const generateId = deps.generateId ?? (() => crypto.randomUUID());
   const photoId = generateId();
-  const failed = (error: string): UploadResult => ({
-    file,
-    photoId,
-    status: "failed",
-    retryable: true,
-    error,
-  });
+  const failed = (error: string): UploadResult => ({ status: "failed", error });
 
   try {
-    return await uploadOneSteps(file, meta, deps, photoId, failed, onBytes);
+    const extractCapturedAt =
+      deps.extractCapturedAt ?? defaultExtractCapturedAt;
+    const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
+
+    const [capturedAt, derivatives] = await Promise.all([
+      extractCapturedAt(file).catch(() => null),
+      makeDerivatives(file).catch(() => null),
+    ]);
+    const paths = storagePaths(meta.uploaderId, photoId, file.name);
+
+    // 1. Original, byte-for-byte, ALWAYS first — a kill after this point
+    // leaves a repairable state, never orphan derivatives.
+    const contentType = file.type || "application/octet-stream";
+    const resumable =
+      file.size > RESUMABLE_THRESHOLD_BYTES ? deps.resumableUpload : undefined;
+    const { error: originalError } = resumable
+      ? await resumable(paths.original, file, {
+          contentType,
+          onProgress: onBytes,
+        })
+      : await deps.storage.upload(paths.original, file, {
+          contentType,
+          upsert: true,
+        });
+    if (originalError) {
+      return failed(`Upload failed: ${originalError.message}`);
+    }
+    onBytes?.(file.size, file.size);
+
+    // 2. Derivatives (small, best-effort). If one fails the row still lands
+    // with null paths — exactly the state the repair loop fills.
+    let thumbPath: string | null = null;
+    let previewPath: string | null = null;
+    if (derivatives) {
+      const [thumbResult, previewResult] = await Promise.all([
+        deps.storage.upload(paths.thumb, derivatives.thumb, {
+          contentType: derivatives.thumb.type || "image/webp",
+          upsert: true,
+        }),
+        deps.storage.upload(paths.preview, derivatives.preview, {
+          contentType: derivatives.preview.type || "image/webp",
+          upsert: true,
+        }),
+      ]);
+      if (!thumbResult.error && !previewResult.error) {
+        thumbPath = paths.thumb;
+        previewPath = paths.preview;
+      }
+    }
+
+    // 3. Finalize — the row existing is what makes the photo "in".
+    const payload: FinalizePayload = {
+      id: photoId,
+      job_id: meta.jobId,
+      kind: kindFromMime(file.type || ""),
+      sheet_number: meta.sheetNumber?.trim() || null,
+      tags: meta.tags ?? [],
+      captured_at: capturedAt ? capturedAt.toISOString() : null,
+      original_path: paths.original,
+      original_bytes: file.size,
+      mime_type: file.type || null,
+      original_name: file.name,
+      thumb_path: thumbPath,
+      preview_path: previewPath,
+      duration_secs: derivatives?.durationSecs ?? null,
+    };
+
+    try {
+      await deps.finalize(payload);
+    } catch (error) {
+      return failed(
+        error instanceof Error ? error.message : "Saving the photo failed"
+      );
+    }
+
+    return { status: "done" };
   } catch (error) {
     // A storage client that THROWS (network drop, killed connection) must
     // not take the rest of the batch down — per-file independence.
     return failed(error instanceof Error ? error.message : "Upload failed");
   }
-}
-
-async function uploadOneSteps(
-  file: File,
-  meta: UploadMeta,
-  deps: UploadDeps,
-  photoId: string,
-  failed: (error: string) => UploadResult,
-  onBytes?: ByteProgress
-): Promise<UploadResult> {
-  const extractCapturedAt = deps.extractCapturedAt ?? defaultExtractCapturedAt;
-  const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
-
-  const [capturedAt, derivatives] = await Promise.all([
-    extractCapturedAt(file).catch(() => null),
-    makeDerivatives(file).catch(() => null),
-  ]);
-  const paths = storagePaths(meta.uploaderId, photoId, file.name);
-
-  // 1. Original, byte-for-byte, ALWAYS first — a kill after this point
-  // leaves a repairable state, never orphan derivatives. Over the plain
-  // upload ceiling the original goes resumable (TUS) so it survives drops.
-  const contentType = file.type || "application/octet-stream";
-  const resumable =
-    file.size > RESUMABLE_THRESHOLD_BYTES ? deps.resumableUpload : undefined;
-  const { error: originalError } = resumable
-    ? await resumable(paths.original, file, {
-        contentType,
-        onProgress: onBytes,
-      })
-    : await deps.storage.upload(paths.original, file, {
-        contentType,
-        upsert: true,
-      });
-  if (originalError) {
-    return failed(`Upload failed: ${originalError.message}`);
-  }
-  onBytes?.(file.size, file.size);
-
-  // 2. Derivatives (small, best-effort). If one fails the row still lands
-  // with null paths — exactly the state the repair loop fills.
-  let thumbPath: string | null = null;
-  let previewPath: string | null = null;
-  if (derivatives) {
-    const [thumbResult, previewResult] = await Promise.all([
-      deps.storage.upload(paths.thumb, derivatives.thumb, {
-        contentType: derivatives.thumb.type || "image/webp",
-        upsert: true,
-      }),
-      deps.storage.upload(paths.preview, derivatives.preview, {
-        contentType: derivatives.preview.type || "image/webp",
-        upsert: true,
-      }),
-    ]);
-    if (!thumbResult.error && !previewResult.error) {
-      thumbPath = paths.thumb;
-      previewPath = paths.preview;
-    }
-  }
-
-  // 3. Finalize — the row existing is what makes the photo "in".
-  const payload: FinalizePayload = {
-    id: photoId,
-    job_id: meta.jobId,
-    kind: kindFromMime(file.type || ""),
-    sheet_number: meta.sheetNumber?.trim() || null,
-    tags: meta.tags ?? [],
-    captured_at: capturedAt ? capturedAt.toISOString() : null,
-    original_path: paths.original,
-    original_bytes: file.size,
-    mime_type: file.type || null,
-    original_name: file.name,
-    thumb_path: thumbPath,
-    preview_path: previewPath,
-    duration_secs: derivatives?.durationSecs ?? null,
-  };
-
-  try {
-    await deps.finalize(payload);
-  } catch (error) {
-    return failed(
-      error instanceof Error ? error.message : "Saving the photo failed"
-    );
-  }
-
-  return { file, photoId, status: "done", retryable: false };
 }

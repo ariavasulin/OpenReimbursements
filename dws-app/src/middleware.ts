@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { normalizeHostname } from "./lib/cookieDomain";
+import { isPhotosHost } from "./lib/cookieDomain";
 
 // Hostname-based product selection: one deployment serves both products. The
 // hostname only decides the default; both products stay path-reachable.
@@ -10,9 +10,7 @@ export function resolvePhotosRewrite(
   pathname: string,
   photosHostname: string | undefined
 ): string | null {
-  if (!photosHostname || !host) return null;
-  if (normalizeHostname(host) !== normalizeHostname(photosHostname)) return null;
-  if (pathname !== "/") return null;
+  if (!isPhotosHost(host, photosHostname) || pathname !== "/") return null;
   return "/photos";
 }
 

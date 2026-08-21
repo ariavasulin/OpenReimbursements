@@ -6,7 +6,7 @@ import {
   PHOTO_COLUMNS,
   UUID_RE,
 } from '@/lib/photos/apiShared';
-import type { PhotoRow } from '@/lib/photos/types';
+import { PHOTO_KINDS, type PhotoRow } from '@/lib/photos/types';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
 //      Filtered photo list, newest capture first, keyset-paginated on
@@ -82,11 +82,11 @@ async function buildSearchFilter(
     parts.push(`uploader_id.in.(${uploaderIds.join(',')})`);
   }
 
-  const query = q.trim().toLowerCase();
+  const query = q.toLowerCase();
   const matchedTags = new Set<string>();
   for (const row of tagRowsResult.data ?? []) {
-    for (const tag of row.tags ?? []) {
-      if (typeof tag === 'string' && tag.toLowerCase().includes(query)) {
+    for (const tag of row.tags) {
+      if (tag.toLowerCase().includes(query)) {
         // Tags with or()/array syntax characters can't be embedded safely;
         // the UI never produces them, so skipping is the safe trade.
         if (!/[,(){}"\\]/.test(tag)) matchedTags.add(tag);
@@ -191,8 +191,6 @@ export async function GET(request: Request) {
   return NextResponse.json({ success: true, photos: page, nextCursor });
 }
 
-const KINDS = new Set(['image', 'video', 'file']);
-
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -232,7 +230,7 @@ export async function POST(request: Request) {
   if (typeof job_id !== 'string' || !UUID_RE.test(job_id)) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
-  if (typeof kind !== 'string' || !KINDS.has(kind)) {
+  if (typeof kind !== 'string' || !(PHOTO_KINDS as readonly string[]).includes(kind)) {
     return NextResponse.json({ error: 'Invalid kind' }, { status: 400 });
   }
 

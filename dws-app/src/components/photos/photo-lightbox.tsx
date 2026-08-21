@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { X } from "lucide-react";
@@ -14,14 +14,11 @@ import { supabase } from "@/lib/supabaseClient";
 import { fetchJobs } from "@/lib/photos/api";
 import { formatBytes } from "@/lib/photos/format";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
+import TagInput from "@/components/photos/tag-input";
 import type { PhotoRow } from "@/lib/photos/types";
 
-// Zoomable lightbox over the current filtered set (whatever grid you opened
-// from is the set you flip through). Zoom/swipe run on the screen-quality
-// preview, never the original — "Download original" streams the untouched
-// file. The bottom bar keeps the evidence metadata (capture time, uploader,
-// job, tags) always visible, plus Edit tags (anyone) and Delete (uploader or
-// admin only).
+// Zoom/swipe run on the screen-quality preview, never the original —
+// "Download original" streams the untouched file.
 
 interface PhotoLightboxProps {
   /** Openable photos in display order (the current filtered/grouped set). */
@@ -48,7 +45,7 @@ function formatCaptured(iso: string): string {
 
 function formatFileInfo(photo: PhotoRow): string | null {
   const parts: string[] = [];
-  const size = photo.original_bytes ? formatBytes(photo.original_bytes) : null;
+  const size = formatBytes(photo.original_bytes);
   if (size) parts.push(size);
   const ext = photo.original_name?.includes(".")
     ? photo.original_name.split(".").pop()
@@ -76,6 +73,33 @@ export default function PhotoLightbox({
   const [tagInput, setTagInput] = useState("");
 
   const photo = photos[index] as PhotoRow | undefined;
+
+  const slides = useMemo(
+    () =>
+      photos.map((item) =>
+        item.kind === "video"
+          ? {
+              // Playback streams the original (storage serves range requests;
+              // there's no transcode) behind the generated poster frame.
+              type: "video" as const,
+              poster: previewUrl(item) ?? undefined,
+              controls: true,
+              playsInline: true,
+              preload: "none",
+              sources: [
+                {
+                  src: publicUrl(item.original_path),
+                  type: item.mime_type ?? "video/mp4",
+                },
+              ],
+            }
+          : {
+              src: previewUrl(item) ?? "",
+              alt: item.original_name ?? "",
+            }
+      ),
+    [photos]
+  );
 
   // Who am I? Delete is uploader-or-admin; hide the button otherwise (RLS
   // still enforces it server-side either way).
@@ -284,40 +308,17 @@ export default function PhotoLightbox({
         />
 
         <label className="mb-1.5 block text-xs text-[#a0a0a0]">Tags</label>
-        <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-2.5 py-2">
-          {editTags.map((tag) => (
-            <span
-              key={tag}
-              className="flex items-center gap-1 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-white"
-            >
-              {tag}
-              <button
-                type="button"
-                aria-label={`Remove tag ${tag}`}
-                onClick={() =>
-                  setEditTags((previous) => previous.filter((t) => t !== tag))
-                }
-                disabled={busy}
-              >
-                <X className="h-3 w-3 text-[#a0a0a0]" />
-              </button>
-            </span>
-          ))}
-          <input
-            type="text"
-            value={tagInput}
-            onChange={(event) => setTagInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === ",") {
-                event.preventDefault();
-                addTag(tagInput);
-              }
-            }}
-            placeholder={editTags.length === 0 ? "Add a tag..." : ""}
-            disabled={busy}
-            className="min-w-[90px] flex-1 bg-transparent py-0.5 text-sm text-white placeholder:text-[#a0a0a0] focus:outline-none"
-          />
-        </div>
+        <TagInput
+          className="mb-3"
+          tags={editTags}
+          input={tagInput}
+          onInputChange={setTagInput}
+          onAdd={addTag}
+          onRemove={(tag) =>
+            setEditTags((previous) => previous.filter((t) => t !== tag))
+          }
+          disabled={busy}
+        />
 
         <button
           type="button"
@@ -337,28 +338,7 @@ export default function PhotoLightbox({
       close={onClose}
       index={index}
       on={{ view: ({ index: viewIndex }) => onIndexChange(viewIndex) }}
-      slides={photos.map((item) =>
-        item.kind === "video"
-          ? {
-              // Playback streams the original (storage serves range requests;
-              // there's no transcode) behind the generated poster frame.
-              type: "video" as const,
-              poster: previewUrl(item) ?? undefined,
-              controls: true,
-              playsInline: true,
-              preload: "none",
-              sources: [
-                {
-                  src: publicUrl(item.original_path),
-                  type: item.mime_type ?? "video/mp4",
-                },
-              ],
-            }
-          : {
-              src: previewUrl(item) ?? "",
-              alt: item.original_name ?? "",
-            }
-      )}
+      slides={slides}
       plugins={[Zoom, Video, Counter]}
       zoom={{ maxZoomPixelRatio: 4, doubleTapDelay: 300 }}
       carousel={{ finite: false }}

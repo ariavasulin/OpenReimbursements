@@ -1,11 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { plural } from "@/lib/photos/format";
 import { publicUrl } from "@/lib/photos/urls";
 import type { PhotoJobSummary } from "@/lib/photos/types";
-
-// One job card on the photos home screen: job number (accent), project name,
-// photo count, and a strip of up to 4 newest thumbnails.
 
 export default function JobCard({ job }: { job: PhotoJobSummary }) {
   const thumbs = job.thumb_paths.slice(0, 4);
@@ -22,7 +20,7 @@ export default function JobCard({ job }: { job: PhotoJobSummary }) {
           <span className="text-white"> · {job.name}</span>
         </div>
         <div className="shrink-0 text-xs text-[#a0a0a0]">
-          {job.photo_count === 1 ? "1 photo" : `${job.photo_count} photos`}
+          {plural(job.photo_count, "photo")}
         </div>
       </div>
       {thumbs.length > 0 ? (

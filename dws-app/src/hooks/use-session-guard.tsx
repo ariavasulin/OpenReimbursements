@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
@@ -9,17 +9,16 @@ import { supabase } from "@/lib/supabaseClient";
  */
 export function useSessionGuard(nextPath: string): boolean {
   const [ready, setReady] = useState(false);
-  const mountedRef = useRef(true);
 
   useEffect(() => {
-    mountedRef.current = true;
+    let cancelled = false;
     const loginUrl = `/login?next=${encodeURIComponent(nextPath)}`;
 
     const guard = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (!mountedRef.current) return;
+      if (cancelled) return;
       if (!session) {
         window.location.replace(loginUrl);
         return;
@@ -36,7 +35,7 @@ export function useSessionGuard(nextPath: string): boolean {
       }
     );
     return () => {
-      mountedRef.current = false;
+      cancelled = true;
       authListener?.subscription?.unsubscribe();
     };
   }, [nextPath]);
@@ -44,7 +43,6 @@ export function useSessionGuard(nextPath: string): boolean {
   return ready;
 }
 
-/** The "Loading... / Verifying authentication" placeholder shown until ready. */
 export function AuthLoading({
   className = "flex min-h-full items-center justify-center px-4 py-8",
 }: {

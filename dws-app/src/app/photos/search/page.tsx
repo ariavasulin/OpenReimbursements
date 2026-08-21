@@ -8,27 +8,13 @@ import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import GroupByToggle from "@/components/photos/group-by-toggle";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
-import { fetchJson, invalidatePhotoCaches } from "@/lib/photos/api";
-import { groupPhotos, type GroupBy } from "@/lib/photos/group";
-import { isOpenable } from "@/lib/photos/urls";
-import type { PhotoRow } from "@/lib/photos/types";
-
-// Cross-job search results grouped by job by default (regroupable by date or
-// sheet).
-
-interface PhotosPage {
-  photos: PhotoRow[];
-  nextCursor: string | null;
-}
-
-async function fetchSearchPage(
-  q: string,
-  cursor: string | null
-): Promise<PhotosPage> {
-  const params = new URLSearchParams({ q });
-  if (cursor) params.set("cursor", cursor);
-  return fetchJson<PhotosPage>(`/api/photos?${params}`, "Search failed");
-}
+import { fetchPhotosPage, invalidatePhotoCaches } from "@/lib/photos/api";
+import { plural } from "@/lib/photos/format";
+import {
+  groupPhotos,
+  openableInDisplayOrder,
+  type GroupBy,
+} from "@/lib/photos/group";
 
 function SearchResults() {
   const router = useRouter();
@@ -50,7 +36,11 @@ function SearchResults() {
     isFetchingNextPage,
   } = useInfiniteQuery({
     queryKey: ["photo-search", q],
-    queryFn: ({ pageParam }) => fetchSearchPage(q, pageParam),
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ q });
+      if (pageParam) params.set("cursor", pageParam);
+      return fetchPhotosPage(params, "Search failed");
+    },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: ready && q.length > 0,
@@ -65,12 +55,8 @@ function SearchResults() {
     [photos]
   );
 
-  const openablePhotos = useMemo(() => {
-    const flattened = groupPhotos(photos, groupBy).flatMap(
-      (group) => group.photos
-    );
-    return flattened.filter(isOpenable);
-  }, [photos, groupBy]);
+  const groups = useMemo(() => groupPhotos(photos, groupBy), [photos, groupBy]);
+  const openablePhotos = useMemo(() => openableInDisplayOrder(groups), [groups]);
 
   const submit = () => {
     const next = input.trim();
@@ -103,9 +89,11 @@ function SearchResults() {
         <p className="mb-2 text-xs text-[#a0a0a0]">
           {photos.length === 0
             ? `No photos match "${q}"`
-            : `${photos.length}${hasNextPage ? "+" : ""} ${
-                photos.length === 1 ? "photo" : "photos"
-              } across ${jobCount} ${jobCount === 1 ? "job" : "jobs"} · "${q}"`}
+            : `${
+                hasNextPage
+                  ? `${photos.length}+ photos`
+                  : plural(photos.length, "photo")
+              } across ${plural(jobCount, "job")} · "${q}"`}
         </p>
       )}
 
@@ -130,14 +118,9 @@ function SearchResults() {
       )}
 
       <PhotoGrid
-        photos={photos}
+        groups={groups}
         groupBy={groupBy}
-        onOpenPhoto={(photo) => {
-          const index = openablePhotos.findIndex(
-            (candidate) => candidate.id === photo.id
-          );
-          if (index >= 0) setLightboxIndex(index);
-        }}
+        onOpenPhoto={setLightboxIndex}
       />
 
       {hasNextPage && (

@@ -4,57 +4,21 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/lib/supabaseClient";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import JobCard from "@/components/photos/job-card";
 import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
 import UploadSheet from "@/components/photos/upload-sheet";
 import { fetchJobs, invalidatePhotoCaches } from "@/lib/photos/api";
 
-// Photos home: searchable job list plus the Take Photos / Upload bar. The
-// guard is session-only — deliberately NO role gate: admins use this page too.
+// Photos home: searchable job list plus the Take Photos / Upload bar.
 
 export default function PhotosHomePage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const sessionReady = useSessionGuard("/photos");
-  const [ready, setReady] = useState(false);
+  const ready = useSessionGuard("/photos");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const batch = useCaptureBatch();
-
-  // Missing-profile fallback (a DB trigger normally creates the profile row
-  // at signup; this covers accounts that predate it).
-  useEffect(() => {
-    if (!sessionReady) return;
-    let cancelled = false;
-    const ensureProfile = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session || cancelled) return;
-
-      const { error: profileError } = await supabase
-        .from("user_profiles")
-        .select("user_id")
-        .eq("user_id", session.user.id)
-        .single();
-
-      if (profileError?.code === "PGRST116") {
-        await supabase.from("user_profiles").insert({
-          user_id: session.user.id,
-          role: "employee",
-          full_name: null,
-        });
-      }
-
-      if (!cancelled) setReady(true);
-    };
-    ensureProfile();
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionReady]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);

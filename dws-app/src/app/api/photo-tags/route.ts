@@ -34,9 +34,7 @@ export async function GET(request: Request) {
 
   const distinct = new Set<string>();
   for (const row of data ?? []) {
-    for (const tag of row.tags ?? []) {
-      if (typeof tag === 'string' && tag) distinct.add(tag);
-    }
+    for (const tag of row.tags) distinct.add(tag);
   }
 
   let tags = [...distinct].sort((a, b) => a.localeCompare(b));

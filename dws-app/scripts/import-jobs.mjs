@@ -57,10 +57,11 @@ async function main() {
   const rows = []
   const unmatched = []
   let archivedDropped = 0
+  const syncedAt = new Date().toISOString()
   for (const j of openJobs) {
     const jobNo = String(j.JobNo || '').trim()
     if (!jobNo) continue
-    if (String(j.JobStatus || '').trim() !== 'O') continue // open jobs only (file is all 'O' today)
+    if (String(j.JobStatus || '').trim() !== 'O') continue // open jobs only
     const p = projectByNumber.get(jobNo)
     if (!p) {
       unmatched.push(jobNo)
@@ -75,7 +76,7 @@ async function main() {
       name: String(p.Project || '').trim(),
       location: String(p.Location || '').trim() || null,
       is_active: true,
-      synced_at: new Date().toISOString(),
+      synced_at: syncedAt,
     })
   }
 

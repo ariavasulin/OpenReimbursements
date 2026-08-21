@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { useRouter } from "next/navigation";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import MultiShotCamera from "@/components/photos/multi-shot-camera";
@@ -15,20 +15,14 @@ import UploadSheet from "@/components/photos/upload-sheet";
 export default function CapturePage() {
   const router = useRouter();
   const ready = useSessionGuard("/capture");
-  const [cameraOpen, setCameraOpen] = useState(true);
-  const batch = useCaptureBatch();
+  const batch = useCaptureBatch(true);
   const uploadedRef = useRef(false);
 
   const handleSheetChange = (open: boolean) => {
     batch.setSheetOpen(open);
     if (!open) {
-      if (uploadedRef.current) {
-        // Batch landed — the natural next stop is the photos home.
-        router.replace("/photos");
-      } else {
-        // Cancelled without uploading — back to shooting.
-        setCameraOpen(true);
-      }
+      if (uploadedRef.current) router.replace("/photos");
+      else batch.setCameraOpen(true);
     }
   };
 
@@ -41,12 +35,9 @@ export default function CapturePage() {
   return (
     <div className="min-h-dvh bg-[#222222] text-white">
       <MultiShotCamera
-        open={cameraOpen}
+        open={batch.cameraOpen}
         onClose={() => router.replace("/photos")}
-        onDone={(shots) => {
-          setCameraOpen(false);
-          batch.handleShotsDone(shots);
-        }}
+        onDone={batch.handleShotsDone}
       />
 
       <UploadSheet

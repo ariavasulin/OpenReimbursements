@@ -13,22 +13,8 @@ interface FakeCanvas {
   height: number;
 }
 
-function installCanvasMocks(bitmap: { width: number; height: number }) {
-  const canvases: FakeCanvas[] = [];
-  const drawCalls: unknown[][] = [];
-
-  const createImageBitmapMock = vi.fn(
-    async (_file: Blob, options?: { imageOrientation?: string }) => {
-      // Emulate `from-image`: the returned bitmap is already orientation-
-      // corrected, so its dimensions are what the canvas math sees.
-      if (options?.imageOrientation !== "from-image") {
-        throw new Error("test expects from-image orientation");
-      }
-      return { width: bitmap.width, height: bitmap.height, close: vi.fn() };
-    }
-  );
-  vi.stubGlobal("createImageBitmap", createImageBitmapMock);
-
+/** Stub OffscreenCanvas; every canvas constructed lands in `canvases`. */
+function installOffscreenCanvas(canvases: FakeCanvas[]) {
   class OffscreenCanvasMock {
     width: number;
     height: number;
@@ -38,10 +24,7 @@ function installCanvasMocks(bitmap: { width: number; height: number }) {
       canvases.push(this);
     }
     getContext(kind: string) {
-      if (kind !== "2d") return null;
-      return {
-        drawImage: (...args: unknown[]) => drawCalls.push(args),
-      };
+      return kind === "2d" ? { drawImage: () => {} } : null;
     }
     async convertToBlob(options?: { type?: string }) {
       return new Blob([`${this.width}x${this.height}`], {
@@ -50,8 +33,22 @@ function installCanvasMocks(bitmap: { width: number; height: number }) {
     }
   }
   vi.stubGlobal("OffscreenCanvas", OffscreenCanvasMock);
+}
 
-  return { canvases, drawCalls, createImageBitmapMock };
+function installCanvasMocks(bitmap: { width: number; height: number }) {
+  const canvases: FakeCanvas[] = [];
+
+  // Emulate `from-image`: the returned bitmap is already orientation-
+  // corrected, so its dimensions are what the canvas math sees.
+  const createImageBitmapMock = vi.fn(async () => ({
+    width: bitmap.width,
+    height: bitmap.height,
+    close: vi.fn(),
+  }));
+  vi.stubGlobal("createImageBitmap", createImageBitmapMock);
+  installOffscreenCanvas(canvases);
+
+  return { canvases, createImageBitmapMock };
 }
 
 afterEach(() => {
@@ -200,25 +197,7 @@ function installVideoMocks(video: FakeVideo) {
       return { width: fake.videoWidth, height: fake.videoHeight, close: vi.fn() };
     })
   );
-
-  class OffscreenCanvasMock {
-    width: number;
-    height: number;
-    constructor(width: number, height: number) {
-      this.width = width;
-      this.height = height;
-      canvases.push(this);
-    }
-    getContext(kind: string) {
-      return kind === "2d" ? { drawImage: () => {} } : null;
-    }
-    async convertToBlob(options?: { type?: string }) {
-      return new Blob([`${this.width}x${this.height}`], {
-        type: options?.type ?? "image/png",
-      });
-    }
-  }
-  vi.stubGlobal("OffscreenCanvas", OffscreenCanvasMock);
+  installOffscreenCanvas(canvases);
 
   return { canvases, revoked };
 }

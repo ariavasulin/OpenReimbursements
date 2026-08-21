@@ -1,6 +1,4 @@
-// Grouping is a view choice, not a fixed hierarchy: the same filtered set of
-// photos regroups by capture date, sheet number, or job. Pure function — the
-// grids feed it whatever pages they have loaded (input is newest-first).
+// Input is newest-first.
 
 import type { PhotoRow } from "./types";
 
@@ -89,4 +87,21 @@ export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] 
   }
 
   return groups;
+}
+
+/**
+ * Can this photo open in the lightbox? Images and videos with a rendered
+ * derivative do; companion files (and derivative-less rows awaiting repair)
+ * show as labeled file tiles with download instead.
+ */
+export function isOpenable(photo: PhotoRow): boolean {
+  return (
+    (photo.preview_path ?? photo.thumb_path) != null &&
+    (photo.kind === "image" || photo.kind === "video")
+  );
+}
+
+/** The photos a lightbox can flip through, in the order the grid shows them. */
+export function openableInDisplayOrder(groups: PhotoGroup[]): PhotoRow[] {
+  return groups.flatMap((group) => group.photos).filter(isOpenable);
 }

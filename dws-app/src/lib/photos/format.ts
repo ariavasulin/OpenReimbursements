@@ -1,5 +1,3 @@
-// Display formatting shared by the grid, lightbox, and upload progress.
-
 /** 1536 -> "1.5 KB"-style sizes; null for unknown. */
 export function formatBytes(bytes: number | null | undefined): string | null {
   if (bytes == null || !Number.isFinite(bytes)) return null;
@@ -18,4 +16,9 @@ export function formatDuration(secs: number): string {
   return hours > 0
     ? `${hours}:${two(minutes)}:${two(seconds)}`
     : `${minutes}:${two(seconds)}`;
+}
+
+/** 1 -> "1 photo", 3 -> "3 photos". */
+export function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }

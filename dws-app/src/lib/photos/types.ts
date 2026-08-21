@@ -1,6 +1,5 @@
-// Shared types for the DWS Photos hub.
-
-export type PhotoKind = "image" | "video" | "file";
+export const PHOTO_KINDS = ["image", "video", "file"] as const;
+export type PhotoKind = (typeof PHOTO_KINDS)[number];
 
 /** One photos row as returned by GET /api/photos (uploader + job embedded). */
 export interface PhotoRow {
@@ -32,8 +31,6 @@ export interface PhotoJobSummary {
   name: string;
   location: string | null;
   photo_count: number;
-  /** ISO timestamp of the newest upload, or null when the job has no photos. */
-  latest_upload_at: string | null;
   /** Storage paths (photos bucket) of up to 4 newest grid thumbnails. */
   thumb_paths: string[];
 }
