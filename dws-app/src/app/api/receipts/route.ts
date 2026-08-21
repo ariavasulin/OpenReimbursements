@@ -325,7 +325,7 @@ export async function PATCH(request: Request) {
       amount: updatedReceipt.amount,
       status: updatedReceipt.status.toLowerCase(),
       category_id: updatedReceipt.category_id,
-      category: (updatedReceipt.categories as { name: string } | null)?.name || "Uncategorized",
+      category: (updatedReceipt.categories as unknown as { name: string } | null)?.name || "Uncategorized",
       description: updatedReceipt.description || "",
       notes: updatedReceipt.description,
       image_url: publicImageUrl,

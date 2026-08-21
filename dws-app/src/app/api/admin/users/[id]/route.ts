@@ -2,8 +2,11 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 import type { AdminUser } from '@/lib/types';
+import type { User } from '@supabase/supabase-js';
 
 type RouteParams = { params: Promise<{ id: string }> };
+/** banned_until is returned by the admin API but missing from supabase-js's User type. */
+type AuthUserWithBan = User & { banned_until?: string };
 
 export async function GET(request: Request, { params }: RouteParams) {
   const { id: userId } = await params;
@@ -54,7 +57,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       phone: authData.user.phone || '',
       created_at: authData.user.created_at,
       last_sign_in_at: authData.user.last_sign_in_at || undefined,
-      banned_until: authData.user.banned_until || undefined,
+      banned_until: (authData.user as AuthUserWithBan).banned_until || undefined,
       role: userProfile?.role || 'employee',
       full_name: userProfile?.full_name || undefined,
       preferred_name: userProfile?.preferred_name || undefined,
@@ -185,7 +188,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       phone: updatedAuthData?.user?.phone || '',
       created_at: updatedAuthData?.user?.created_at || '',
       last_sign_in_at: updatedAuthData?.user?.last_sign_in_at || undefined,
-      banned_until: updatedAuthData?.user?.banned_until || undefined,
+      banned_until: (updatedAuthData?.user as AuthUserWithBan | undefined)?.banned_until || undefined,
       role: updatedProfile?.role || 'employee',
       full_name: updatedProfile?.full_name || undefined,
       preferred_name: updatedProfile?.preferred_name || undefined,

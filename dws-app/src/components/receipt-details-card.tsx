@@ -67,7 +67,7 @@ export function ReceiptDetailsCard({
   const [amount, setAmount] = useState(initialData?.amount?.toString() || "");
   const [categoryId, setCategoryId] = useState<string>(initialData?.category_id || '');
   const [notes, setNotes] = useState(initialData?.notes || "");
-  const [status, setStatus] = useState<string>(initialData?.status || "pending");
+  const [status, setStatus] = useState<Receipt["status"]>(initialData?.status || "pending");
   const [categories, setCategories] = useState<CategoryType[]>([]);
   const [isLoadingCategories, setIsLoadingCategories] = useState(true);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -316,7 +316,7 @@ export function ReceiptDetailsCard({
                 <Label htmlFor="status" className="text-white">
                   Status
                 </Label>
-                <Select value={status} onValueChange={setStatus}>
+                <Select value={status} onValueChange={(v) => setStatus(v as Receipt["status"])}>
                   <SelectTrigger id="status" className="w-full bg-[#3e3e3e] border-[#3e3e3e] text-white">
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>

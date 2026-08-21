@@ -1,4 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr"
+import { cookieDomainForHost } from "@/lib/cookieDomain"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -12,7 +13,12 @@ if (!supabaseAnonKey) {
 
 // Lazily create the browser client only when running in the browser so that
 // server-side rendering doesn't attempt to touch window/localStorage.
-const createClient = () => createBrowserClient(supabaseUrl, supabaseAnonKey)
+const createClient = () =>
+  createBrowserClient(supabaseUrl, supabaseAnonKey, {
+    cookieOptions: {
+      domain: cookieDomainForHost(window.location.hostname),
+    },
+  })
 
 export const supabase =
   typeof window === "undefined"

@@ -10,6 +10,39 @@ import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 
 import { formatUSPhoneNumber } from '@/lib/phone';
+import { isPhotosHost } from '@/lib/cookieDomain';
+
+function getPostLoginPath(): string {
+  const params = new URLSearchParams(window.location.search);
+  const next = params.get('next');
+  // Open-redirect guard: only same-origin absolute paths.
+  if (next && next.startsWith('/') && !next.startsWith('//')) {
+    return next;
+  }
+  return isPhotosHost(window.location.hostname) ? '/photos' : '/employee';
+}
+
+async function needsNamePrompt(user: {
+  id: string;
+  phone?: string | null;
+}): Promise<boolean> {
+  const { data: profile, error } = await supabase
+    .from('user_profiles')
+    .select('full_name')
+    .eq('user_id', user.id)
+    .single();
+
+  if (error) {
+    // PGRST116 = no profile row yet -> needs a name. On transient errors,
+    // don't block login behind the prompt.
+    return error.code === 'PGRST116';
+  }
+
+  const name = (profile.full_name ?? '').trim();
+  // Supabase stores phone without "+"; compare both forms
+  const phone = user.phone ?? '';
+  return !name || name === 'Employee' || name === phone || name === `+${phone}`;
+}
 
 export default function LoginPage() {
   const [phoneNumberInput, setPhoneNumberInput] = useState('');
@@ -18,9 +51,25 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [otpSent, setOtpSent] = useState(false);
+  const [needsName, setNeedsName] = useState(false);
+  const [fullNameInput, setFullNameInput] = useState('');
   const router = useRouter();
-  
+
   const mountedRef = useRef(true);
+
+  const routeSignedInUser = async (user: { id: string; phone?: string | null }) => {
+    const promptForName = await needsNamePrompt(user);
+
+    if (!mountedRef.current) return;
+
+    if (promptForName) {
+      setNeedsName(true);
+      setMessage(null);
+      setLoading(false);
+    } else {
+      window.location.replace(getPostLoginPath());
+    }
+  };
 
   useEffect(() => {
     if (!mountedRef.current) return;
@@ -28,9 +77,9 @@ export default function LoginPage() {
     const checkInitialAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        
+
         if (session && session.user) {
-          window.location.replace('/employee');
+          await routeSignedInUser(session.user);
         }
       } catch (err) {
       }
@@ -121,11 +170,12 @@ export default function LoginPage() {
           }
           
           setMessage('Login successful! Redirecting...');
-          
+
+          const signedInUser = data.user ?? data.session.user;
           setTimeout(() => {
-            window.location.replace('/employee');
+            routeSignedInUser(signedInUser);
           }, 500);
-          
+
         } else {
           setError('Received invalid session data. Please try again.');
           return;
@@ -135,6 +185,31 @@ export default function LoginPage() {
         return;
       }
       
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(errorMessage);
+      setLoading(false);
+    }
+  };
+
+  const handleSubmitName = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: fullNameInput }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save your name');
+      }
+
+      window.location.replace(getPostLoginPath());
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       setError(errorMessage);
@@ -157,14 +232,47 @@ export default function LoginPage() {
             />
           </div>
           <p className="mt-2 text-center text-sm text-gray-400">
-            {otpSent ? 'Enter the code sent to your phone' : 'Sign in to upload and track your receipts'}
+            {needsName
+              ? "One last thing — what's your name?"
+              : otpSent
+                ? 'Enter the code sent to your phone'
+                : 'Sign in with your phone number'}
           </p>
         </div>
 
         {error && <p className="text-sm text-red-400 bg-red-900/30 p-3 rounded-md text-center">{error}</p>}
         {message && <p className="text-sm text-green-400 bg-green-900/30 p-3 rounded-md text-center">{message}</p>}
 
-        {!otpSent ? (
+        {needsName ? (
+          <form onSubmit={handleSubmitName} className="mt-8 space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="fullName" className="text-white">
+                Full Name
+              </Label>
+              <Input
+                id="fullName"
+                type="text"
+                placeholder="e.g. Marco Reyes"
+                value={fullNameInput}
+                onChange={(e) => setFullNameInput(e.target.value)}
+                required
+                className="bg-[#333333] border-[#444444] text-white placeholder:text-gray-500 focus:border-[#2680FC] focus:ring-[#2680FC]"
+                disabled={loading}
+                autoComplete="name"
+                maxLength={120}
+              />
+              <p className="text-xs text-gray-400">Shown next to everything you upload</p>
+            </div>
+            <Button
+              type="submit"
+              className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white"
+              disabled={loading || !fullNameInput.trim()}
+            >
+              {loading ? 'Saving...' : 'Continue'}
+              {!loading && <ArrowRight className="ml-2 h-4 w-4" />}
+            </Button>
+          </form>
+        ) : !otpSent ? (
           <form onSubmit={handleSendOtp} className="mt-8 space-y-6">
             <div className="space-y-2">
               <Label htmlFor="phone" className="text-white">
