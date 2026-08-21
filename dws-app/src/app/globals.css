@@ -119,6 +119,13 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Safari paints the status-bar and toolbar regions (viewport-fit=cover) from
+     the html/body background, so the theme token's white would show as bars
+     above and below the app; every screen already paints #222222 itself. */
+  html,
+  body {
+    background-color: #222222;
+  }
 }
 
 /* Fix for Radix Dialog scroll lock cleanup issues (ARI-11) */
