@@ -21,11 +21,8 @@ export interface PhotosPage {
   nextCursor: string | null;
 }
 
-export function fetchPhotosPage(
-  params: URLSearchParams,
-  fallbackMessage = "Failed to load photos"
-): Promise<PhotosPage> {
-  return fetchJson<PhotosPage>(`/api/photos?${params}`, fallbackMessage);
+export function fetchPhotosPage(params: URLSearchParams): Promise<PhotosPage> {
+  return fetchJson<PhotosPage>(`/api/photos?${params}`, "Failed to load photos");
 }
 
 export async function fetchJobs(q = ""): Promise<PhotoJobSummary[]> {

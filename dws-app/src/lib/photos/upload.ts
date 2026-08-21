@@ -1,11 +1,6 @@
 // Upload orchestration: per file, original FIRST, then derivatives, then POST
 // the row. Storage and API clients are injected so the logic is testable
 // without a browser or network.
-//
-// Originals over 6 MB go up via resumable TUS (Supabase's
-// /storage/v1/upload/resumable endpoint) so a multi-GB jobsite-LTE video
-// survives drops and resumes instead of restarting. Derivatives are always
-// small plain uploads.
 
 import { Upload as TusUpload, type UploadOptions, type DetailedError } from "tus-js-client";
 import { extractCapturedAt as defaultExtractCapturedAt } from "./exif";
@@ -130,16 +125,10 @@ export function createResumableUpload(
         retryDelays: [0, 3000, 5000, 10000, 20000],
         uploadDataDuringCreation: true,
         removeFingerprintOnSuccess: true,
-        // tus-js-client's default fingerprint is [name, type, size,
-        // lastModified, endpoint] — the objectName is NOT part of it. A retry
-        // of a failed file generates a NEW photoId (so a new objectName), but
-        // the default fingerprint still matches the dead attempt's localStorage
-        // entry, and resuming PATCHes that attempt's upload URL — whose
-        // objectName was fixed at TUS creation. The bytes would complete under
-        // the OLD path while the finalized row records the NEW one: a row-less
-        // orphan the repair cron deletes, and a row whose original 404s.
-        // Including the objectName makes "fingerprint matches" imply "same
-        // storage path", so a resume can only ever continue THIS object.
+        // tus-js-client's default fingerprint omits the objectName, so a retry
+        // (new photoId, new path) would resume the dead attempt and finish the
+        // bytes under the OLD path. Including the path makes a resume continue
+        // only THIS object.
         fingerprint: async () =>
           [
             "tus-sb",
@@ -285,7 +274,7 @@ export async function uploadOne(
     const payload: FinalizePayload = {
       id: photoId,
       job_id: meta.jobId,
-      kind: kindFromMime(file.type || ""),
+      kind: kindFromMime(file.type),
       sheet_number: meta.sheetNumber?.trim() || null,
       tags: meta.tags ?? [],
       captured_at: capturedAt ? capturedAt.toISOString() : null,
@@ -298,13 +287,7 @@ export async function uploadOne(
       duration_secs: derivatives?.durationSecs ?? null,
     };
 
-    try {
-      await deps.finalize(payload);
-    } catch (error) {
-      return failed(
-        error instanceof Error ? error.message : "Saving the photo failed"
-      );
-    }
+    await deps.finalize(payload);
 
     return { status: "done" };
   } catch (error) {

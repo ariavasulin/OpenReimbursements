@@ -1,6 +1,3 @@
-export const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** Columns every photos response returns (uploader name + job embedded). */
 export const PHOTO_COLUMNS =
   'id, job_id, uploader_id, kind, sheet_number, tags, captured_at, ' +
@@ -14,6 +11,11 @@ export function escapeForIlike(raw: string): string {
     .replace(/[%_\\]/g, (m) => `\\${m}`)
     .replace(/[,()]/g, ' ')
     .trim();
+}
+
+/** Trimmed sheet number; null when absent, blank, or not a string. */
+export function cleanSheet(input: unknown): string | null {
+  return typeof input === 'string' && input.trim() ? input.trim() : null;
 }
 
 export const MAX_TAGS = 20;

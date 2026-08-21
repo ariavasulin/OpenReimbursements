@@ -7,10 +7,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import JobCard from "@/components/photos/job-card";
 import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
+import SearchInput from "@/components/photos/search-input";
+import StatusLine from "@/components/photos/status-line";
 import UploadSheet from "@/components/photos/upload-sheet";
 import { fetchJobs, invalidatePhotoCaches } from "@/lib/photos/api";
-
-// Photos home: searchable job list plus the Take Photos / Upload bar.
 
 export default function PhotosHomePage() {
   const router = useRouter();
@@ -51,17 +51,14 @@ export default function PhotosHomePage() {
         </a>
       </header>
 
-      <input
-        type="search"
+      <SearchInput
         value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && search.trim()) {
+        onChange={setSearch}
+        onSubmit={() => {
+          if (search.trim()) {
             router.push(`/photos/search?q=${encodeURIComponent(search.trim())}`);
           }
         }}
-        placeholder="Search jobs, people, or tags..."
-        className="mb-2 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
       />
 
       {debouncedSearch ? (
@@ -75,33 +72,25 @@ export default function PhotosHomePage() {
         <div className="mb-1" />
       )}
 
-      {isLoading && (
-        <p className="py-8 text-center text-sm text-[#a0a0a0]">
-          Loading jobs...
-        </p>
-      )}
+      {isLoading && <StatusLine>Loading jobs...</StatusLine>}
       {error && (
-        <p className="py-8 text-center text-sm text-red-400">
+        <StatusLine error>
           {error instanceof Error ? error.message : "Failed to load jobs"}
-        </p>
+        </StatusLine>
       )}
       {jobs && jobs.length === 0 && (
-        <p className="py-8 text-center text-sm text-[#a0a0a0]">
+        <StatusLine>
           {debouncedSearch
             ? `No jobs match "${debouncedSearch}"`
             : "No jobs yet"}
-        </p>
+        </StatusLine>
       )}
 
       <div className="space-y-2.5">
         {jobs?.map((job) => <JobCard key={job.id} job={job} />)}
       </div>
 
-      <CaptureBar
-        batch={batch}
-        maxWidthClass="max-w-2xl"
-        inputId="photos-home-upload-input"
-      />
+      <CaptureBar batch={batch} maxWidthClass="max-w-2xl" />
 
       <UploadSheet
         files={batch.pickedFiles}

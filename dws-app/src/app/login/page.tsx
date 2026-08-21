@@ -12,21 +12,16 @@ import { ArrowRight } from "lucide-react";
 import { formatUSPhoneNumber } from '@/lib/phone';
 import { isPhotosHost } from '@/lib/cookieDomain';
 
-// Where to land after login: an explicit ?next= path wins (so deep links like
-// /capture survive the login round-trip), then the hostname picks the product
-// (photos domain -> /photos), receipts -> /employee as before.
 function getPostLoginPath(): string {
   const params = new URLSearchParams(window.location.search);
   const next = params.get('next');
+  // Open-redirect guard: only same-origin absolute paths.
   if (next && next.startsWith('/') && !next.startsWith('//')) {
     return next;
   }
   return isPhotosHost(window.location.hostname) ? '/photos' : '/employee';
 }
 
-// One-time name prompt: fires when the user has no profile row, an empty
-// full_name, or a placeholder name (their phone number, or the legacy
-// 'Employee' fallback) — so every upload can carry a real name.
 async function needsNamePrompt(user: {
   id: string;
   phone?: string | null;
@@ -43,7 +38,7 @@ async function needsNamePrompt(user: {
     return error.code === 'PGRST116';
   }
 
-  const name = (profile?.full_name ?? '').trim();
+  const name = (profile.full_name ?? '').trim();
   // Supabase stores phone without "+"; compare both forms
   const phone = user.phone ?? '';
   return !name || name === 'Employee' || name === phone || name === `+${phone}`;

@@ -8,7 +8,6 @@
 //   node scripts/import-jobs.mjs --projects <tblProject.csv> --jobs <tblMas90JobMasterOpen.csv>            # dry run
 //   node scripts/import-jobs.mjs --projects <tblProject.csv> --jobs <tblMas90JobMasterOpen.csv> --execute  # write
 //
-// NOTE: csv-parse handles tblProject.csv's quoted embedded commas/newlines.
 import fs from 'fs'
 import { parse } from 'csv-parse/sync'
 import { createClient } from '@supabase/supabase-js'

@@ -18,8 +18,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
 import GroupByToggle from "@/components/photos/group-by-toggle";
+import LoadMoreButton from "@/components/photos/load-more-button";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
+import StatusLine from "@/components/photos/status-line";
 import UploadSheet from "@/components/photos/upload-sheet";
 import {
   fetchJobs,
@@ -29,9 +31,6 @@ import {
 } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { groupPhotos, openableInDisplayOrder } from "@/lib/photos/group";
-
-// One job's photos: grouped grid, filter chips, the pinned Professional
-// Photography section, the lightbox, and the Upload flow.
 
 const PINNED_TAG = "professional";
 
@@ -290,28 +289,26 @@ export default function JobPhotosPage() {
         onChange={(mode) => setGroupBy(mode)}
       />
 
-      {isLoading && (
-        <p className="py-8 text-center text-sm text-[#a0a0a0]">
-          Loading photos...
-        </p>
-      )}
+      {isLoading && <StatusLine>Loading photos...</StatusLine>}
       {error && (
-        <p className="py-8 text-center text-sm text-red-400">
+        <StatusLine error>
           {error instanceof Error ? error.message : "Failed to load photos"}
-        </p>
+        </StatusLine>
       )}
       {!isLoading && !error && photos.length === 0 && (
-        <p className="py-8 text-center text-sm text-[#a0a0a0]">
+        <StatusLine>
           {noFiltersActive
             ? "No photos yet — upload the first one."
             : "No photos match these filters."}
-        </p>
+        </StatusLine>
       )}
 
       <PhotoGrid
         groups={groups}
         groupBy={groupBy}
-        onOpenPhoto={setLightboxIndex}
+        onOpenPhoto={(photo) =>
+          setLightboxIndex(openablePhotos.findIndex((p) => p.id === photo.id))
+        }
         pinnedTag={noFiltersActive ? PINNED_TAG : undefined}
         pinnedLabel="Professional Photography"
         onExpandPinned={() =>
@@ -320,21 +317,13 @@ export default function JobPhotosPage() {
       />
 
       {hasNextPage && (
-        <button
-          type="button"
+        <LoadMoreButton
           onClick={() => fetchNextPage()}
-          disabled={isFetchingNextPage}
-          className="mt-4 w-full rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] py-2.5 text-sm text-white hover:border-[#2680FC]"
-        >
-          {isFetchingNextPage ? "Loading..." : "Load more"}
-        </button>
+          loading={isFetchingNextPage}
+        />
       )}
 
-      <CaptureBar
-        batch={batch}
-        maxWidthClass="max-w-3xl"
-        inputId="photos-upload-input"
-      />
+      <CaptureBar batch={batch} maxWidthClass="max-w-3xl" />
 
       <UploadSheet
         files={batch.pickedFiles}

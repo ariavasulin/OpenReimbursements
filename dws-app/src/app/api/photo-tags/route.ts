@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
-import { UUID_RE } from '@/lib/photos/apiShared';
+import { validate as isUuid } from 'uuid';
 
 // GET /api/photo-tags?job=&q= — distinct tags in use (optionally scoped to a
 // job, optionally prefix-filtered), for the Tags filter and upload type-ahead.
@@ -21,7 +21,7 @@ export async function GET(request: Request) {
 
   let query = supabase.from('photos').select('tags').limit(10000);
   if (job) {
-    if (!UUID_RE.test(job)) {
+    if (!isUuid(job)) {
       return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
     }
     query = query.eq('job_id', job);
@@ -34,13 +34,11 @@ export async function GET(request: Request) {
 
   const distinct = new Set<string>();
   for (const row of data ?? []) {
-    for (const tag of row.tags) distinct.add(tag);
+    for (const tag of row.tags) {
+      if (!q || tag.toLowerCase().includes(q)) distinct.add(tag);
+    }
   }
-
-  let tags = [...distinct].sort((a, b) => a.localeCompare(b));
-  if (q) {
-    tags = tags.filter((tag) => tag.toLowerCase().includes(q));
-  }
+  const tags = [...distinct].sort((a, b) => a.localeCompare(b));
 
   return NextResponse.json({ success: true, tags });
 }

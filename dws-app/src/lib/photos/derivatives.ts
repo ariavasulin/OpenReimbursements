@@ -18,8 +18,8 @@ export interface Derivatives {
   thumb: Blob;
   /** ~2048px WebP for the lightbox (a video's poster frame). */
   preview: Blob;
-  /** Video duration in seconds; null/absent for images. */
-  durationSecs?: number | null;
+  /** Video duration in seconds; null for images. */
+  durationSecs: number | null;
 }
 
 export async function makeDerivatives(
@@ -53,7 +53,7 @@ async function makeImageDerivatives(
   } catch {
     return null;
   } finally {
-    bitmap.close?.();
+    bitmap.close();
   }
 }
 
@@ -142,7 +142,7 @@ async function makeVideoDerivatives(
   } catch {
     return null;
   } finally {
-    bitmap?.close?.();
+    bitmap?.close();
     video.removeAttribute("src");
     URL.revokeObjectURL(url);
   }

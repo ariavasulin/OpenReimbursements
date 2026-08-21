@@ -6,8 +6,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import GroupByToggle from "@/components/photos/group-by-toggle";
+import LoadMoreButton from "@/components/photos/load-more-button";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
+import SearchInput from "@/components/photos/search-input";
+import StatusLine from "@/components/photos/status-line";
 import { fetchPhotosPage, invalidatePhotoCaches } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import {
@@ -39,7 +42,7 @@ function SearchResults() {
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({ q });
       if (pageParam) params.set("cursor", pageParam);
-      return fetchPhotosPage(params, "Search failed");
+      return fetchPhotosPage(params);
     },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -74,16 +77,7 @@ function SearchResults() {
         &lsaquo; All jobs
       </Link>
 
-      <input
-        type="search"
-        value={input}
-        onChange={(event) => setInput(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") submit();
-        }}
-        placeholder="Search jobs, people, or tags..."
-        className="mb-2 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-sm text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none"
-      />
+      <SearchInput value={input} onChange={setInput} onSubmit={submit} />
 
       {q && !isLoading && !error && (
         <p className="mb-2 text-xs text-[#a0a0a0]">
@@ -103,35 +97,27 @@ function SearchResults() {
         onChange={(mode) => setGroupBy(mode)}
       />
 
-      {!q && (
-        <p className="py-8 text-center text-sm text-[#a0a0a0]">
-          Search for a job, a person, or a tag.
-        </p>
-      )}
-      {isLoading && q && (
-        <p className="py-8 text-center text-sm text-[#a0a0a0]">Searching...</p>
-      )}
+      {!q && <StatusLine>Search for a job, a person, or a tag.</StatusLine>}
+      {isLoading && q && <StatusLine>Searching...</StatusLine>}
       {error && (
-        <p className="py-8 text-center text-sm text-red-400">
+        <StatusLine error>
           {error instanceof Error ? error.message : "Search failed"}
-        </p>
+        </StatusLine>
       )}
 
       <PhotoGrid
         groups={groups}
         groupBy={groupBy}
-        onOpenPhoto={setLightboxIndex}
+        onOpenPhoto={(photo) =>
+          setLightboxIndex(openablePhotos.findIndex((p) => p.id === photo.id))
+        }
       />
 
       {hasNextPage && (
-        <button
-          type="button"
+        <LoadMoreButton
           onClick={() => fetchNextPage()}
-          disabled={isFetchingNextPage}
-          className="mt-4 w-full rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] py-2.5 text-sm text-white hover:border-[#2680FC]"
-        >
-          {isFetchingNextPage ? "Loading..." : "Load more"}
-        </button>
+          loading={isFetchingNextPage}
+        />
       )}
 
       <PhotoLightbox

@@ -36,7 +36,7 @@ export function useSessionGuard(nextPath: string): boolean {
     );
     return () => {
       cancelled = true;
-      authListener?.subscription?.unsubscribe();
+      authListener.subscription.unsubscribe();
     };
   }, [nextPath]);
 

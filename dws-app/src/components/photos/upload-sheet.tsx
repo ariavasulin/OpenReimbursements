@@ -26,12 +26,12 @@ import { extractCapturedAt } from "@/lib/photos/exif";
 import UploadProgress, {
   type UploadItem,
 } from "@/components/photos/upload-progress";
-import TagInput from "@/components/photos/tag-input";
+import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
 import { fetchJobs, fetchJson, fetchTags } from "@/lib/photos/api";
+import { plural } from "@/lib/photos/format";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
 
-/** @param capturedAtOverrides Shutter times for in-app camera shots (see CameraShot). */
 function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
   return {
     extractCapturedAt: async (file: File) =>
@@ -142,9 +142,8 @@ export default function UploadSheet({
       .slice(0, 6);
   }, [tagInput, knownTags, tags]);
 
-  const addTag = (raw: string) => {
-    const tag = raw.trim();
-    if (tag && !tags.includes(tag)) setTags((previous) => [...previous, tag]);
+  const addTag = (tag: string) => {
+    setTags((previous) => appendTag(previous, tag));
     setTagInput("");
   };
 
@@ -173,7 +172,7 @@ export default function UploadSheet({
       jobId,
       uploaderId: session.user.id,
       sheetNumber: sheetNumber || null,
-      tags: tagInput.trim() ? [...tags, tagInput.trim()] : tags,
+      tags: withPendingTag(tags, tagInput),
     };
     const deps = buildUploadDeps(capturedAtOverrides);
 
@@ -219,12 +218,10 @@ export default function UploadSheet({
     }
   };
 
-  const failedIndices = items
-    .map((item, index) => (item.status === "failed" ? index : -1))
-    .filter((index) => index >= 0);
-  const pendingIndices = items
-    .map((item, index) => (item.status === "pending" ? index : -1))
-    .filter((index) => index >= 0);
+  const indicesWith = (status: UploadItem["status"]) =>
+    items.flatMap((item, index) => (item.status === status ? [index] : []));
+  const failedIndices = indicesWith("failed");
+  const pendingIndices = indicesWith("pending");
   const doneCount = items.filter((item) => item.status === "done").length;
   const uploadStarted = items.some((item) => item.status !== "pending");
   const retrying = failedIndices.length > 0;
@@ -237,7 +234,7 @@ export default function UploadSheet({
   const body = (
     <div className="px-4 pb-5 pt-1">
       <div className="mb-3 text-[15px] font-semibold text-white">
-        Add {files.length} {files.length === 1 ? "file" : "files"}
+        Add {plural(files.length, "file")}
       </div>
 
       <div className="mb-3.5 flex gap-1.5 overflow-x-auto">
@@ -337,7 +334,7 @@ export default function UploadSheet({
               : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
             : retrying
               ? `Retry ${failedIndices.length} failed`
-              : `Upload ${pendingIndices.length} ${pendingIndices.length === 1 ? "file" : "files"}`}
+              : `Upload ${plural(pendingIndices.length, "file")}`}
         </Button>
       </div>
     </div>

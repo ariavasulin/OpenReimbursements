@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { validate as isUuid } from 'uuid';
 import {
+  cleanSheet,
   cleanTags,
   escapeForIlike,
   PHOTO_COLUMNS,
-  UUID_RE,
 } from '@/lib/photos/apiShared';
 import { PHOTO_KINDS, type PhotoRow } from '@/lib/photos/types';
 
@@ -29,7 +30,7 @@ function decodeCursor(cursor: string): { capturedAt: string; id: string } | null
       Array.isArray(parsed) &&
       typeof parsed[0] === 'string' &&
       typeof parsed[1] === 'string' &&
-      UUID_RE.test(parsed[1])
+      isUuid(parsed[1])
     ) {
       return { capturedAt: parsed[0], id: parsed[1] };
     }
@@ -119,10 +120,10 @@ export async function GET(request: Request) {
     .filter(Boolean);
   const q = params.get('q')?.trim() || null;
 
-  if (job && !UUID_RE.test(job)) {
+  if (job && !isUuid(job)) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
-  if (uploader && !UUID_RE.test(uploader)) {
+  if (uploader && !isUuid(uploader)) {
     return NextResponse.json({ error: 'Invalid uploader id' }, { status: 400 });
   }
   if (!job && !q && !uploader && tags.length === 0) {
@@ -186,7 +187,7 @@ export async function GET(request: Request) {
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   const nextCursor =
-    rows.length > limit && last ? encodeCursor(last.captured_at, last.id) : null;
+    rows.length > limit ? encodeCursor(last.captured_at, last.id) : null;
 
   return NextResponse.json({ success: true, photos: page, nextCursor });
 }
@@ -224,10 +225,10 @@ export async function POST(request: Request) {
     duration_secs,
   } = body;
 
-  if (typeof id !== 'string' || !UUID_RE.test(id)) {
+  if (typeof id !== 'string' || !isUuid(id)) {
     return NextResponse.json({ error: 'Invalid photo id' }, { status: 400 });
   }
-  if (typeof job_id !== 'string' || !UUID_RE.test(job_id)) {
+  if (typeof job_id !== 'string' || !isUuid(job_id)) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
   if (typeof kind !== 'string' || !(PHOTO_KINDS as readonly string[]).includes(kind)) {
@@ -268,10 +269,7 @@ export async function POST(request: Request) {
       job_id,
       uploader_id: userId, // never trusted from the client
       kind,
-      sheet_number:
-        typeof sheet_number === 'string' && sheet_number.trim()
-          ? sheet_number.trim()
-          : null,
+      sheet_number: cleanSheet(sheet_number),
       tags: cleanTags(tags),
       // EXIF capture time when the client found one; upload time as fallback.
       captured_at: (capturedAtDate ?? new Date()).toISOString(),

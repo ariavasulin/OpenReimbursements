@@ -5,10 +5,6 @@
 --   insert into storage.buckets (id, name, public, file_size_limit)
 --   values ('photos', 'photos', true, 53687091200)   -- 50 GiB
 --   on conflict (id) do nothing;
---
--- NOTE: user_profiles already has an authenticated-SELECT policy
--- (user_profiles_select_policy, qual: auth.uid() is not null) — deliberately
--- NOT duplicated here.
 
 create table if not exists public.jobs (
   id          uuid primary key default gen_random_uuid(),

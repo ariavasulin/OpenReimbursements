@@ -72,6 +72,7 @@ function makeDeps(overrides?: {
         : {
             thumb: new Blob(["t"], { type: "image/webp" }),
             preview: new Blob(["p"], { type: "image/webp" }),
+            durationSecs: null,
           },
     generateId: () => `photo-${++idCounter}`,
   };

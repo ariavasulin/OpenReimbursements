@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { supabaseAdmin } from '@/lib/supabaseAdminClient';
-import { cleanTags, PHOTO_COLUMNS, UUID_RE } from '@/lib/photos/apiShared';
+import { validate as isUuid } from 'uuid';
+import { cleanSheet, cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
 
 // PATCH  /api/photos/:id — fix organizational metadata (job / sheet / tags).
 //        Any signed-in user. The editable columns are whitelisted here; RLS
@@ -16,7 +17,7 @@ interface RouteContext {
 
 export async function PATCH(request: Request, context: RouteContext) {
   const { id } = await context.params;
-  if (!UUID_RE.test(id)) {
+  if (!isUuid(id)) {
     return NextResponse.json({ error: 'Invalid photo id' }, { status: 400 });
   }
 
@@ -38,7 +39,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   const updates: Record<string, unknown> = {};
 
   if ('job_id' in body) {
-    if (typeof body.job_id !== 'string' || !UUID_RE.test(body.job_id)) {
+    if (typeof body.job_id !== 'string' || !isUuid(body.job_id)) {
       return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
     }
     updates.job_id = body.job_id;
@@ -52,8 +53,7 @@ export async function PATCH(request: Request, context: RouteContext) {
         { status: 400 }
       );
     }
-    updates.sheet_number =
-      typeof sheet === 'string' && sheet.trim() ? sheet.trim() : null;
+    updates.sheet_number = cleanSheet(sheet);
   }
 
   if ('tags' in body) {
@@ -93,7 +93,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   const { id } = await context.params;
-  if (!UUID_RE.test(id)) {
+  if (!isUuid(id)) {
     return NextResponse.json({ error: 'Invalid photo id' }, { status: 400 });
   }
 

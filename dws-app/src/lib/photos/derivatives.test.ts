@@ -35,20 +35,30 @@ function installOffscreenCanvas(canvases: FakeCanvas[]) {
   vi.stubGlobal("OffscreenCanvas", OffscreenCanvasMock);
 }
 
-function installCanvasMocks(bitmap: { width: number; height: number }) {
+function installCanvasMocks(bitmap: {
+  width: number;
+  height: number;
+  /** Stored with an EXIF rotation (e.g. orientation 6): only
+   * `imageOrientation: "from-image"` decodes it with the sides swapped. */
+  exifRotated?: boolean;
+}) {
   const canvases: FakeCanvas[] = [];
 
-  // Emulate `from-image`: the returned bitmap is already orientation-
-  // corrected, so its dimensions are what the canvas math sees.
-  const createImageBitmapMock = vi.fn(async () => ({
-    width: bitmap.width,
-    height: bitmap.height,
-    close: vi.fn(),
-  }));
-  vi.stubGlobal("createImageBitmap", createImageBitmapMock);
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn(async (_source: unknown, options?: ImageBitmapOptions) => {
+      const rotated =
+        bitmap.exifRotated && options?.imageOrientation === "from-image";
+      return {
+        width: rotated ? bitmap.height : bitmap.width,
+        height: rotated ? bitmap.width : bitmap.height,
+        close: vi.fn(),
+      };
+    })
+  );
   installOffscreenCanvas(canvases);
 
-  return { canvases, createImageBitmapMock };
+  return { canvases };
 }
 
 afterEach(() => {
@@ -57,19 +67,13 @@ afterEach(() => {
 
 describe("makeDerivatives", () => {
   it("makes a ~400px thumb and ~2048px preview from a landscape image", async () => {
-    const { canvases, createImageBitmapMock } = installCanvasMocks({
-      width: 4000,
-      height: 3000,
-    });
+    const { canvases } = installCanvasMocks({ width: 4000, height: 3000 });
     const file = new File([new Uint8Array(8)], "photo.jpg", {
       type: "image/jpeg",
     });
 
     const result = await makeDerivatives(file);
 
-    expect(createImageBitmapMock).toHaveBeenCalledWith(file, {
-      imageOrientation: "from-image",
-    });
     expect(result).not.toBeNull();
     expect(result!.thumb.type).toBe("image/webp");
     expect(result!.preview.type).toBe("image/webp");
@@ -83,8 +87,12 @@ describe("makeDerivatives", () => {
 
   it("keeps a rotated (portrait after EXIF orientation) photo portrait", async () => {
     // A phone photo stored landscape with EXIF orientation 6 decodes to a
-    // portrait bitmap under from-image — the derivatives must stay portrait.
-    const { canvases } = installCanvasMocks({ width: 3000, height: 4000 });
+    // portrait bitmap only under from-image — the derivatives must be portrait.
+    const { canvases } = installCanvasMocks({
+      width: 4000,
+      height: 3000,
+      exifRotated: true,
+    });
     const file = new File([new Uint8Array(8)], "rotated.jpg", {
       type: "image/jpeg",
     });

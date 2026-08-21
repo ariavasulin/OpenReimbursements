@@ -17,7 +17,6 @@ const SHEET_PREFIX = "sheet:";
 
 function append(
   map: Map<string, PhotoGroup>,
-  order: string[],
   key: string,
   label: string,
   photo: PhotoRow
@@ -26,24 +25,22 @@ function append(
   if (!group) {
     group = { key, label, photos: [] };
     map.set(key, group);
-    order.push(key);
   }
   group.photos.push(photo);
 }
 
 export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] {
+  // Map keeps insertion order, so groups come out in first-seen order.
   const map = new Map<string, PhotoGroup>();
-  const order: string[] = [];
 
   for (const photo of photos) {
     if (groupBy === "date") {
       const date = new Date(photo.captured_at);
       if (Number.isNaN(date.getTime())) {
-        append(map, order, "date:unknown", "Unknown date", photo);
+        append(map, "date:unknown", "Unknown date", photo);
       } else {
         append(
           map,
-          order,
           `date:${date.toDateString()}`,
           date.toLocaleDateString("en-US", {
             year: "numeric",
@@ -56,19 +53,19 @@ export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] 
     } else if (groupBy === "sheet") {
       const sheet = photo.sheet_number?.trim() || null;
       if (sheet) {
-        append(map, order, `${SHEET_PREFIX}${sheet}`, `Sheet ${sheet}`, photo);
+        append(map, `${SHEET_PREFIX}${sheet}`, `Sheet ${sheet}`, photo);
       } else {
-        append(map, order, NO_SHEET_KEY, "No sheet", photo);
+        append(map, NO_SHEET_KEY, "No sheet", photo);
       }
     } else {
       const label = photo.job
         ? `#${photo.job.job_number} · ${photo.job.name}`
         : "Unknown job";
-      append(map, order, `job:${photo.job_id}`, label, photo);
+      append(map, `job:${photo.job_id}`, label, photo);
     }
   }
 
-  const groups = order.map((key) => map.get(key)!);
+  const groups = [...map.values()];
 
   if (groupBy === "sheet") {
     // Numeric sheets highest-first, then non-numeric A→Z, "No sheet" last.

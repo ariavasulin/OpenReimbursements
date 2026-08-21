@@ -6,7 +6,7 @@ import { publicUrl } from "@/lib/photos/urls";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 
 export default function JobCard({ job }: { job: PhotoJobSummary }) {
-  const thumbs = job.thumb_paths.slice(0, 4);
+  const thumbs = job.thumb_paths; // server caps at 4
   const remainder = job.photo_count - thumbs.length;
 
   return (

@@ -14,7 +14,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { fetchJobs } from "@/lib/photos/api";
 import { formatBytes } from "@/lib/photos/format";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
-import TagInput from "@/components/photos/tag-input";
+import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
 import type { PhotoRow } from "@/lib/photos/types";
 
 // Zoom/swipe run on the screen-quality preview, never the original —
@@ -146,26 +146,17 @@ export default function PhotoLightbox({
     setEditing(true);
   };
 
-  const addTag = (raw: string) => {
-    const tag = raw.trim();
-    if (tag && !editTags.includes(tag)) {
-      setEditTags((previous) => [...previous, tag]);
-    }
-    setTagInput("");
-  };
-
   const saveEdits = async () => {
     if (!photo) return;
     setBusy(true);
     try {
-      const tags = tagInput.trim() ? [...editTags, tagInput.trim()] : editTags;
       const response = await fetch(`/api/photos/${photo.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           job_id: editJobId,
           sheet_number: editSheet.trim() || null,
-          tags,
+          tags: withPendingTag(editTags, tagInput),
         }),
       });
       if (!response.ok) {
@@ -313,7 +304,7 @@ export default function PhotoLightbox({
           tags={editTags}
           input={tagInput}
           onInputChange={setTagInput}
-          onAdd={addTag}
+          onAdd={(tag) => setEditTags((previous) => appendTag(previous, tag))}
           onRemove={(tag) =>
             setEditTags((previous) => previous.filter((t) => t !== tag))
           }

@@ -3,12 +3,7 @@
 import { useMemo } from "react";
 import { Download, FileText, Play, Video } from "lucide-react";
 import { formatBytes, formatDuration, plural } from "@/lib/photos/format";
-import {
-  isOpenable,
-  openableInDisplayOrder,
-  type GroupBy,
-  type PhotoGroup,
-} from "@/lib/photos/group";
+import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
 
@@ -16,8 +11,8 @@ interface PhotoGridProps {
   /** Precomputed via groupPhotos — the page shares them with the lightbox. */
   groups: PhotoGroup[];
   groupBy?: GroupBy;
-  /** Tapping an image tile — its index in openableInDisplayOrder(groups). */
-  onOpenPhoto?: (index: number) => void;
+  /** Tapping an image tile. */
+  onOpenPhoto?: OnOpen;
   /**
    * Display rule, not a special flag: when set (e.g. "professional") and
    * grouping by date, photos carrying the tag get a pinned section on top.
@@ -98,23 +93,15 @@ export default function PhotoGrid({
   pinnedLabel,
   onExpandPinned,
 }: PhotoGridProps) {
-  const { pinned, openIndex } = useMemo(() => {
-    const photos = groups.flatMap((group) => group.photos);
-    return {
-      pinned:
-        pinnedTag && groupBy === "date"
-          ? photos.filter((photo) => photo.tags.includes(pinnedTag))
-          : [],
-      openIndex: new Map(
-        openableInDisplayOrder(groups).map((photo, index) => [photo.id, index])
-      ),
-    };
-  }, [groups, groupBy, pinnedTag]);
-
-  const onOpen: OnOpen = (photo) => {
-    const index = openIndex.get(photo.id);
-    if (index !== undefined) onOpenPhoto?.(index);
-  };
+  const pinned = useMemo(
+    () =>
+      pinnedTag && groupBy === "date"
+        ? groups
+            .flatMap((group) => group.photos)
+            .filter((photo) => photo.tags.includes(pinnedTag))
+        : [],
+    [groups, groupBy, pinnedTag]
+  );
 
   return (
     <div>
@@ -127,7 +114,7 @@ export default function PhotoGrid({
           >
             {pinnedLabel ?? pinnedTag} · {pinned.length} ›
           </button>
-          <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpen} />
+          <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpenPhoto} />
         </section>
       )}
       {groups.map((group) => (
@@ -141,7 +128,7 @@ export default function PhotoGrid({
               </span>
             )}
           </h2>
-          <TileGrid photos={group.photos} onOpen={onOpen} />
+          <TileGrid photos={group.photos} onOpen={onOpenPhoto} />
         </section>
       ))}
     </div>

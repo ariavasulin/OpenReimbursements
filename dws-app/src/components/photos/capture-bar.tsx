@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import MultiShotCamera, {
+  readPickedFiles,
   useHasCamera,
   type CameraShot,
 } from "@/components/photos/multi-shot-camera";
@@ -10,24 +11,14 @@ import MultiShotCamera, {
 /**
  * File-picker accept attribute: generic `image/*,video/*` on iOS ONLY —
  * explicitly listing image/heic defeats Safari's automatic HEIC→JPEG
- * conversion (the receipt app makes this mistake; don't copy it). Everywhere
- * else the picker stays unrestricted so companion files (XMP sidecars, RAW)
- * remain pickable.
+ * conversion. Everywhere else the picker stays unrestricted so companion
+ * files (XMP sidecars, RAW) remain pickable.
  */
 export function pickerAccept(): string | undefined {
   if (typeof navigator === "undefined") return undefined;
   return /iPad|iPhone|iPod/.test(navigator.userAgent)
     ? "image/*,video/*"
     : undefined;
-}
-
-/** The picked files; resets the input so the same files can be re-picked. */
-export function readPickedFiles(
-  event: React.ChangeEvent<HTMLInputElement>
-): File[] {
-  const files = Array.from(event.target.files ?? []);
-  event.target.value = "";
-  return files;
 }
 
 // The shared "get files into a batch" state: the native picker and the in-app
@@ -78,11 +69,10 @@ interface CaptureBarProps {
   batch: ReturnType<typeof useCaptureBatch>;
   /** Tailwind max-width class matching the page's <main>. */
   maxWidthClass: string;
-  inputId: string;
 }
 
 /** Fixed bottom bar: Take Photos (when a camera exists) + Upload picker. */
-export function CaptureBar({ batch, maxWidthClass, inputId }: CaptureBarProps) {
+export function CaptureBar({ batch, maxWidthClass }: CaptureBarProps) {
   const hasCamera = useHasCamera();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -93,7 +83,6 @@ export function CaptureBar({ batch, maxWidthClass, inputId }: CaptureBarProps) {
       >
         <input
           ref={fileInputRef}
-          id={inputId}
           type="file"
           multiple
           accept={pickerAccept()}
