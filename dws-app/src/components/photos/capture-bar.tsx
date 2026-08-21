@@ -79,7 +79,7 @@ export function CaptureBar({ batch, maxWidthClass }: CaptureBarProps) {
   return (
     <>
       <div
-        className={`fixed bottom-4 left-0 right-0 mx-auto flex w-full ${maxWidthClass} gap-2 px-4`}
+        className={`fixed bottom-[calc(1rem_+_env(safe-area-inset-bottom))] left-0 right-0 mx-auto flex w-full ${maxWidthClass} gap-2 px-4`}
       >
         <input
           ref={fileInputRef}

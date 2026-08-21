@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/lib/supabaseClient";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import JobCard from "@/components/photos/job-card";
 import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
@@ -35,11 +36,24 @@ export default function PhotosHomePage() {
     enabled: ready,
   });
 
+  // The auth cookie is apex-scoped (.dws-receipts.com), so this signs out of
+  // Receipts too — intended: one account. useSessionGuard handles the redirect.
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+  };
+
   if (!ready) return <AuthLoading />;
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-5">
       <header className="relative mb-3 text-center">
+        <button
+          type="button"
+          onClick={handleSignOut}
+          className="absolute left-0 top-0 text-[13px] text-[#a0a0a0] hover:text-white"
+        >
+          Sign out
+        </button>
         <div className="text-[15px] font-semibold tracking-wide">
           DWS <span className="text-[#2680FC]">Photos</span>
         </div>

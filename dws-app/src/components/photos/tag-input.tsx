@@ -71,7 +71,7 @@ export default function TagInput({
         }}
         placeholder={tags.length === 0 ? "Add a tag..." : ""}
         disabled={disabled}
-        className="min-w-[90px] flex-1 bg-transparent py-0.5 text-sm text-white placeholder:text-[#a0a0a0] focus:outline-none"
+        className="min-w-[90px] flex-1 bg-transparent py-0.5 text-base text-white md:text-sm placeholder:text-[#a0a0a0] focus:outline-none"
       />
     </div>
   );
