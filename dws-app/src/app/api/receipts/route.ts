@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { isStorageNotFound } from '@/lib/storageErrors';
 import type { Receipt } from '@/lib/types';
 
 export async function POST(request: Request) {
@@ -49,35 +50,12 @@ export async function POST(request: Request) {
     const finalImagePath = `${userId}/${newReceiptId}.${originalFileExtension}`;
     const bucketName = 'receipt-images';
 
-    const pathParts = tempFilePath.split('/');
-    const fileNameToSearch = pathParts.pop();
-    const folderPathToList = pathParts.join('/');
-
-    const { data: fileList, error: listError } = await supabase.storage
-      .from(bucketName)
-      .list(folderPathToList, {
-        search: fileNameToSearch,
-        limit: 1
-      });
-
-    if (listError) {
-      return NextResponse.json({ error: `Error verifying temporary file before move: ${listError.message}` }, { status: 500 });
-    }
-
-    if (!fileList || fileList.length === 0) {
-      const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
-      // Best-effort cleanup, ignore deleteDbError
-      return NextResponse.json({ error: `Temporary file not found before move. Path: ${tempFilePath}` }, { status: 404 });
-    }
-
-    // Check if the found file exactly matches the name (list with search can be broad)
-    const foundFile = fileList.find(f => f.name === fileNameToSearch);
-    if (!foundFile) {
-        const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
-        // Best-effort cleanup, ignore deleteDbError
-        return NextResponse.json({ error: `Temporary file '${fileNameToSearch}' not found in expected folder '${folderPathToList}'.` }, { status: 404 });
-    }
-
+    // No pre-flight existence check: storage.move() returns a 404 when the
+    // source object is missing, and the moveError branch below already cleans
+    // up the orphan receipt row. The check that used to live here compiled to
+    // storage.search(), which cost 29.6% of all database time (85ms mean,
+    // 1527ms p-max, 3213 calls) for information the move already gives us.
+    // See .artifacts/db-query-performance/00-diagnosis-pg-stat-statements.md
     const { error: moveError } = await supabase.storage
       .from(bucketName)
       .move(tempFilePath, finalImagePath);
@@ -85,8 +63,17 @@ export async function POST(request: Request) {
     if (moveError) {
       const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
       // Best-effort cleanup, ignore deleteDbError
-      // The temp file still exists in storage at tempFilePath
-      return NextResponse.json({ error: `Failed to finalize image storage during MOVE: ${moveError.message}` }, { status: 500 });
+      // A missing source is the "temp file not found" case the old pre-flight
+      // list() reported as 404; everything else is a genuine 500.
+      const notFound = isStorageNotFound(moveError);
+      return NextResponse.json(
+        {
+          error: notFound
+            ? `Temporary file not found before move. Path: ${tempFilePath}`
+            : `Failed to finalize image storage during MOVE: ${moveError.message}`,
+        },
+        { status: notFound ? 404 : 500 }
+      );
     }
 
     const { data: updatedReceipt, error: updateError } = await supabase
