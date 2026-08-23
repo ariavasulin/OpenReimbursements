@@ -137,3 +137,9 @@ body[data-scroll-locked] {
 body:not([data-scroll-locked]) {
   pointer-events: auto !important;
 }
+
+/* vaul adds an ::after filler under bottom drawers that clips scrolled content
+   once the drawer has a fixed height (vaul #575). */
+[data-vaul-drawer][data-vaul-drawer-direction="bottom"]::after {
+  height: unset;
+}

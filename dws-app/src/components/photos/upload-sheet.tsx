@@ -262,110 +262,114 @@ export default function UploadSheet({
   };
 
   const body = (
-    <div className="px-4 pb-5 pt-1">
-      <div className="mb-3 text-[15px] font-semibold text-white">
-        Add {plural(files.length, "file")}
-      </div>
+    <>
+      <div className="shrink-0 px-4 pt-1">
+        <div className="mb-3 text-[15px] font-semibold text-white">
+          Add {plural(files.length, "file")}
+        </div>
 
-      <div className="mb-3.5 flex gap-1.5 overflow-x-auto p-1">
-        {files.map((file, index) => {
-          const removable = removableAt(index);
-          return (
-            <div key={index} className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setPreviewIndex(index)}
-                aria-label={`Preview ${file.name}`}
-                className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
-              >
-                {previews[index] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={previews[index]}
-                    alt={file.name}
-                    className="h-14 w-14 rounded-lg object-cover"
-                  />
-                ) : (
-                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
-                    {file.name}
-                  </div>
-                )}
-              </button>
-              {removable && (
+        <div className="mb-2 flex gap-1.5 overflow-x-auto p-1">
+          {files.map((file, index) => {
+            const removable = removableAt(index);
+            return (
+              <div key={index} className="relative shrink-0">
                 <button
                   type="button"
-                  onClick={() => removeFile(index)}
-                  aria-label={`Remove ${file.name}`}
-                  className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
+                  onClick={() => setPreviewIndex(index)}
+                  aria-label={`Preview ${file.name}`}
+                  className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
                 >
-                  <X className="h-3 w-3" />
+                  {previews[index] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={previews[index]}
+                      alt={file.name}
+                      className="h-14 w-14 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
+                      {file.name}
+                    </div>
+                  )}
                 </button>
-              )}
-            </div>
-          );
-        })}
+                {removable && (
+                  <button
+                    type="button"
+                    onClick={() => removeFile(index)}
+                    aria-label={`Remove ${file.name}`}
+                    className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {uploadStarted && (
-        <UploadProgress
-          files={files}
-          items={items}
-          onRetry={(index) => runUpload([index])}
-          retryDisabled={uploading}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3">
+        {uploadStarted && (
+          <UploadProgress
+            files={files}
+            items={items}
+            onRetry={(index) => runUpload([index])}
+            retryDisabled={uploading}
+          />
+        )}
+
+        <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
+        <JobCombobox
+          jobs={jobs ?? []}
+          value={jobId}
+          onChange={setJobId}
+          disabled={uploading}
         />
-      )}
 
-      <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
-      <JobCombobox
-        jobs={jobs ?? []}
-        value={jobId}
-        onChange={setJobId}
-        disabled={uploading}
-      />
+        <label className="mb-1.5 block text-xs text-[#a0a0a0]">
+          Sheet # (optional)
+        </label>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={sheetNumber}
+          onChange={(event) => setSheetNumber(event.target.value)}
+          placeholder="e.g. 12"
+          disabled={uploading}
+          className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
+        />
 
-      <label className="mb-1.5 block text-xs text-[#a0a0a0]">
-        Sheet # (optional)
-      </label>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={sheetNumber}
-        onChange={(event) => setSheetNumber(event.target.value)}
-        placeholder="e.g. 12"
-        disabled={uploading}
-        className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
-      />
+        <label className="mb-1.5 block text-xs text-[#a0a0a0]">
+          Tags (optional)
+        </label>
+        <TagInput
+          className="mb-1"
+          tags={tags}
+          input={tagInput}
+          onInputChange={setTagInput}
+          onAdd={addTag}
+          onRemove={(tag) =>
+            setTags((previous) => previous.filter((t) => t !== tag))
+          }
+          disabled={uploading}
+        />
+        {tagSuggestions.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {tagSuggestions.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => addTag(tag)}
+                className="rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-[#d0d0d0] hover:border-[#2680FC]"
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
-      <label className="mb-1.5 block text-xs text-[#a0a0a0]">
-        Tags (optional)
-      </label>
-      <TagInput
-        className="mb-1"
-        tags={tags}
-        input={tagInput}
-        onInputChange={setTagInput}
-        onAdd={addTag}
-        onRemove={(tag) =>
-          setTags((previous) => previous.filter((t) => t !== tag))
-        }
-        disabled={uploading}
-      />
-      {tagSuggestions.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {tagSuggestions.map((tag) => (
-            <button
-              key={tag}
-              type="button"
-              onClick={() => addTag(tag)}
-              className="rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-[#d0d0d0] hover:border-[#2680FC]"
-            >
-              {tag}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-3">
+      <div className="shrink-0 border-t border-[#3e3e3e] px-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] pt-3">
         <Button
           onClick={() => runUpload(retrying ? failedIndices : pendingIndices)}
           disabled={uploading || (!retrying && pendingIndices.length === 0)}
@@ -381,7 +385,7 @@ export default function UploadSheet({
               : `Upload ${plural(pendingIndices.length, "file")}`}
         </Button>
       </div>
-    </div>
+    </>
   );
 
   const title = "Upload photos";
@@ -401,7 +405,7 @@ export default function UploadSheet({
   if (isMobile) {
     return (
       <Drawer open={open} onOpenChange={handleOpenChange}>
-        <DrawerContent className="border-[#4e4e4e] bg-[#2e2e2e]">
+        <DrawerContent className="h-[85dvh] max-h-[85dvh] border-[#4e4e4e] bg-[#2e2e2e]">
           <DrawerTitle className="sr-only">{title}</DrawerTitle>
           {body}
           {preview}
@@ -412,7 +416,7 @@ export default function UploadSheet({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="border-none bg-[#2e2e2e] p-0 sm:max-w-md">
+      <DialogContent className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 sm:max-w-md">
         <DialogTitle className="sr-only">{title}</DialogTitle>
         {body}
         {preview}
