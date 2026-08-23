@@ -8,6 +8,7 @@ import {
   formatDuration,
   plural,
 } from "@/lib/photos/format";
+import { useDesktop } from "@/hooks/use-desktop";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
@@ -30,12 +31,22 @@ interface PhotoGridProps {
 
 type OnOpen = (photo: PhotoRow) => void;
 
-function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
+function Tile({
+  photo,
+  onOpen,
+  showMeta,
+}: {
+  photo: PhotoRow;
+  onOpen?: OnOpen;
+  /** Desktop only: the hover/focus overlay. A phone renders no <span> at all. */
+  showMeta: boolean;
+}) {
   if (isOpenable(photo) && photo.thumb_path) {
-    // "Capture date · uploader" for the desktop hover/focus overlay.
-    const meta = [formatCaptureDay(photo.captured_at), photo.uploader?.full_name]
-      .filter(Boolean)
-      .join(" · ");
+    const meta = showMeta
+      ? [formatCaptureDay(photo.captured_at), photo.uploader?.full_name]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
     return (
       <button
         type="button"
@@ -58,7 +69,7 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
         {/* TODO(#13): tile hover/focus metadata reads ~3.25:1 over bright photos; needs the rendered pass to settle, not a blind token change. */}
         {/* TODO(#14): prefers-reduced-motion is unhandled app-wide (this transition, the rail skeleton pulse, dialog animations); wants one pass across both apps rather than here alone. */}
         {meta && (
-          <span className="pointer-events-none absolute inset-x-0 bottom-0 hidden truncate bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 desktop:block">
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
             {meta}
           </span>
         )}
@@ -102,11 +113,24 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
  * repetitions off the *definite* track size, so a capped max under-counts the
  * columns. The 140px min pairs with JobsRail narrowing to 200px below 1280.
  */
-function TileGrid({ photos, onOpen }: { photos: PhotoRow[]; onOpen?: OnOpen }) {
+function TileGrid({
+  photos,
+  onOpen,
+  showMeta,
+}: {
+  photos: PhotoRow[];
+  onOpen?: OnOpen;
+  showMeta: boolean;
+}) {
   return (
     <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
       {photos.map((photo) => (
-        <Tile key={photo.id} photo={photo} onOpen={onOpen} />
+        <Tile
+          key={photo.id}
+          photo={photo}
+          onOpen={onOpen}
+          showMeta={showMeta}
+        />
       ))}
     </div>
   );
@@ -120,6 +144,7 @@ export default function PhotoGrid({
   pinnedLabel,
   onExpandPinned,
 }: PhotoGridProps) {
+  const isDesktop = useDesktop();
   const pinned = useMemo(
     () =>
       pinnedTag && groupBy === "date"
@@ -142,7 +167,11 @@ export default function PhotoGrid({
             {pinnedLabel ?? pinnedTag} · {pinned.length} ›
           </button>
           {/* TODO(#15): design-standard drift — this pinned-row slice(0, 3), the lightbox close icon size, and the TopBar search max-width are separate cosmetic calls to settle together. */}
-          <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpenPhoto} />
+          <TileGrid
+            photos={pinned.slice(0, 3)}
+            onOpen={onOpenPhoto}
+            showMeta={isDesktop}
+          />
         </section>
       )}
       {groups.map((group) => (
@@ -158,7 +187,11 @@ export default function PhotoGrid({
               </span>
             )}
           </h2>
-          <TileGrid photos={group.photos} onOpen={onOpenPhoto} />
+          <TileGrid
+            photos={group.photos}
+            onOpen={onOpenPhoto}
+            showMeta={isDesktop}
+          />
         </section>
       ))}
     </div>

@@ -131,7 +131,7 @@ export default function JobPhotosPage() {
   });
 
   usePhotoDeepLink({
-    openPhotoId: lightboxOpen ? openPhotoId : null,
+    openPhotoId,
     onPopClose: () => setOpenPhotoId(null),
     onPopOpen: (photoId) => {
       if (!openablePhotos.some((candidate) => candidate.id === photoId)) {
@@ -220,15 +220,11 @@ export default function JobPhotosPage() {
             onClear={() => setFilters((previous) => ({ ...previous, tag: null }))}
           />
         </div>
-        {/* Block-level at phone width (full-width segmented control); a
-            shrink-to-fit flex item in the desktop row. */}
-        <div className="desktop:shrink-0">
-          <GroupByToggle
-            modes={["date", "sheet"] as const}
-            value={groupBy}
-            onChange={(mode) => setGroupBy(mode)}
-          />
-        </div>
+        <GroupByToggle
+          modes={["date", "sheet"] as const}
+          value={groupBy}
+          onChange={(mode) => setGroupBy(mode)}
+        />
       </div>
 
       {isLoading && <StatusLine>Loading photos...</StatusLine>}

@@ -20,7 +20,6 @@ function urlWithSearch(search: string): string {
   return `${window.location.pathname}${search}${window.location.hash}`;
 }
 
-/** Rewrites the current entry with the photo param set. */
 function replacePhotoParam(photoId: string): void {
   window.history.replaceState(
     null,
@@ -29,7 +28,6 @@ function replacePhotoParam(photoId: string): void {
   );
 }
 
-/** Rewrites the current entry with the photo param removed. */
 function stripPhotoParam(): void {
   window.history.replaceState(
     null,
@@ -163,7 +161,9 @@ export function useLightboxByPhotoId(openablePhotos: PhotoRow[]) {
   }, [index]);
 
   return {
-    openPhotoId,
+    // Gated: the raw id outlives `index !== -1` by one render, and every
+    // consumer wants "the photo the viewer is showing".
+    openPhotoId: isOpen ? openPhotoId : null,
     setOpenPhotoId,
     isOpen,
     /** Spread into <PhotoLightbox>; the page adds its own `onChanged`. */

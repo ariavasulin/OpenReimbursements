@@ -2,13 +2,11 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import { readInputFiles } from "@/lib/photos/batch";
 import { pairByBasename } from "@/lib/photos/sidecar";
 import type { CameraShot } from "@/components/photos/multi-shot-camera";
 
-// The shared "get files into a batch" state: the native picker and the in-app
-// multi-shot camera both end with pickedFiles + capturedAtOverrides and the
-// upload sheet open.
+// The shared "get files into a batch" state: every intake ends with
+// pickedFiles + capturedAtOverrides and the upload sheet open.
 export function useCaptureBatch(initialCameraOpen = false) {
   const [pickedFiles, setPickedFiles] = useState<File[]>([]);
   /** Shutter times for in-app camera shots (see CameraShot). */
@@ -56,14 +54,6 @@ export function useCaptureBatch(initialCameraOpen = false) {
     setSheetOpen(true);
   };
 
-  const handleFilesPicked = (
-    event: React.ChangeEvent<HTMLInputElement>,
-    jobId?: string
-  ) => {
-    openSheet(readInputFiles(event.target), jobId);
-  };
-
-  /** Opens the camera and snapshots its job. */
   const openCamera = (jobId?: string) => {
     setCameraJobId(jobId);
     setCameraOpen(true);
@@ -88,12 +78,9 @@ export function useCaptureBatch(initialCameraOpen = false) {
     setSheetOpen,
     sheetJobId,
     cameraOpen,
-    // Only openCamera opens it: a raw setter would let a caller skip the job
-    // snapshot the batch is filed under.
     openCamera,
     closeCamera,
     openSheet,
-    handleFilesPicked,
     handleShotsDone,
   };
 }

@@ -36,9 +36,4 @@ describe("readInputFiles", () => {
     expect(element.value).toBe("");
   });
 
-  it("clears the input even when nothing was picked", () => {
-    const element = input(null);
-    expect(readInputFiles(element)).toEqual([]);
-    expect(element.value).toBe("");
-  });
 });

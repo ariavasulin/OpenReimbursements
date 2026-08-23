@@ -43,7 +43,6 @@ export function withoutPhotoParam(search: string): string {
   return next ? `?${next}` : "";
 }
 
-/** Route of the all-photos search page. */
 export const PHOTO_SEARCH_PATH = "/photos/search";
 
 /** The all-photos search page for a job/people/tag query. */

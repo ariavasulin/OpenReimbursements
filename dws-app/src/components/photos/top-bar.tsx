@@ -24,11 +24,10 @@ export default function TopBar() {
   const onRoot = pathname === "/photos";
   const trimmed = query.trim();
 
-  // The root-route contract: on /photos typing filters the overview and the
-  // rail together (both read ["photo-jobs", debouncedQuery]) and Enter does
-  // nothing extra; everywhere else Enter submits to photo search. On the
-  // search route that is a replace — refining a query must not make Back walk
-  // every intermediate one.
+  // On /photos, typing already filters the overview and the rail (both read
+  // ["photo-jobs", debouncedQuery]), so Enter does nothing extra. Elsewhere it
+  // submits to photo search — replacing on the search route itself, so
+  // refining a query does not make Back walk every intermediate one.
   const handleSubmit = () => {
     if (onRoot || !trimmed) return;
     const href = photoSearchHref(trimmed);

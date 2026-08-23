@@ -1,29 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 /**
- * Session-only guard (no role gate): redirects to /login?next=<pathname+search>
+ * Session-only guard (no role gate): redirects to /login?next=<path and query>
  * when there is no session or the user signs out. Returns true once verified.
  *
- * Only `pathname` re-runs the check, never the query string. Arming costs a
- * getSession() (a network token refresh inside the expiry margin) and an
- * onAuthStateChange resubscribe whose own INITIAL_SESSION emit can redirect, so
- * a page that rewrites its query string in place (the lightbox writes
- * `?photo=<id>` once per slide) must not re-arm it. The redirect still reads
- * the *latest* search, so `?next=` round-trips the query string.
+ * Only `pathname` re-arms the check, never the query string: arming costs a
+ * getSession() token refresh and an onAuthStateChange resubscribe whose own
+ * INITIAL_SESSION emit can redirect, and the lightbox rewrites `?photo=<id>`
+ * in place once per slide.
  */
-export function useSessionGuard(pathname: string, search = ""): boolean {
+export function useSessionGuard(pathname: string): boolean {
   const [ready, setReady] = useState(false);
-  const nextPathRef = useRef("");
-  nextPathRef.current = search ? `${pathname}?${search}` : pathname;
 
   useEffect(() => {
     let cancelled = false;
+    // Read at redirect time, so `?next=` carries the query string as it stands.
     const toLogin = () =>
       window.location.replace(
-        `/login?next=${encodeURIComponent(nextPathRef.current)}`
+        `/login?next=${encodeURIComponent(
+          `${window.location.pathname}${window.location.search}`
+        )}`
       );
 
     const guard = async () => {

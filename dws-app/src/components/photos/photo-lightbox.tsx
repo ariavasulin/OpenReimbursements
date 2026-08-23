@@ -118,7 +118,6 @@ const FOCUSABLE_SELECTOR = [
   "[tabindex]",
 ].join(",");
 
-/** Tabbable descendants in DOM order, minus the focus sentinels. */
 function tabbableWithin(root: HTMLElement): HTMLElement[] {
   return Array.from(
     root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
@@ -133,7 +132,6 @@ function tabbableWithin(root: HTMLElement): HTMLElement[] {
   );
 }
 
-/** Poster + download card for a video no player here can decode. */
 function unplayableSlide(slide: {
   poster: string;
   download: string;
@@ -294,7 +292,6 @@ export default function PhotoLightbox({
     if (!(open && isDesktop)) return;
     const opener = document.activeElement;
     const node = wrapperRef.current;
-    // The portal renders into document.body, so its siblings are body's.
     const siblings = document.body.children;
     const undo: (() => void)[] = [];
     for (let i = 0; i < siblings.length; i += 1) {
@@ -422,6 +419,24 @@ export default function PhotoLightbox({
     />
   );
 
+  // Shared by both paths; each adds its own plugins, styles and render slots.
+  const common = {
+    index,
+    on: {
+      view: ({ index: viewIndex }: { index: number }) => onIndexChange(viewIndex),
+    },
+    slides,
+    zoom: { maxZoomPixelRatio: 4, doubleTapDelay: 300 },
+    carousel: { finite: false },
+    styles: { container: { backgroundColor: "rgba(0,0,0,.92)" } },
+    render: {
+      // Returning undefined falls through to the default slide renderers
+      // (image, and the Video plugin's player).
+      slide: ({ slide }: { slide: Slide }) =>
+        slide.type === "unplayable" ? unplayableSlide(slide) : undefined,
+    },
+  };
+
   if (isDesktop) {
     if (!open) return null;
     // Portalled to <body> so the inert loop above can reach the whole app:
@@ -434,7 +449,6 @@ export default function PhotoLightbox({
             role="dialog"
             aria-modal="true"
             aria-label="Photo viewer"
-            // z-40, below the edit sheet (z-50) and its nested pickers (z-[60]).
             className="fixed inset-0 z-40 flex bg-black/95"
           >
             {sentinel("last")}
@@ -445,12 +459,8 @@ export default function PhotoLightbox({
               onPointerUp={handleBackdropPointerUp}
             >
               <Lightbox
-                index={index}
-                on={{ view: ({ index: viewIndex }) => onIndexChange(viewIndex) }}
-                slides={slides}
+                {...common}
                 plugins={[Inline, Zoom, Video, Counter, Thumbnails]}
-                zoom={{ maxZoomPixelRatio: 4, doubleTapDelay: 300 }}
-                carousel={{ finite: false }}
                 inline={{ style: { width: "100%", height: "100%" } }}
                 // Inline mode removes YARL's close action, and with it the only
                 // visible way out of the viewer. Put a real button back in the
@@ -469,19 +479,11 @@ export default function PhotoLightbox({
                   ],
                 }}
                 styles={{
-                  container: { backgroundColor: "rgba(0,0,0,.92)" },
+                  ...common.styles,
                   // The container is no longer the full viewport; keep the
                   // toolbar and next-arrow pinned inside it, not under the panel.
                   toolbar: { right: 0 },
                   navigationNext: { right: 0 },
-                }}
-                render={{
-                  // Returning undefined falls through to the default slide
-                  // renderers (image, and the Video plugin's player).
-                  slide: ({ slide }) =>
-                    slide.type === "unplayable"
-                      ? unplayableSlide(slide)
-                      : undefined,
                 }}
               />
             </div>
@@ -516,23 +518,14 @@ export default function PhotoLightbox({
   return (
     <>
       <Lightbox
+        {...common}
         open={open}
         close={onClose}
-        index={index}
-        on={{ view: ({ index: viewIndex }) => onIndexChange(viewIndex) }}
-        slides={slides}
         plugins={[Zoom, Video, Counter]}
-        zoom={{ maxZoomPixelRatio: 4, doubleTapDelay: 300 }}
-        carousel={{ finite: false }}
         controller={{ closeOnBackdropClick: false }}
-        styles={{
-          // Below the edit sheet (z-50) and its nested pickers (z-[60]).
-          root: { zIndex: 40 },
-          container: { backgroundColor: "rgba(0,0,0,.92)" },
-        }}
+        styles={{ ...common.styles, root: { zIndex: 40 } }}
         render={{
-          slide: ({ slide }) =>
-            slide.type === "unplayable" ? unplayableSlide(slide) : undefined,
+          ...common.render,
           controls: () => (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
               {photo && (

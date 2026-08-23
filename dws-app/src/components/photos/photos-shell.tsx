@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useParams, usePathname, useSearchParams } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import {
   AuthLoading,
   PHOTOS_AUTH_LOADING_CLASS,
@@ -9,7 +9,7 @@ import {
 } from "@/hooks/use-session-guard";
 import { useDesktop } from "@/hooks/use-desktop";
 import { useCaptureBatch } from "@/hooks/use-capture-batch";
-import { pickerAccept } from "@/lib/photos/batch";
+import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
 import DropZone from "@/components/photos/drop-zone";
 import JobsRail from "@/components/photos/jobs-rail";
 import MultiShotCamera from "@/components/photos/multi-shot-camera";
@@ -31,10 +31,9 @@ import { jobLabel } from "@/lib/photos/format";
  */
 export default function PhotosShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const params = useParams<{ jobId?: string }>();
 
-  const ready = useSessionGuard(pathname, searchParams.toString());
+  const ready = useSessionGuard(pathname);
   const isDesktop = useDesktop();
   const activeJobId = params?.jobId ?? null;
 
@@ -56,8 +55,6 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   );
   const activeJob = jobsForLabel?.find((job) => job.id === activeJobId);
 
-  // Not memoized: batch.openSheet is a fresh closure every render, so any
-  // memo over it would bust every render anyway.
   const value: PhotosShellValue = {
     openPicker: () => fileInputRef.current?.click(),
     openCamera: () => batch.openCamera(activeJobId ?? undefined),
@@ -81,7 +78,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
         multiple
         accept={pickerAccept()}
         onChange={(event) =>
-          batch.handleFilesPicked(event, activeJobId ?? undefined)
+          batch.openSheet(readInputFiles(event.target), activeJobId ?? undefined)
         }
         className="sr-only"
       />

@@ -8,9 +8,7 @@ import { plural } from "@/lib/photos/format";
 
 /**
  * Desktop-only jobs navigation. Shares ["photo-jobs", debouncedQuery] with
- * the /photos overview so the rail and the overview are one fetch; being
- * always mounted makes it a permanent observer of that key, and staleTime
- * bounds the refetch traffic.
+ * the /photos overview, so the rail and the overview are one fetch.
  */
 export default function JobsRail() {
   const navRef = useRef<HTMLElement>(null);
@@ -66,7 +64,7 @@ export default function JobsRail() {
 
       {error && (
         <div className="px-4 py-3 text-xs text-red-400">
-          {error instanceof Error ? error.message : "Failed to load jobs"}
+          {error.message}
           <button
             type="button"
             onClick={() => refetch()}

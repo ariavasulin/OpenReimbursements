@@ -98,8 +98,6 @@ export default function PhotosHomePage() {
         </StatusLine>
       )}
 
-      {/* Desktop only ever reaches this page with no jobs to list — with a
-          first job it redirects to it above. */}
       <div className="mt-1 space-y-2.5">
         {jobs?.map((job) => <JobCard key={job.id} job={job} />)}
       </div>

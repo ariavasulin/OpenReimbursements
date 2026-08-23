@@ -104,13 +104,11 @@ export default function PhotoSearchPage() {
         </p>
       )}
 
-      <div className="desktop:flex">
-        <GroupByToggle
-          modes={["job", "date", "sheet"] as const}
-          value={groupBy}
-          onChange={(mode) => setGroupBy(mode)}
-        />
-      </div>
+      <GroupByToggle
+        modes={["job", "date", "sheet"] as const}
+        value={groupBy}
+        onChange={(mode) => setGroupBy(mode)}
+      />
 
       {!q && <StatusLine>Search for a job, a person, or a tag.</StatusLine>}
       {isLoading && q && <StatusLine>Searching...</StatusLine>}

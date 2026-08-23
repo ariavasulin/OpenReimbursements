@@ -17,8 +17,8 @@ export const metadata: Metadata = {
 // PhotosShell sits inside it — it mounts the upload sheet, which hands its
 // batch to the manager.
 //
-// PhotosShell calls useSearchParams(), so the Suspense boundary is required —
-// without it Next refuses to prerender /photos and /photos/search.
+// /photos/search calls useSearchParams(), so the Suspense boundary is required
+// — without it Next refuses to prerender that route.
 export default function PhotosLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
