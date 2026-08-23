@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useMobile } from "@/hooks/use-mobile";
+import { useKeyboardInset } from "@/hooks/use-keyboard-inset";
 import { supabase } from "@/lib/supabaseClient";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
@@ -93,6 +94,9 @@ export default function UploadSheet({
   capturedAtOverrides,
 }: UploadSheetProps) {
   const isMobile = useMobile();
+  // Phase 4: we lift the drawer above the keyboard ourselves (vaul's
+  // repositionInputs is off), so the frame only ever moves, never resizes.
+  const keyboardInset = useKeyboardInset(isMobile && open);
   const [jobId, setJobId] = useState(defaultJobId ?? "");
   const [sheetNumber, setSheetNumber] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -308,7 +312,17 @@ export default function UploadSheet({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3"
+        onFocusCapture={(event) => {
+          const target = event.target as HTMLElement;
+          // After the keyboard animates in (~250ms) and the drawer has lifted.
+          setTimeout(
+            () => target.scrollIntoView({ block: "nearest", behavior: "smooth" }),
+            300
+          );
+        }}
+      >
         {uploadStarted && (
           <UploadProgress
             files={files}
@@ -405,8 +419,18 @@ export default function UploadSheet({
 
   if (isMobile) {
     return (
-      <Drawer open={open} onOpenChange={handleOpenChange}>
-        <DrawerContent className="h-[85dvh] max-h-[85dvh] border-[#4e4e4e] bg-[#2e2e2e]">
+      <Drawer
+        open={open}
+        onOpenChange={handleOpenChange}
+        repositionInputs={false}
+      >
+        <DrawerContent
+          className="h-[85dvh] max-h-[85dvh] border-[#4e4e4e] bg-[#2e2e2e] transition-[bottom] duration-150"
+          style={{
+            bottom: keyboardInset,
+            maxHeight: `calc(100dvh - ${keyboardInset}px - 2rem)`,
+          }}
+        >
           <DrawerTitle className="sr-only">{title}</DrawerTitle>
           {body}
           {preview}
