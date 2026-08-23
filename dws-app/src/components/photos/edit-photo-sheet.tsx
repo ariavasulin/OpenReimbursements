@@ -8,7 +8,7 @@ import PhotoMetaFields, {
   EMPTY_META,
   type PhotoMeta,
 } from "@/components/photos/photo-meta-fields";
-import { withPendingTag } from "@/components/photos/tag-input";
+import { appendTag } from "@/lib/photos/tags";
 import { fetchJson } from "@/lib/photos/api";
 import type { PhotoRow } from "@/lib/photos/types";
 
@@ -48,7 +48,11 @@ export default function EditPhotoSheet({
   }, [open, photoId]);
 
   const save = async () => {
-    if (!photo) return;
+    if (!photo) {
+      toast.error("This photo is no longer available");
+      onOpenChange(false);
+      return;
+    }
     if (!meta.jobId) {
       toast.error("Pick a job first");
       return;
@@ -61,7 +65,7 @@ export default function EditPhotoSheet({
         body: JSON.stringify({
           job_id: meta.jobId,
           sheet_number: meta.sheetNumber.trim() || null,
-          tags: withPendingTag(meta.tags, meta.tagInput),
+          tags: appendTag(meta.tags, meta.tagInput),
         }),
       });
       toast.success("Photo updated");
@@ -101,6 +105,7 @@ export default function EditPhotoSheet({
         onChange={setMeta}
         enabled={open}
         disabled={busy}
+        jobFallback={photo?.job}
       />
     </SheetShell>
   );

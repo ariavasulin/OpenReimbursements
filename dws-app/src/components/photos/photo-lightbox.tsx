@@ -227,14 +227,12 @@ export default function PhotoLightbox({
           ),
         }}
       />
-      {editing && (
-        <EditPhotoSheet
-          photo={photo ?? null}
-          open
-          onOpenChange={setEditing}
-          onSaved={onChanged}
-        />
-      )}
+      <EditPhotoSheet
+        photo={photo ?? null}
+        open={editing}
+        onOpenChange={setEditing}
+        onSaved={onChanged}
+      />
     </>
   );
 }

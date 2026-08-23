@@ -22,7 +22,7 @@ import { extractCapturedAt } from "@/lib/photos/exif";
 import UploadProgress, {
   type UploadItem,
 } from "@/components/photos/upload-progress";
-import { withPendingTag } from "@/components/photos/tag-input";
+import { appendTag } from "@/lib/photos/tags";
 import { fetchJson } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
@@ -172,8 +172,8 @@ export default function UploadSheet({
     const uploadMeta = {
       jobId: meta.jobId,
       uploaderId: session.user.id,
-      sheetNumber: meta.sheetNumber || null,
-      tags: withPendingTag(meta.tags, meta.tagInput),
+      sheetNumber: meta.sheetNumber.trim() || null,
+      tags: appendTag(meta.tags, meta.tagInput),
     };
     const deps = buildUploadDeps(capturedAtOverrides);
 
@@ -262,7 +262,7 @@ export default function UploadSheet({
                 type="button"
                 onClick={() => removeFile(index)}
                 aria-label={`Remove ${file.name}`}
-                className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
+                className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
               >
                 <X className="h-3 w-3" />
               </button>

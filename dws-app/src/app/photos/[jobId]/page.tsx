@@ -24,10 +24,10 @@ import PhotoLightbox from "@/components/photos/photo-lightbox";
 import StatusLine from "@/components/photos/status-line";
 import UploadSheet from "@/components/photos/upload-sheet";
 import {
-  fetchJobs,
   fetchPhotosPage,
   fetchTags,
   invalidatePhotoCaches,
+  usePhotoJobs,
 } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { groupPhotos, openableInDisplayOrder } from "@/lib/photos/group";
@@ -122,11 +122,7 @@ export default function JobPhotosPage() {
     uploaders: new Map(),
   }));
 
-  const { data: jobs } = useQuery({
-    queryKey: ["photo-jobs", ""],
-    queryFn: () => fetchJobs(),
-    enabled: ready,
-  });
+  const { data: jobs } = usePhotoJobs(ready);
   const job = jobs?.find((candidate) => candidate.id === jobId);
 
   const { data: jobTags } = useQuery({

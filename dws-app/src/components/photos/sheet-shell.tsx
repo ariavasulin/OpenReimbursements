@@ -18,9 +18,8 @@ import { cn } from "@/lib/utils";
 // middle scrolls. On phones, vaul's input repositioning is off and the drawer
 // is lifted above the software keyboard by useKeyboardInset instead.
 
-// The drawer's `bottom` transition (see DrawerContent's duration-150 class); a
-// focused field is scrolled into view only after the keyboard has animated in
-// (~250ms) and that lift has finished.
+// A focused field is scrolled into view only after the iOS keyboard has
+// finished animating in (~250ms), so the scroll targets the settled layout.
 const KEYBOARD_SETTLE_MS = 300;
 
 // Gap kept above the drawer so it never covers the whole screen.
@@ -83,7 +82,12 @@ export default function SheetShell({
     if (scrollTimer.current !== null) clearTimeout(scrollTimer.current);
     scrollTimer.current = setTimeout(() => {
       scrollTimer.current = null;
-      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      target.scrollIntoView({
+        block: "nearest",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+      });
     }, KEYBOARD_SETTLE_MS);
   };
 
@@ -100,7 +104,13 @@ export default function SheetShell({
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3"
         onFocusCapture={
           isMobile
-            ? (event) => scrollFocusedIntoView(event.target as HTMLElement)
+            ? (event) => {
+                const target = event.target as HTMLElement;
+                // Only text entry raises the keyboard; buttons don't need it.
+                if (target.matches("input, textarea, [contenteditable]")) {
+                  scrollFocusedIntoView(target);
+                }
+              }
             : undefined
         }
       >
@@ -124,7 +134,9 @@ export default function SheetShell({
           className={cn(
             // vaul adds an ::after filler under bottom drawers that clips
             // scrolled content once the drawer has a fixed height (vaul #575).
-            "border-[#4e4e4e] bg-[#2e2e2e] transition-[bottom] duration-150 [&::after]:h-[unset]",
+            // `!` because vaul's stylesheet is unlayered and beats a layered
+            // utility.
+            "border-[#4e4e4e] bg-[#2e2e2e] [&::after]:h-[unset]!",
             SIZES[size].mobile
           )}
           style={{

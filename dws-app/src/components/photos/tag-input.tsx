@@ -1,33 +1,18 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { X } from "lucide-react";
-import { tagSuggestions, toTagPairs } from "@/lib/photos/tags";
+import { appendTag, tagSuggestions, toTagPairs } from "@/lib/photos/tags";
 
 // Tag chip editor shared by the upload sheet and the lightbox edit panel:
 // chips with a remove button plus a free-text input (Enter or comma adds),
 // with optional suggestion chips from the tags already in use.
 
-/** `tags` plus the trimmed `raw` tag; the same array when blank or already present. */
-export function appendTag(tags: string[], raw: string): string[] {
-  const tag = raw.trim();
-  return tag && !tags.includes(tag) ? [...tags, tag] : tags;
-}
-
-/** The tags to save: a half-typed input counts as one more tag. */
-export function withPendingTag(tags: string[], input: string): string[] {
-  return appendTag(tags, input);
-}
-
-// Suggestion matching is pure and lives in lib/photos/tags so it can be unit
-// tested without a DOM.
-export { tagSuggestions, toTagPairs, type TagPair } from "@/lib/photos/tags";
-
 interface TagInputProps {
   tags: string[];
   input: string;
   onInputChange(value: string): void;
-  /** A new, trimmed tag (never blank or a duplicate). */
+  /** A new, trimmed tag (never blank or a duplicate). Must also clear the input. */
   onAdd(tag: string): void;
   onRemove(tag: string): void;
   /** Tags already in use; matching ones render as chips under the field. */
@@ -35,6 +20,8 @@ interface TagInputProps {
   disabled?: boolean;
   /** Wrapper margin classes (the two hosts space it differently). */
   className?: string;
+  /** id for the text input, so a host label can point at it. */
+  inputId?: string;
 }
 
 export default function TagInput({
@@ -46,7 +33,9 @@ export default function TagInput({
   suggestions,
   disabled,
   className = "",
+  inputId,
 }: TagInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const pairs = useMemo(() => toTagPairs(suggestions ?? []), [suggestions]);
   const matches = useMemo(
     () => tagSuggestions(pairs, input, tags),
@@ -61,7 +50,7 @@ export default function TagInput({
         {tags.map((tag) => (
           <span
             key={tag}
-            className="flex items-center gap-1 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-white"
+            className="flex items-center gap-1 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] py-0.5 pl-2.5 pr-1 text-xs text-white"
           >
             {tag}
             <button
@@ -69,12 +58,15 @@ export default function TagInput({
               aria-label={`Remove tag ${tag}`}
               onClick={() => onRemove(tag)}
               disabled={disabled}
+              className="rounded-full p-1.5"
             >
               <X className="h-3 w-3 text-[#a0a0a0]" />
             </button>
           </span>
         ))}
         <input
+          ref={inputRef}
+          id={inputId}
           type="text"
           value={input}
           onChange={(event) => onInputChange(event.target.value)}
@@ -82,13 +74,15 @@ export default function TagInput({
             if (event.key === "Enter" || event.key === ",") {
               event.preventDefault();
               const next = appendTag(tags, input);
+              // onAdd clears the input itself (one state transition); clearing
+              // here too would overwrite the add from a stale value.
               if (next !== tags) onAdd(next[next.length - 1]);
-              onInputChange("");
+              else onInputChange("");
             }
           }}
           placeholder={tags.length === 0 ? "Add a tag..." : ""}
           disabled={disabled}
-          className="min-w-[90px] flex-1 bg-transparent py-0.5 text-base text-white md:text-sm placeholder:text-[#a0a0a0] focus:outline-none"
+          className="min-w-[90px] flex-1 bg-transparent py-0.5 text-base text-white md:text-sm placeholder:text-[#b4b4b4] focus:outline-none"
         />
       </div>
       {matches.length > 0 && (
@@ -97,7 +91,10 @@ export default function TagInput({
             <button
               key={tag}
               type="button"
-              onClick={() => onAdd(tag)}
+              onClick={() => {
+                onAdd(tag);
+                inputRef.current?.focus();
+              }}
               className="rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-[#d0d0d0] hover:border-[#2680FC]"
             >
               {tag}

@@ -6,16 +6,17 @@ import { useEffect, useRef, useState } from "react";
 const MIN_KEYBOARD_PX = 150;
 
 // Height of the software keyboard overlapping the layout viewport, in px.
-// iOS Safari shrinks only the visual viewport for the keyboard, so
-// `innerHeight - vv.height - vv.offsetTop` is the one signal available.
+// iOS Safari shrinks only the visual viewport for the keyboard. The presence
+// check runs on the raw height so a scrolled viewport can't hide a keyboard.
 // Pure so the threshold can be unit-tested without a DOM.
 export function keyboardInsetFrom(
   innerHeight: number,
   vvHeight: number,
   vvOffsetTop: number
 ): number {
-  const next = Math.max(0, innerHeight - vvHeight - vvOffsetTop);
-  return next >= MIN_KEYBOARD_PX ? next : 0;
+  const keyboard = innerHeight - vvHeight;
+  if (keyboard < MIN_KEYBOARD_PX) return 0;
+  return Math.max(0, keyboard - vvOffsetTop);
 }
 
 // 0 when no keyboard, when disabled, or where visualViewport is unsupported.
