@@ -7,7 +7,11 @@ import {
   escapeForIlike,
   PHOTO_COLUMNS,
 } from '@/lib/photos/apiShared';
-import { PHOTO_KINDS, type PhotoRow } from '@/lib/photos/types';
+import {
+  CAPTURED_AT_SOURCES,
+  PHOTO_KINDS,
+  type PhotoRow,
+} from '@/lib/photos/types';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
 //      Filtered photo list, newest capture first, keyset-paginated on
@@ -216,6 +220,7 @@ export async function POST(request: Request) {
     sheet_number,
     tags,
     captured_at,
+    captured_at_source,
     original_path,
     original_bytes,
     mime_type,
@@ -273,6 +278,14 @@ export async function POST(request: Request) {
       tags: cleanTags(tags),
       // EXIF capture time when the client found one; upload time as fallback.
       captured_at: (capturedAtDate ?? new Date()).toISOString(),
+      // Provenance is only trusted alongside a real date; old clients that
+      // omit it (and the now() fallback) land as 'upload'.
+      captured_at_source:
+        typeof captured_at_source === 'string' &&
+        (CAPTURED_AT_SOURCES as readonly string[]).includes(captured_at_source) &&
+        capturedAtDate
+          ? captured_at_source
+          : 'upload',
       original_path,
       original_bytes:
         typeof original_bytes === 'number' && Number.isFinite(original_bytes)

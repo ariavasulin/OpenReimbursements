@@ -101,3 +101,9 @@ create policy photos_storage_update on storage.objects
     and (storage.foldername(name))[1] in ('originals', 'derived')
     and (storage.foldername(name))[2] = auth.uid()::text
   );
+
+-- Upload pipeline hardening, Phase 2: date provenance. Legacy rows default to
+-- 'upload' (their captured_at may be the server's now() fallback).
+alter table public.photos
+  add column if not exists captured_at_source text not null default 'upload'
+    check (captured_at_source in ('exif','xmp','camera','file','upload'));

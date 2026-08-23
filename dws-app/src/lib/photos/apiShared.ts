@@ -1,6 +1,7 @@
 /** Columns every photos response returns (uploader name + job embedded). */
 export const PHOTO_COLUMNS =
   'id, job_id, uploader_id, kind, sheet_number, tags, captured_at, ' +
+  'captured_at_source, ' +
   'original_path, original_bytes, mime_type, original_name, thumb_path, ' +
   'preview_path, duration_secs, created_at, ' +
   'uploader:user_profiles(full_name), job:jobs(id, job_number, name)';

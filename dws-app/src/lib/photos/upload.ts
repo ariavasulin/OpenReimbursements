@@ -3,12 +3,16 @@
 // without a browser or network.
 
 import { Upload as TusUpload, type UploadOptions, type DetailedError } from "tus-js-client";
-import { extractCapturedAt as defaultExtractCapturedAt } from "./exif";
+import {
+  extractCapturedAt as defaultExtractCapturedAt,
+  type CapturedAt,
+} from "./exif";
+import { classifyFile, rewrap } from "./classify";
 import {
   makeDerivatives as defaultMakeDerivatives,
   type Derivatives,
 } from "./derivatives";
-import type { PhotoKind } from "./types";
+import type { CapturedAtSource, PhotoKind } from "./types";
 
 export interface UploadMeta {
   jobId: string;
@@ -31,6 +35,9 @@ export interface FinalizePayload {
   sheet_number: string | null;
   tags: string[];
   captured_at: string | null;
+  /** Where captured_at came from; 'upload' when captured_at is null (the
+   * server stamps now()). */
+  captured_at_source: CapturedAtSource;
   original_path: string;
   original_bytes: number;
   mime_type: string | null;
@@ -69,7 +76,10 @@ export interface UploadDeps {
   /** TUS path for originals over RESUMABLE_THRESHOLD_BYTES (optional: tests
    * and environments without TUS fall back to plain uploads). */
   resumableUpload?: ResumableUpload;
-  extractCapturedAt?: (file: File) => Promise<Date | null>;
+  extractCapturedAt?: (
+    file: File,
+    opts?: { shutter?: Date; sidecarDate?: Date | null }
+  ) => Promise<CapturedAt>;
   makeDerivatives?: (file: File) => Promise<Derivatives | null>;
 }
 
@@ -215,14 +225,16 @@ export function storagePaths(uploaderId: string, photoId: string, filename: stri
 }
 
 export async function uploadOne(
-  file: File,
+  rawFile: File,
   /** Owned by the caller (the upload manager) and STABLE across retries — a
    * retry resumes the same TUS fingerprint and replays the same row id
    * instead of orphaning the first attempt. */
   photoId: string,
   meta: UploadMeta,
   deps: UploadDeps,
-  onBytes?: ByteProgress
+  onBytes?: ByteProgress,
+  /** Per-file extras: the in-app camera shutter time (date source 'camera'). */
+  opts: { shutter?: Date } = {}
 ): Promise<UploadResult> {
   const failed = (error: string): UploadResult => ({ status: "failed", error });
 
@@ -231,15 +243,22 @@ export async function uploadOne(
       deps.extractCapturedAt ?? defaultExtractCapturedAt;
     const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
 
+    // Extension-first classification; the original is re-wrapped (same
+    // bytes) so the stored object's Content-Type is the canonical mime, not
+    // the browser's guess.
+    const classified = classifyFile(rawFile);
+    const file = rewrap(rawFile, classified.mime);
     const [capturedAt, derivatives] = await Promise.all([
-      extractCapturedAt(file).catch(() => null),
+      extractCapturedAt(file, { shutter: opts.shutter }).catch(
+        (): CapturedAt => ({ date: null, source: "upload" })
+      ),
       makeDerivatives(file).catch(() => null),
     ]);
     const paths = storagePaths(meta.uploaderId, photoId, file.name);
 
     // 1. Original, byte-for-byte, ALWAYS first — a kill after this point
     // leaves a repairable state, never orphan derivatives.
-    const contentType = file.type || "application/octet-stream";
+    const contentType = classified.mime;
     const resumable =
       file.size > RESUMABLE_THRESHOLD_BYTES ? deps.resumableUpload : undefined;
     const { error: originalError } = resumable
@@ -281,13 +300,16 @@ export async function uploadOne(
     const payload: FinalizePayload = {
       id: photoId,
       job_id: meta.jobId,
-      kind: kindFromMime(file.type),
+      // 'sidecar' never lands as its own kind — until pairing (Phase 3) a
+      // lone .xmp stays a plain file tile.
+      kind: classified.kind === "sidecar" ? "file" : classified.kind,
       sheet_number: meta.sheetNumber?.trim() || null,
       tags: meta.tags ?? [],
-      captured_at: capturedAt ? capturedAt.toISOString() : null,
+      captured_at: capturedAt.date ? capturedAt.date.toISOString() : null,
+      captured_at_source: capturedAt.date ? capturedAt.source : "upload",
       original_path: paths.original,
       original_bytes: file.size,
-      mime_type: file.type || null,
+      mime_type: classified.mime,
       original_name: file.name,
       thumb_path: thumbPath,
       preview_path: previewPath,

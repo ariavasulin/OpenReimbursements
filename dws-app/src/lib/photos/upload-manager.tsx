@@ -198,14 +198,14 @@ export function UploadManagerProvider({
               sheetNumber: current.sheetNumber,
               tags: current.tags,
             },
+            deps,
+            (sent) =>
+              dispatch({ type: "progress", photoId: id, sentBytes: sent }),
             {
-              ...deps,
-              extractCapturedAt: async (f) =>
-                current.shutterAt
-                  ? new Date(current.shutterAt)
-                  : extractCapturedAt(f),
-            },
-            (sent) => dispatch({ type: "progress", photoId: id, sentBytes: sent })
+              shutter: current.shutterAt
+                ? new Date(current.shutterAt)
+                : undefined,
+            }
           );
           console.info(
             `photos.upload photoId=${id} status=${result.status}${result.error ? ` err=${result.error}` : ""}`

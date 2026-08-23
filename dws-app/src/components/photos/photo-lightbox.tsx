@@ -213,7 +213,13 @@ export default function PhotoLightbox({
           </div>
         )}
         <div className="mt-0.5 text-xs text-[#a0a0a0]">
-          Taken {formatCaptured(photo.captured_at)}
+          {/* 'file'/'upload' dates are fallbacks (lastModified / server
+              time), never EXIF evidence — say so. */}
+          {photo.captured_at_source === "file" ||
+          photo.captured_at_source === "upload"
+            ? "Approx. "
+            : "Taken "}
+          {formatCaptured(photo.captured_at)}
           {photo.uploader?.full_name &&
             ` · Uploaded by ${photo.uploader.full_name}`}
           {fileInfo && ` · ${fileInfo}`}

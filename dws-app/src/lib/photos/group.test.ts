@@ -14,6 +14,7 @@ function makePhoto(overrides: Partial<PhotoRow> = {}): PhotoRow {
     sheet_number: null,
     tags: [],
     captured_at: "2026-08-14T14:41:00.000Z",
+    captured_at_source: "exif",
     original_path: "originals/user-1/x/file.jpg",
     original_bytes: 1000,
     mime_type: "image/jpeg",

@@ -18,7 +18,6 @@ import {
   type UploadDeps,
   type UploadResult,
 } from "@/lib/photos/upload";
-import { extractCapturedAt } from "@/lib/photos/exif";
 import { useUploadManager } from "@/lib/photos/upload-manager";
 import UploadProgress, {
   RowButton,
@@ -46,10 +45,8 @@ function revokePreviews(previews: (string | null)[]) {
   for (const url of previews) if (url) URL.revokeObjectURL(url);
 }
 
-function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
+function buildUploadDeps(): UploadDeps {
   return {
-    extractCapturedAt: async (file: File) =>
-      capturedAtOverrides?.get(file) ?? extractCapturedAt(file),
     storage: {
       async upload(path, body, options) {
         const { error } = await supabase.storage
@@ -228,7 +225,7 @@ export default function UploadSheet({
       sheetNumber: sheetNumber || null,
       tags: withPendingTag(tags, tagInput),
     };
-    const deps = buildUploadDeps(capturedAtOverrides);
+    const deps = buildUploadDeps();
 
     const results: UploadResult[] = [];
     for (const fileIndex of indices) {
@@ -250,7 +247,8 @@ export default function UploadSheet({
             const next = [...previous];
             next[fileIndex] = { ...next[fileIndex], sentBytes, totalBytes };
             return next;
-          })
+          }),
+        { shutter: capturedAtOverrides?.get(file) }
       );
       results.push(result);
       patchItem(fileIndex, { status: result.status, error: result.error });

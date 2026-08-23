@@ -65,7 +65,10 @@ function makeDeps(overrides?: {
       finalized.push(payload);
       return {};
     }),
-    extractCapturedAt: async () => CAPTURED,
+    extractCapturedAt: async (_file, opts) =>
+      opts?.shutter
+        ? { date: opts.shutter, source: "camera" }
+        : { date: CAPTURED, source: "exif" },
     makeDerivatives: async () =>
       overrides?.noDerivatives
         ? null
@@ -104,6 +107,7 @@ describe("uploadOne", () => {
       sheet_number: "12",
       tags: ["professional"],
       captured_at: CAPTURED.toISOString(),
+      captured_at_source: "exif",
       original_path: "originals/user-1/photo-1/IMG_0001.jpg",
       original_bytes: 10,
       mime_type: "image/jpeg",
@@ -168,9 +172,59 @@ describe("uploadOne", () => {
     expect(uploads).toHaveLength(1); // only the original
     expect(finalized[0]).toMatchObject({
       kind: "file",
-      mime_type: null,
+      mime_type: "application/octet-stream", // canonical, never the browser's blank
       thumb_path: null,
       preview_path: null,
+    });
+  });
+
+  it("classifies by extension: a typeless .mov is a video with a canonical mime", async () => {
+    const { deps, uploads, finalized } = makeDeps({ noDerivatives: true });
+    const file = makeFile("IMG_5011.MOV", "", 8); // Safari sometimes leaves type empty
+
+    const result = await uploadOne(file, "photo-1", META, deps);
+
+    expect(result.status).toBe("done");
+    // The stored object carries the canonical Content-Type (rewrap), not "".
+    expect(uploads[0].contentType).toBe("video/quicktime");
+    expect(finalized[0]).toMatchObject({
+      kind: "video",
+      mime_type: "video/quicktime",
+    });
+  });
+
+  it("forwards the shutter time so in-app shots record source 'camera'", async () => {
+    const { deps, finalized } = makeDeps();
+    const shutter = new Date("2026-08-20T10:00:00.000Z");
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps,
+      undefined,
+      { shutter }
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      captured_at: shutter.toISOString(),
+      captured_at_source: "camera",
+    });
+  });
+
+  it("finalizes source 'upload' with a null date when extraction throws", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.extractCapturedAt = async () => {
+      throw new Error("exif exploded");
+    };
+
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      captured_at: null,
+      captured_at_source: "upload",
     });
   });
 });
