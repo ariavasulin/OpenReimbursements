@@ -40,16 +40,34 @@ function basenameLower(name) {
   return (dot > 0 ? name.slice(0, dot) : name).toLowerCase()
 }
 
-async function main() {
-  const { data: rows, error } = await supabase
-    .from('photos')
-    .select('id, job_id, uploader_id, kind, original_name, original_path, sidecar_path')
-  if (error) throw new Error(error.message)
+const PAGE = 1000
+const COLUMNS = 'id, job_id, uploader_id, kind, original_name, original_path, sidecar_path'
 
-  const orphans = rows.filter(
-    (r) => r.kind === 'file' && (r.original_name ?? '').toLowerCase().endsWith('.xmp')
+/** Reads a photos query page by page. PostgREST caps an un-ranged response at
+ * its configured row limit (1000 by default) and says nothing about it, so an
+ * unpaged read of a bigger table is silently partial — here that would hide
+ * orphans, or their matching images. Ordered by id so pages tile the table. */
+async function selectAllPages(build) {
+  const out = []
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await build().order('id').range(offset, offset + PAGE - 1)
+    if (error) throw new Error(error.message)
+    out.push(...(data ?? []))
+    if (!data || data.length < PAGE) break
+  }
+  return out
+}
+
+async function main() {
+  // The orphan side filters server-side ('.' is literal in LIKE; ilike keeps
+  // the old case-insensitive suffix match) so only the two kinds that can
+  // pair are ever fetched.
+  const orphans = await selectAllPages(() =>
+    supabase.from('photos').select(COLUMNS).eq('kind', 'file').ilike('original_name', '%.xmp')
   )
-  const images = rows.filter((r) => r.kind === 'image')
+  const images = await selectAllPages(() =>
+    supabase.from('photos').select(COLUMNS).eq('kind', 'image')
+  )
 
   const plans = []
   const unmatched = []

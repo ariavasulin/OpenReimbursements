@@ -6,16 +6,12 @@ import { ChevronDown, ChevronUp, RotateCw, X } from "lucide-react";
 import { useUploadManager } from "@/lib/photos/upload-manager";
 import { pickerAccept } from "@/components/photos/capture-bar";
 import { readPickedFiles } from "@/components/photos/multi-shot-camera";
-import UploadProgress, {
-  RowButton,
-  type UploadRow,
-} from "@/components/photos/upload-progress";
+import UploadProgress, { type UploadRow } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";
 import type { QueueItem } from "@/lib/photos/upload-queue";
 
 // The always-visible upload status bar, pinned above the CaptureBar on every
-// photos page. Collapsed it is one summary line; expanded it lists per-file
-// rows with Retry (failed), Re-pick (interrupted after a reload), and Remove.
+// photos page.
 
 function summary(items: QueueItem[], active: boolean): string {
   const count = (statuses: QueueItem["status"][]) =>
@@ -28,7 +24,13 @@ function summary(items: QueueItem[], active: boolean): string {
   if (interrupted) return `${plural(interrupted, "upload")} interrupted`;
   const failed = count(["failed"]);
   if (failed) return `${plural(failed, "upload")} failed`;
-  return `${count(["done", "duplicate"])} uploaded`;
+  // Duplicates are reported apart from uploads: "already in this job" is not
+  // the same news as "uploaded".
+  const uploaded = count(["done"]);
+  const duplicates = count(["duplicate"]);
+  if (!duplicates) return `${uploaded} uploaded`;
+  if (!uploaded) return `${plural(duplicates, "photo")} already in this job`;
+  return `${uploaded} uploaded, ${duplicates} already in this job`;
 }
 
 export default function UploadTray({
@@ -57,27 +59,31 @@ export default function UploadTray({
     }
   };
 
-  const rows: UploadRow[] = items.map((item) => ({
-    name: item.name,
-    item,
-    actions:
+  const rows: UploadRow[] = items.map((item) => {
+    const primary =
       item.status === "failed" ? (
-        <>
-          <RowButton onClick={() => manager.retry(item.photoId)}>
-            <RotateCw className="h-3 w-3" />
-            Retry
-          </RowButton>
-          <RemoveButton onClick={() => manager.remove(item.photoId)} name={item.name} />
-        </>
+        <RowButton onClick={() => manager.retry(item.photoId)}>
+          <RotateCw className="h-3 w-3" />
+          Retry
+        </RowButton>
       ) : item.status === "interrupted" ? (
+        <RowButton onClick={() => repickInputRef.current?.click()}>
+          Re-pick
+        </RowButton>
+      ) : null;
+    return {
+      item,
+      actions: primary ? (
         <>
-          <RowButton onClick={() => repickInputRef.current?.click()}>
-            Re-pick
-          </RowButton>
-          <RemoveButton onClick={() => manager.remove(item.photoId)} name={item.name} />
+          {primary}
+          <RemoveButton
+            onClick={() => manager.remove(item.photoId)}
+            name={item.name}
+          />
         </>
       ) : undefined,
-  }));
+    };
+  });
 
   return (
     <div
@@ -125,6 +131,24 @@ export default function UploadTray({
         )}
       </div>
     </div>
+  );
+}
+
+function RowButton({
+  onClick,
+  children,
+}: {
+  onClick(): void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-1 rounded-md bg-[#2680FC] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-[#1a6fd8]"
+    >
+      {children}
+    </button>
   );
 }
 

@@ -1,17 +1,7 @@
-// Pure helpers for the pending batch in the upload sheet. `files` and
-// `previews` are two arrays indexed by the same file position, so any
-// removal has to shift both together.
+// Pure helpers for the pending batch in the upload sheet.
 
-export function removeAt(
-  files: File[],
-  previews: (string | null)[],
-  index: number
-) {
-  const drop = <T>(list: T[]) => list.filter((_, i) => i !== index);
-  return { files: drop(files), previews: drop(previews) };
-}
-
-/** null when nothing is left. */
+/** Where the full-screen preview lands after a removal; null when nothing is
+ * left. */
 export function nextPreviewIndex(
   current: number,
   removed: number,

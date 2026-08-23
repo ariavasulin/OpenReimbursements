@@ -22,11 +22,17 @@ const row = (over: Partial<RepairRow> = {}): RepairRow => ({
 });
 
 const NOW = SETTLE_MS * 10;
-const originals = (...paths: string[]) => new Set(paths);
+/** Objects the walk found, each owned by some row — never orphan candidates. */
+const stored = (...names: string[]): StoredObject[] =>
+  names.map((name) => ({
+    name,
+    created_at: new Date(0).toISOString(),
+    has_row: true,
+  }));
 
 describe("planSweep", () => {
   it("fills derivatives for a transformable image without a thumb", () => {
-    const plan = planSweep([row()], [], originals("originals/u1/p1/a.jpg"), NOW);
+    const plan = planSweep([row()], stored("originals/u1/p1/a.jpg"), NOW);
     expect(plan).toEqual([{ action: "fillImageDerivatives", photoId: "p1" }]);
   });
 
@@ -39,8 +45,7 @@ describe("planSweep", () => {
     });
     const plan = planSweep(
       [raw, big],
-      [],
-      originals("originals/u1/p1/a.jpg", "originals/u1/p2/b.jpg"),
+      stored("originals/u1/p1/a.jpg", "originals/u1/p2/b.jpg"),
       NOW
     );
     expect(plan).toEqual([
@@ -51,17 +56,17 @@ describe("planSweep", () => {
 
   it("plans a poster for a video without a thumb", () => {
     const video = row({ kind: "video", mime_type: "video/quicktime" });
-    const plan = planSweep([video], [], originals(video.original_path), NOW);
+    const plan = planSweep([video], stored(video.original_path), NOW);
     expect(plan).toEqual([{ action: "makeVideoPoster", photoId: "p1" }]);
   });
 
   it("leaves rows younger than the settle window alone", () => {
     const fresh = row({ created_at: new Date(NOW - SETTLE_MS + 1).toISOString() });
-    expect(planSweep([fresh], [], originals(fresh.original_path), NOW)).toEqual([]);
+    expect(planSweep([fresh], stored(fresh.original_path), NOW)).toEqual([]);
   });
 
   it("deletes a row whose original object is missing", () => {
-    expect(planSweep([row()], [], originals(), NOW)).toEqual([
+    expect(planSweep([row()], [], NOW)).toEqual([
       { action: "deleteDeadRow", photoId: "p1" },
     ]);
   });
@@ -74,7 +79,7 @@ describe("planSweep", () => {
     };
     const young: StoredObject = { ...old, name: "originals/u1/new/b.jpg", created_at: new Date(NOW - 1).toISOString() };
     const owned: StoredObject = { ...old, name: "originals/u1/p9/c.jpg", has_row: true };
-    expect(planSweep([], [old, young, owned], originals(), NOW)).toEqual([
+    expect(planSweep([], [old, young, owned], NOW)).toEqual([
       { action: "deleteOrphanObject", path: "originals/u1/dead/a.jpg" },
     ]);
   });
@@ -85,7 +90,7 @@ describe("planSweep", () => {
       created_at: new Date(NOW - 1).toISOString(),
       has_row: false,
     };
-    expect(planSweep([], [young], originals(), NOW, { orphanMs: 0 })).toEqual([
+    expect(planSweep([], [young], NOW, { orphanMs: 0 })).toEqual([
       { action: "deleteOrphanObject", path: "originals/u1/new/b.jpg" },
     ]);
   });
@@ -97,7 +102,7 @@ describe("planSweep", () => {
       created_at: new Date(0).toISOString(),
       has_row: true,
     };
-    expect(planSweep([done], [object], originals(done.original_path), NOW)).toEqual([]);
+    expect(planSweep([done], [object], NOW)).toEqual([]);
   });
 
   it("plans transcodes only when the gate is on and no skip reason is set", () => {
@@ -110,9 +115,9 @@ describe("planSweep", () => {
       playback_path: null,
       playback_skipped_reason: "over cap",
     });
-    const objs = originals(pending.original_path, skipped.original_path);
-    expect(planSweep([pending, skipped], [], objs, NOW)).toEqual([]);
-    expect(planSweep([pending, skipped], [], objs, NOW, { transcode: true })).toEqual([
+    const objs = stored(pending.original_path, skipped.original_path);
+    expect(planSweep([pending, skipped], objs, NOW)).toEqual([]);
+    expect(planSweep([pending, skipped], objs, NOW, { transcode: true })).toEqual([
       { action: "transcodeVideo", photoId: "p1" },
     ]);
   });

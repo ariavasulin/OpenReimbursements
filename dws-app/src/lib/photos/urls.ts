@@ -33,8 +33,9 @@ export function sidecarDownloadUrl(photo: PhotoRow): string | null {
   return data.publicUrl;
 }
 
-/** The lightbox renders previews only — never originals (videos stream the
- * original for playback; there's no transcode, but the poster is a preview). */
+/** The lightbox renders previews only — never originals (a video streams its
+ * transcoded rendition, or the original when there is none, but the poster is
+ * a preview). */
 export function previewUrl(photo: PhotoRow): string | null {
   const path = photo.preview_path ?? photo.thumb_path;
   return path ? publicUrl(path) : null;

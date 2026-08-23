@@ -7,7 +7,6 @@ const row = (
   overrides: Partial<Parameters<typeof videoSource>[0]> = {}
 ): Parameters<typeof videoSource>[0] => ({
   mime_type: "video/quicktime",
-  original_name: "IMG_0001.MOV",
   original_path: "originals/u1/p1/IMG_0001.MOV",
   playback_path: null,
   ...overrides,

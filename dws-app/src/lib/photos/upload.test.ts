@@ -422,7 +422,6 @@ describe("content-hash dedupe in uploadOne", () => {
     await uploadOne(file, "photo-1", META, deps);
 
     expect(finalized[0].content_sha256).toBe(await sha256(file));
-    expect(finalized[0].content_sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

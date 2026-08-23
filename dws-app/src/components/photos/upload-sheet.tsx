@@ -15,7 +15,7 @@ import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-inp
 import { fetchJobs, fetchTags } from "@/lib/photos/api";
 import { readSidecarMeta } from "@/lib/photos/sidecar";
 import { plural } from "@/lib/photos/format";
-import { nextPreviewIndex, removeAt } from "@/lib/photos/batch";
+import { nextPreviewIndex } from "@/lib/photos/batch";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
 // The batch is copied into local state so files can be removed before upload.
@@ -96,16 +96,17 @@ export default function UploadSheet({
   const removeFile = (index: number) => {
     const url = previews[index];
     if (url) URL.revokeObjectURL(url);
-    const next = removeAt(files, previews, index);
-    setFiles(next.files);
-    previewsRef.current = next.previews;
-    setPreviews(next.previews);
+    // files and previews are indexed by the same position, so drop from both.
+    const drop = <T,>(list: T[]) => list.filter((_, i) => i !== index);
+    const nextFiles = drop(files);
+    const nextPreviews = drop(previews);
+    setFiles(nextFiles);
+    previewsRef.current = nextPreviews;
+    setPreviews(nextPreviews);
     setPreviewIndex((current) =>
-      current === null
-        ? null
-        : nextPreviewIndex(current, index, next.files.length)
+      current === null ? null : nextPreviewIndex(current, index, nextFiles.length)
     );
-    if (next.files.length === 0) onOpenChange(false);
+    if (nextFiles.length === 0) onOpenChange(false);
   };
 
   // dc:subject keywords from paired sidecars — SUGGESTED only, never
@@ -160,18 +161,17 @@ export default function UploadSheet({
       toast.error("Pick a job first");
       return;
     }
-    // The queue pairs by basename itself, so hand it each primary WITH its
-    // sidecar (a sidecar whose primary was removed simply stays behind).
-    const batchFiles = files.flatMap((file) => {
-      const sidecar = sidecars?.get(file);
-      return sidecar ? [file, sidecar] : [file];
-    });
-    manager.enqueue(batchFiles, {
-      jobId,
-      sheetNumber: sheetNumber || null,
-      tags: withPendingTag(tags, tagInput),
-      shutterAt: capturedAtOverrides,
-    });
+    // Pairing was decided at pick time; a sidecar whose primary was removed
+    // from the strip simply stays behind.
+    manager.enqueue(
+      files.map((file) => ({ file, sidecar: sidecars?.get(file) })),
+      {
+        jobId,
+        sheetNumber: sheetNumber || null,
+        tags: withPendingTag(tags, tagInput),
+        shutterAt: capturedAtOverrides,
+      }
+    );
     onOpenChange(false);
   };
 

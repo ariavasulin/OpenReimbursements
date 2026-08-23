@@ -21,6 +21,18 @@ describe("capReason", () => {
       `over ${CAP.bytes} bytes`
     );
   });
+
+  it("skips a clip whose duration is unknown", () => {
+    expect(capReason(10, null)).toBe("unknown duration");
+  });
+
+  it("still passes a genuinely zero-second clip", () => {
+    expect(capReason(10, 0)).toBeNull();
+  });
+
+  it("reports the size cap first when the duration is also unknown", () => {
+    expect(capReason(CAP.bytes + 1, null)).toBe(`over ${CAP.bytes} bytes`);
+  });
 });
 
 describe("parseDuration", () => {
@@ -37,10 +49,15 @@ describe("parseDuration", () => {
   it("carries hours and minutes", () => {
     expect(parseDuration("  Duration: 01:02:03.00, start: 0")).toBe(3723);
   });
-  it("returns 0 when ffmpeg reports N/A", () => {
-    expect(parseDuration("  Duration: N/A, bitrate: N/A")).toBe(0);
+  it("reads a real zero-second duration as 0, not unknown", () => {
+    expect(parseDuration("  Duration: 00:00:00.00, start: 0")).toBe(0);
   });
-  it("returns 0 when there is no Duration line at all", () => {
-    expect(parseDuration("/tmp/x: Invalid data found when processing input")).toBe(0);
+  it("returns null when ffmpeg reports N/A", () => {
+    expect(parseDuration("  Duration: N/A, bitrate: N/A")).toBeNull();
+  });
+  it("returns null when there is no Duration line at all", () => {
+    expect(
+      parseDuration("/tmp/x: Invalid data found when processing input")
+    ).toBeNull();
   });
 });

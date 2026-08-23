@@ -334,13 +334,17 @@ export async function POST(request: Request) {
   if (error) {
     // 23505 on photos_job_sha = the JOB already has these exact bytes under
     // another photo id — a duplicate, so the client discards its upload.
-    // Any other 23505 (the pkey) = a retry of a finalize that actually
-    // landed; treat as success so retries converge.
+    // 23505 on photos_pkey = a retry of a finalize that actually landed;
+    // treat as success so retries converge. Both constraints are named
+    // explicitly: a unique constraint we don't recognize is a real failure,
+    // and reporting it as success would hide the row that never got written.
     if (error.code === '23505') {
       if (error.message.includes('photos_job_sha')) {
         return NextResponse.json({ success: true, duplicate: true });
       }
-      return NextResponse.json({ success: true, alreadyExists: true });
+      if (error.message.includes('photos_pkey')) {
+        return NextResponse.json({ success: true, alreadyExists: true });
+      }
     }
     const status = error.code === '23503' ? 400 : 500; // bad FK vs. real failure
     return NextResponse.json({ error: error.message }, { status });

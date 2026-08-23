@@ -32,13 +32,19 @@ response looks like:
 | `transcodeVideo` | A video within the caps gained an H.264/AAC `playback_path` rendition (`derived/{uid}/{photoId}_playback.mp4`). Only planned when `PHOTOS_TRANSCODE=1`. |
 | `playbackSkipped` | A planned transcode found the clip over a cap and set `playback_skipped_reason` instead. The sweep never replans it; the lightbox shows the download card. |
 | `transcodeDeferred` | The run's 240 s transcode budget ran out before this clip started. Nothing was written; the next run (or a manual one) picks it up. |
-| `deleteOrphanObject` | An object under `originals/` had no `photos` row pointing at it (original **or** sidecar) and was older than 24 h — a dead upload whose finalize never ran. Deleted. |
+| `deleteOrphanObject` | An object under `originals/` had no `photos` row pointing at it (original **or** sidecar) and was older than 24 h — a dead upload whose finalize never ran. Deleted. `DELETE /api/photos/:id` already removes a row's objects (original, thumb, preview, sidecar) in the same request, so this collects only what that misses. |
 | `deleteDeadRow` | A `photos` row's original object is missing from storage — finalize raced a dead upload. Row deleted. |
 
 `errors` lists actions that failed (`"<action>: <message>"`); each action is
 isolated, so one failure never aborts the rest of the sweep. Rows younger
 than 10 minutes are always skipped — the client may still be uploading its
 derivatives.
+
+**A run with any error responds `500`.** The body is unchanged — same
+`counts`, `errors`, and `planned` — so a manual run still shows exactly what
+landed and what failed; only the status code differs. That is what makes a
+failed cron show red under **Settings → Cron Jobs**. A `400` instead means
+the request itself was bad (an unparseable `?olderThan=`); nothing was swept.
 
 ### `?olderThan=<ms>` (drills only)
 
@@ -57,11 +63,13 @@ object can look row-less until its finalize lands.
 
 The H.264 playback rendition is behind the `PHOTOS_TRANSCODE` Vercel env
 var — set it to `1` to turn transcoding on; unset (or anything else) means
-transcodes are never planned. Posters are **not** behind the switch: a video
-missing its thumb always gets `makeVideoPoster`.
+transcodes are never planned. It is not set at first deploy — set it to `1`
+once a manual sweep run and posters look healthy in production. Posters are
+**not** behind the switch: a video missing its thumb always gets
+`makeVideoPoster`.
 
 Caps (`src/lib/photos/repair/transcode.ts`): originals over **200 MB** or
-**300 s** are skipped permanently via `playback_skipped_reason`. Transcodes
+**120 s** are skipped permanently via `playback_skipped_reason`. Transcodes
 always run after every other action and stop starting after 240 s of wall
 time (`transcodeDeferred`), so a big backlog drains across daily runs.
 
@@ -107,9 +115,7 @@ approximate time, the job, and ideally the filename.
    `interrupted` row (they reloaded/killed Safari) resumes after re-picking
    the same files from the tray. "Already in this job" means the same bytes
    were already uploaded to that job — the photo is there, under the earlier
-   row. The browser logs `photos.upload photoId=<uuid> status=…` to the
-   client console only — you will usually not have it after the fact, so go
-   server-side:
+   row.
 
 2. **Is there a row?**
 
@@ -148,16 +154,15 @@ approximate time, the job, and ideally the filename.
    converges every partial state that can be converged (`counts` tells you
    what it found).
 
-## Kill switches
+## Rollback: the upload manager
 
-- **`PHOTOS_TRANSCODE`** (Vercel env var) is the one deliberate switch left:
-  it gates only H.264 transcodes in the repair sweep (see above). It is NOT
-  set at first deploy — set it to `1` once a manual sweep run and posters
-  look healthy in production.
-- **Upload manager.** If the browser-side upload manager misbehaves in
-  production, revert the upload-manager commit — that restores the sheet's
-  in-place upload loop behind `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER` — then set
-  `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER=0` and redeploy.
+There is no runtime switch for the browser-side upload manager — rollback is
+a revert. Commit `e07574e` deleted the `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER`
+flag and the legacy in-sheet upload loop it guarded (the manager itself came
+in `0f5749f`). Reverting `e07574e` restores both: the manager stays the
+default, so you then have to set `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER=0` in
+Vercel and redeploy — a `NEXT_PUBLIC_` var is baked in at build time —
+before the in-sheet loop actually runs.
 
 ## Launch drills (run on production after the first deploy)
 
@@ -180,9 +185,3 @@ Run them on an iPhone over LTE (not office Wi-Fi). Record results inline.
 - [ ] **Transcode turn-on** (after the above): set `PHOTOS_TRANSCODE=1`, run
   the sweep by hand, confirm the backlog clips gain `playback_path` and play
   in desktop Chrome/Firefox (see "Video transcoding" above).
-
-## Related
-
-- `DELETE /api/photos/:id` removes the row's storage objects (original,
-  thumb, preview, sidecar) in the same request; anything it misses is
-  exactly what the orphan sweep collects on the next run.

@@ -3,7 +3,6 @@
 // network.
 
 import { classifyFile } from "./classify";
-import { pairByBasename, type Rejected } from "./sidecar";
 import type { BatchMeta } from "./upload";
 
 export type QueueStatus =
@@ -33,10 +32,16 @@ export interface QueueItem {
   sidecarName?: string;
 }
 
+/** An uploadable file with its .xmp, if one was paired to it at pick time. */
+export interface PairedFile {
+  file: File;
+  sidecar?: File;
+}
+
 /** Files live only in memory; the manifest never carries them. */
 export interface Queue {
   items: QueueItem[];
-  files: Map<string, { file: File; sidecar?: File }>;
+  files: Map<string, PairedFile>;
 }
 
 export type Persisted = Omit<QueueItem, "status" | "sentBytes"> & {
@@ -48,23 +53,19 @@ export const MANIFEST_TTL_MS = 24 * 60 * 60 * 1000;
 export const emptyQueue = (): Queue => ({ items: [], files: new Map() });
 
 /**
- * Add a picked batch. Runs sidecar pairing internally: a .xmp never becomes
- * its own item — it rides on its image's entry (and manifest as sidecarName).
- * Rejected sidecars (no same-basename image in this batch) surface to the
- * caller for a toast.
+ * Add a picked batch, already paired by the caller: a .xmp never becomes its
+ * own item — it rides on its image's entry (and manifest as sidecarName).
  */
 export function enqueue(
   q: Queue,
-  files: File[],
+  paired: PairedFile[],
   meta: BatchMeta,
   now: number,
   newId: () => string = () => crypto.randomUUID()
-): { queue: Queue; rejected: Rejected[] } {
-  const { pairs, rejected } = pairByBasename(files);
+): Queue {
   const items = [...q.items];
   const map = new Map(q.files);
-  for (const pair of pairs) {
-    const file = pair.primary.file;
+  for (const { file, sidecar } of paired) {
     const photoId = newId();
     items.push({
       photoId,
@@ -79,11 +80,11 @@ export function enqueue(
       status: "queued",
       sentBytes: 0,
       shutterAt: meta.shutterAt?.get(file)?.toISOString(),
-      sidecarName: pair.sidecar?.file.name,
+      sidecarName: sidecar?.name,
     });
-    map.set(photoId, { file, sidecar: pair.sidecar?.file });
+    map.set(photoId, { file, sidecar });
   }
-  return { queue: { items, files: map }, rejected };
+  return { items, files: map };
 }
 
 const patch = (q: Queue, photoId: string, p: Partial<QueueItem>): Queue => ({
@@ -115,10 +116,8 @@ export function clearSettled(q: Queue): Queue {
   const items = q.items.filter(
     (i) => i.status !== "done" && i.status !== "duplicate"
   );
-  const files = new Map(q.files);
-  for (const [id] of q.files) {
-    if (!items.some((i) => i.photoId === id)) files.delete(id);
-  }
+  const live = new Set(items.map((i) => i.photoId));
+  const files = new Map([...q.files].filter(([id]) => live.has(id)));
   return { items, files };
 }
 
@@ -127,12 +126,18 @@ export const nextQueued = (q: Queue) =>
 export const isActive = (q: Queue) =>
   q.items.some((i) => i.status === "queued" || i.status === "uploading");
 
+/**
+ * Persist everything still recoverable — including `failed`, so a failure
+ * survives navigation as a re-pickable entry instead of silently reading as a
+ * successful upload. `done`/`duplicate` are left out: nothing to recover.
+ */
 export function toManifest(q: Queue, now: number): Persisted[] {
   return q.items
     .filter(
       (i) =>
         (i.status === "queued" ||
           i.status === "uploading" ||
+          i.status === "failed" ||
           i.status === "interrupted") &&
         now - i.enqueuedAt < MANIFEST_TTL_MS
     )

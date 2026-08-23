@@ -14,22 +14,8 @@ export type VideoSource = { src: string; type: string } | { unplayable: true };
 /** `HTMLMediaElement.canPlayType`: "" | "maybe" | "probably". */
 type CanPlay = (type: string) => string;
 
-/** The MIME label to probe/serve for this row's container. */
-function containerMime(
-  row: Pick<PhotoRow, "mime_type" | "original_name">
-): string {
-  const m = row.mime_type ?? "";
-  if (m === "video/quicktime" || m === "video/mp4" || m === "") {
-    return "video/mp4";
-  }
-  return m;
-}
-
 export function videoSource(
-  row: Pick<
-    PhotoRow,
-    "mime_type" | "original_name" | "original_path" | "playback_path"
-  >,
+  row: Pick<PhotoRow, "mime_type" | "original_path" | "playback_path">,
   publicUrl: (path: string) => string,
   canPlayType: CanPlay
 ): VideoSource {
@@ -38,7 +24,11 @@ export function videoSource(
   if (row.playback_path) {
     return { src: publicUrl(row.playback_path), type: "video/mp4" };
   }
-  const type = containerMime(row);
+  const mime = row.mime_type ?? "";
+  const type =
+    mime === "video/quicktime" || mime === "video/mp4" || mime === ""
+      ? "video/mp4"
+      : mime;
   if (canPlayType(type) !== "") {
     return { src: publicUrl(row.original_path), type };
   }

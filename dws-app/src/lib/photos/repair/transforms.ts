@@ -2,7 +2,7 @@
 // picked in Chrome, or a tab killed between the original and its derivatives.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { THUMB_MAX_DIM, PREVIEW_MAX_DIM } from "../derivatives";
-import type { RepairRow } from "./sweep";
+import { derivedKeys, type RepairRow } from "./sweep";
 
 export type FillResult =
   | { ok: true }
@@ -35,12 +35,7 @@ export async function fillImageDerivatives(
   admin: SupabaseClient,
   row: Pick<RepairRow, "id" | "uploader_id" | "original_path">
 ): Promise<FillResult> {
-  // Same derived/ keys the client's storagePaths() builds — spelled out here
-  // so the server bundle doesn't drag in the tus-js-client upload module.
-  const paths = {
-    thumb: `derived/${row.uploader_id}/${row.id}_thumb.webp`,
-    preview: `derived/${row.uploader_id}/${row.id}_preview.webp`,
-  };
+  const paths = derivedKeys(row.uploader_id, row.id);
 
   const [thumb, preview] = await Promise.all([
     render(admin, row.original_path, THUMB_MAX_DIM),

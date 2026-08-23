@@ -7,7 +7,7 @@ import {
   extractCapturedAt as defaultExtractCapturedAt,
   type CapturedAt,
 } from "./exif";
-import { classifyFile, rewrap } from "./classify";
+import { classifyFile, extensionOf, rewrap } from "./classify";
 import { sha256 } from "./hash";
 import { readSidecarMeta } from "./sidecar";
 import {
@@ -230,9 +230,11 @@ export function sanitizeFilename(name: string): string {
 
 export function storagePaths(uploaderId: string, photoId: string, filename: string) {
   const sanitized = sanitizeFilename(filename);
+  const ext = extensionOf(sanitized);
+  const base = ext ? sanitized.slice(0, -(ext.length + 1)) : sanitized;
   return {
     original: `originals/${uploaderId}/${photoId}/${sanitized}`,
-    sidecar: `originals/${uploaderId}/${photoId}/${sanitized.replace(/\.[^.]*$/, "")}.xmp`,
+    sidecar: `originals/${uploaderId}/${photoId}/${base}.xmp`,
     thumb: `derived/${uploaderId}/${photoId}_thumb.webp`,
     preview: `derived/${uploaderId}/${photoId}_preview.webp`,
   };
@@ -361,7 +363,7 @@ export async function uploadOne(
       sheet_number: meta.sheetNumber?.trim() || null,
       tags: meta.tags ?? [],
       captured_at: capturedAt.date ? capturedAt.date.toISOString() : null,
-      captured_at_source: capturedAt.date ? capturedAt.source : "upload",
+      captured_at_source: capturedAt.source,
       original_path: paths.original,
       original_bytes: file.size,
       mime_type: classified.mime,
@@ -369,16 +371,13 @@ export async function uploadOne(
       thumb_path: thumbPath,
       preview_path: previewPath,
       duration_secs: derivatives?.durationSecs ?? null,
-      // Both or neither: a name without a stored object is useless.
       sidecar_path: sidecarPath,
       sidecar_name: sidecarName,
       content_sha256: contentSha256,
     };
 
-    // alreadyExists (an idempotent replay of a photoId that finalized before
-    // the client heard about it) is still "done" — the photo is in.
-    // duplicate (this job already has these bytes under ANOTHER photoId)
-    // means the objects just uploaded are orphans: best-effort remove them.
+    // A duplicate means the objects just uploaded are orphans: best-effort
+    // remove them.
     const finalizeResult = await deps.finalize(payload);
     if (finalizeResult.duplicate) {
       try {

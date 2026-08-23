@@ -25,22 +25,23 @@ import {
   type UploadDeps,
 } from "./upload";
 import { extractCapturedAt } from "./exif";
+import { plural } from "./format";
 
 const MANIFEST_KEY = "photos.upload-manifest";
 
 type Action =
-  | { type: "enqueue"; files: File[]; meta: BatchMeta; now: number }
+  | { type: "enqueue"; files: Q.PairedFile[]; meta: BatchMeta; now: number }
   | { type: "start" | "complete" | "retry" | "remove" | "duplicate"; photoId: string }
   | { type: "progress"; photoId: string; sentBytes: number }
   | { type: "fail"; photoId: string; error: string }
   | { type: "restore"; saved: Q.Persisted[]; now: number }
-  | { type: "repick"; queue: Q.Queue }
+  | { type: "repick"; files: File[] }
   | { type: "dismissDone" };
 
 function reducer(q: Q.Queue, a: Action): Q.Queue {
   switch (a.type) {
     case "enqueue":
-      return Q.enqueue(q, a.files, a.meta, a.now).queue;
+      return Q.enqueue(q, a.files, a.meta, a.now);
     case "start":
       return Q.start(q, a.photoId);
     case "progress":
@@ -58,7 +59,7 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
     case "restore":
       return Q.restoreManifest(a.saved, a.now);
     case "repick":
-      return a.queue;
+      return Q.adoptRepick(q, a.files).queue;
     case "dismissDone":
       return Q.clearSettled(q);
   }
@@ -67,7 +68,7 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
 interface Manager {
   items: Q.QueueItem[];
   active: boolean;
-  enqueue(files: File[], meta: BatchMeta): void;
+  enqueue(files: Q.PairedFile[], meta: BatchMeta): void;
   retry(photoId: string): void;
   remove(photoId: string): void;
   /** Adopts re-picked files into interrupted entries; returns the files that
@@ -134,7 +135,18 @@ export function UploadManagerProvider({
   const running = useRef(false);
   const queueRef = useRef(queue);
   queueRef.current = queue;
-  const savedManifest = useRef<string | null>(null);
+  const persistedKey = useRef<string | null>(null);
+  // Teardown flag for the runner loop. It lives in a mount-scoped effect
+  // rather than the runner effect's own cleanup because that effect re-runs on
+  // every queue change — its cleanup would fire on ordinary dispatches, not
+  // just unmount.
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false;
+    return () => {
+      unmounted.current = true;
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -147,14 +159,19 @@ export function UploadManagerProvider({
       /* no storage / bad JSON: start empty */
     }
   }, []);
-  // The manifest carries no progress, so it is byte-identical across the
-  // progress ticks that dominate queue changes — skip those writes.
+  // The manifest carries no progress, so it only ever changes when an item is
+  // added, dropped, or changes status — and progress ticks dominate queue
+  // changes. Compare that cheap key first so the ticks skip building the
+  // manifest at all, not just the write.
   useEffect(() => {
-    const manifest = JSON.stringify(Q.toManifest(queue, Date.now()));
-    if (manifest === savedManifest.current) return;
-    savedManifest.current = manifest;
+    const key = queue.items.map((i) => `${i.photoId}:${i.status}`).join(",");
+    if (key === persistedKey.current) return;
+    persistedKey.current = key;
     try {
-      localStorage.setItem(MANIFEST_KEY, manifest);
+      localStorage.setItem(
+        MANIFEST_KEY,
+        JSON.stringify(Q.toManifest(queue, Date.now()))
+      );
     } catch {
       /* ignore */
     }
@@ -185,71 +202,107 @@ export function UploadManagerProvider({
       const deps = buildDeps();
       let item: Q.QueueItem | null = next;
       let any = false;
-      while (item) {
-        const current = item;
-        const entry = queueRef.current.files.get(current.photoId);
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!entry || !session) {
-          dispatch({
-            type: "fail",
-            photoId: current.photoId,
-            error: entry
-              ? "Signed out — sign in and retry"
-              : "File no longer available — re-pick it",
-          });
-        } else {
-          dispatch({ type: "start", photoId: current.photoId });
-          const id = current.photoId;
-          const result = await uploadOne(
-            entry.file,
-            id,
-            {
-              jobId: current.jobId,
-              uploaderId: session.user.id,
-              sheetNumber: current.sheetNumber,
-              tags: current.tags,
-            },
-            deps,
-            (sent) =>
-              dispatch({ type: "progress", photoId: id, sentBytes: sent }),
-            {
-              shutter: current.shutterAt
-                ? new Date(current.shutterAt)
-                : undefined,
-              sidecar: entry.sidecar,
-            }
-          );
-          console.info(
-            `photos.upload photoId=${id} status=${result.status}${result.error ? ` err=${result.error}` : ""}`
-          );
-          if (result.status === "done") {
-            any = true;
-            dispatch({ type: "complete", photoId: id });
-          } else if (result.status === "duplicate") {
-            dispatch({ type: "duplicate", photoId: id });
-          } else {
+      let failed = 0;
+      let duplicates = 0;
+      // Counts come from the run itself, not from queueRef afterwards: the
+      // last file's dispatch may not have rendered by the time we get here.
+      try {
+        while (item && !unmounted.current) {
+          const current = item;
+          const entry = queueRef.current.files.get(current.photoId);
+          const {
+            data: { session },
+          } = await supabase.auth.getSession();
+          if (unmounted.current) break;
+          if (!entry || !session) {
+            failed += 1;
             dispatch({
               type: "fail",
-              photoId: id,
-              error: result.error ?? "Upload failed",
+              photoId: current.photoId,
+              error: entry
+                ? "Signed out — sign in and retry"
+                : "File no longer available — re-pick it",
             });
+          } else {
+            dispatch({ type: "start", photoId: current.photoId });
+            const id = current.photoId;
+            const result = await uploadOne(
+              entry.file,
+              id,
+              {
+                jobId: current.jobId,
+                uploaderId: session.user.id,
+                sheetNumber: current.sheetNumber,
+                tags: current.tags,
+              },
+              deps,
+              (sent) => {
+                if (unmounted.current) return;
+                dispatch({ type: "progress", photoId: id, sentBytes: sent });
+              },
+              {
+                shutter: current.shutterAt
+                  ? new Date(current.shutterAt)
+                  : undefined,
+                sidecar: entry.sidecar,
+              }
+            );
+            // uploadOne has no abort, so a file already in flight finishes
+            // sending its bytes; we just stop advancing and stop dispatching.
+            if (unmounted.current) break;
+            console.info(
+              `photos.upload photoId=${id} status=${result.status}${result.error ? ` err=${result.error}` : ""}`
+            );
+            if (result.status === "done") {
+              any = true;
+              dispatch({ type: "complete", photoId: id });
+            } else if (result.status === "duplicate") {
+              duplicates += 1;
+              dispatch({ type: "duplicate", photoId: id });
+            } else {
+              failed += 1;
+              dispatch({
+                type: "fail",
+                photoId: id,
+                error: result.error ?? "Upload failed",
+              });
+            }
           }
+          item = Q.nextQueued(queueRef.current);
         }
-        item = Q.nextQueued(queueRef.current);
+      } catch (e) {
+        // Everything inside the loop that can reject per file is already
+        // handled by uploadOne; a throw reaching here is the surrounding
+        // machinery (the session lookup, storage). Fail the item we were on
+        // so it lands in the tray with a retry instead of sitting queued
+        // behind a lock that never clears.
+        console.error("photos.upload runner aborted", e);
+        if (item && !unmounted.current) {
+          failed += 1;
+          dispatch({
+            type: "fail",
+            photoId: item.photoId,
+            error:
+              e instanceof Error && e.message
+                ? `Upload interrupted — ${e.message}`
+                : "Upload interrupted — retry",
+          });
+        }
+      } finally {
+        // The one release: a throw above must never strand the queue, because
+        // every later run of this effect exits early while it is held.
+        running.current = false;
       }
-      running.current = false;
+      if (unmounted.current) return;
       if (any) invalidatePhotoCaches(queryClient);
-      const failed = queueRef.current.items.filter(
-        (i) => i.status === "failed"
-      ).length;
       if (failed) {
         toast.error(
-          `${failed} upload${failed === 1 ? "" : "s"} failed — open the tray to retry`
+          `${plural(failed, "upload")} failed — open the tray to retry`
         );
       } else if (any) {
         toast.success("Upload complete");
+      } else if (duplicates) {
+        toast.success(`${plural(duplicates, "photo")} already in this job`);
       }
     })();
   }, [queue, queryClient]);
@@ -262,9 +315,11 @@ export function UploadManagerProvider({
     retry: (photoId) => dispatch({ type: "retry", photoId }),
     remove: (photoId) => dispatch({ type: "remove", photoId }),
     repick: (files) => {
-      const { queue: next, unmatched } = Q.adoptRepick(queueRef.current, files);
-      dispatch({ type: "repick", queue: next });
-      return unmatched;
+      dispatch({ type: "repick", files });
+      // The reducer is the source of truth for the queue; this second
+      // adoptRepick pass is deliberate and only reads `unmatched` for the
+      // toast, where a slightly stale queue is harmless.
+      return Q.adoptRepick(queueRef.current, files).unmatched;
     },
     dismissDone: () => dispatch({ type: "dismissDone" }),
   };

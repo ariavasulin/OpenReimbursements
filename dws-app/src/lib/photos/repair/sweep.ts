@@ -5,6 +5,7 @@
 // what makes the daily cron and manual runs safely overlappable.
 
 import type { PhotoKind } from "../types";
+import type { ListedObject } from "./known-paths";
 
 /** The columns the sweep needs from a photos row with a hole. playback_*
  * stay optional so plain test rows and callers that don't select them
@@ -22,11 +23,10 @@ export interface RepairRow {
   created_at: string;
 }
 
-/** One object found under originals/ in the photos bucket. */
-export interface StoredObject {
-  name: string;
-  created_at: string;
-  /** True when some photos row points at it (original_path or sidecar_path). */
+/** A listed object plus whether a photos row still owns it. */
+export interface StoredObject extends ListedObject {
+  /** True when some photos row points at it through any of its path columns
+   * (original, sidecar, thumb, preview, playback). */
   has_row: boolean;
 }
 
@@ -65,19 +65,23 @@ export interface SweepOpts {
   orphanMs?: number;
 }
 
+/** Plans the sweep. `objects` is everything the bucket walk found, and both
+ * delete actions are planned from it — so the caller must confirm each one
+ * against live state before executing it: this listing is a snapshot taken
+ * while uploads and deletes keep running. */
 export function planSweep(
   rows: RepairRow[],
   objects: StoredObject[],
-  existingOriginals: Set<string>,
   now: number,
   opts: SweepOpts = {}
 ): Action[] {
   const orphanMs = opts.orphanMs ?? ORPHAN_MS;
+  const storedPaths = new Set(objects.map((o) => o.name));
   const out: Action[] = [];
   for (const r of rows) {
     const age = now - Date.parse(r.created_at);
     if (age < SETTLE_MS) continue; // client may still be uploading derivatives
-    if (!existingOriginals.has(r.original_path)) {
+    if (!storedPaths.has(r.original_path)) {
       // Finalize raced a dead upload: a row whose original never landed.
       out.push({ action: "deleteDeadRow", photoId: r.id });
       continue;
@@ -112,4 +116,16 @@ export function planSweep(
     }
   }
   return out;
+}
+
+/** The derived/ keys the repair pass writes for a row's renditions — the same
+ * keys the client's storagePaths() builds, spelled out server-side so the
+ * server bundle doesn't drag in the tus-js-client upload module. */
+export function derivedKeys(uploaderId: string, photoId: string) {
+  const base = `derived/${uploaderId}/${photoId}`;
+  return {
+    thumb: `${base}_thumb.webp`,
+    preview: `${base}_preview.webp`,
+    playback: `${base}_playback.mp4`,
+  };
 }

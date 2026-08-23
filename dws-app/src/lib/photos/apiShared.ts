@@ -1,3 +1,5 @@
+import { PATH_COLUMNS } from './repair/known-paths';
+
 /** Columns every photos response returns (uploader name + job embedded). */
 export const PHOTO_COLUMNS =
   'id, job_id, uploader_id, kind, sheet_number, tags, captured_at, ' +
@@ -43,19 +45,12 @@ export function isSha256(v: unknown): v is string {
 }
 
 /** Storage objects DELETE removes alongside a photos row (order is
- * irrelevant; nulls and absent columns drop out). */
-export function deletionPaths(row: {
-  original_path: string | null;
-  thumb_path: string | null;
-  preview_path: string | null;
-  sidecar_path: string | null;
-  playback_path?: string | null;
-}): string[] {
-  return [
-    row.original_path,
-    row.thumb_path,
-    row.preview_path,
-    row.sidecar_path,
-    row.playback_path,
-  ].filter((path): path is string => Boolean(path));
+ * irrelevant; nulls and absent columns drop out). Driven by PATH_COLUMNS so a
+ * column added there is deleted here without a second edit. */
+export function deletionPaths(
+  row: Partial<Record<(typeof PATH_COLUMNS)[number], string | null>>
+): string[] {
+  return PATH_COLUMNS.map((column) => row[column]).filter(
+    (path): path is string => Boolean(path)
+  );
 }

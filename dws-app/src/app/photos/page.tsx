@@ -44,7 +44,7 @@ export default function PhotosHomePage() {
   if (!ready) return <AuthLoading />;
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-5">
+    <main className="mx-auto w-full max-w-3xl px-4 pb-28 pt-5">
       <header className="relative mb-3 text-center">
         <button
           type="button"
@@ -103,7 +103,7 @@ export default function PhotosHomePage() {
         {jobs?.map((job) => <JobCard key={job.id} job={job} />)}
       </div>
 
-      <CaptureBar batch={batch} maxWidthClass="max-w-2xl" />
+      <CaptureBar batch={batch} maxWidthClass="max-w-3xl" />
 
       <UploadSheet
         files={batch.pickedFiles}

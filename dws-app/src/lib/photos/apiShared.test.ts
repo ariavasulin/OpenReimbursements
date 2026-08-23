@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deletionPaths } from "./apiShared";
 
-// DELETE /api/photos/:id passes this straight to storage.remove — every
-// present path must be included, every absent one dropped.
+// DELETE /api/photos/:id passes this straight to storage.remove.
 describe("deletionPaths", () => {
   it("returns all five paths when present", () => {
     const paths = deletionPaths({

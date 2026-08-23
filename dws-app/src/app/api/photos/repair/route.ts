@@ -8,11 +8,18 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 import {
+  derivedKeys,
   planSweep,
   type Action,
   type RepairRow,
-  type StoredObject,
 } from '@/lib/photos/repair/sweep';
+import {
+  PATH_COLUMNS,
+  knownPaths,
+  markOwnership,
+  type ListedObject,
+  type PathRow,
+} from '@/lib/photos/repair/known-paths';
 import { fillImageDerivatives } from '@/lib/photos/repair/transforms';
 import {
   ENABLED as transcodeEnabled,
@@ -31,7 +38,8 @@ import {
 // issues GET with Authorization: Bearer $CRON_SECRET; POST is for manual
 // runs with the same header). Plans with the pure planner in
 // lib/photos/repair/sweep.ts, then executes action-by-action, each isolated:
-// one failure lands in `errors` and never aborts the rest.
+// one failure lands in `errors` and never aborts the rest. A run that ends
+// with any error responds 500 so the cron shows red.
 //
 // `?olderThan=<ms>` (manual runs) overrides the 24 h orphan age for drills.
 
@@ -43,14 +51,42 @@ const PAGE = 1000;
 const TRANSCODE_BUDGET_MS = 240 * 1000;
 /** Directory listings in flight at once while walking the bucket. */
 const LIST_CONCURRENCY = 8;
+/** Prefixes that hold photo objects, walked one after the other so the whole
+ * listing stays inside LIST_CONCURRENCY. */
+const ROOTS = ['originals', 'derived'];
 
 /** Counter keys: every planned action, plus the outcomes the executor can
- * report in place of one (downgrades and the budget deferral). */
-type CountKey = Action['action'] | 'playbackSkipped' | 'transcodeDeferred';
+ * report in place of one (downgrades, the budget deferral, and a destructive
+ * action its confirmation read cancelled). */
+type CountKey =
+  | Action['action']
+  | 'playbackSkipped'
+  | 'transcodeDeferred'
+  | 'orphanDeleteSkipped'
+  | 'deadRowDeleteSkipped';
 
-interface ListedObject {
-  name: string;
-  created_at: string;
+/** Walks a photos query page by page. PostgREST caps an un-ranged response at
+ * its configured row limit (1000 by default) and says nothing about it, so an
+ * unpaged read of a table past that size is silently partial — and a partial
+ * known-paths read makes every object of an unlisted row read as an orphan.
+ * Ordered by id so the pages tile the table instead of overlapping.
+ *
+ * Rows come back as T on the caller's word — a select list built from a const
+ * array isn't a literal, so PostgREST's row type can't be inferred from it. */
+async function selectAllPages<T>(
+  page: (
+    from: number,
+    to: number
+  ) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await page(offset, offset + PAGE - 1);
+    if (error) throw new Error(error.message);
+    out.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
 }
 
 /** One directory level, fully paginated. Folders come back with id: null. */
@@ -82,13 +118,17 @@ async function listDirs(prefixes: string[]) {
   return out;
 }
 
-/** Every object under originals/ (layout: originals/{uid}/{photoId}/{file}). */
-async function listOriginals(): Promise<ListedObject[]> {
+/** Every object under `root`, covering both layouts the bucket uses:
+ * originals/{uid}/{photoId}/{file} and derived/{uid}/{file}. Files are
+ * collected at both depths — under derived/ the uid level holds the real
+ * renditions, and under originals/ it only ever holds strays, which the
+ * orphan sweep wants collected anyway. */
+async function listObjects(root: string): Promise<ListedObject[]> {
   const out: ListedObject[] = [];
 
-  const uidPrefixes = (await listDir('originals'))
+  const uidPrefixes = (await listDir(root))
     .filter((e) => e.id === null) // stray file at the top level — ignore
-    .map((e) => `originals/${e.name}`);
+    .map((e) => `${root}/${e.name}`);
 
   const photoPrefixes: string[] = [];
   for (const { prefix, entries } of await listDirs(uidPrefixes)) {
@@ -96,7 +136,6 @@ async function listOriginals(): Promise<ListedObject[]> {
       if (entry.id === null) {
         photoPrefixes.push(`${prefix}/${entry.name}`);
       } else {
-        // Stray file directly under the uid: no row can point here.
         out.push({ name: `${prefix}/${entry.name}`, created_at: entry.created_at });
       }
     }
@@ -110,6 +149,35 @@ async function listOriginals(): Promise<ListedObject[]> {
   }
 
   return out;
+}
+
+/** Quotes a storage path for a PostgREST or() filter: an uploaded filename
+ * can hold commas, parens, and quotes, all of them or() syntax. */
+function quoteFilter(value: string): string {
+  return `"${value.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
+/** Does any photos row still point at this exact object? The bulk listing is
+ * a snapshot: a finalize that landed mid-sweep makes a live object look
+ * row-less, and deleting a storage object is not reversible. */
+async function isReferenced(objectPath: string): Promise<boolean> {
+  const value = quoteFilter(objectPath);
+  const { data, error } = await supabaseAdmin
+    .from('photos')
+    .select('id')
+    .or(PATH_COLUMNS.map((column) => `${column}.eq.${value}`).join(','))
+    .limit(1);
+  if (error) throw new Error(`confirm orphan ${objectPath}: ${error.message}`);
+  return (data ?? []).length > 0;
+}
+
+/** Is this one object really in storage? A targeted HEAD, not the bulk walk:
+ * a concurrent delete shifts list offsets mid-scan and can drop a live object
+ * out of the listing, after which its row looks dead. (A clean miss comes
+ * back as `data: false` with an error set; anything else exists() throws.) */
+async function objectExists(objectPath: string): Promise<boolean> {
+  const { data } = await supabaseAdmin.storage.from(BUCKET).exists(objectPath);
+  return data;
 }
 
 async function markFileTile(photoId: string, reason: string) {
@@ -159,32 +227,37 @@ async function writePoster(
   row: RepairRow,
   dir: string,
   input: string,
-  durationSecs: number
+  durationSecs: number | null
 ) {
-  // Frame 0 is often black, so seek ~1s in — unless the clip is shorter.
-  const seek = durationSecs > POSTER_SEEK_SECS ? POSTER_SEEK_SECS : 0;
+  // Frame 0 is often black, so seek ~1s in — unless the clip is shorter, or
+  // its duration is unknown (probe returns null), where 0 is the safe seek.
+  const seek =
+    durationSecs !== null && durationSecs > POSTER_SEEK_SECS ? POSTER_SEEK_SECS : 0;
 
+  const keys = derivedKeys(row.uploader_id, row.id);
   const outputs = [
-    { local: path.join(dir, 'thumb.webp'), maxDim: THUMB_MAX_DIM, key: `derived/${row.uploader_id}/${row.id}_thumb.webp` },
-    { local: path.join(dir, 'preview.webp'), maxDim: PREVIEW_MAX_DIM, key: `derived/${row.uploader_id}/${row.id}_preview.webp` },
+    { path: path.join(dir, 'thumb.webp'), maxDim: THUMB_MAX_DIM, key: keys.thumb },
+    { path: path.join(dir, 'preview.webp'), maxDim: PREVIEW_MAX_DIM, key: keys.preview },
   ];
-  for (const out of outputs) {
-    await poster(input, out.local, out.maxDim, seek);
-    const { error } = await supabaseAdmin.storage
-      .from(BUCKET)
-      .upload(out.key, await readFile(out.local), {
-        contentType: 'image/webp',
-        upsert: true,
-      });
-    if (error) throw new Error(`upload ${out.key}: ${error.message}`);
-  }
+  await poster(input, seek, outputs);
+  await Promise.all(
+    outputs.map(async (out) => {
+      const { error } = await supabaseAdmin.storage
+        .from(BUCKET)
+        .upload(out.key, await readFile(out.path), {
+          contentType: 'image/webp',
+          upsert: true,
+        });
+      if (error) throw new Error(`upload ${out.key}: ${error.message}`);
+    })
+  );
 
   const { error } = await supabaseAdmin
     .from('photos')
     .update({
-      thumb_path: outputs[0].key,
-      preview_path: outputs[1].key,
-      duration_secs: durationSecs > 0 ? durationSecs : null,
+      thumb_path: keys.thumb,
+      preview_path: keys.preview,
+      duration_secs: durationSecs !== null && durationSecs > 0 ? durationSecs : null,
     })
     .eq('id', row.id);
   if (error) throw new Error(`update ${row.id}: ${error.message}`);
@@ -197,7 +270,7 @@ async function writeRendition(
   row: RepairRow,
   dir: string,
   input: string,
-  durationSecs: number
+  durationSecs: number | null
 ): Promise<CountKey> {
   const bytes = row.original_bytes ?? (await stat(input)).size;
   const reason = capReason(bytes, durationSecs);
@@ -213,7 +286,7 @@ async function writeRendition(
 
   const output = path.join(dir, 'playback.mp4');
   await transcode(input, output);
-  const key = `derived/${row.uploader_id}/${row.id}_playback.mp4`;
+  const key = derivedKeys(row.uploader_id, row.id).playback;
   const { error: uploadError } = await supabaseAdmin.storage
     .from(BUCKET)
     .upload(key, await readFile(output), {
@@ -237,61 +310,82 @@ interface VideoOpts {
   deferTranscode: boolean;
 }
 
-/** Runs one action; returns the counter keys it earned. */
+/** Runs one action, calling `count` as each piece of work commits. Counting
+ * as we go rather than on return is what keeps a paired poster's count when
+ * the transcode behind it throws: the poster's row update has landed, and a
+ * run that under-reports committed work can never reach `errors: []`. */
 async function execute(
   a: Action,
   rowsById: Map<string, RepairRow>,
-  video: VideoOpts
-): Promise<CountKey[]> {
-  // planSweep emits photoId only as `r.id` while iterating the rows rowsById
-  // was built from, so every planned photoId is a key here.
-  const row = rowsById.get('photoId' in a ? a.photoId : '')!;
+  video: VideoOpts,
+  count: (key: CountKey) => void
+): Promise<void> {
+  const rowFor = (photoId: string): RepairRow => {
+    const row = rowsById.get(photoId);
+    if (!row) throw new Error(`no repair row for ${photoId}`);
+    return row;
+  };
 
   switch (a.action) {
     case 'fillImageDerivatives': {
-      const result = await fillImageDerivatives(supabaseAdmin, row);
+      const result = await fillImageDerivatives(supabaseAdmin, rowFor(a.photoId));
       if (!result.ok) {
         await markFileTile(a.photoId, result.reason);
-        return ['markFileTile'];
+        count('markFileTile');
+        return;
       }
-      return [a.action];
+      count(a.action);
+      return;
     }
     case 'markFileTile':
       await markFileTile(a.photoId, a.reason);
-      return [a.action];
+      count(a.action);
+      return;
     case 'makeVideoPoster':
       return withTempDir(async (dir) => {
+        const row = rowFor(a.photoId);
         const { input, durationSecs } = await fetchAndProbe(row, dir);
         await writePoster(row, dir, input, durationSecs);
-        return [a.action];
+        count(a.action);
       });
     case 'transcodeVideo':
       return withTempDir(async (dir) => {
+        const row = rowFor(a.photoId);
         const { input, durationSecs } = await fetchAndProbe(row, dir);
-        const counted: CountKey[] = [];
         if (video.alsoPoster) {
           await writePoster(row, dir, input, durationSecs);
-          counted.push('makeVideoPoster');
+          count('makeVideoPoster');
         }
-        counted.push(
+        count(
           video.deferTranscode
             ? 'transcodeDeferred'
             : await writeRendition(row, dir, input, durationSecs)
         );
-        return counted;
       });
+    // A cancelled delete is counted, not raised — the next run replans it if
+    // it was genuinely due.
     case 'deleteOrphanObject': {
+      if (await isReferenced(a.path)) {
+        count('orphanDeleteSkipped');
+        return;
+      }
       const { error } = await supabaseAdmin.storage.from(BUCKET).remove([a.path]);
       if (error) throw new Error(`remove ${a.path}: ${error.message}`);
-      return [a.action];
+      count(a.action);
+      return;
     }
     case 'deleteDeadRow': {
+      if (await objectExists(rowFor(a.photoId).original_path)) {
+        count('deadRowDeleteSkipped');
+        return;
+      }
       const { error } = await supabaseAdmin
         .from('photos')
         .delete()
         .eq('id', a.photoId);
       if (error) throw new Error(`delete row ${a.photoId}: ${error.message}`);
-      return [a.action];
+      count(a.action);
+      return;
     }
   }
 }
@@ -302,10 +396,22 @@ async function run(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // Absent means the default 24 h orphan age. Anything present must parse:
+  // Number('') is 0, so a trailing `&olderThan` in a hand-typed curl would
+  // otherwise coerce into the most destructive mode — delete every row-less
+  // object right now — silently.
   const olderThanRaw = new URL(request.url).searchParams.get('olderThan');
-  const olderThan = olderThanRaw === null ? NaN : Number(olderThanRaw);
-  const orphanMs =
-    Number.isFinite(olderThan) && olderThan >= 0 ? olderThan : undefined;
+  let orphanMs: number | undefined;
+  if (olderThanRaw !== null) {
+    const olderThan = Number(olderThanRaw);
+    if (olderThanRaw.trim() === '' || !Number.isFinite(olderThan) || olderThan < 0) {
+      return NextResponse.json(
+        { error: `olderThan must be a non-negative number of ms, got "${olderThanRaw}"` },
+        { status: 400 }
+      );
+    }
+    orphanMs = olderThan;
+  }
 
   const now = Date.now();
 
@@ -313,55 +419,47 @@ async function run(request: Request) {
   //  - rows with a hole: a missing thumb, or a video missing its playback
   //    rendition. (Rows with playback_skipped_reason set still match — the
   //    planner drops them, so they never replan.)
-  //  - paths some row points at — originals AND sidecars, which share the
-  //    originals/{uid}/{photoId}/ prefix and must not read as orphans.
-  //  - everything actually stored under originals/.
-  const [
-    { data: rows, error: rowsError },
-    { data: knownRows, error: knownError },
-    listed,
-  ] = await Promise.all([
-    supabaseAdmin
-      .from('photos')
-      .select(
-        'id, uploader_id, kind, mime_type, original_path, original_bytes, thumb_path, playback_path, playback_skipped_reason, created_at'
-      )
-      .or('thumb_path.is.null,and(kind.eq.video,playback_path.is.null)'),
-    supabaseAdmin.from('photos').select('original_path, sidecar_path'),
-    listOriginals().then(
-      (objects) => ({ objects, error: null }),
-      (e: unknown) => ({
-        objects: null,
-        error: e instanceof Error ? e.message : String(e),
-      })
-    ),
-  ]);
-
-  if (rowsError) {
-    return NextResponse.json({ error: rowsError.message }, { status: 500 });
-  }
-  if (knownError) {
-    return NextResponse.json({ error: knownError.message }, { status: 500 });
-  }
-  if (listed.error !== null) {
-    return NextResponse.json({ error: listed.error }, { status: 500 });
-  }
-  const objects = listed.objects;
-
-  const known = new Set<string>();
-  for (const r of knownRows ?? []) {
-    if (r.original_path) known.add(r.original_path);
-    if (r.sidecar_path) known.add(r.sidecar_path);
+  //  - every path some row points at, across all five path columns; anything
+  //    stored and unlisted here is what the sweep deletes as an orphan.
+  //  - everything actually stored under originals/ and derived/.
+  // Any of the three failing takes the whole run down: a plan built on half
+  // an inventory deletes objects and rows that were never orphaned.
+  let repairRows: RepairRow[];
+  let pathRows: PathRow[];
+  let objects: ListedObject[];
+  try {
+    [repairRows, pathRows, objects] = await Promise.all([
+      selectAllPages<RepairRow>((from, to) =>
+        supabaseAdmin
+          .from('photos')
+          .select(
+            'id, uploader_id, kind, mime_type, original_path, original_bytes, thumb_path, playback_path, playback_skipped_reason, created_at'
+          )
+          .or('thumb_path.is.null,and(kind.eq.video,playback_path.is.null)')
+          .order('id')
+          .range(from, to)
+      ),
+      selectAllPages<PathRow>((from, to) =>
+        supabaseAdmin
+          .from('photos')
+          .select(PATH_COLUMNS.join(', '))
+          .order('id')
+          .range(from, to)
+      ),
+      (async () => {
+        const found: ListedObject[] = [];
+        for (const root of ROOTS) found.push(...(await listObjects(root)));
+        return found;
+      })(),
+    ]);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  const stored: StoredObject[] = objects.map((o) => ({
-    ...o,
-    has_row: known.has(o.name),
-  }));
-  const existingOriginals = new Set(objects.map((o) => o.name));
+  const stored = markOwnership(objects, knownPaths(pathRows));
 
-  const repairRows = (rows ?? []) as RepairRow[];
-  const planned = planSweep(repairRows, stored, existingOriginals, now, {
+  const planned = planSweep(repairRows, stored, now, {
     transcode: transcodeEnabled(),
     orphanMs,
   });
@@ -400,19 +498,31 @@ async function run(request: Request) {
       console.info(`photos.repair action=transcodeDeferred ${target}`);
       continue;
     }
+    const counted: CountKey[] = [];
+    const count = (key: CountKey) => {
+      counted.push(key);
+      counts[key] = (counts[key] ?? 0) + 1;
+    };
     try {
-      const counted = await execute(a, rowsById, { alsoPoster, deferTranscode });
-      for (const key of counted) counts[key] = (counts[key] ?? 0) + 1;
+      await execute(a, rowsById, { alsoPoster, deferTranscode }, count);
       console.info(`photos.repair action=${counted.join('+')} ${target} ok`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       errors.push(`${a.action}: ${msg}`);
-      console.error(`photos.repair action=${a.action} ${target} err=${msg}`);
+      const committed = counted.length ? ` committed=${counted.join('+')}` : '';
+      console.error(`photos.repair action=${a.action} ${target}${committed} err=${msg}`);
     }
   }
 
-  return NextResponse.json({ counts, errors, planned: planned.length });
+  // A run with any failed action must not read as a successful invocation:
+  // Vercel scores the cron on the status code, and a green run where every
+  // action failed is never retried and never noticed. The body keeps its
+  // shape, so a manual run still shows the counts and the errors.
+  return NextResponse.json(
+    { counts, errors, planned: planned.length },
+    { status: errors.length > 0 ? 500 : 200 }
+  );
 }
 
-export const GET = run; // Vercel cron
-export const POST = run; // manual runs
+export const GET = run;
+export const POST = run;

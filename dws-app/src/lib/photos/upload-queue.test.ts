@@ -6,11 +6,12 @@ const f = (name: string, size = 10, lastModified = 1000) =>
 const meta = { jobId: "job-1", sheetNumber: null, tags: [] };
 let n = 0;
 const id = () => `id-${++n}`;
-const enq = (q: Q.Queue, files: File[]) => Q.enqueue(q, files, meta, 0, id).queue;
+const enq = (q: Q.Queue, paired: Q.PairedFile[]) =>
+  Q.enqueue(q, paired, meta, 0, id);
 
 describe("upload-queue", () => {
   it("enqueue → start/progress/complete keeps one item per file", () => {
-    let q = enq(Q.emptyQueue(), [f("a.jpg"), f("b.jpg")]);
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }, { file: f("b.jpg") }]);
     q = Q.start(q, q.items[0].photoId);
     q = Q.progress(q, q.items[0].photoId, 5);
     q = Q.complete(q, q.items[0].photoId);
@@ -18,7 +19,7 @@ describe("upload-queue", () => {
   });
 
   it("retry keeps the photoId", () => {
-    let q = enq(Q.emptyQueue(), [f("a.jpg")]);
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }]);
     const before = q.items[0].photoId;
     q = Q.retry(Q.fail(q, before, "boom"), before);
     expect(q.items[0]).toMatchObject({
@@ -28,39 +29,8 @@ describe("upload-queue", () => {
     });
   });
 
-  it("enqueue pairs a .xmp onto its image instead of making an item", () => {
-    const { queue, rejected } = Q.enqueue(
-      Q.emptyQueue(),
-      [f("IMG_1.JPG"), f("img_1.xmp")],
-      meta,
-      0,
-      id
-    );
-    expect(rejected).toEqual([]);
-    expect(queue.items).toHaveLength(1);
-    expect(queue.items[0]).toMatchObject({
-      name: "IMG_1.JPG",
-      sidecarName: "img_1.xmp",
-    });
-    expect(queue.files.get(queue.items[0].photoId)?.sidecar?.name).toBe(
-      "img_1.xmp"
-    );
-  });
-
-  it("enqueue rejects a lone .xmp — no item, surfaced to the caller", () => {
-    const { queue, rejected } = Q.enqueue(
-      Q.emptyQueue(),
-      [f("lonely.xmp")],
-      meta,
-      0,
-      id
-    );
-    expect(queue.items).toEqual([]);
-    expect(rejected.map((r) => r.name)).toEqual(["lonely.xmp"]);
-  });
-
   it("manifest strips files, restores as interrupted, expires after 24h", () => {
-    const q = enq(Q.emptyQueue(), [f("a.jpg")]);
+    const q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }]);
     const saved = Q.toManifest(q, 1);
     expect(Q.restoreManifest(saved, 1).files.size).toBe(0);
     expect(Q.restoreManifest(saved, 1).items[0].status).toBe("interrupted");
@@ -69,7 +39,7 @@ describe("upload-queue", () => {
 
   it("adoptRepick matches name+size+mtime and reports the rest", () => {
     const q = Q.restoreManifest(
-      Q.toManifest(enq(Q.emptyQueue(), [f("a.jpg", 10, 7)]), 0),
+      Q.toManifest(enq(Q.emptyQueue(), [{ file: f("a.jpg", 10, 7) }]), 0),
       0
     );
     const { queue, unmatched } = Q.adoptRepick(q, [
@@ -83,7 +53,12 @@ describe("upload-queue", () => {
 
   it("adoptRepick re-attaches a re-picked sidecar to its entry", () => {
     const q = Q.restoreManifest(
-      Q.toManifest(enq(Q.emptyQueue(), [f("a.jpg", 10, 7), f("a.xmp", 2, 7)]), 0),
+      Q.toManifest(
+        enq(Q.emptyQueue(), [
+          { file: f("a.jpg", 10, 7), sidecar: f("a.xmp", 2, 7) },
+        ]),
+        0
+      ),
       0
     );
     const { queue, unmatched } = Q.adoptRepick(q, [
@@ -97,7 +72,12 @@ describe("upload-queue", () => {
 
   it("adoptRepick reports a sidecar whose primary was never re-picked", () => {
     const q = Q.restoreManifest(
-      Q.toManifest(enq(Q.emptyQueue(), [f("a.jpg", 10, 7), f("a.xmp", 2, 7)]), 0),
+      Q.toManifest(
+        enq(Q.emptyQueue(), [
+          { file: f("a.jpg", 10, 7), sidecar: f("a.xmp", 2, 7) },
+        ]),
+        0
+      ),
       0
     );
     const { unmatched } = Q.adoptRepick(q, [f("a.xmp", 2, 7)]);
@@ -105,7 +85,7 @@ describe("upload-queue", () => {
   });
 
   it("remove drops the item and its file; clearSettled keeps live work", () => {
-    let q = enq(Q.emptyQueue(), [f("a.jpg"), f("b.jpg")]);
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }, { file: f("b.jpg") }]);
     const [a, b] = q.items.map((i) => i.photoId);
     q = Q.remove(q, a);
     expect(q.items.map((i) => i.photoId)).toEqual([b]);
