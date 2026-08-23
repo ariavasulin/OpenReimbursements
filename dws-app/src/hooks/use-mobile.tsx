@@ -3,20 +3,26 @@
 import { useState, useEffect } from "react"
 
 export function useMobile() {
-  const [isMobile, setIsMobile] = useState(false)
+  // Lazy initializer: compute synchronously on first client render so a phone
+  // never paints the desktop variant (e.g. Dialog) before flipping to mobile.
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window === "undefined" ? false : checkIfMobile()
+  )
 
   useEffect(() => {
-    const checkIfMobile = () => {
-      const widthIsMobile = window.innerWidth < 768;
-      const agentIsMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      setIsMobile(widthIsMobile || agentIsMobile);
-    }
+    const update = () => setIsMobile(checkIfMobile())
+    update()
 
-    checkIfMobile()
-
-    window.addEventListener("resize", checkIfMobile)
-    return () => window.removeEventListener("resize", checkIfMobile)
+    window.addEventListener("resize", update)
+    return () => window.removeEventListener("resize", update)
   }, [])
 
   return isMobile
+}
+
+function checkIfMobile() {
+  return (
+    window.innerWidth < 768 ||
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+  )
 }
