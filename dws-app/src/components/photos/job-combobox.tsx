@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
 import {
   Popover,
@@ -8,51 +8,78 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import JobPickerSheet from "@/components/photos/job-picker-sheet";
+import { useSheetLayout } from "@/components/photos/sheet-shell";
 import { filterJobs } from "@/lib/photos/job-filter";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 import { cn } from "@/lib/utils";
 
-// Job picker for the upload sheet. Two modes, chosen by the caller:
-// - "inline" (desktop): a text field whose suggestions render in a portaled
-//   Popover anchored to it, so the list floats over the fields below and never
-//   changes the sheet's layout.
-// - "picker" (phones): a button-like field that opens JobPickerSheet, a
+// Job field for the upload/edit sheets, picked by the enclosing SheetShell's
+// layout:
+// - JobTypeahead (desktop): a text field whose suggestions render in a
+//   portaled Popover anchored to it, so the list floats over the fields below
+//   and never changes the sheet's layout.
+// - JobPickerField (phones): a button-like field that opens JobPickerSheet, a
 //   full-screen search step, so the keyboard never fights the drawer.
 
-interface JobComboboxProps {
+interface JobFieldProps {
   jobs: PhotoJobSummary[];
   /** Selected job id, or "" for none. */
   value: string;
   onChange(jobId: string): void;
   disabled?: boolean;
-  /** "picker": button opens a full-screen search (phones). "inline": typeahead field (desktop). */
-  mode: "picker" | "inline";
 }
 
 function jobLabel(job: PhotoJobSummary) {
   return `#${job.job_number} · ${job.name}`;
 }
 
-export default function JobCombobox({
-  jobs,
-  value,
-  onChange,
-  disabled,
-  mode,
-}: JobComboboxProps) {
-  const [query, setQuery] = useState("");
+function useSelectedJob(jobs: PhotoJobSummary[], value: string) {
+  return useMemo(() => jobs.find((job) => job.id === value) ?? null, [jobs, value]);
+}
+
+export default function JobField(props: JobFieldProps) {
+  const { isMobile } = useSheetLayout();
+  return isMobile ? <JobPickerField {...props} /> : <JobTypeahead {...props} />;
+}
+
+export function JobPickerField({ jobs, value, onChange, disabled }: JobFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const selected = useSelectedJob(jobs, value);
+
+  return (
+    <div className="mb-3.5">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setPickerOpen(true)}
+        className="flex w-full items-center justify-between rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-left text-base text-white disabled:opacity-50"
+      >
+        <span className={selected ? "truncate" : "text-[#a0a0a0]"}>
+          {selected ? jobLabel(selected) : "Pick a job..."}
+        </span>
+        <ChevronRight className="h-4 w-4 shrink-0 text-[#a0a0a0]" />
+      </button>
+      <JobPickerSheet
+        jobs={jobs}
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(job) => {
+          onChange(job.id);
+          setPickerOpen(false);
+        }}
+      />
+    </div>
+  );
+}
+
+export function JobTypeahead({ jobs, value, onChange, disabled }: JobFieldProps) {
+  const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
 
-  useEffect(() => setActiveIndex(0), [query]);
-
-  const selected = useMemo(
-    () => jobs.find((job) => job.id === value) ?? null,
-    [jobs, value]
-  );
+  const selected = useSelectedJob(jobs, value);
   const suggestions = useMemo(
     () => (selected ? [] : filterJobs(jobs, query)),
     [jobs, query, selected]
@@ -60,42 +87,20 @@ export default function JobCombobox({
   const noMatches = query.trim().length > 0 && suggestions.length === 0;
   const listOpen = open && !selected && (suggestions.length > 0 || noMatches);
 
+  // Any change to the query restarts the highlight at the top.
+  const changeQuery = (next: string) => {
+    setQuery(next);
+    setActiveIndex(0);
+  };
   const select = (job: PhotoJobSummary) => {
     onChange(job.id);
-    setQuery("");
+    changeQuery("");
     setOpen(false);
   };
   const clear = () => {
     onChange("");
-    setQuery("");
+    changeQuery("");
   };
-
-  if (mode === "picker") {
-    return (
-      <div className="mb-3.5">
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => setPickerOpen(true)}
-          className="flex w-full items-center justify-between rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-left text-base text-white disabled:opacity-50"
-        >
-          <span className={selected ? "truncate" : "text-[#a0a0a0]"}>
-            {selected ? jobLabel(selected) : "Pick a job..."}
-          </span>
-          <ChevronRight className="h-4 w-4 shrink-0 text-[#a0a0a0]" />
-        </button>
-        <JobPickerSheet
-          jobs={jobs}
-          open={pickerOpen}
-          onClose={() => setPickerOpen(false)}
-          onSelect={(job) => {
-            onChange(job.id);
-            setPickerOpen(false);
-          }}
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="mb-3.5">
@@ -121,7 +126,7 @@ export default function JobCombobox({
               value={selected ? jobLabel(selected) : query}
               readOnly={Boolean(selected)}
               onChange={(event) => {
-                setQuery(event.target.value);
+                changeQuery(event.target.value);
                 setOpen(true);
               }}
               onFocus={() => setOpen(true)}
@@ -157,7 +162,7 @@ export default function JobCombobox({
                       event.preventDefault();
                       setOpen(false);
                     } else {
-                      setQuery("");
+                      changeQuery("");
                     }
                     break;
                 }

@@ -10,6 +10,7 @@ import Counter from "yet-another-react-lightbox/plugins/counter";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/counter.css";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchJson } from "@/lib/photos/api";
 import { formatBytes } from "@/lib/photos/format";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
 import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
@@ -129,13 +130,9 @@ export default function PhotoLightbox({
     if (!photo) return;
     setBusy(true);
     try {
-      const response = await fetch(`/api/photos/${photo.id}`, {
+      await fetchJson(`/api/photos/${photo.id}`, "Delete failed", {
         method: "DELETE",
       });
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        throw new Error(data?.error || `Delete failed (${response.status})`);
-      }
       toast.success("Photo deleted");
       onChanged();
       onClose();
@@ -230,12 +227,14 @@ export default function PhotoLightbox({
           ),
         }}
       />
-      <EditPhotoSheet
-        photo={photo ?? null}
-        open={open && editing}
-        onOpenChange={setEditing}
-        onSaved={onChanged}
-      />
+      {editing && (
+        <EditPhotoSheet
+          photo={photo ?? null}
+          open
+          onOpenChange={setEditing}
+          onSaved={onChanged}
+        />
+      )}
     </>
   );
 }

@@ -1,28 +1,31 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useSyncExternalStore } from "react"
 
-export function useMobile() {
-  // Lazy initializer: compute synchronously on first client render so a phone
-  // never paints the desktop variant (e.g. Dialog) before flipping to mobile.
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window === "undefined" ? false : checkIfMobile()
-  )
+// Phone-class devices are always "mobile" regardless of viewport (a tablet in
+// landscape still has a software keyboard); everything else goes by width.
+const UA_IS_MOBILE =
+  typeof navigator !== "undefined" &&
+  /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
 
-  useEffect(() => {
-    const update = () => setIsMobile(checkIfMobile())
-    update()
+const QUERY = "(max-width: 767px)"
 
-    window.addEventListener("resize", update)
-    return () => window.removeEventListener("resize", update)
-  }, [])
-
-  return isMobile
+function subscribe(onChange: () => void) {
+  const mql = window.matchMedia(QUERY)
+  mql.addEventListener("change", onChange)
+  return () => mql.removeEventListener("change", onChange)
 }
 
-function checkIfMobile() {
-  return (
-    window.innerWidth < 768 ||
-    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-  )
+function getSnapshot() {
+  return UA_IS_MOBILE || window.matchMedia(QUERY).matches
+}
+
+function getServerSnapshot() {
+  return false
+}
+
+export function useMobile() {
+  // useSyncExternalStore reads the snapshot synchronously on the first client
+  // render, so a phone never paints the desktop variant before flipping.
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }

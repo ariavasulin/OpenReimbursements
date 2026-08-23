@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import type { PhotoJobSummary, PhotoRow } from "./types";
 
 /** fetch + JSON; a non-OK response throws the server's `error` message. */
@@ -41,6 +41,24 @@ export async function fetchTags(jobId?: string): Promise<string[]> {
     "Failed to load tags"
   );
   return data.tags;
+}
+
+/** All jobs (unfiltered), for job pickers. Shares a cache entry across sheets. */
+export function usePhotoJobs(enabled: boolean) {
+  return useQuery({
+    queryKey: ["photo-jobs", ""],
+    queryFn: () => fetchJobs(),
+    enabled,
+  });
+}
+
+/** Every tag in use, for tag suggestions. */
+export function usePhotoTags(enabled: boolean) {
+  return useQuery({
+    queryKey: ["photo-tags"],
+    queryFn: () => fetchTags(),
+    enabled,
+  });
 }
 
 /** After an upload, edit, or delete: every photo-derived query refetches. */
