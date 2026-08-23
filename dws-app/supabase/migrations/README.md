@@ -20,8 +20,11 @@ env -u SUPABASE_ACCESS_TOKEN supabase db query --linked \
   --project-ref qebbmojnqzwwdpkhuyyd "select 1;"
 ```
 
-`db query` does not wrap the file in a transaction, which is required for
-`CREATE INDEX CONCURRENTLY`. Every migration must be idempotent — use
+Caution: `db query -f` wraps a **multi-statement** file in a transaction
+(observed on CLI 2.115.0), which breaks `CREATE INDEX CONCURRENTLY`
+(`ERROR 25001`). A single statement passed positionally is not wrapped —
+so apply any migration containing `CONCURRENTLY` one statement at a time
+using the positional form above. Every migration must be idempotent — use
 `if not exists` and `drop … if exists` / `create` pairs so re-running is a no-op.
 
 The `00000000000000`–`00000000000003` files are the captured baseline of what
