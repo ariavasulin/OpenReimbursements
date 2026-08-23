@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabaseClient";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import JobCard from "@/components/photos/job-card";
@@ -11,11 +11,10 @@ import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
 import SearchInput from "@/components/photos/search-input";
 import StatusLine from "@/components/photos/status-line";
 import UploadSheet from "@/components/photos/upload-sheet";
-import { fetchJobs, invalidatePhotoCaches } from "@/lib/photos/api";
+import { fetchJobs } from "@/lib/photos/api";
 
 export default function PhotosHomePage() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const ready = useSessionGuard("/photos");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -110,7 +109,6 @@ export default function PhotosHomePage() {
         files={batch.pickedFiles}
         open={batch.sheetOpen}
         onOpenChange={batch.setSheetOpen}
-        onUploaded={() => invalidatePhotoCaches(queryClient)}
         capturedAtOverrides={batch.capturedAtOverrides}
         sidecars={batch.sidecars}
       />

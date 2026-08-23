@@ -1,36 +1,21 @@
-// Pure helpers for the pending batch in the upload sheet. `files`, `items`,
-// and `previews` are three arrays indexed by the same file position, so any
-// removal has to shift all three together.
+// Pure helpers for the pending batch in the upload sheet. `files` and
+// `previews` are two arrays indexed by the same file position, so any
+// removal has to shift both together.
 
-export interface BatchState<TFile, TItem, TPreview> {
+export interface BatchState<TFile, TPreview> {
   files: TFile[];
-  items: TItem[];
   previews: TPreview[];
 }
 
-export function removeAt<TFile, TItem, TPreview>(
-  state: BatchState<TFile, TItem, TPreview>,
+export function removeAt<TFile, TPreview>(
+  state: BatchState<TFile, TPreview>,
   index: number
-): BatchState<TFile, TItem, TPreview> {
-  const drop = <T>(list: T[]) => list.filter((_, i) => i !== index);
+): BatchState<TFile, TPreview> {
+  const drop = <T,>(list: T[]) => list.filter((_, i) => i !== index);
   return {
     files: drop(state.files),
-    items: drop(state.items),
     previews: drop(state.previews),
   };
-}
-
-/** Only pending and failed files may leave the batch; in-flight and landed stay. */
-export function canRemove(
-  status:
-    | "pending"
-    | "uploading"
-    | "done"
-    | "failed"
-    | "duplicate"
-    | "interrupted"
-): boolean {
-  return status === "pending" || status === "failed";
 }
 
 /** null when nothing is left. */

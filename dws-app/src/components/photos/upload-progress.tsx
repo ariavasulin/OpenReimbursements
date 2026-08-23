@@ -4,10 +4,9 @@ import type { ReactNode } from "react";
 import { formatBytes } from "@/lib/photos/format";
 import type { UploadResult } from "@/lib/photos/upload";
 
-// Per-file progress rows, shared by the upload tray and the sheet's legacy
-// (manager-off) loop. Callers pass a name + item per row plus whatever action
-// buttons that row needs (Retry, Remove, Re-pick) — the rows themselves only
-// render status. Done rows stay done — a partial batch keeps its successes
+// Per-file progress rows for the upload tray. Callers pass a name + item per
+// row plus whatever action buttons that row needs (Retry, Remove, Re-pick) —
+// the rows themselves only render status. Done rows stay done — a partial batch keeps its successes
 // (4 of 5 photos landing on jobsite LTE is a success to keep).
 
 export interface UploadItem {

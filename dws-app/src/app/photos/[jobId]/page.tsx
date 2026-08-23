@@ -330,7 +330,6 @@ export default function JobPhotosPage() {
         open={batch.sheetOpen}
         onOpenChange={batch.setSheetOpen}
         defaultJobId={jobId}
-        onUploaded={refetchPhotos}
         capturedAtOverrides={batch.capturedAtOverrides}
         sidecars={batch.sidecars}
       />

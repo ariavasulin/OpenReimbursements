@@ -28,9 +28,6 @@ import {
 import { extractCapturedAt } from "./exif";
 
 const MANIFEST_KEY = "photos.upload-manifest";
-/** Kill switch: set NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER=0 to fall back to the
- * sheet's legacy in-place upload loop. Removed in Phase 8. */
-const ENABLED = process.env.NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER !== "0";
 
 type Action =
   | { type: "enqueue"; files: File[]; meta: BatchMeta; now: number }
@@ -69,7 +66,6 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
 }
 
 interface Manager {
-  enabled: boolean;
   items: Q.QueueItem[];
   active: boolean;
   enqueue(files: File[], meta: BatchMeta): void;
@@ -258,7 +254,6 @@ export function UploadManagerProvider({
   }, [queue, queryClient]);
 
   const value: Manager = {
-    enabled: ENABLED,
     items: queue.items,
     active,
     enqueue: (files, meta) => {

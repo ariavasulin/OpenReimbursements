@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { canRemove, nextPreviewIndex, removeAt } from "./batch";
+import { nextPreviewIndex, removeAt } from "./batch";
 
 const state = {
   files: ["a", "b", "c"],
-  items: [{ status: "pending" }, { status: "failed" }, { status: "pending" }],
   previews: ["blob:a", null, "blob:c"],
 };
 
 describe("removeAt", () => {
-  it("drops the same position from files, items, and previews", () => {
+  it("drops the same position from files and previews", () => {
     const next = removeAt(state, 1);
     expect(next.files).toEqual(["a", "c"]);
-    expect(next.items).toEqual([{ status: "pending" }, { status: "pending" }]);
     expect(next.previews).toEqual(["blob:a", "blob:c"]);
   });
 
@@ -21,18 +19,9 @@ describe("removeAt", () => {
     expect(state.previews).toEqual(["blob:a", null, "blob:c"]);
   });
 
-  it("empties every array when the last file goes", () => {
-    const one = { files: ["a"], items: [{ status: "pending" }], previews: [null] };
-    expect(removeAt(one, 0)).toEqual({ files: [], items: [], previews: [] });
-  });
-});
-
-describe("canRemove", () => {
-  it("allows pending and failed, blocks uploading and done", () => {
-    expect(canRemove("pending")).toBe(true);
-    expect(canRemove("failed")).toBe(true);
-    expect(canRemove("uploading")).toBe(false);
-    expect(canRemove("done")).toBe(false);
+  it("empties both arrays when the last file goes", () => {
+    const one = { files: ["a"], previews: [null] };
+    expect(removeAt(one, 0)).toEqual({ files: [], previews: [] });
   });
 });
 

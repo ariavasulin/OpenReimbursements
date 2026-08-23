@@ -4,37 +4,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useMobile } from "@/hooks/use-mobile";
-import { supabase } from "@/lib/supabaseClient";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
-import { RotateCw, X } from "lucide-react";
+import { X } from "lucide-react";
 import JobCombobox from "@/components/photos/job-combobox";
 import BatchPreview from "@/components/photos/batch-preview";
-import {
-  createResumableUpload,
-  uploadOne,
-  type FinalizePayload,
-  type UploadDeps,
-  type UploadResult,
-} from "@/lib/photos/upload";
 import { useUploadManager } from "@/lib/photos/upload-manager";
-import UploadProgress, {
-  RowButton,
-  type UploadItem,
-} from "@/components/photos/upload-progress";
 import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
-import { fetchJobs, fetchJson, fetchTags } from "@/lib/photos/api";
+import { fetchJobs, fetchTags } from "@/lib/photos/api";
 import { readSidecarMeta } from "@/lib/photos/sidecar";
 import { plural } from "@/lib/photos/format";
-import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
+import { nextPreviewIndex, removeAt } from "@/lib/photos/batch";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
 // The batch is copied into local state so files can be removed before upload.
-// With the upload manager on (the default), the sheet is compose-only: Upload
-// hands the batch to the manager and closes; the tray shows progress. The
-// legacy in-sheet loop remains behind NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER=0 for
-// one release (removed in Phase 8).
+// The sheet is compose-only: Upload hands the batch to the app-level upload
+// manager and closes; the tray (upload-tray.tsx) shows progress from there.
 
 function makePreviews(files: File[]): (string | null)[] {
   return files.map((file) =>
@@ -46,49 +32,6 @@ function revokePreviews(previews: (string | null)[]) {
   for (const url of previews) if (url) URL.revokeObjectURL(url);
 }
 
-function buildUploadDeps(): UploadDeps {
-  return {
-    storage: {
-      async upload(path, body, options) {
-        const { error } = await supabase.storage
-          .from("photos")
-          .upload(path, body, options);
-        return { error };
-      },
-      async remove(paths) {
-        const { error } = await supabase.storage.from("photos").remove(paths);
-        return { error };
-      },
-    },
-    resumableUpload: createResumableUpload({
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      getAccessToken: async () => {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        return session?.access_token ?? null;
-      },
-    }),
-    finalize: (payload: FinalizePayload) =>
-      fetchJson<{ alreadyExists?: boolean; duplicate?: boolean }>(
-        "/api/photos",
-        "Saving failed",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }
-      ),
-    exists: async (jobId, sha) => {
-      const data = await fetchJson<{ exists: boolean }>(
-        `/api/photos/exists?job=${encodeURIComponent(jobId)}&sha=${encodeURIComponent(sha)}`,
-        "Duplicate check failed"
-      );
-      return data.exists;
-    },
-  };
-}
-
 interface UploadSheetProps {
   /** The picked/shot batch; the sheet keeps its own editable copy. */
   files: File[];
@@ -96,9 +39,6 @@ interface UploadSheetProps {
   onOpenChange(open: boolean): void;
   /** Pre-selects the job when uploading from inside a job. */
   defaultJobId?: string;
-  /** Legacy loop only — the manager invalidates caches itself. Unused when
-   * the manager is enabled; the prop dies with the legacy loop in Phase 8. */
-  onUploaded(): void;
   /** Shutter times for in-app camera shots (see CameraShot). */
   capturedAtOverrides?: Map<File, Date>;
   /** Paired .xmp per primary image (pairByBasename ran at pick time). */
@@ -110,7 +50,6 @@ export default function UploadSheet({
   open,
   onOpenChange,
   defaultJobId,
-  onUploaded,
   capturedAtOverrides,
   sidecars,
 }: UploadSheetProps) {
@@ -124,8 +63,6 @@ export default function UploadSheet({
   const [previews, setPreviews] = useState<(string | null)[]>([]);
   const previewsRef = useRef<(string | null)[]>([]);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [items, setItems] = useState<UploadItem[]>([]);
-  const [uploading, setUploading] = useState(false);
 
   const { data: jobs } = useQuery({
     queryKey: ["photo-jobs", ""],
@@ -147,13 +84,6 @@ export default function UploadSheet({
       setTagInput("");
       setPreviewIndex(null);
       setFiles(initialFiles);
-      setItems(
-        initialFiles.map((file) => ({
-          status: "pending",
-          sentBytes: 0,
-          totalBytes: file.size,
-        }))
-      );
       revokePreviews(previewsRef.current);
       const next = makePreviews(initialFiles);
       previewsRef.current = next;
@@ -165,17 +95,11 @@ export default function UploadSheet({
     return () => revokePreviews(previewsRef.current);
   }, []);
 
-  const removableAt = (index: number) =>
-    manager.enabled ||
-    (!uploading && !!items[index] && canRemove(items[index].status));
-
   const removeFile = (index: number) => {
-    if (!removableAt(index)) return;
     const url = previews[index];
     if (url) URL.revokeObjectURL(url);
-    const next = removeAt({ files, items, previews }, index);
+    const next = removeAt({ files, previews }, index);
     setFiles(next.files);
-    setItems(next.items);
     previewsRef.current = next.previews;
     setPreviews(next.previews);
     setPreviewIndex((current) =>
@@ -224,14 +148,7 @@ export default function UploadSheet({
     setTagInput("");
   };
 
-  const patchItem = (index: number, patch: Partial<UploadItem>) =>
-    setItems((previous) => {
-      const next = [...previous];
-      next[index] = { ...next[index], ...patch };
-      return next;
-    });
-
-  /** Manager path: hand the batch over and close — the tray takes it from here. */
+  /** Hand the batch to the manager and close — the tray takes it from here. */
   const submit = () => {
     if (!jobId) {
       toast.error("Pick a job first");
@@ -252,88 +169,6 @@ export default function UploadSheet({
     onOpenChange(false);
   };
 
-  /** Legacy in-sheet loop, only when the manager kill switch is thrown. */
-  const legacyRunUpload = async (indices: number[]) => {
-    if (!jobId) {
-      toast.error("Pick a job first");
-      return;
-    }
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session) {
-      toast.error("You are signed out — sign in and try again");
-      return;
-    }
-
-    setUploading(true);
-    const meta = {
-      jobId,
-      uploaderId: session.user.id,
-      sheetNumber: sheetNumber || null,
-      tags: withPendingTag(tags, tagInput),
-    };
-    const deps = buildUploadDeps();
-
-    const results: UploadResult[] = [];
-    for (const fileIndex of indices) {
-      const file = files[fileIndex];
-      patchItem(fileIndex, {
-        status: "uploading",
-        sentBytes: 0,
-        totalBytes: file.size,
-        error: undefined,
-      });
-      const result = await uploadOne(
-        file,
-        crypto.randomUUID(),
-        meta,
-        deps,
-        (sentBytes, totalBytes) =>
-          setItems((previous) => {
-            if (previous[fileIndex]?.sentBytes === sentBytes) return previous;
-            const next = [...previous];
-            next[fileIndex] = { ...next[fileIndex], sentBytes, totalBytes };
-            return next;
-          }),
-        { shutter: capturedAtOverrides?.get(file), sidecar: sidecars?.get(file) }
-      );
-      results.push(result);
-      patchItem(fileIndex, { status: result.status, error: result.error });
-    }
-    setUploading(false);
-
-    const failed = results.filter((result) => result.status === "failed");
-    if (results.some((result) => result.status === "done")) onUploaded();
-    if (failed.length === 0) {
-      toast.success(
-        results.length === 1
-          ? "Photo uploaded"
-          : `${results.length} files uploaded`
-      );
-      onOpenChange(false);
-    } else {
-      toast.error(
-        `${failed.length} of ${results.length} failed — ${failed[0].error ?? "upload error"}`
-      );
-    }
-  };
-
-  const indicesWith = (status: UploadItem["status"]) =>
-    items.flatMap((item, index) => (item.status === status ? [index] : []));
-  const failedIndices = indicesWith("failed");
-  const pendingIndices = indicesWith("pending");
-  const doneCount = items.filter((item) => item.status === "done").length;
-  const uploadStarted = items.some((item) => item.status !== "pending");
-  const retrying = failedIndices.length > 0;
-
-  const handleOpenChange = (next: boolean) => {
-    // Legacy loop only: closing would lose the in-flight batch. The manager
-    // survives the sheet closing, so it never blocks.
-    if (!next && !manager.enabled && uploading) return;
-    onOpenChange(next);
-  };
-
   const body = (
     <div className="px-4 pb-5 pt-1">
       <div className="mb-3 text-[15px] font-semibold text-white">
@@ -341,70 +176,41 @@ export default function UploadSheet({
       </div>
 
       <div className="mb-3.5 flex gap-1.5 overflow-x-auto p-1">
-        {files.map((file, index) => {
-          const removable = removableAt(index);
-          return (
-            <div key={index} className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => setPreviewIndex(index)}
-                aria-label={`Preview ${file.name}`}
-                className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
-              >
-                {previews[index] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={previews[index]}
-                    alt={file.name}
-                    className="h-14 w-14 rounded-lg object-cover"
-                  />
-                ) : (
-                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
-                    {file.name}
-                  </div>
-                )}
-              </button>
-              {removable && (
-                <button
-                  type="button"
-                  onClick={() => removeFile(index)}
-                  aria-label={`Remove ${file.name}`}
-                  className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
-                >
-                  <X className="h-3 w-3" />
-                </button>
+        {files.map((file, index) => (
+          <div key={index} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setPreviewIndex(index)}
+              aria-label={`Preview ${file.name}`}
+              className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
+            >
+              {previews[index] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={previews[index]}
+                  alt={file.name}
+                  className="h-14 w-14 rounded-lg object-cover"
+                />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
+                  {file.name}
+                </div>
               )}
-            </div>
-          );
-        })}
+            </button>
+            <button
+              type="button"
+              onClick={() => removeFile(index)}
+              aria-label={`Remove ${file.name}`}
+              className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        ))}
       </div>
 
-      {!manager.enabled && uploadStarted && (
-        <UploadProgress
-          rows={files.map((file, index) => ({
-            name: file.name,
-            item: items[index],
-            actions:
-              items[index]?.status === "failed" ? (
-                <RowButton
-                  onClick={() => legacyRunUpload([index])}
-                  disabled={uploading}
-                >
-                  <RotateCw className="h-3 w-3" />
-                  Retry
-                </RowButton>
-              ) : undefined,
-          }))}
-        />
-      )}
-
       <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
-      <JobCombobox
-        jobs={jobs ?? []}
-        value={jobId}
-        onChange={setJobId}
-        disabled={uploading}
-      />
+      <JobCombobox jobs={jobs ?? []} value={jobId} onChange={setJobId} />
 
       <label className="mb-1.5 block text-xs text-[#a0a0a0]">
         Sheet # (optional)
@@ -415,7 +221,6 @@ export default function UploadSheet({
         value={sheetNumber}
         onChange={(event) => setSheetNumber(event.target.value)}
         placeholder="e.g. 12"
-        disabled={uploading}
         className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
       />
 
@@ -431,7 +236,6 @@ export default function UploadSheet({
         onRemove={(tag) =>
           setTags((previous) => previous.filter((t) => t !== tag))
         }
-        disabled={uploading}
       />
       {tagSuggestions.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
@@ -449,33 +253,14 @@ export default function UploadSheet({
       )}
 
       <div className="mt-3">
-        {manager.enabled ? (
-          <Button
-            onClick={submit}
-            disabled={files.length === 0}
-            className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
-            size="lg"
-          >
-            {`Upload ${plural(files.length, "file")}`}
-          </Button>
-        ) : (
-          <Button
-            onClick={() =>
-              legacyRunUpload(retrying ? failedIndices : pendingIndices)
-            }
-            disabled={uploading || (!retrying && pendingIndices.length === 0)}
-            className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
-            size="lg"
-          >
-            {uploading
-              ? retrying
-                ? "Uploading..."
-                : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
-              : retrying
-                ? `Retry ${failedIndices.length} failed`
-                : `Upload ${plural(pendingIndices.length, "file")}`}
-          </Button>
-        )}
+        <Button
+          onClick={submit}
+          disabled={files.length === 0}
+          className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
+          size="lg"
+        >
+          {`Upload ${plural(files.length, "file")}`}
+        </Button>
       </div>
     </div>
   );
@@ -490,13 +275,13 @@ export default function UploadSheet({
       onIndexChange={setPreviewIndex}
       onClose={() => setPreviewIndex(null)}
       onRemove={removeFile}
-      removeDisabled={previewIndex === null || !removableAt(previewIndex)}
+      removeDisabled={previewIndex === null}
     />
   );
 
   if (isMobile) {
     return (
-      <Drawer open={open} onOpenChange={handleOpenChange}>
+      <Drawer open={open} onOpenChange={onOpenChange}>
         <DrawerContent className="border-[#4e4e4e] bg-[#2e2e2e]">
           <DrawerTitle className="sr-only">{title}</DrawerTitle>
           {body}
@@ -507,7 +292,7 @@ export default function UploadSheet({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="border-none bg-[#2e2e2e] p-0 sm:max-w-md">
         <DialogTitle className="sr-only">{title}</DialogTitle>
         {body}

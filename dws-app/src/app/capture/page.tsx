@@ -1,6 +1,5 @@
 "use client";
 
-import { useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Toaster as SonnerToaster } from "sonner";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
@@ -19,14 +18,13 @@ export default function CapturePage() {
   const router = useRouter();
   const ready = useSessionGuard("/capture");
   const batch = useCaptureBatch(true);
-  const uploadedRef = useRef(false);
 
+  // Closing the sheet (upload handed off or cancelled) returns to the camera;
+  // the tray shows upload progress over it. Leaving the page goes via the
+  // camera's own close button.
   const handleSheetChange = (open: boolean) => {
     batch.setSheetOpen(open);
-    if (!open) {
-      if (uploadedRef.current) router.replace("/photos");
-      else batch.setCameraOpen(true);
-    }
+    if (!open) batch.setCameraOpen(true);
   };
 
   if (!ready) {
@@ -51,9 +49,6 @@ export default function CapturePage() {
           files={batch.pickedFiles}
           open={batch.sheetOpen}
           onOpenChange={handleSheetChange}
-          onUploaded={() => {
-            uploadedRef.current = true;
-          }}
           capturedAtOverrides={batch.capturedAtOverrides}
           sidecars={batch.sidecars}
         />

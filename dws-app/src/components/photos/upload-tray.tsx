@@ -49,7 +49,7 @@ export default function UploadTray({
   const [expanded, setExpanded] = useState(false);
   const repickInputRef = useRef<HTMLInputElement>(null);
 
-  if (!manager.enabled || manager.items.length === 0) return null;
+  if (manager.items.length === 0) return null;
 
   const { items, active } = manager;
   const settledOnly = items.every(
