@@ -1,8 +1,12 @@
+import { PATH_COLUMNS } from './repair/known-paths';
+
 /** Columns every photos response returns (uploader name + job embedded). */
 export const PHOTO_COLUMNS =
   'id, job_id, uploader_id, kind, sheet_number, tags, captured_at, ' +
+  'captured_at_source, ' +
   'original_path, original_bytes, mime_type, original_name, thumb_path, ' +
-  'preview_path, duration_secs, created_at, ' +
+  'preview_path, playback_path, duration_secs, sidecar_path, sidecar_name, ' +
+  'created_at, ' +
   'uploader:user_profiles(full_name), job:jobs(id, job_number, name)';
 
 /** Escape ILIKE wildcards and strip PostgREST or()-syntax characters. */
@@ -32,4 +36,21 @@ export function cleanTags(input: unknown): string[] {
         .filter(Boolean)
     ),
   ].slice(0, MAX_TAGS);
+}
+
+/** True for a lowercase hex SHA-256 digest — the only content_sha256 shape
+ * the per-job unique index (photos_job_sha) is meant to bite on. */
+export function isSha256(v: unknown): v is string {
+  return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+}
+
+/** Storage objects DELETE removes alongside a photos row (order is
+ * irrelevant; nulls and absent columns drop out). Driven by PATH_COLUMNS so a
+ * column added there is deleted here without a second edit. */
+export function deletionPaths(
+  row: Partial<Record<(typeof PATH_COLUMNS)[number], string | null>>
+): string[] {
+  return PATH_COLUMNS.map((column) => row[column]).filter(
+    (path): path is string => Boolean(path)
+  );
 }

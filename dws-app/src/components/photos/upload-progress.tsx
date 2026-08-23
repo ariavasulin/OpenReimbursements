@@ -1,52 +1,60 @@
 "use client";
 
-import { RotateCw } from "lucide-react";
+import type { ReactNode } from "react";
 import { formatBytes } from "@/lib/photos/format";
-import type { UploadResult } from "@/lib/photos/upload";
+import type { QueueItem } from "@/lib/photos/upload-queue";
 
-// Per-file progress list for a running (or partially failed) batch. Failed
-// rows get an unmissable Retry; done rows stay done — a partial batch keeps
-// its successes (4 of 5 photos landing on jobsite LTE is a success to keep).
+export type UploadItem = Pick<
+  QueueItem,
+  "name" | "status" | "sentBytes" | "size" | "error"
+>;
 
-export interface UploadItem {
-  status: UploadResult["status"] | "pending" | "uploading";
-  sentBytes: number;
-  totalBytes: number;
-  error?: string;
+export interface UploadRow {
+  item: UploadItem;
+  actions?: ReactNode;
 }
 
+// #b4b4b4 on the #3e3e3e row background is ~5.2:1, clearing the 4.5:1 AA floor
+// for the 10px status text (#a0a0a0 was ~4.1:1 — too dim on a phone outdoors).
 const STATUS_COLORS: Record<UploadItem["status"], { text: string; bar: string }> =
   {
     done: { text: "text-[#4ade80]", bar: "bg-[#4ade80]" },
+    duplicate: { text: "text-[#b4b4b4]", bar: "bg-[#4ade80]" },
     failed: { text: "text-red-400", bar: "bg-red-500" },
-    pending: { text: "text-[#a0a0a0]", bar: "bg-[#2680FC]" },
-    uploading: { text: "text-[#a0a0a0]", bar: "bg-[#2680FC]" },
+    interrupted: { text: "text-amber-400", bar: "bg-amber-400" },
+    queued: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
+    uploading: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
   };
 
-interface UploadProgressProps {
-  files: File[];
-  items: UploadItem[];
-  /** Retry one failed file. Disabled while another upload is in flight. */
-  onRetry(index: number): void;
-  retryDisabled?: boolean;
+function statusLabel(item: UploadItem): string {
+  switch (item.status) {
+    case "done":
+      return "Done";
+    case "duplicate":
+      return "Already in this job";
+    case "failed":
+      return "Failed";
+    case "interrupted":
+      return "Interrupted";
+    case "queued":
+      return "Waiting";
+    case "uploading":
+      return item.sentBytes > 0
+        ? `${formatBytes(item.sentBytes)} / ${formatBytes(item.size)}`
+        : "Uploading...";
+  }
 }
 
 function percent(item: UploadItem): number {
-  if (item.status === "done") return 100;
-  if (item.totalBytes <= 0) return 0;
-  return Math.min(100, Math.round((item.sentBytes / item.totalBytes) * 100));
+  if (item.status === "done" || item.status === "duplicate") return 100;
+  if (item.size <= 0) return 0;
+  return Math.min(100, Math.round((item.sentBytes / item.size) * 100));
 }
 
-export default function UploadProgress({
-  files,
-  items,
-  onRetry,
-  retryDisabled,
-}: UploadProgressProps) {
+export default function UploadProgress({ rows }: { rows: UploadRow[] }) {
   return (
     <div className="mb-3.5 flex max-h-48 flex-col gap-1.5 overflow-y-auto">
-      {files.map((file, index) => {
-        const item = items[index];
+      {rows.map(({ item, actions }, index) => {
         const value = percent(item);
         const colors = STATUS_COLORS[item.status];
         return (
@@ -62,16 +70,10 @@ export default function UploadProgress({
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-xs text-white">
-                    {file.name}
+                    {item.name}
                   </span>
                   <span className={`shrink-0 text-[10px] ${colors.text}`}>
-                    {item.status === "done" && "Done"}
-                    {item.status === "pending" && "Waiting"}
-                    {item.status === "failed" && "Failed"}
-                    {item.status === "uploading" &&
-                      (item.sentBytes > 0
-                        ? `${formatBytes(item.sentBytes)} / ${formatBytes(item.totalBytes)}`
-                        : "Uploading...")}
+                    {statusLabel(item)}
                   </span>
                 </div>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#222222]">
@@ -86,16 +88,8 @@ export default function UploadProgress({
                   </div>
                 )}
               </div>
-              {item.status === "failed" && (
-                <button
-                  type="button"
-                  onClick={() => onRetry(index)}
-                  disabled={retryDisabled}
-                  className="flex shrink-0 items-center gap-1 rounded-md bg-[#2680FC] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-[#1a6fd8] disabled:opacity-50"
-                >
-                  <RotateCw className="h-3 w-3" />
-                  Retry
-                </button>
+              {actions && (
+                <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
               )}
             </div>
           </div>

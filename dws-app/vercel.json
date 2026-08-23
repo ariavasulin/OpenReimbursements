@@ -2,5 +2,6 @@
   "env": {
     "NEXT_ESLINT_DISABLED": "1"
   },
-  "installCommand": "npm install --legacy-peer-deps"
+  "installCommand": "npm install --legacy-peer-deps",
+  "crons": [{ "path": "/api/photos/repair", "schedule": "0 9 * * *" }]
 }

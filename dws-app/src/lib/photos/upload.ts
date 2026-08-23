@@ -3,12 +3,18 @@
 // without a browser or network.
 
 import { Upload as TusUpload, type UploadOptions, type DetailedError } from "tus-js-client";
-import { extractCapturedAt as defaultExtractCapturedAt } from "./exif";
+import {
+  extractCapturedAt as defaultExtractCapturedAt,
+  type CapturedAt,
+} from "./exif";
+import { classifyFile, extensionOf, rewrap } from "./classify";
+import { sha256 } from "./hash";
+import { readSidecarMeta } from "./sidecar";
 import {
   makeDerivatives as defaultMakeDerivatives,
   type Derivatives,
 } from "./derivatives";
-import type { PhotoKind } from "./types";
+import type { CapturedAtSource, PhotoKind } from "./types";
 
 export interface UploadMeta {
   jobId: string;
@@ -16,6 +22,11 @@ export interface UploadMeta {
   uploaderId: string;
   sheetNumber?: string | null;
   tags?: string[];
+}
+
+/** What the sheet hands the manager: meta plus per-file shutter times. */
+export interface BatchMeta extends Omit<UploadMeta, "uploaderId"> {
+  shutterAt?: Map<File, Date>;
 }
 
 /** Row payload POSTed to /api/photos once the files are in storage. */
@@ -26,6 +37,9 @@ export interface FinalizePayload {
   sheet_number: string | null;
   tags: string[];
   captured_at: string | null;
+  /** Where captured_at came from; 'upload' when captured_at is null (the
+   * server stamps now()). */
+  captured_at_source: CapturedAtSource;
   original_path: string;
   original_bytes: number;
   mime_type: string | null;
@@ -33,6 +47,13 @@ export interface FinalizePayload {
   thumb_path: string | null;
   preview_path: string | null;
   duration_secs: number | null;
+  /** Attached .xmp beside the original; both null when there is none (or its
+   * upload failed — the row still lands). */
+  sidecar_path: string | null;
+  sidecar_name: string | null;
+  /** SHA-256 of the original's bytes; null over the hashing cap. The server's
+   * per-job unique index on it is what makes dedupe stick. */
+  content_sha256: string | null;
 }
 
 export interface PhotoStorage {
@@ -41,6 +62,9 @@ export interface PhotoStorage {
     body: Blob | File,
     options?: { contentType?: string; upsert?: boolean }
   ): Promise<{ error: { message: string } | null }>;
+  /** Best-effort cleanup when finalize reports a duplicate (optional: the
+   * repair sweep eventually deletes row-less originals anyway). */
+  remove?(paths: string[]): Promise<{ error: { message: string } | null }>;
 }
 
 /** Byte-level progress for one file (only TUS uploads report mid-file). */
@@ -58,18 +82,27 @@ export type ResumableUpload = (
 
 export interface UploadDeps {
   storage: PhotoStorage;
-  /** POST /api/photos; must throw on failure. */
-  finalize: (payload: FinalizePayload) => Promise<void>;
+  /** POST /api/photos; must throw on failure. Resolves alreadyExists on an
+   * idempotent replay (same photoId retried after the row already landed) and
+   * duplicate when the job already has a row with these exact bytes. */
+  finalize: (
+    payload: FinalizePayload
+  ) => Promise<{ alreadyExists?: boolean; duplicate?: boolean }>;
+  /** GET /api/photos/exists — pre-flight dedupe check, called for files big
+   * enough that uploading a duplicate would hurt (optional). */
+  exists?: (jobId: string, contentSha256: string) => Promise<boolean>;
   /** TUS path for originals over RESUMABLE_THRESHOLD_BYTES (optional: tests
    * and environments without TUS fall back to plain uploads). */
   resumableUpload?: ResumableUpload;
-  extractCapturedAt?: (file: File) => Promise<Date | null>;
+  extractCapturedAt?: (
+    file: File,
+    opts?: { shutter?: Date; sidecarDate?: Date | null }
+  ) => Promise<CapturedAt>;
   makeDerivatives?: (file: File) => Promise<Derivatives | null>;
-  generateId?: () => string;
 }
 
 export interface UploadResult {
-  status: "done" | "failed";
+  status: "done" | "failed" | "duplicate";
   error?: string;
 }
 
@@ -125,10 +158,10 @@ export function createResumableUpload(
         retryDelays: [0, 3000, 5000, 10000, 20000],
         uploadDataDuringCreation: true,
         removeFingerprintOnSuccess: true,
-        // tus-js-client's default fingerprint omits the objectName, so a retry
-        // (new photoId, new path) would resume the dead attempt and finish the
-        // bytes under the OLD path. Including the path makes a resume continue
-        // only THIS object.
+        // tus-js-client's default fingerprint omits the objectName. Including
+        // the path scopes resumes to THIS object: a retry with the same
+        // photoId (same path) resumes its own bytes, and an upload to a
+        // different path can never adopt a dead attempt's URL.
         fingerprint: async () =>
           [
             "tus-sb",
@@ -195,28 +228,31 @@ export function sanitizeFilename(name: string): string {
   return cleanExt ? `${cleanBase}.${cleanExt}` : cleanBase;
 }
 
-export function kindFromMime(mime: string): PhotoKind {
-  if (mime.startsWith("image/")) return "image";
-  if (mime.startsWith("video/")) return "video";
-  return "file";
-}
-
 export function storagePaths(uploaderId: string, photoId: string, filename: string) {
+  const sanitized = sanitizeFilename(filename);
+  const ext = extensionOf(sanitized);
+  const base = ext ? sanitized.slice(0, -(ext.length + 1)) : sanitized;
   return {
-    original: `originals/${uploaderId}/${photoId}/${sanitizeFilename(filename)}`,
+    original: `originals/${uploaderId}/${photoId}/${sanitized}`,
+    sidecar: `originals/${uploaderId}/${photoId}/${base}.xmp`,
     thumb: `derived/${uploaderId}/${photoId}_thumb.webp`,
     preview: `derived/${uploaderId}/${photoId}_preview.webp`,
   };
 }
 
 export async function uploadOne(
-  file: File,
+  rawFile: File,
+  /** Owned by the caller (the upload manager) and STABLE across retries — a
+   * retry resumes the same TUS fingerprint and replays the same row id
+   * instead of orphaning the first attempt. */
+  photoId: string,
   meta: UploadMeta,
   deps: UploadDeps,
-  onBytes?: ByteProgress
+  onBytes?: ByteProgress,
+  /** Per-file extras: the in-app camera shutter time (date source 'camera')
+   * and the paired .xmp sidecar (uploaded beside the original). */
+  opts: { shutter?: Date; sidecar?: File } = {}
 ): Promise<UploadResult> {
-  const generateId = deps.generateId ?? (() => crypto.randomUUID());
-  const photoId = generateId();
   const failed = (error: string): UploadResult => ({ status: "failed", error });
 
   try {
@@ -224,15 +260,43 @@ export async function uploadOne(
       deps.extractCapturedAt ?? defaultExtractCapturedAt;
     const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
 
-    const [capturedAt, derivatives] = await Promise.all([
-      extractCapturedAt(file).catch(() => null),
+    const classified = classifyFile(rawFile);
+    const file = rewrap(rawFile, classified.mime);
+
+    // Content hash for dedupe (null over the cap), started but not awaited:
+    // only the big-file pre-flight needs it early, so everything else lets it
+    // overlap EXIF parsing and derivative encoding.
+    const hashing = sha256(file);
+    if (file.size > RESUMABLE_THRESHOLD_BYTES && deps.exists) {
+      // Big files pre-flight a server check so duplicate bytes never leave the
+      // phone; small ones just upload — the finalize unique index catches
+      // theirs cheaply.
+      const digest = await hashing;
+      if (digest) {
+        const alreadyInJob = await deps
+          .exists(meta.jobId, digest)
+          .catch(() => false); // a broken check must never block an upload
+        if (alreadyInJob) return { status: "duplicate" };
+      }
+    }
+
+    const [capturedAt, derivatives, contentSha256] = await Promise.all([
+      (async (): Promise<CapturedAt> => {
+        // The sidecar's date only matters when the image itself has no EXIF
+        // (extractCapturedAt owns that priority).
+        const sidecarDate = opts.sidecar
+          ? (await readSidecarMeta(opts.sidecar)).capturedAt
+          : null;
+        return extractCapturedAt(file, { shutter: opts.shutter, sidecarDate });
+      })().catch((): CapturedAt => ({ date: null, source: "upload" })),
       makeDerivatives(file).catch(() => null),
+      hashing,
     ]);
     const paths = storagePaths(meta.uploaderId, photoId, file.name);
 
     // 1. Original, byte-for-byte, ALWAYS first — a kill after this point
     // leaves a repairable state, never orphan derivatives.
-    const contentType = file.type || "application/octet-stream";
+    const contentType = classified.mime;
     const resumable =
       file.size > RESUMABLE_THRESHOLD_BYTES ? deps.resumableUpload : undefined;
     const { error: originalError } = resumable
@@ -249,7 +313,28 @@ export async function uploadOne(
     }
     onBytes?.(file.size, file.size);
 
-    // 2. Derivatives (small, best-effort). If one fails the row still lands
+    // 2. Sidecar (tiny, best-effort) right after its original. On failure the
+    // row still lands with null sidecar columns — but unlike derivatives the
+    // repair sweep can't recreate an .xmp, so leave a trace in the console.
+    let sidecarPath: string | null = null;
+    let sidecarName: string | null = null;
+    if (opts.sidecar) {
+      const { error: sidecarError } = await deps.storage.upload(
+        paths.sidecar,
+        opts.sidecar,
+        { contentType: "application/rdf+xml", upsert: true }
+      );
+      if (sidecarError) {
+        console.warn(
+          `photos.upload sidecar failed photoId=${photoId} err=${sidecarError.message}`
+        );
+      } else {
+        sidecarPath = paths.sidecar;
+        sidecarName = opts.sidecar.name;
+      }
+    }
+
+    // 3. Derivatives (small, best-effort). If one fails the row still lands
     // with null paths — exactly the state the repair loop fills.
     let thumbPath: string | null = null;
     let previewPath: string | null = null;
@@ -270,24 +355,42 @@ export async function uploadOne(
       }
     }
 
-    // 3. Finalize — the row existing is what makes the photo "in".
+    // 4. Finalize — the row existing is what makes the photo "in".
     const payload: FinalizePayload = {
       id: photoId,
       job_id: meta.jobId,
-      kind: kindFromMime(file.type),
+      kind: classified.kind === "sidecar" ? "file" : classified.kind,
       sheet_number: meta.sheetNumber?.trim() || null,
       tags: meta.tags ?? [],
-      captured_at: capturedAt ? capturedAt.toISOString() : null,
+      captured_at: capturedAt.date ? capturedAt.date.toISOString() : null,
+      captured_at_source: capturedAt.source,
       original_path: paths.original,
       original_bytes: file.size,
-      mime_type: file.type || null,
+      mime_type: classified.mime,
       original_name: file.name,
       thumb_path: thumbPath,
       preview_path: previewPath,
       duration_secs: derivatives?.durationSecs ?? null,
+      sidecar_path: sidecarPath,
+      sidecar_name: sidecarName,
+      content_sha256: contentSha256,
     };
 
-    await deps.finalize(payload);
+    // A duplicate means the objects just uploaded are orphans: best-effort
+    // remove them.
+    const finalizeResult = await deps.finalize(payload);
+    if (finalizeResult.duplicate) {
+      try {
+        await deps.storage.remove?.(
+          [paths.original, sidecarPath, thumbPath, previewPath].filter(
+            (path): path is string => Boolean(path)
+          )
+        );
+      } catch {
+        // The repair sweep deletes row-less originals after 24 h anyway.
+      }
+      return { status: "duplicate" };
+    }
 
     return { status: "done" };
   } catch (error) {

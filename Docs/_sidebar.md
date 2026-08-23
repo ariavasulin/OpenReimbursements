@@ -15,3 +15,4 @@
   - [API](API.md)
   - [Database](Database.md)
   - [Components](Components.md)
+  - [Photos Runbook](photos-runbook.md)

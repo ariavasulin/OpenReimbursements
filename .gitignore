@@ -69,3 +69,6 @@ hack.bak/
 .vercel 
 # Riptide artifacts (cloud-synced)
 .humanlayer/tasks/
+
+# Supabase CLI scratch (created by `supabase db query --linked`)
+supabase/.temp/

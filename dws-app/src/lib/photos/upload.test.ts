@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   DetailedError,
   HttpRequest,
@@ -6,7 +8,6 @@ import type {
 } from "tus-js-client";
 import {
   createResumableUpload,
-  kindFromMime,
   RESUMABLE_THRESHOLD_BYTES,
   sanitizeFilename,
   storagePaths,
@@ -17,6 +18,7 @@ import {
   type UploadDeps,
   type UploadMeta,
 } from "./upload";
+import { sha256 } from "./hash";
 
 const META: UploadMeta = {
   jobId: "0b7f0000-0000-4000-8000-000000000001",
@@ -43,7 +45,6 @@ function makeDeps(overrides?: {
 }) {
   const uploads: Recorded[] = [];
   const finalized: FinalizePayload[] = [];
-  let idCounter = 0;
 
   const deps: UploadDeps = {
     storage: {
@@ -64,8 +65,12 @@ function makeDeps(overrides?: {
       if (overrides?.throwAt?.("finalize")) throw new Error("KILLED");
       if (overrides?.failFinalize) throw new Error("db says no");
       finalized.push(payload);
+      return {};
     }),
-    extractCapturedAt: async () => CAPTURED,
+    extractCapturedAt: async (_file, opts) =>
+      opts?.shutter
+        ? { date: opts.shutter, source: "camera" }
+        : { date: CAPTURED, source: "exif" },
     makeDerivatives: async () =>
       overrides?.noDerivatives
         ? null
@@ -74,7 +79,6 @@ function makeDeps(overrides?: {
             preview: new Blob(["p"], { type: "image/webp" }),
             durationSecs: null,
           },
-    generateId: () => `photo-${++idCounter}`,
   };
 
   return { deps, uploads, finalized };
@@ -89,7 +93,7 @@ describe("uploadOne", () => {
     const { deps, uploads, finalized } = makeDeps();
     const file = makeFile("IMG_0001.jpg", "image/jpeg", 10);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(uploads.map((u) => u.path)).toEqual([
@@ -105,6 +109,7 @@ describe("uploadOne", () => {
       sheet_number: "12",
       tags: ["professional"],
       captured_at: CAPTURED.toISOString(),
+      captured_at_source: "exif",
       original_path: "originals/user-1/photo-1/IMG_0001.jpg",
       original_bytes: 10,
       mime_type: "image/jpeg",
@@ -114,9 +119,23 @@ describe("uploadOne", () => {
     });
   });
 
+  it("treats a finalize replay (alreadyExists) as done", async () => {
+    const { deps } = makeDeps();
+    deps.finalize = vi.fn(async () => ({ alreadyExists: true }));
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result).toEqual({ status: "done" });
+  });
+
   it("marks the file failed when the row POST fails", async () => {
     const { deps, finalized } = makeDeps({ failFinalize: true });
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain("db says no");
@@ -127,7 +146,7 @@ describe("uploadOne", () => {
     const { deps, uploads } = makeDeps({
       failUploadPaths: (path) => path.startsWith("originals/"),
     });
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
 
     expect(result.status).toBe("failed");
     expect(uploads).toHaveLength(0); // derivatives never went up either
@@ -138,7 +157,7 @@ describe("uploadOne", () => {
     const { deps, finalized } = makeDeps({
       failUploadPaths: (path) => path.includes("_thumb"),
     });
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(finalized[0].thumb_path).toBeNull();
@@ -149,16 +168,260 @@ describe("uploadOne", () => {
     const { deps, uploads, finalized } = makeDeps({ noDerivatives: true });
     const file = makeFile("shot.CR3", "", 6);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(uploads).toHaveLength(1); // only the original
     expect(finalized[0]).toMatchObject({
       kind: "file",
-      mime_type: null,
+      mime_type: "application/octet-stream", // canonical, never the browser's blank
       thumb_path: null,
       preview_path: null,
     });
+  });
+
+  it("classifies by extension: a typeless .mov is a video with a canonical mime", async () => {
+    const { deps, uploads, finalized } = makeDeps({ noDerivatives: true });
+    const file = makeFile("IMG_5011.MOV", "", 8); // Safari sometimes leaves type empty
+
+    const result = await uploadOne(file, "photo-1", META, deps);
+
+    expect(result.status).toBe("done");
+    // The stored object carries the canonical Content-Type (rewrap), not "".
+    expect(uploads[0].contentType).toBe("video/quicktime");
+    expect(finalized[0]).toMatchObject({
+      kind: "video",
+      mime_type: "video/quicktime",
+    });
+  });
+
+  it("forwards the shutter time so in-app shots record source 'camera'", async () => {
+    const { deps, finalized } = makeDeps();
+    const shutter = new Date("2026-08-20T10:00:00.000Z");
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps,
+      undefined,
+      { shutter }
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      captured_at: shutter.toISOString(),
+      captured_at_source: "camera",
+    });
+  });
+
+  it("finalizes source 'upload' with a null date when extraction throws", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.extractCapturedAt = async () => {
+      throw new Error("exif exploded");
+    };
+
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      captured_at: null,
+      captured_at_source: "upload",
+    });
+  });
+});
+
+describe("uploadOne with a sidecar", () => {
+  const XMP = readFileSync(join(__dirname, "__fixtures__", "sample.xmp"));
+  const xmpFile = (name = "IMG_0001.xmp") => new File([XMP], name);
+  // The fixture's exif:DateTimeOriginal carries no offset -> local time.
+  const FIXTURE_CAPTURED = new Date("2026-08-14T14:41:00");
+
+  it("uploads the sidecar AFTER the original and BEFORE derivatives, and finalizes both columns", async () => {
+    const { deps, uploads, finalized } = makeDeps();
+    const file = makeFile("IMG_0001.jpg", "image/jpeg", 10);
+
+    const result = await uploadOne(file, "photo-1", META, deps, undefined, {
+      sidecar: xmpFile(),
+    });
+
+    expect(result.status).toBe("done");
+    expect(uploads.map((u) => u.path)).toEqual([
+      "originals/user-1/photo-1/IMG_0001.jpg",
+      "originals/user-1/photo-1/IMG_0001.xmp",
+      "derived/user-1/photo-1_thumb.webp",
+      "derived/user-1/photo-1_preview.webp",
+    ]);
+    expect(uploads[1].contentType).toBe("application/rdf+xml");
+    expect(finalized[0]).toMatchObject({
+      sidecar_path: "originals/user-1/photo-1/IMG_0001.xmp",
+      sidecar_name: "IMG_0001.xmp",
+    });
+  });
+
+  it("still lands the row (null sidecar columns) when the sidecar upload fails", async () => {
+    const { deps, finalized } = makeDeps({
+      failUploadPaths: (path) => path.endsWith(".xmp"),
+    });
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps,
+      undefined,
+      { sidecar: xmpFile("a.xmp") }
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      sidecar_path: null,
+      sidecar_name: null,
+    });
+  });
+
+  it("feeds the sidecar's XMP date into extractCapturedAt (source 'xmp' when no EXIF)", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.extractCapturedAt = async (_file, opts) =>
+      opts?.sidecarDate
+        ? { date: opts.sidecarDate, source: "xmp" }
+        : { date: null, source: "upload" };
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps,
+      undefined,
+      { sidecar: xmpFile("a.xmp") }
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      captured_at: FIXTURE_CAPTURED.toISOString(),
+      captured_at_source: "xmp",
+    });
+  });
+
+  it("finalizes without sidecar columns when none is passed", async () => {
+    const { deps, finalized } = makeDeps();
+    await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    expect(finalized[0]).toMatchObject({
+      sidecar_path: null,
+      sidecar_name: null,
+    });
+  });
+});
+
+describe("content-hash dedupe in uploadOne", () => {
+  const bigSize = RESUMABLE_THRESHOLD_BYTES + 1;
+
+  it("pre-flights big files: a hit uploads NOTHING and reports duplicate", async () => {
+    const { deps, uploads } = makeDeps();
+    deps.exists = vi.fn(async () => true);
+    deps.resumableUpload = vi.fn(async () => ({ error: null }));
+    const file = makeFile("big.mp4", "video/mp4", bigSize);
+
+    const result = await uploadOne(file, "photo-1", META, deps);
+
+    expect(result).toEqual({ status: "duplicate" });
+    expect(deps.exists).toHaveBeenCalledWith(
+      META.jobId,
+      await sha256(file)
+    );
+    expect(uploads).toHaveLength(0);
+    expect(deps.resumableUpload).not.toHaveBeenCalled();
+    expect(deps.finalize).not.toHaveBeenCalled();
+  });
+
+  it("skips the pre-flight for small files (finalize's index catches theirs)", async () => {
+    const { deps } = makeDeps();
+    deps.exists = vi.fn(async () => true);
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result.status).toBe("done");
+    expect(deps.exists).not.toHaveBeenCalled();
+  });
+
+  it("uploads anyway when the pre-flight check itself fails", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.exists = vi.fn(async () => {
+      throw new Error("exists endpoint down");
+    });
+    deps.resumableUpload = vi.fn(async () => ({ error: null }));
+
+    const result = await uploadOne(
+      makeFile("big.mp4", "video/mp4", bigSize),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized).toHaveLength(1);
+  });
+
+  it("finalize saying duplicate → removes the just-uploaded objects, reports duplicate", async () => {
+    const { deps, uploads } = makeDeps();
+    const removed: string[][] = [];
+    deps.storage.remove = async (paths) => {
+      removed.push(paths);
+      return { error: null };
+    };
+    deps.finalize = vi.fn(async () => ({ duplicate: true }));
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result).toEqual({ status: "duplicate" });
+    expect(uploads.map((u) => u.path)).toEqual([
+      "originals/user-1/photo-1/a.jpg",
+      "derived/user-1/photo-1_thumb.webp",
+      "derived/user-1/photo-1_preview.webp",
+    ]);
+    expect(removed).toEqual([
+      [
+        "originals/user-1/photo-1/a.jpg",
+        "derived/user-1/photo-1_thumb.webp",
+        "derived/user-1/photo-1_preview.webp",
+      ],
+    ]);
+  });
+
+  it("stays duplicate even when the cleanup remove throws", async () => {
+    const { deps } = makeDeps();
+    deps.storage.remove = async () => {
+      throw new Error("remove exploded");
+    };
+    deps.finalize = vi.fn(async () => ({ duplicate: true }));
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result).toEqual({ status: "duplicate" });
+  });
+
+  it("finalize payload carries the file's content_sha256", async () => {
+    const { deps, finalized } = makeDeps();
+    const file = makeFile("a.jpg", "image/jpeg", 10);
+
+    await uploadOne(file, "photo-1", META, deps);
+
+    expect(finalized[0].content_sha256).toBe(await sha256(file));
   });
 });
 
@@ -187,7 +450,7 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const { deps, uploads, finalized, resumableCalls } = withResumable();
     const file = makeFile("big.mp4", "video/mp4", bigSize);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(resumableCalls).toEqual([
@@ -207,7 +470,7 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const { deps, uploads, resumableCalls } = withResumable();
     const file = makeFile("small.jpg", "image/jpeg", RESUMABLE_THRESHOLD_BYTES);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(resumableCalls).toHaveLength(0);
@@ -219,7 +482,9 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const file = makeFile("big.mp4", "video/mp4", bigSize);
     const ticks: [number, number][] = [];
 
-    await uploadOne(file, META, deps, (sent, total) => ticks.push([sent, total]));
+    await uploadOne(file, "photo-1", META, deps, (sent, total) =>
+      ticks.push([sent, total])
+    );
 
     expect(ticks.at(-1)).toEqual([bigSize, bigSize]);
     for (let i = 1; i < ticks.length; i++) {
@@ -231,7 +496,7 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const { deps, finalized } = withResumable({ failResumable: true });
     const file = makeFile("big.mp4", "video/mp4", bigSize);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain("tus gave up");
@@ -464,9 +729,10 @@ describe("createResumableUpload", () => {
 describe("step-kill convergence", () => {
   // Simulate the tab dying at each step of uploadOne and assert every
   // partial state is repairable: derivatives never exist without their
-  // original, a row never exists without its original, and a plain retry
-  // (new photo id) converges to a complete photo. Leftover row-less
-  // objects are exactly what the repair cron's orphan sweep deletes.
+  // original, a row never exists without its original, and a retry (SAME
+  // photoId — the manager keeps it stable) converges to a complete photo.
+  // Leftover row-less objects are exactly what the repair cron's orphan
+  // sweep deletes.
   type KillPoint = "original" | "thumb" | "preview" | "finalize";
 
   const stepFor = (path: string): KillPoint =>
@@ -511,7 +777,7 @@ describe("step-kill convergence", () => {
       });
       const file = makeFile("IMG_0042.jpg", "image/jpeg", 10);
 
-      const killed = await uploadOne(file, META, deps);
+      const killed = await uploadOne(file, "photo-1", META, deps);
 
       expect(killed.status).toBe("failed");
       expect(rows).toHaveLength(0); // no kill point leaves a phantom row
@@ -519,7 +785,7 @@ describe("step-kill convergence", () => {
 
       // The user taps Retry (network is back): the file converges.
       kill.at = null;
-      const retried = await uploadOne(file, META, deps);
+      const retried = await uploadOne(file, "photo-1", META, deps);
 
       expect(retried.status).toBe("done");
       expect(rows).toHaveLength(1);
@@ -541,17 +807,11 @@ describe("sanitizeFilename", () => {
   });
 });
 
-describe("kindFromMime / storagePaths", () => {
-  it("classifies mime types", () => {
-    expect(kindFromMime("image/jpeg")).toBe("image");
-    expect(kindFromMime("video/quicktime")).toBe("video");
-    expect(kindFromMime("application/octet-stream")).toBe("file");
-    expect(kindFromMime("")).toBe("file");
-  });
-
-  it("builds own-prefix keys", () => {
+describe("storagePaths", () => {
+  it("builds own-prefix keys, the sidecar named after the original", () => {
     expect(storagePaths("u1", "p1", "a b.jpg")).toEqual({
       original: "originals/u1/p1/a_b.jpg",
+      sidecar: "originals/u1/p1/a_b.xmp",
       thumb: "derived/u1/p1_thumb.webp",
       preview: "derived/u1/p1_preview.webp",
     });

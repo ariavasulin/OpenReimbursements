@@ -22,8 +22,20 @@ export function downloadUrl(photo: PhotoRow): string {
   return data.publicUrl;
 }
 
-/** The lightbox renders previews only — never originals (videos stream the
- * original for playback; there's no transcode, but the poster is a preview). */
+/** Download link for the attached XMP sidecar; null when there is none. */
+export function sidecarDownloadUrl(photo: PhotoRow): string | null {
+  if (!photo.sidecar_path) return null;
+  const { data } = supabase.storage
+    .from("photos")
+    .getPublicUrl(photo.sidecar_path, {
+      download: photo.sidecar_name || true,
+    });
+  return data.publicUrl;
+}
+
+/** The lightbox renders previews only — never originals (a video streams its
+ * transcoded rendition, or the original when there is none, but the poster is
+ * a preview). */
 export function previewUrl(photo: PhotoRow): string | null {
   const path = photo.preview_path ?? photo.thumb_path;
   return path ? publicUrl(path) : null;

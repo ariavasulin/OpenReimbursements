@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { pairByBasename } from "@/lib/photos/sidecar";
 import MultiShotCamera, {
   readPickedFiles,
   useHasCamera,
@@ -30,16 +32,29 @@ export function useCaptureBatch(initialCameraOpen = false) {
   const [capturedAtOverrides, setCapturedAtOverrides] = useState<
     Map<File, Date>
   >(new Map());
+  /** Paired .xmp per primary image (see pairByBasename). */
+  const [sidecars, setSidecars] = useState<Map<File, File>>(new Map());
   const [sheetOpen, setSheetOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(initialCameraOpen);
 
   const handleFilesPicked = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = readPickedFiles(event);
-    if (files.length > 0) {
-      setPickedFiles(files);
-      setCapturedAtOverrides(new Map());
-      setSheetOpen(true);
-    }
+    if (files.length === 0) return;
+    // Pair .xmp sidecars with their image up front: the batch (and the
+    // sheet's strip) carries primaries only; a lone .xmp never uploads.
+    const { pairs, rejected } = pairByBasename(files);
+    for (const r of rejected) toast.error(`${r.name} ${r.reason}`);
+    if (pairs.length === 0) return;
+    setPickedFiles(pairs.map((pair) => pair.primary.file));
+    setSidecars(
+      new Map(
+        pairs.flatMap((pair) =>
+          pair.sidecar ? [[pair.primary.file, pair.sidecar.file] as const] : []
+        )
+      )
+    );
+    setCapturedAtOverrides(new Map());
+    setSheetOpen(true);
   };
 
   const handleShotsDone = (shots: CameraShot[]) => {
@@ -49,6 +64,7 @@ export function useCaptureBatch(initialCameraOpen = false) {
     }
     setPickedFiles(shots.map((shot) => shot.file));
     setCapturedAtOverrides(overrides);
+    setSidecars(new Map());
     setCameraOpen(false);
     setSheetOpen(true);
   };
@@ -56,6 +72,7 @@ export function useCaptureBatch(initialCameraOpen = false) {
   return {
     pickedFiles,
     capturedAtOverrides,
+    sidecars,
     sheetOpen,
     setSheetOpen,
     cameraOpen,

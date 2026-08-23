@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import SheetShell from "@/components/photos/sheet-shell";
@@ -11,25 +10,22 @@ import PhotoMetaFields, {
   type PhotoMeta,
 } from "@/components/photos/photo-meta-fields";
 import BatchPreview from "@/components/photos/batch-preview";
+import { useUploadManager } from "@/lib/photos/upload-manager";
 import {
-  createResumableUpload,
-  uploadOne,
-  type FinalizePayload,
-  type UploadDeps,
-  type UploadResult,
-} from "@/lib/photos/upload";
-import { extractCapturedAt } from "@/lib/photos/exif";
-import UploadProgress, {
-  type UploadItem,
-} from "@/components/photos/upload-progress";
-import { appendTag } from "@/lib/photos/tags";
-import { fetchJson } from "@/lib/photos/api";
+  addTagToMeta,
+  appendTag,
+  tagSuggestions,
+  toTagPairs,
+} from "@/lib/photos/tags";
+import { usePhotoTags } from "@/lib/photos/api";
+import { readSidecarMeta } from "@/lib/photos/sidecar";
 import { plural } from "@/lib/photos/format";
-import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
+import { nextPreviewIndex } from "@/lib/photos/batch";
 
 // One job, sheet, and tag set per batch, inside SheetShell (Drawer on mobile,
 // Dialog on desktop). The batch is copied into local state so files can be
-// removed before upload.
+// removed before it is handed to the upload manager; from there the tray owns
+// the upload and its progress, and this sheet just closes.
 
 function makePreviews(files: File[]): (string | null)[] {
   return files.map((file) =>
@@ -41,37 +37,6 @@ function revokePreviews(previews: (string | null)[]) {
   for (const url of previews) if (url) URL.revokeObjectURL(url);
 }
 
-function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
-  return {
-    extractCapturedAt: async (file: File) =>
-      capturedAtOverrides?.get(file) ?? extractCapturedAt(file),
-    storage: {
-      async upload(path, body, options) {
-        const { error } = await supabase.storage
-          .from("photos")
-          .upload(path, body, options);
-        return { error };
-      },
-    },
-    resumableUpload: createResumableUpload({
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      getAccessToken: async () => {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        return session?.access_token ?? null;
-      },
-    }),
-    async finalize(payload: FinalizePayload) {
-      await fetchJson("/api/photos", "Saving failed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    },
-  };
-}
-
 interface UploadSheetProps {
   /** The picked/shot batch; the sheet keeps its own editable copy. */
   files: File[];
@@ -79,10 +44,10 @@ interface UploadSheetProps {
   onOpenChange(open: boolean): void;
   /** Pre-selects the job when uploading from inside a job. */
   defaultJobId?: string;
-  /** Called after at least one file lands, so grids can refetch. */
-  onUploaded(): void;
   /** Shutter times for in-app camera shots (see CameraShot). */
   capturedAtOverrides?: Map<File, Date>;
+  /** Paired .xmp per primary image (pairByBasename ran at pick time). */
+  sidecars?: Map<File, File>;
 }
 
 export default function UploadSheet({
@@ -90,9 +55,10 @@ export default function UploadSheet({
   open,
   onOpenChange,
   defaultJobId,
-  onUploaded,
   capturedAtOverrides,
+  sidecars,
 }: UploadSheetProps) {
+  const manager = useUploadManager();
   const [meta, setMeta] = useState<PhotoMeta>({
     ...EMPTY_META,
     jobId: defaultJobId ?? "",
@@ -101,8 +67,6 @@ export default function UploadSheet({
   const [previews, setPreviews] = useState<(string | null)[]>([]);
   const previewsRef = useRef<(string | null)[]>([]);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const [items, setItems] = useState<UploadItem[]>([]);
-  const [uploading, setUploading] = useState(false);
 
   // Reset per new batch.
   useEffect(() => {
@@ -110,13 +74,6 @@ export default function UploadSheet({
       setMeta({ ...EMPTY_META, jobId: defaultJobId ?? "" });
       setPreviewIndex(null);
       setFiles(initialFiles);
-      setItems(
-        initialFiles.map((file) => ({
-          status: "pending",
-          sentBytes: 0,
-          totalBytes: file.size,
-        }))
-      );
       revokePreviews(previewsRef.current);
       const next = makePreviews(initialFiles);
       previewsRef.current = next;
@@ -128,168 +85,146 @@ export default function UploadSheet({
     return () => revokePreviews(previewsRef.current);
   }, []);
 
-  const removableAt = (index: number) =>
-    !uploading && !!items[index] && canRemove(items[index].status);
-
   const removeFile = (index: number) => {
-    if (!removableAt(index)) return;
     const url = previews[index];
     if (url) URL.revokeObjectURL(url);
-    const next = removeAt({ files, items, previews }, index);
-    setFiles(next.files);
-    setItems(next.items);
-    previewsRef.current = next.previews;
-    setPreviews(next.previews);
+    // files and previews are indexed by the same position, so drop from both.
+    const drop = <T,>(list: T[]) => list.filter((_, i) => i !== index);
+    const nextFiles = drop(files);
+    const nextPreviews = drop(previews);
+    setFiles(nextFiles);
+    previewsRef.current = nextPreviews;
+    setPreviews(nextPreviews);
     setPreviewIndex((current) =>
       current === null
         ? null
-        : nextPreviewIndex(current, index, next.files.length)
+        : nextPreviewIndex(current, index, nextFiles.length)
     );
-    if (next.files.length === 0) onOpenChange(false);
+    if (nextFiles.length === 0) onOpenChange(false);
   };
 
-  const patchItem = (index: number, patch: Partial<UploadItem>) =>
-    setItems((previous) => {
-      const next = [...previous];
-      next[index] = { ...next[index], ...patch };
-      return next;
+  // dc:subject keywords from paired sidecars — SUGGESTED only, never
+  // auto-applied (tags stay a human decision). Keyed by primary file and read
+  // once per batch, so removing a thumbnail never re-reads the other .xmps.
+  const [keywordsByFile, setKeywordsByFile] = useState<Map<File, string[]>>(
+    new Map()
+  );
+  useEffect(() => {
+    if (!open) return;
+    const pairs = sidecars ? [...sidecars] : [];
+    if (pairs.length === 0) {
+      setKeywordsByFile(new Map());
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      pairs.map(async ([primary, xmp]) => {
+        const sidecarMeta = await readSidecarMeta(xmp);
+        return [primary, sidecarMeta.keywords] as const;
+      })
+    ).then((entries) => {
+      if (cancelled) return;
+      setKeywordsByFile(new Map(entries));
     });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sidecars]);
 
-  const runUpload = async (indices: number[]) => {
+  const { data: knownTags } = usePhotoTags(open);
+
+  // What the sidecars add on top of PhotoMetaFields' own suggestions: the same
+  // matching rule, minus the tags its TagInput is already showing. With no
+  // query typed TagInput shows nothing, so the keywords themselves surface.
+  const sidecarSuggestions = useMemo(() => {
+    const alreadyShown = new Set(
+      tagSuggestions(toTagPairs(knownTags ?? []), meta.tagInput, meta.tags)
+    );
+    const query = meta.tagInput.trim().toLowerCase();
+    return [...new Set(files.flatMap((file) => keywordsByFile.get(file) ?? []))]
+      .filter(
+        (tag) =>
+          !meta.tags.includes(tag) &&
+          !alreadyShown.has(tag) &&
+          tag.toLowerCase().includes(query)
+      )
+      .slice(0, 6);
+  }, [files, keywordsByFile, knownTags, meta.tagInput, meta.tags]);
+
+  /** Hand the batch to the manager and close — the tray takes it from here. */
+  const submit = () => {
     if (!meta.jobId) {
       toast.error("Pick a job first");
       return;
     }
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session) {
-      toast.error("You are signed out — sign in and try again");
-      return;
-    }
-
-    setUploading(true);
-    const uploadMeta = {
-      jobId: meta.jobId,
-      uploaderId: session.user.id,
-      sheetNumber: meta.sheetNumber.trim() || null,
-      tags: appendTag(meta.tags, meta.tagInput),
-    };
-    const deps = buildUploadDeps(capturedAtOverrides);
-
-    const results: UploadResult[] = [];
-    for (const fileIndex of indices) {
-      const file = files[fileIndex];
-      patchItem(fileIndex, {
-        status: "uploading",
-        sentBytes: 0,
-        totalBytes: file.size,
-        error: undefined,
-      });
-      const result = await uploadOne(
-        file,
-        uploadMeta,
-        deps,
-        (sentBytes, totalBytes) =>
-          setItems((previous) => {
-            if (previous[fileIndex]?.sentBytes === sentBytes) return previous;
-            const next = [...previous];
-            next[fileIndex] = { ...next[fileIndex], sentBytes, totalBytes };
-            return next;
-          })
-      );
-      results.push(result);
-      patchItem(fileIndex, { status: result.status, error: result.error });
-    }
-    setUploading(false);
-
-    const failed = results.filter((result) => result.status === "failed");
-    if (results.some((result) => result.status === "done")) onUploaded();
-    if (failed.length === 0) {
-      toast.success(
-        results.length === 1
-          ? "Photo uploaded"
-          : `${results.length} files uploaded`
-      );
-      onOpenChange(false);
-    } else {
-      toast.error(
-        `${failed.length} of ${results.length} failed — ${failed[0].error ?? "upload error"}`
-      );
-    }
-  };
-
-  const indicesWith = (status: UploadItem["status"]) =>
-    items.flatMap((item, index) => (item.status === status ? [index] : []));
-  const failedIndices = indicesWith("failed");
-  const pendingIndices = indicesWith("pending");
-  const doneCount = items.filter((item) => item.status === "done").length;
-  const uploadStarted = items.some((item) => item.status !== "pending");
-  const retrying = failedIndices.length > 0;
-
-  const handleOpenChange = (next: boolean) => {
-    if (!next && uploading) return; // don't lose an in-flight batch
-    onOpenChange(next);
+    // Pairing was decided at pick time; a sidecar whose primary was removed
+    // from the strip simply stays behind.
+    manager.enqueue(
+      files.map((file) => ({ file, sidecar: sidecars?.get(file) })),
+      {
+        jobId: meta.jobId,
+        sheetNumber: meta.sheetNumber.trim() || null,
+        tags: appendTag(meta.tags, meta.tagInput),
+        shutterAt: capturedAtOverrides,
+      }
+    );
+    onOpenChange(false);
   };
 
   const header = (
     <div className="mb-2 flex gap-1.5 overflow-x-auto p-1">
-      {files.map((file, index) => {
-        const removable = removableAt(index);
-        return (
-          <div key={index} className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setPreviewIndex(index)}
-              aria-label={`Preview ${file.name}`}
-              className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
-            >
-              {previews[index] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={previews[index]}
-                  alt={file.name}
-                  className="h-14 w-14 rounded-lg object-cover"
-                />
-              ) : (
-                <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
-                  {file.name}
-                </div>
-              )}
-            </button>
-            {removable && (
-              <button
-                type="button"
-                onClick={() => removeFile(index)}
-                aria-label={`Remove ${file.name}`}
-                className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
-              >
-                <X className="h-3 w-3" />
-              </button>
+      {files.map((file, index) => (
+        <div key={index} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setPreviewIndex(index)}
+            aria-label={`Preview ${file.name}`}
+            className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
+          >
+            {previews[index] ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={previews[index]}
+                alt={file.name}
+                className="h-14 w-14 rounded-lg object-cover"
+              />
+            ) : (
+              <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
+                {file.name}
+              </div>
             )}
-          </div>
-        );
-      })}
+          </button>
+          <button
+            type="button"
+            onClick={() => removeFile(index)}
+            aria-label={`Remove ${file.name}`}
+            className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ))}
     </div>
   );
 
   const fields = (
     <>
-      {uploadStarted && (
-        <UploadProgress
-          files={files}
-          items={items}
-          onRetry={(index) => runUpload([index])}
-          retryDisabled={uploading}
-        />
-      )}
+      <PhotoMetaFields value={meta} onChange={setMeta} enabled={open} />
 
-      <PhotoMetaFields
-        value={meta}
-        onChange={setMeta}
-        enabled={open}
-        disabled={uploading}
-      />
+      {sidecarSuggestions.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {sidecarSuggestions.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => setMeta((prev) => addTagToMeta(prev, tag))}
+              className="rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-[#d0d0d0] hover:border-[#2680FC]"
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
 
       <BatchPreview
         files={files}
@@ -298,32 +233,26 @@ export default function UploadSheet({
         onIndexChange={setPreviewIndex}
         onClose={() => setPreviewIndex(null)}
         onRemove={removeFile}
-        removeDisabled={previewIndex === null || !removableAt(previewIndex)}
+        removeDisabled={previewIndex === null}
       />
     </>
   );
 
   const footer = (
     <Button
-      onClick={() => runUpload(retrying ? failedIndices : pendingIndices)}
-      disabled={uploading || (!retrying && pendingIndices.length === 0)}
+      onClick={submit}
+      disabled={files.length === 0}
       className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
       size="lg"
     >
-      {uploading
-        ? retrying
-          ? "Uploading..."
-          : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
-        : retrying
-          ? `Retry ${failedIndices.length} failed`
-          : `Upload ${plural(pendingIndices.length, "file")}`}
+      {`Upload ${plural(files.length, "file")}`}
     </Button>
   );
 
   return (
     <SheetShell
       open={open}
-      onOpenChange={handleOpenChange}
+      onOpenChange={onOpenChange}
       title={`Add ${plural(files.length, "file")}`}
       header={header}
       footer={footer}

@@ -5,9 +5,14 @@ import {
   cleanSheet,
   cleanTags,
   escapeForIlike,
+  isSha256,
   PHOTO_COLUMNS,
 } from '@/lib/photos/apiShared';
-import { PHOTO_KINDS, type PhotoRow } from '@/lib/photos/types';
+import {
+  CAPTURED_AT_SOURCES,
+  PHOTO_KINDS,
+  type PhotoRow,
+} from '@/lib/photos/types';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
 //      Filtered photo list, newest capture first, keyset-paginated on
@@ -216,6 +221,7 @@ export async function POST(request: Request) {
     sheet_number,
     tags,
     captured_at,
+    captured_at_source,
     original_path,
     original_bytes,
     mime_type,
@@ -223,6 +229,9 @@ export async function POST(request: Request) {
     thumb_path,
     preview_path,
     duration_secs,
+    sidecar_path,
+    sidecar_name,
+    content_sha256,
   } = body;
 
   if (typeof id !== 'string' || !isUuid(id)) {
@@ -257,6 +266,18 @@ export async function POST(request: Request) {
     }
   }
 
+  // The sidecar lives beside the original, under THIS photo's own prefix.
+  if (
+    sidecar_path != null &&
+    (typeof sidecar_path !== 'string' ||
+      !sidecar_path.startsWith(`originals/${userId}/${id}/`))
+  ) {
+    return NextResponse.json(
+      { error: "sidecar_path must be under this photo's own prefix" },
+      { status: 400 }
+    );
+  }
+
   const capturedAtDate =
     typeof captured_at === 'string' && !Number.isNaN(Date.parse(captured_at))
       ? new Date(captured_at)
@@ -273,6 +294,14 @@ export async function POST(request: Request) {
       tags: cleanTags(tags),
       // EXIF capture time when the client found one; upload time as fallback.
       captured_at: (capturedAtDate ?? new Date()).toISOString(),
+      // Provenance is only trusted alongside a real date; old clients that
+      // omit it (and the now() fallback) land as 'upload'.
+      captured_at_source:
+        typeof captured_at_source === 'string' &&
+        (CAPTURED_AT_SOURCES as readonly string[]).includes(captured_at_source) &&
+        capturedAtDate
+          ? captured_at_source
+          : 'upload',
       original_path,
       original_bytes:
         typeof original_bytes === 'number' && Number.isFinite(original_bytes)
@@ -287,15 +316,35 @@ export async function POST(request: Request) {
         typeof duration_secs === 'number' && Number.isFinite(duration_secs)
           ? duration_secs
           : null,
+      sidecar_path: typeof sidecar_path === 'string' ? sidecar_path : null,
+      // A name only makes sense alongside a stored sidecar object.
+      sidecar_name:
+        typeof sidecar_path === 'string' &&
+        typeof sidecar_name === 'string' &&
+        sidecar_name
+          ? sidecar_name
+          : null,
+      // Lowercase hex SHA-256 or nothing — the per-job unique index
+      // (photos_job_sha) only bites on real hashes.
+      content_sha256: isSha256(content_sha256) ? content_sha256 : null,
     })
     .select(PHOTO_COLUMNS)
     .single();
 
   if (error) {
-    // 23505 = the row already exists (a retry of a finalize that actually
-    // landed); treat as success so retries converge.
+    // 23505 on photos_job_sha = the JOB already has these exact bytes under
+    // another photo id — a duplicate, so the client discards its upload.
+    // 23505 on photos_pkey = a retry of a finalize that actually landed;
+    // treat as success so retries converge. Both constraints are named
+    // explicitly: a unique constraint we don't recognize is a real failure,
+    // and reporting it as success would hide the row that never got written.
     if (error.code === '23505') {
-      return NextResponse.json({ success: true, alreadyExists: true });
+      if (error.message.includes('photos_job_sha')) {
+        return NextResponse.json({ success: true, duplicate: true });
+      }
+      if (error.message.includes('photos_pkey')) {
+        return NextResponse.json({ success: true, alreadyExists: true });
+      }
     }
     const status = error.code === '23503' ? 400 : 500; // bad FK vs. real failure
     return NextResponse.json({ error: error.message }, { status });
