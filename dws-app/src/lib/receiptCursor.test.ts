@@ -29,3 +29,18 @@ describe("receipt cursor", () => {
     expect(decodeReceiptCursor(hostile)).toBeNull();
   });
 });
+
+describe("receipt cursor tiebreaker", () => {
+  const encode = (date: string, createdAt: string) =>
+    Buffer.from(JSON.stringify([date, createdAt])).toString("base64url");
+
+  it("rejects a malformed createdAt", () => {
+    expect(decodeReceiptCursor(encode("2026-08-01", "---"))).toBeNull();
+    expect(decodeReceiptCursor(encode("2026-08-01", "+"))).toBeNull();
+    expect(decodeReceiptCursor(encode("2026-08-01", "2026-13-99T99:99:99Z"))).toBeNull();
+  });
+
+  it("rejects an impossible receiptDate", () => {
+    expect(decodeReceiptCursor(encode("2026-13-45", "2026-08-01T00:00:00Z"))).toBeNull();
+  });
+});

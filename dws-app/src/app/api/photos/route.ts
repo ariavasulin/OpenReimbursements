@@ -5,6 +5,7 @@ import {
   cleanSheet,
   cleanTags,
   escapeForIlike,
+  escapeIlikeWildcards,
   isSha256,
   PHOTO_COLUMNS,
 } from '@/lib/photos/apiShared';
@@ -17,7 +18,9 @@ import {
 import {
   decodeKeysetCursor,
   encodeKeysetCursor,
+  isIsoTimestamp,
   keysetOrFilter,
+  parseLimit,
 } from '@/lib/keysetCursor';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
@@ -29,6 +32,9 @@ import {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
+// Upper bound on tags spliced into one or() filter — a URL-length guard, not a
+// recall choice; the type-ahead (/api/photo-tags) is unbounded.
+const MAX_SEARCH_TAGS = 500;
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -47,6 +53,10 @@ async function buildSearchFilter(
   q: string,
   job: string | null
 ): Promise<string | null> {
+  // Two escapes of the same query: the RPC argument is bound, so it only
+  // needs its wildcards neutralised; the or() filter below is grammar, so it
+  // also loses PostgREST's syntax characters.
+  const rpcQuery = escapeIlikeWildcards(q);
   const escaped = escapeForIlike(q);
   if (!escaped) return null;
   const pattern = `%${escaped}%`;
@@ -62,10 +72,7 @@ async function buildSearchFilter(
       .select('user_id')
       .ilike('full_name', pattern)
       .limit(200),
-    // `escaped`, not the raw `q`: the RPC interpolates its argument into
-    // ilike '%' || q || '%', so an unescaped % or _ from the search box would
-    // match every tag.
-    supabase.rpc('get_photo_tags', { job_filter: job, q: escaped, max_tags: 200 }),
+    supabase.rpc('get_photo_tags', { job_filter: job, q: rpcQuery }),
   ]);
 
   const firstError =
@@ -87,7 +94,8 @@ async function buildSearchFilter(
   // The UI never produces those, so skipping is the safe trade.
   const matchedTags = ((tagRowsResult.data ?? []) as PhotoTagRow[])
     .map((row) => row.tag)
-    .filter((tag) => !/[,(){}"\\]/.test(tag));
+    .filter((tag) => !/[,(){}"\\]/.test(tag))
+    .slice(0, MAX_SEARCH_TAGS);
   if (matchedTags.length > 0) {
     parts.push(`tags.ov.{${matchedTags.join(',')}}`);
   }
@@ -127,10 +135,10 @@ export async function GET(request: Request) {
     );
   }
 
-  const limit = Math.min(
-    Math.max(parseInt(params.get('limit') ?? '', 10) || DEFAULT_LIMIT, 1),
-    MAX_LIMIT
-  );
+  const limit = parseLimit(params.get('limit'), DEFAULT_LIMIT, MAX_LIMIT);
+  if (limit === null) {
+    return NextResponse.json({ error: 'Invalid limit' }, { status: 400 });
+  }
 
   let query = supabase
     .from('photos')
@@ -163,7 +171,7 @@ export async function GET(request: Request) {
   const rawCursor = params.get('cursor');
   if (rawCursor) {
     const cursor = decodeKeysetCursor(rawCursor, (capturedAt, id) =>
-      isUuid(id) ? { capturedAt, id } : null
+      isIsoTimestamp(capturedAt) && isUuid(id) ? { capturedAt, id } : null
     );
     if (!cursor) {
       return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });

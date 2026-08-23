@@ -1,10 +1,8 @@
 -- Review fixes: authorization, privilege, and convergence items raised by the
 -- code review of the upload-pipeline-hardening branch.
 --
--- Every statement is idempotent. The final statement uses DROP INDEX
--- CONCURRENTLY, which cannot run inside a transaction — apply it on its own
--- with the positional form (see supabase/migrations/README.md); the rest of
--- the file applies as one `db query -f` run.
+-- Every statement is idempotent and transactional: the file applies as one
+-- `db query -f` run.
 
 
 -- 1. get_admin_receipts_page: add the missing authorization gate, and stop
@@ -247,22 +245,10 @@ end
 $$;
 
 -- Bucket rows, transcribed from live storage.buckets. Their policies are in
--- 00000000000001_baseline_storage_policies.sql and in section 4 above.
+-- 20260822130200_rls_storage_scalar_subqueries.sql and in section 4 above.
 insert into storage.buckets (id, name, public, file_size_limit)
 values
   ('receipt-images', 'receipt-images', true, 20971520),      -- 20 MiB
   ('photos',         'photos',         true, 53687091200)    -- 50 GiB
 on conflict (id) do nothing;
 
-
--- 6. Drop the superseded photos index. photos_job_captured (job_id,
---    captured_at desc) is a prefix of photos_job_captured_id (job_id,
---    captured_at desc, id desc) from 20260822120100, which serves the same
---    lookups and the keyset tiebreak. It keeps reappearing because
---    00000000000003_photos_schema.sql created it; that line is removed in this
---    commit.
---
---    APPLY THIS STATEMENT ON ITS OWN (positional form) — CONCURRENTLY cannot
---    run inside the transaction that `db query -f` wraps a multi-statement
---    file in.
-drop index concurrently if exists public.photos_job_captured;

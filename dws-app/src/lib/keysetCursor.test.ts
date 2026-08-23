@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { decodeKeysetCursor, encodeKeysetCursor } from "./keysetCursor";
+import { decodeKeysetCursor, encodeKeysetCursor, isIsoTimestamp, keysetOrFilter } from "./keysetCursor";
 
 const pass = (first: string, second: string) => ({ first, second });
 
@@ -70,5 +70,31 @@ describe("keyset cursor", () => {
         throw new Error("boom");
       })
     ).toBeNull();
+  });
+});
+
+describe("isIsoTimestamp", () => {
+  it("accepts the shapes PostgREST emits", () => {
+    expect(isIsoTimestamp("2026-08-01T12:00:00Z")).toBe(true);
+    expect(isIsoTimestamp("2026-08-01T12:00:00.123456+00:00")).toBe(true);
+    expect(isIsoTimestamp("2026-08-01 12:00:00-07")).toBe(true);
+  });
+
+  it("rejects malformed timestamps", () => {
+    expect(isIsoTimestamp("---")).toBe(false);
+    expect(isIsoTimestamp("+")).toBe(false);
+    expect(isIsoTimestamp("2026-13-99T99:99:99Z")).toBe(false);
+    expect(isIsoTimestamp("2026-08-01")).toBe(false);
+    expect(isIsoTimestamp("2026-08-01T12:00:00Z,or(status.eq.Approved)")).toBe(false);
+  });
+});
+
+describe("keysetOrFilter", () => {
+  it("builds 'strictly past this position' for a descending sort", () => {
+    expect(
+      keysetOrFilter("receipt_date", "2026-08-01", "created_at", "2026-08-01T12:00:00Z")
+    ).toBe(
+      "receipt_date.lt.2026-08-01,and(receipt_date.eq.2026-08-01,created_at.lt.2026-08-01T12:00:00Z)"
+    );
   });
 });

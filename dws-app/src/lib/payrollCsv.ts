@@ -1,10 +1,18 @@
 // Payroll CSV builder. The payroll system consumes this output — do not change
 // its format; payrollCsv.test.ts pins it with a golden fixture, and
 // byte-identical output is the contract.
+//
+// The one deliberate departure from pure quoting: a text cell that starts with
+// =, +, - or @ gets a leading apostrophe. Spreadsheets strip CSV quoting before
+// deciding whether a cell is a formula, and the employee name comes from
+// PATCH /api/profile, where any signed-in user may set it.
+
+const FORMULA_LEADERS = /^[=+\-@]/
 
 // quoteCsv always wraps values in quotes, even when not required.
 export function quoteCsv(value: string): string {
-  const escaped = value.replace(/"/g, '""')
+  const neutralised = FORMULA_LEADERS.test(value) ? `'${value}` : value
+  const escaped = neutralised.replace(/"/g, '""')
   return `"${escaped}"`
 }
 

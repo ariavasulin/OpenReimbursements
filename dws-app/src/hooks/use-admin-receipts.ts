@@ -1,12 +1,16 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { fetchJson } from '@/lib/photos/api'
 import type { ReceiptStatusFilter } from '@/hooks/use-receipts'
 import { Receipt, toDbReceiptStatus } from '@/lib/types'
+import type { ReceiptSort } from '@/components/receipt-table'
 
 interface AdminReceiptsParams {
   status?: ReceiptStatusFilter
   fromDate?: string
   toDate?: string
+  /** Free-text search over employee name and description, applied server-side. */
+  search?: string
+  sort?: ReceiptSort | null
   page?: number
   pageSize?: number
   enabled?: boolean
@@ -53,6 +57,15 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<AdminRec
     urlParams.append('toDate', params.toDate)
   }
 
+  if (params.search) {
+    urlParams.append('q', params.search)
+  }
+
+  if (params.sort) {
+    urlParams.append('sort', params.sort.field)
+    urlParams.append('dir', params.sort.direction)
+  }
+
   if (params.page) {
     urlParams.append('page', String(params.page))
   }
@@ -89,6 +102,10 @@ export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsPar
     queryKey: adminReceiptsKeys.list(params),
     queryFn: () => fetchAdminReceipts(params),
     enabled,
+    // Every filter, sort and page is part of the key. Without this each change
+    // drops `data` to undefined mid-fetch: the table unmounts, the totals read
+    // 0, and the pager computes a page count of 1.
+    placeholderData: keepPreviousData,
   })
 }
 

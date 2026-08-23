@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { Download, RefreshCw, ListChecks, LogOut, Search, CheckCircle, AlertCircle, Users } from "lucide-react"
@@ -30,10 +30,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
-import ReceiptTable from "@/components/receipt-table"
+import ReceiptTable, { type ReceiptSort } from "@/components/receipt-table"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 import { formatCurrency } from "@/lib/utils"
-import { normalizeReceiptSearch, receiptMatchesSearch } from "@/lib/receiptSearch"
+import { normalizeReceiptSearch } from "@/lib/receiptSearch"
 import { toDbReceiptStatus, type Receipt, type BulkUpdateResponse } from "@/lib/types"
 import { useAdminReceipts, useAdminReceiptCounts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
@@ -52,9 +52,13 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
   const [activeTab, setActiveTab] = useState<ReceiptStatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState<string>("")
+  // The search runs server-side, so the request waits for a pause in typing.
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("")
+  const [sort, setSort] = useState<ReceiptSort | null>(null)
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [isExporting, setIsExporting] = useState(false)
   const [dateRange, setDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({
     from: undefined,
     to: undefined,
@@ -68,29 +72,45 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const [deletingReceipt, setDeletingReceipt] = useState<Receipt | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
+  useEffect(() => {
+    const handle = setTimeout(() => setDebouncedSearch(normalizeReceiptSearch(searchQuery)), 300)
+    return () => clearTimeout(handle)
+  }, [searchQuery])
+
+  // Selection is a set of ids on the page in view; any change of page, filter
+  // or sort replaces those rows, so the selection goes with them.
+  const handleClearSelection = () => {
+    setSelectedRows(new Set())
+  }
+
   const handleDateChange = (selectedDateRange: { from: Date | undefined; to: Date | undefined }) => {
     setDateRange({
       from: selectedDateRange?.from,
       to: selectedDateRange?.to,
     });
     setCurrentPage(1);
+    handleClearSelection();
   };
 
   const handleSelectedRowsChange = (newSelectedRows: Set<string>) => {
     setSelectedRows(newSelectedRows)
   }
 
-  const handleClearSelection = () => {
-    setSelectedRows(new Set())
-  }
-
   const handlePageChange = (page: number) => {
     setCurrentPage(page)
+    handleClearSelection()
   }
 
   const handlePageSizeChange = (newPageSize: number) => {
     setPageSize(newPageSize)
     setCurrentPage(1)
+    handleClearSelection()
+  }
+
+  const handleSortChange = (nextSort: ReceiptSort | null) => {
+    setSort(nextSort)
+    setCurrentPage(1)
+    handleClearSelection()
   }
 
   const fromDateParam = dateRange.from?.toISOString().split('T')[0]
@@ -107,12 +127,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const {
     data: receiptsPage,
     isLoading: loading,
+    isPlaceholderData,
     error: queryError,
     refetch
   } = useAdminReceipts({
     status: activeTab,
     fromDate: fromDateParam,
     toDate: toDateParam,
+    search: debouncedSearch,
+    sort,
     page: currentPage,
     pageSize,
     enabled: shouldFetch,
@@ -120,6 +143,15 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
   const rawReceipts = receiptsPage?.receipts ?? []
   const totalCount = receiptsPage?.totalCount ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
+
+  // A refetch can shrink the set under the current page (a deleted last row,
+  // a bulk status change). Step back to the last page that still has rows.
+  useEffect(() => {
+    if (!isPlaceholderData && currentPage > totalPages) {
+      setCurrentPage(totalPages)
+    }
+  }, [currentPage, totalPages, isPlaceholderData])
 
   const { data: receiptCounts } = useAdminReceiptCounts({
     fromDate: fromDateParam,
@@ -136,16 +168,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     status: receipt.status.toLowerCase() as Receipt['status'],
   }))
 
-  // Search filters the loaded page; the export sends the same term and applies
-  // this matcher server-side.
-  const normalizedSearch = normalizeReceiptSearch(searchQuery)
-  const filteredReceipts = receipts.filter(receipt =>
-    receiptMatchesSearch(receipt, normalizedSearch)
-  )
-
-  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
-
-  const downloadPayrollCSV = () => {
+  const downloadPayrollCSV = async () => {
     const params = new URLSearchParams()
     if (activeTab !== 'all') {
       params.set('status', toDbReceiptStatus(activeTab))
@@ -154,8 +177,34 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     if (toDateParam) params.set('toDate', toDateParam)
     // Carry the search box through: the CSV must describe what the admin is
     // looking at, not everyone.
-    if (normalizedSearch) params.set('q', normalizedSearch)
-    window.location.href = `/api/admin/receipts/export?${params.toString()}`
+    if (debouncedSearch) params.set('q', debouncedSearch)
+
+    // Fetched rather than navigated to: a 401/403/413/500 from the route is
+    // JSON, and navigating would replace the dashboard with it.
+    setIsExporting(true)
+    try {
+      const response = await fetch(`/api/admin/receipts/export?${params.toString()}`)
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}))
+        throw new Error(body.error || `Export failed (${response.status})`)
+      }
+      const blob = await response.blob()
+      const filename =
+        response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1]
+        ?? 'receipts_totals.csv'
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Export failed')
+    } finally {
+      setIsExporting(false)
+    }
   }
 
   const getTotalApprovedCount = async () => {
@@ -242,12 +291,14 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     toast.success("Receipt updated successfully");
   }
 
-  // Counts come from a server-side aggregate so they're cap-proof and remain
-  // correct regardless of how many receipts exist. Total amount is a window
-  // aggregate over the full filtered set, computed by the paged RPC — the
-  // client only ever receives one page of rows.
+  // Two populations feed the summary cards. The Total Receipts card reads the
+  // paged RPC's totals, which honour the active tab, dates and search, so its
+  // count and amount always describe the same rows; it says so when narrowed.
+  // The three status cards read the per-status counts (dates only) and show
+  // their share of every receipt in range.
   const totalReceipts = receiptCounts?.total ?? 0
   const totalAmount = receiptsPage?.totalAmount ?? 0
+  const isNarrowed = activeTab !== 'all' || Boolean(debouncedSearch) || Boolean(dateRange.from)
   const pendingCount = receiptCounts?.pending ?? 0
   const approvedCount = receiptCounts?.approved ?? 0
   const reimbursedCount = receiptCounts?.reimbursed ?? 0
@@ -343,8 +394,11 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
               </svg>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-white">{totalReceipts}</div>
-              <p className="text-xs text-gray-400">Total amount: ${totalAmount.toFixed(2)}</p>
+              <div className="text-2xl font-bold text-white">{totalCount}</div>
+              <p className="text-xs text-gray-400">
+                Total amount: ${totalAmount.toFixed(2)}
+                {isNarrowed && " (matching current filters)"}
+              </p>
             </CardContent>
           </Card>
 
@@ -438,6 +492,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 onValueChange={(value) => {
                   setActiveTab(value as ReceiptStatusFilter);
                   setCurrentPage(1); // pagination is server-driven; a new filter starts at page 1
+                  handleClearSelection();
                 }}
                 className="space-y-4"
               >
@@ -486,7 +541,11 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                           placeholder="Search employee or description..."
                           className="w-full md:w-[270px] bg-[#444444] text-white border-[#555555] placeholder:text-white focus:border-[#2680FC] focus:ring-[#2680FC] pl-10"
                           value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onChange={(e) => {
+                            setSearchQuery(e.target.value)
+                            setCurrentPage(1)
+                            handleClearSelection()
+                          }}
                         />
                       </div>
                     </div>
@@ -511,10 +570,17 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                     <Button
                       variant="ghost"
                       onClick={downloadPayrollCSV}
-                      className="bg-[#444444] text-white hover:bg-[#555555]"
+                      // Same gate as the table: a start date with no end date
+                      // fetches nothing here and must not export everything.
+                      disabled={isExporting || !shouldFetch}
+                      className="bg-[#444444] text-white hover:bg-[#555555] disabled:opacity-50"
                     >
-                      <Download className="mr-2 h-4 w-4" />
-                      Export CSV
+                      {isExporting ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-4 w-4" />
+                      )}
+                      {isExporting ? "Exporting..." : "Export CSV"}
                     </Button>
                   </div>
                 </div>
@@ -523,19 +589,35 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                     server, so all five tabs render the same fetched page and
                     differ only in what they say when it is empty. */}
                 <TabsContent value={activeTab} className="space-y-4">
-                  <div className="w-full">
-                    {filteredReceipts.length === 0 && !loading && (
+                  {/* While the next page/filter is in flight the previous
+                      rows stay mounted, dimmed, so nothing jumps. */}
+                  <div
+                    className={`w-full transition-opacity ${isPlaceholderData ? "opacity-50" : ""}`}
+                    aria-busy={isPlaceholderData || loading}
+                  >
+                    {loading && (
                       <div className="flex items-center justify-center h-64">
-                        <p className="text-[#999999]">{TAB_EMPTY_MESSAGES[activeTab]}</p>
+                        <p className="text-[#999999]">Loading receipts...</p>
                       </div>
                     )}
-                    {filteredReceipts.length > 0 && (
+                    {receipts.length === 0 && !loading && (
+                      <div className="flex items-center justify-center h-64">
+                        <p className="text-[#999999]">
+                          {debouncedSearch
+                            ? `No receipts match "${searchQuery.trim()}".`
+                            : TAB_EMPTY_MESSAGES[activeTab]}
+                        </p>
+                      </div>
+                    )}
+                    {receipts.length > 0 && (
                       <ReceiptTable
-                        rowData={filteredReceipts}
+                        rowData={receipts}
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
                         onEdit={setEditingReceipt}
                         onDelete={setDeletingReceipt}
+                        sort={sort}
+                        onSortChange={handleSortChange}
                       />
                     )}
                   </div>

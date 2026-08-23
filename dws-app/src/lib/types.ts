@@ -58,6 +58,10 @@ export const RECEIPT_STATUS_VALUES = ["Pending", "Approved", "Rejected", "Reimbu
 
 export type ReceiptStatusValue = (typeof RECEIPT_STATUS_VALUES)[number];
 
+/** Columns the admin table can sort by — the get_admin_receipts_page whitelist. */
+export const RECEIPT_SORT_FIELDS = ["date", "employee", "phone", "amount", "category", "description"] as const;
+export type ReceiptSortField = (typeof RECEIPT_SORT_FIELDS)[number];
+
 /**
  * The UI carries statuses lowercased; receipts.status stores them capitalized.
  * One transform so the API query string and the export query string agree.

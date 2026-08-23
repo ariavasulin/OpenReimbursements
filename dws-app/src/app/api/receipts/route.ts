@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { isStorageNotFound } from '@/lib/storageErrors';
-import { keysetOrFilter } from '@/lib/keysetCursor';
+import { keysetOrFilter, parseLimit } from '@/lib/keysetCursor';
 import { decodeReceiptCursor, encodeReceiptCursor } from '@/lib/receiptCursor';
 import { RECEIPT_STATUS_VALUES, type Receipt } from '@/lib/types';
 
@@ -60,6 +60,12 @@ export async function POST(request: Request) {
       .move(tempFilePath, finalImagePath);
 
     if (moveError) {
+      // The 404 response below replaces moveError.message, so log it first.
+      console.error('POST /api/receipts: storage move failed', {
+        tempFilePath,
+        finalImagePath,
+        error: moveError,
+      });
       const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
       // Best-effort cleanup, ignore deleteDbError
       const notFound = isStorageNotFound(moveError);
@@ -100,7 +106,7 @@ const DEFAULT_RECEIPTS_LIMIT = 50;
 const MAX_RECEIPTS_LIMIT = 200;
 
 /** Status values stored in receipts.status, keyed by their lowercase form. */
-const RECEIPT_STATUSES: Record<string, string> = Object.fromEntries(
+const RECEIPT_STATUSES = new Map(
   RECEIPT_STATUS_VALUES.map((status) => [status.toLowerCase(), status])
 );
 
@@ -122,16 +128,16 @@ export async function GET(request: Request) {
   const userId = session.user.id;
 
   const params = new URL(request.url).searchParams;
-  const limit = Math.min(
-    Math.max(parseInt(params.get('limit') ?? '', 10) || DEFAULT_RECEIPTS_LIMIT, 1),
-    MAX_RECEIPTS_LIMIT
-  );
+  const limit = parseLimit(params.get('limit'), DEFAULT_RECEIPTS_LIMIT, MAX_RECEIPTS_LIMIT);
+  if (limit === null) {
+    return NextResponse.json({ error: 'Invalid limit' }, { status: 400 });
+  }
   const rawCursor = params.get('cursor');
 
   // The employee table's status filter is applied here, not over the returned
   // rows: only one page is loaded at a time.
   const rawStatus = params.get('status');
-  const statusFilter = rawStatus ? RECEIPT_STATUSES[rawStatus.toLowerCase()] : undefined;
+  const statusFilter = rawStatus ? RECEIPT_STATUSES.get(rawStatus.toLowerCase()) : undefined;
   if (rawStatus && rawStatus.toLowerCase() !== 'all' && !statusFilter) {
     return NextResponse.json({ error: 'Invalid status filter' }, { status: 400 });
   }
@@ -270,34 +276,29 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
     }
 
-    let userIsAdmin = false;
     const isOwner = existingReceipt.user_id === userId;
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('user_id', userId)
+      .single();
+    const userIsAdmin = profile?.role === 'admin';
 
-    if (!isOwner) {
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('user_id', userId)
-        .single();
-
-      if (!profile || profile.role !== 'admin') {
-        return NextResponse.json({ error: 'You can only edit your own receipts' }, { status: 403 });
-      }
-      userIsAdmin = true;
-    } else {
-      // Owner - check if also admin (needed for status check)
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('user_id', userId)
-        .single();
-      userIsAdmin = profile?.role === 'admin';
+    if (!isOwner && !userIsAdmin) {
+      return NextResponse.json({ error: 'You can only edit your own receipts' }, { status: 403 });
     }
 
     if (existingReceipt.status.toLowerCase() !== 'pending' && !userIsAdmin) {
       return NextResponse.json({
         error: `Cannot edit receipt with status "${existingReceipt.status}". Contact an admin.`
       }, { status: 403 });
+    }
+
+    // The owner of a Pending receipt may edit its details, not its status; the
+    // database enforces the same rule with a trigger
+    // (20260823120100_write_guards.sql), this just answers 403 instead of 500.
+    if (status !== undefined && !userIsAdmin) {
+      return NextResponse.json({ error: 'Only an admin can change a receipt status' }, { status: 403 });
     }
 
     const updateData: Record<string, unknown> = {
@@ -309,12 +310,11 @@ export async function PATCH(request: Request) {
     if (category_id !== undefined) updateData.category_id = category_id;
     if (notes !== undefined) updateData.description = notes;
     if (status !== undefined) {
-      const validStatuses = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
-      const capitalizedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
-      if (!validStatuses.includes(capitalizedStatus)) {
-        return NextResponse.json({ error: `Invalid status value. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 });
+      const canonical = RECEIPT_STATUSES.get(String(status).toLowerCase());
+      if (!canonical) {
+        return NextResponse.json({ error: `Invalid status value. Must be one of: ${RECEIPT_STATUS_VALUES.join(', ')}` }, { status: 400 });
       }
-      updateData.status = capitalizedStatus;
+      updateData.status = canonical;
     }
 
     const { data: updatedReceipt, error: updateError } = await supabase

@@ -1,32 +1,11 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { requireAdmin } from '@/lib/requireAdmin';
 import { RECEIPT_STATUS_VALUES, type BatchStatusRequest } from '@/lib/types';
 
 export async function PATCH(request: Request): Promise<NextResponse> {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
-  }
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('user_id', session.user.id)
-    .single();
-
-  if (profileError || !profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (gate.response) return gate.response;
+  const { supabase } = gate;
 
   try {
     const body = (await request.json()) as BatchStatusRequest;

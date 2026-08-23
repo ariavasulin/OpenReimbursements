@@ -1,12 +1,13 @@
 /**
  * The admin dashboard's free-text receipt search.
  *
- * Shared so the payroll CSV export applies exactly the filter the table shows.
- * The export used to read only status and dates, so an admin who searched for
- * one employee and clicked Export got a CSV covering everyone.
- *
- * Case-insensitive substring match over the employee name and the receipt
- * description — the same two fields the table has always searched.
+ * The table's copy runs in SQL: get_admin_receipts_page applies the same
+ * match (case-insensitive substring over the employee's display name and the
+ * description) inside its filtered CTE, so the page, the totals and the pager
+ * agree. This module is the JS twin for the payroll CSV export, which still
+ * reads the full set through get_admin_receipts_with_phone and filters here —
+ * as the pre-pagination dashboard did over its client-side rows. Keep the two
+ * matchers in step.
  */
 export interface ReceiptSearchFields {
   employeeName?: string | null

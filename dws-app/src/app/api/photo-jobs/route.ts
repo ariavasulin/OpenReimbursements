@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
-import { escapeForIlike } from '@/lib/photos/apiShared';
+import { escapeIlikeWildcards } from '@/lib/photos/apiShared';
 import {
   mapJobSummary,
   type PhotoJobSummaryRow,
@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 
   // Counts, latest-upload ordering, and the 4 newest thumbs per job are all
   // computed in SQL (get_photo_job_summaries).
-  const escaped = escapeForIlike(q);
+  const escaped = escapeIlikeWildcards(q);
   const { data, error } = await supabase.rpc('get_photo_job_summaries', {
     search_query: escaped || null,
   });

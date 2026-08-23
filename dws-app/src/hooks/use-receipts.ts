@@ -67,17 +67,17 @@ export function useMyReceipts({
 }
 
 /**
- * Post-mutation refresh after adding or editing a receipt.
- *
- * Deliberately reset, not invalidate: this is an infinite query, and
- * invalidateQueries refetches every cached page — sequentially, because keyset
- * pages can only be fetched in cursor order. resetQueries drops back to page 1
- * and fetches once.
+ * Post-mutation refresh of the employee's list, an infinite query. After an
+ * edit, invalidateQueries refetches every loaded page — sequentially, since
+ * keyset pages only fetch in cursor order — so the user keeps their place.
+ * After an upload, resetQueries drops the loaded pages and fetches page 1 once.
  */
-export function useResetMyReceipts(userId: string | null | undefined) {
+export function useRefreshMyReceipts(userId: string | null | undefined) {
   const queryClient = useQueryClient()
+  const queryKey = receiptsKeys.mineForUser(userId)
 
-  return () => {
-    queryClient.resetQueries({ queryKey: receiptsKeys.mineForUser(userId) })
+  return {
+    afterUpload: () => queryClient.resetQueries({ queryKey }),
+    afterEdit: () => queryClient.invalidateQueries({ queryKey }),
   }
 }

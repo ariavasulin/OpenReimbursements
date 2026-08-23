@@ -9,6 +9,13 @@ describe("quoteCsv", () => {
   it("quotes and doubles embedded quotes", () => {
     expect(quoteCsv('He said "hi"')).toBe('"He said ""hi"""');
   });
+  it("neutralises a leading formula character with an apostrophe", () => {
+    expect(quoteCsv("=1+1")).toBe('"\'=1+1"');
+    expect(quoteCsv("+cmd")).toBe('"\'+cmd"');
+    expect(quoteCsv("-1")).toBe('"\'-1"');
+    expect(quoteCsv("@SUM(A1)")).toBe('"\'@SUM(A1)"');
+    expect(quoteCsv("O'Brien")).toBe('"O\'Brien"');
+  });
   it("quotes values containing a comma", () => {
     expect(quoteCsv("Smith, Jr")).toBe('"Smith, Jr"');
   });

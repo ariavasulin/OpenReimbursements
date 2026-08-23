@@ -10,6 +10,16 @@ describe("isStorageNotFound", () => {
     expect(isStorageNotFound({ statusCode: "404", message: "" })).toBe(true);
   });
 
+  it("matches the shape the pinned storage client produces: status + message", () => {
+    expect(isStorageNotFound({ status: 404, message: "Object not found" })).toBe(true);
+    expect(isStorageNotFound({ status: "404", message: "Object not found" })).toBe(true);
+  });
+
+  it("lets a present status decide, even when the message says not found", () => {
+    expect(isStorageNotFound({ status: 500, message: "bucket not found in region" })).toBe(false);
+    expect(isStorageNotFound({ statusCode: 503, message: "Object not found" })).toBe(false);
+  });
+
   it("matches the message when no status is present", () => {
     expect(isStorageNotFound({ message: "Object not found" })).toBe(true);
   });

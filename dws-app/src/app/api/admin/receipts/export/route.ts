@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
-import { buildPayrollCsv } from '@/lib/payrollCsv';
+import { buildPayrollCsv, type PayrollReceiptRow } from '@/lib/payrollCsv';
 import { normalizeReceiptSearch, receiptMatchesSearch } from '@/lib/receiptSearch';
 import { employeeIdentity } from '@/lib/types';
 
@@ -21,10 +21,14 @@ export async function GET(request: Request) {
     const search = normalizeReceiptSearch(searchParams.get('q'));
 
     // PostgREST caps RPC responses at ~1000 rows. Strategy: ask for the total
-    // count first, then fire one Range-based fetch per page in parallel. Two
-    // round-trips total, regardless of dataset size.
+    // count first, then fetch one Range per page, a few pages at a time. Each
+    // page re-runs the full-result RPC, so the concurrency bound is what keeps
+    // a large export from opening dozens of connections at once.
     const PAGE_SIZE = 1000;
-    const MAX_ROWS = 100_000; // hard guard if the counts RPC ever returns wild values
+    const PAGE_CONCURRENCY = 4;
+    // Above this the export refuses rather than returning a short file: a
+    // payroll CSV that silently stops at row 100,000 is worse than no CSV.
+    const MAX_ROWS = 100_000;
 
     const { data: countsData, error: countsError } = await supabase.rpc(
       'get_admin_receipt_status_counts',
@@ -42,39 +46,56 @@ export async function GET(request: Request) {
       },
       0
     );
-    const expectedRows = Math.min(totalMatching, MAX_ROWS);
-    const pageCount = Math.max(1, Math.ceil(expectedRows / PAGE_SIZE));
-
-    const pageFetches = Array.from({ length: pageCount }, (_, i) =>
-      supabase
-        .rpc('get_admin_receipts_with_phone', {
-          status_filter: statusFilter || null,
-          from_date: fromDate || null,
-          to_date: toDate || null,
-        })
-        .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
-    );
-    const pageResults = await Promise.all(pageFetches);
-    const failedPage = pageResults.find((r) => r.error);
-    if (failedPage?.error) {
-      return NextResponse.json({ error: failedPage.error.message }, { status: 500 });
+    if (totalMatching > MAX_ROWS) {
+      return NextResponse.json(
+        {
+          error: `Export covers ${totalMatching} receipts; the limit is ${MAX_ROWS}. Narrow the date range or status and try again.`,
+        },
+        { status: 413 }
+      );
     }
-    const receiptsData: any[] = pageResults.flatMap((r) => r.data ?? []);
+    const pageCount = Math.max(1, Math.ceil(totalMatching / PAGE_SIZE));
 
-    const rows = receiptsData.map((item: any) => ({
-      ...employeeIdentity(item),
-      description: item.description ?? '',
-      amount: item.amount,
-    }));
+    const rows: PayrollReceiptRow[] = [];
+    for (let start = 0; start < pageCount; start += PAGE_CONCURRENCY) {
+      const batch = Array.from(
+        { length: Math.min(PAGE_CONCURRENCY, pageCount - start) },
+        (_, offset) => {
+          const i = start + offset;
+          return supabase
+            .rpc('get_admin_receipts_with_phone', {
+              status_filter: statusFilter || null,
+              from_date: fromDate || null,
+              to_date: toDate || null,
+            })
+            .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1);
+        }
+      );
+      const results = await Promise.all(batch);
+      const failedPage = results.find((r) => r.error);
+      if (failedPage?.error) {
+        return NextResponse.json({ error: failedPage.error.message }, { status: 500 });
+      }
+      for (const r of results) {
+        for (const item of (r.data ?? []) as any[]) {
+          const row = {
+            ...employeeIdentity(item),
+            description: item.description ?? '',
+            amount: item.amount,
+          };
+          if (receiptMatchesSearch(row, search)) rows.push(row);
+        }
+      }
+    }
 
-    const csv = buildPayrollCsv(
-      rows.filter((row) => receiptMatchesSearch(row, search))
-    );
+    const csv = buildPayrollCsv(rows);
 
     return new NextResponse(csv, {
       headers: {
         'Content-Type': 'text/csv;charset=utf-8',
         'Content-Disposition': `attachment; filename="receipts_totals_${new Date().toISOString().split('T')[0]}.csv"`,
+        // Employee names and totals: never let a shared cache keep a copy.
+        'Cache-Control': 'no-store',
       },
     });
   } catch (error) {

@@ -76,6 +76,12 @@ export const supabaseAdmin = createClient(
 
 **RLS**: Enabled. Policies (`receipts_select`/`insert`/`update`/`delete`) allow a row when `user_id = auth.uid() OR public.is_admin()` — owners see/modify only their own rows; admins see/modify all. Defined in `dws-app/supabase/migrations/00000000000002_enable_rls_receipts_categories.sql`; `20260822130000_rls_scalar_subqueries.sql` rewrote the same predicates as `(select auth.uid())` / `(select public.is_admin())` so Postgres evaluates them once per statement instead of once per row.
 
+**Status changes**: a `BEFORE UPDATE OF status` trigger
+(`receipts_guard_status_change`, `20260823120100_write_guards.sql`) raises
+`42501` unless the caller is an admin session (`public.is_admin()`) or the
+service role. RLS lets an owner update their own Pending row; the trigger is
+what keeps that update from being an approval.
+
 ### categories
 
 | Column | Type | Description |
@@ -112,6 +118,11 @@ policies OR together, so any authenticated user can read every profile row.
 (`dws-app/supabase/migrations/20260823100000_review_fixes.sql`).
 `role`, `employee_id_internal`, and `deleted_at` are writable only by the
 admin API routes, which use the service-role key.
+
+**Inserts**: `user_profiles_insert_policy` (`20260823120100_write_guards.sql`)
+allows only `user_id = auth.uid()` with `role = 'employee'` — the shape
+`PATCH /api/profile` writes when the signup trigger did not. The trigger itself
+runs as the table owner and is unaffected.
 
 ## TypeScript Types
 
@@ -169,14 +180,19 @@ Called via: `supabase.rpc('get_admin_receipts_with_phone', { ... })` — the
 payroll CSV export (`GET /api/admin/receipts/export`), which needs the whole
 result set.
 
-### get_admin_receipts_page(status_filter, from_date, to_date, page_num, page_size)
+### get_admin_receipts_page(status_filter, from_date, to_date, page_num, page_size, search_term, sort_field, sort_dir)
 
 The paginated sibling used by `GET /api/admin/receipts`. Same columns and
-filters, plus one bounded page and `total_count` / `total_amount` over the whole
-filtered set, so the dashboard needs no second counting query. `SECURITY
-DEFINER` for the `auth.users` join, and it raises `not authorized` unless
-`public.is_admin()` — the API route's admin gate does not protect the function
-from a direct PostgREST call.
+filters, plus the dashboard's search (`search_term`: case-insensitive substring
+over the employee's display name and the description) and column sort
+(`sort_field` from a whitelist of six, `sort_dir`), one bounded page, and
+`total_count` / `total_amount` over the whole filtered set, so the dashboard
+needs no second counting query.
+`SECURITY DEFINER` for the `auth.users` join, and it raises `not authorized`
+unless `public.is_admin()` — the API route's admin gate does not protect the
+function from a direct PostgREST call. Executable by `authenticated` only (the
+service role cannot pass `is_admin()`). Current
+definition: `20260823120000_admin_receipts_page_search_sort.sql`.
 
 A page past the end of the result set returns a single row whose receipt columns
 are all `NULL`, carrying the totals; callers skip rows with a null `id`.
@@ -209,6 +225,12 @@ that table; `search_path` is locked to `public` to prevent search-path hijacking
 ## Storage
 
 **Bucket**: `receipt-images`
+
+Both buckets are `public: true` (rows checked in by
+`20260823100000_review_fixes.sql` §5), so the storage SELECT policies gate only
+authenticated-API reads; anyone holding an object URL can fetch the file. That
+is the app's existing design — the admin route hands out `getPublicUrl()`
+links — not something the policies prevent.
 
 **Path Structure**:
 ```

@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useMemo, useEffect } from "react"
+import { useState, useEffect } from "react"
 import { ChevronUp, ChevronDown, ChevronsUpDown, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -15,10 +15,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { formatDate } from "@/lib/utils"
-import type { Receipt } from "@/lib/types"
+import type { Receipt, ReceiptSortField } from "@/lib/types"
 
-// Renders exactly the rows it is handed, in whatever sort the header controls
-// select. Paging is the caller's job.
+export type ReceiptSortDirection = "asc" | "desc"
+export interface ReceiptSort {
+  field: ReceiptSortField
+  direction: ReceiptSortDirection
+}
+
+// Renders exactly the rows it is handed, in the order it is handed them.
+// Sorting and paging happen server-side: the header controls only report the
+// requested sort to the caller, which sends it with the page request.
 interface ReceiptTableProps {
   rowData?: Receipt[]
   height?: number | string | "auto"
@@ -27,10 +34,9 @@ interface ReceiptTableProps {
   onEdit?: (receipt: Receipt) => void
   onDelete?: (receipt: Receipt) => void
   showActions?: boolean
+  sort: ReceiptSort | null
+  onSortChange: (sort: ReceiptSort | null) => void
 }
-
-type SortField = keyof Receipt
-type SortDirection = "asc" | "desc" | null
 
 const ReceiptTable: React.FC<ReceiptTableProps> = ({
   rowData = [],
@@ -40,10 +46,12 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
   onEdit,
   onDelete,
   showActions = true,
+  sort,
+  onSortChange,
 }) => {
   const [internalSelectedRows, setInternalSelectedRows] = useState<Set<string>>(new Set())
-  const [sortField, setSortField] = useState<SortField | null>(null)
-  const [sortDirection, setSortDirection] = useState<SortDirection>(null)
+  const sortField = sort?.field ?? null
+  const sortDirection = sort?.direction ?? null
 
   const selectedRows = controlledSelectedRows !== undefined ? controlledSelectedRows : internalSelectedRows
 
@@ -61,45 +69,18 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
     }
   }
 
-  const sortedData = useMemo(() => {
-    if (!sortField || !sortDirection) return rowData
-
-    return [...rowData].sort((a, b) => {
-      const aValue = a[sortField];
-      const bValue = b[sortField];
-
-      // Handle null/undefined values: treat null/undefined as lesser
-      if (aValue == null && bValue == null) return 0;
-      if (aValue == null) return sortDirection === "asc" ? -1 : 1;
-      if (bValue == null) return sortDirection === "asc" ? 1 : -1;
-
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return sortDirection === "asc" ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
-      }
-
-      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
-      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
-      return 0;
-    })
-  }, [rowData, sortField, sortDirection])
-
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      if (sortDirection === "asc") {
-        setSortDirection("desc")
-      } else if (sortDirection === "desc") {
-        setSortField(null)
-        setSortDirection(null)
-      } else {
-        setSortDirection("asc")
-      }
+  // asc -> desc -> default order, per column.
+  const handleSort = (field: ReceiptSortField) => {
+    if (sortField !== field) {
+      onSortChange({ field, direction: "asc" })
+    } else if (sortDirection === "asc") {
+      onSortChange({ field, direction: "desc" })
     } else {
-      setSortField(field)
-      setSortDirection("asc")
+      onSortChange(null)
     }
   }
 
-  const getSortIcon = (field: SortField) => {
+  const getSortIcon = (field: ReceiptSortField) => {
     if (sortField !== field) {
       return <ChevronsUpDown className="ml-2 h-4 w-4" />
     }
@@ -114,7 +95,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      handleSelectedRowsChange(new Set(sortedData.map((row) => row.id)))
+      handleSelectedRowsChange(new Set(rowData.map((row) => row.id)))
     } else {
       handleSelectedRowsChange(new Set())
     }
@@ -130,8 +111,8 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
     handleSelectedRowsChange(newSelected)
   }
 
-  const isAllSelected = sortedData.length > 0 && sortedData.every((row) => selectedRows.has(row.id))
-  const isIndeterminate = sortedData.some((row) => selectedRows.has(row.id)) && !isAllSelected
+  const isAllSelected = rowData.length > 0 && rowData.every((row) => selectedRows.has(row.id))
+  const isIndeterminate = rowData.some((row) => selectedRows.has(row.id)) && !isAllSelected
 
   const formatPhoneNumber = (phone: string | null | undefined) => {
     if (!phone) return "N/A"
@@ -189,11 +170,11 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
                 </TableHead>
               <TableHead className="text-white text-left p-3">
                 <div
-                    onClick={() => handleSort("employeeName")}
+                    onClick={() => handleSort("employee")}
                   className="cursor-pointer font-medium text-white hover:text-gray-300 flex items-center justify-start"
                   >
                     Employee
-                    {getSortIcon("employeeName")}
+                    {getSortIcon("employee")}
                 </div>
                 </TableHead>
               <TableHead className="text-white text-left p-3">
@@ -240,7 +221,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedData.map((receipt) => (
+              {rowData.map((receipt) => (
                 <TableRow key={receipt.id} className="border-[#444444] hover:bg-[#555555] text-white">
                 <TableCell className="text-center p-3">
                     <Checkbox

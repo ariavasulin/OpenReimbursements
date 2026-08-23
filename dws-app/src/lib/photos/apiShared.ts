@@ -9,12 +9,24 @@ export const PHOTO_COLUMNS =
   'created_at, ' +
   'uploader:user_profiles(full_name), job:jobs(id, job_number, name)';
 
-/** Escape ILIKE wildcards and strip PostgREST or()-syntax characters. */
+/**
+ * Escape ILIKE wildcards for a value bound as an RPC argument. The RPCs
+ * interpolate it into `ilike '%' || q || '%'`, so a typed % or _ would match
+ * everything; nothing else needs touching, because a bound parameter cannot
+ * break out of its query.
+ */
+export function escapeIlikeWildcards(raw: string): string {
+  return raw.replace(/[%_\\]/g, (m) => `\\${m}`).trim();
+}
+
+/**
+ * The same, plus PostgREST or()-syntax characters stripped, for a value that
+ * goes into a `.or('col.ilike.%…%')` filter string. Stripping costs matches
+ * (`punch (list)` becomes `punch  list`), so only use it where the value is
+ * part of the filter grammar.
+ */
 export function escapeForIlike(raw: string): string {
-  return raw
-    .replace(/[%_\\]/g, (m) => `\\${m}`)
-    .replace(/[,()]/g, ' ')
-    .trim();
+  return escapeIlikeWildcards(raw).replace(/[,()]/g, ' ').trim();
 }
 
 /** Trimmed sheet number; null when absent, blank, or not a string. */

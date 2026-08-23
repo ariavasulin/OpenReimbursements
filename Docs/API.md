@@ -136,8 +136,10 @@ Keyset-paginated: one page per request, `nextCursor` fetches the next.
 **Query Params**:
 - `status`: `pending` | `approved` | `rejected` | `reimbursed` (case-insensitive;
   `all` or omitted means every status). Anything else is a 400.
-- `limit`: page size, 1–200 (default 50)
-- `cursor`: opaque `nextCursor` from the previous response; omit for page 1
+- `limit`: page size, 1–200 (default 50). Must be a positive integer; anything
+  else is a 400.
+- `cursor`: opaque `nextCursor` from the previous response; omit for page 1.
+  A cursor that does not decode to a valid `(date, timestamp)` pair is a 400.
 
 **Response**:
 ```json
@@ -181,8 +183,10 @@ Updates receipt fields.
 ```
 
 **Permissions**:
-- Employees: Own pending receipts only
-- Admins: Any receipt
+- Employees: Own pending receipts only, and never `status` — a body carrying
+  `status` from a non-admin is a 403. (The database enforces the same rule with
+  a trigger, for any client.)
+- Admins: Any receipt, any field
 
 ---
 
@@ -235,6 +239,12 @@ over the whole filtered set. Backed by the `get_admin_receipts_page` RPC.
 - `status`: Filter by status (capitalized, e.g. `Approved`; `all` or omitted for every status)
 - `fromDate`: Start date (YYYY-MM-DD), inclusive
 - `toDate`: End date (YYYY-MM-DD), **exclusive**
+- `q`: free-text search — case-insensitive substring over the employee's
+  display name and the receipt description
+- `sort`: `date` | `employee` | `phone` | `amount` | `category` | `description`;
+  omitted means `receipt_date DESC, created_at DESC`, which is also every
+  sort's tiebreak. Anything else is a 400.
+- `dir`: `asc` | `desc` (default `asc`)
 - `page`: 1-based page number (default 1)
 - `pageSize`: rows per page, 1–200 (default 25)
 
@@ -258,9 +268,9 @@ over the whole filtered set. Backed by the `get_admin_receipts_page` RPC.
 }
 ```
 
-`totalCount` / `totalAmount` describe every receipt matching the status and date
-filters, not just the returned page, and stay correct on a page past the end of
-the result set (which returns an empty `receipts` array).
+`totalCount` / `totalAmount` describe every receipt matching the status, date
+and search filters, not just the returned page, and stay correct on a page past
+the end of the result set (which returns an empty `receipts` array).
 
 ---
 
@@ -279,7 +289,14 @@ clicks Export.
   the CSV covers everyone.
 
 **Response**: `text/csv` attachment
-(`LastName,FirstName,EmployeeNumber,TotalAmount`).
+(`LastName,FirstName,EmployeeNumber,TotalAmount`), `Cache-Control: no-store`.
+Text cells that begin with `=`, `+`, `-` or `@` are prefixed with `'` so a
+spreadsheet does not evaluate them.
+
+**Errors**: 413 when more than 100,000 receipts match — the export refuses
+rather than returning a truncated file; narrow the filters. The dashboard
+fetches this endpoint and shows the error message, so a failure never replaces
+the page.
 
 ---
 

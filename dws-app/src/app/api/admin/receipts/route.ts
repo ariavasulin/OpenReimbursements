@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
-import { employeeIdentity, type Receipt } from '@/lib/types';
+import { employeeIdentity, RECEIPT_SORT_FIELDS, type Receipt, type ReceiptSortField } from '@/lib/types';
+import { normalizeReceiptSearch } from '@/lib/receiptSearch';
 
 export async function GET(request: Request) {
   const gate = await requireAdmin();
@@ -12,6 +13,16 @@ export async function GET(request: Request) {
     const statusFilter = searchParams.get('status');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
+    const search = normalizeReceiptSearch(searchParams.get('q'));
+    const sortField = searchParams.get('sort');
+    const sortDir = searchParams.get('dir');
+    // The RPC checks too; a 400 here beats its 500.
+    if (sortField && !RECEIPT_SORT_FIELDS.includes(sortField as ReceiptSortField)) {
+      return NextResponse.json({ error: 'Invalid sort field' }, { status: 400 });
+    }
+    if (sortDir && sortDir !== 'asc' && sortDir !== 'desc') {
+      return NextResponse.json({ error: 'Invalid sort direction' }, { status: 400 });
+    }
 
     const page = Math.max(parseInt(searchParams.get('page') ?? '', 10) || 1, 1);
     const pageSize = Math.min(
@@ -21,15 +32,19 @@ export async function GET(request: Request) {
 
     // One bounded call. The full-result-set path lives on in ./export/route.ts,
     // where it runs only when someone exports the payroll CSV. The function
-    // aggregates the filtered totals in a CTE and joins it to the page, so
-    // every returned row repeats total_count/total_amount and no separate
-    // counts round-trip is needed here.
+    // applies status, dates, search and sort once, aggregates the filtered
+    // totals in a CTE and joins them to the page, so every returned row
+    // repeats total_count/total_amount and the table, the summary card and
+    // the pager all describe the same set.
     const { data, error } = await supabase.rpc('get_admin_receipts_page', {
       status_filter: statusFilter || null,
       from_date: fromDate || null,
       to_date: toDate || null,
       page_num: page,
       page_size: pageSize,
+      search_term: search || null,
+      sort_field: sortField || null,
+      sort_dir: sortDir || null,
     });
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -43,13 +58,12 @@ export async function GET(request: Request) {
     const totalAmount = rows.length > 0 ? Number(rows[0].total_amount) : 0;
     const receiptsData = rows.filter((row) => row.id !== null);
 
+    const bucket = supabase.storage.from('receipt-images');
     const mappedReceipts = receiptsData.map((item: any) => {
       let publicImageUrl = item.image_url;
 
       if (item.image_url) {
-        const { data: publicUrlData } = supabase.storage
-          .from('receipt-images')
-          .getPublicUrl(item.image_url);
+        const { data: publicUrlData } = bucket.getPublicUrl(item.image_url);
 
         if (publicUrlData?.publicUrl) {
           publicImageUrl = publicUrlData.publicUrl;

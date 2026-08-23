@@ -7,7 +7,8 @@ import { supabase } from '@/lib/supabaseClient';
 import ReceiptUploader from '@/components/receipt-uploader';
 import EmployeeReceiptTable from '@/components/employee-receipt-table';
 import LoadMoreButton from '@/components/photos/load-more-button';
-import { useMyReceipts, useResetMyReceipts, type ReceiptStatusFilter } from '@/hooks/use-receipts';
+import StatusLine from '@/components/photos/status-line';
+import { useMyReceipts, useRefreshMyReceipts, type ReceiptStatusFilter } from '@/hooks/use-receipts';
 import type { UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Toaster as SonnerToaster } from 'sonner';
@@ -27,7 +28,9 @@ export default function EmployeePage() {
   const {
     data: receiptsData,
     isLoading: receiptsLoading,
+    isPlaceholderData: receiptsArePlaceholder,
     error: receiptsQueryError,
+    refetch: refetchReceipts,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
@@ -44,7 +47,7 @@ export default function EmployeePage() {
   const receiptsError =
     receiptsQueryError instanceof Error ? receiptsQueryError.message : null;
 
-  const resetReceipts = useResetMyReceipts(user?.id);
+  const refreshReceipts = useRefreshMyReceipts(user?.id);
 
   useEffect(() => {
     loadingTimeoutRef.current = setTimeout(() => {
@@ -221,19 +224,33 @@ export default function EmployeePage() {
       </div>
       
       <div className="max-w-4xl mx-auto space-y-6">
-        <ReceiptUploader onReceiptAdded={resetReceipts} />
+        <ReceiptUploader onReceiptAdded={refreshReceipts.afterUpload} />
         
-        {receiptsLoading && <p className="text-center">Loading receipts...</p>}
-        {receiptsError && <p className="text-center text-red-500">Error loading receipts: {receiptsError}</p>}
-        {!receiptsLoading && !receiptsError && (
+        {receiptsLoading && <StatusLine>Loading receipts...</StatusLine>}
+        {/* A failed fetch — first load or a later "Load more" — reports
+            itself here, but never takes already-loaded rows off the screen. */}
+        {receiptsError && (
+          <div className="text-center space-y-2">
+            <StatusLine error>Error loading receipts: {receiptsError}</StatusLine>
+            <Button
+              variant="outline"
+              onClick={() => (receiptsData ? fetchNextPage() : refetchReceipts())}
+              className="border-[#4e4e4e] text-white hover:bg-[#383838]"
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+        {receiptsData && (
           <>
             <EmployeeReceiptTable
               receipts={receipts}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
-              onReceiptUpdated={resetReceipts}
+              onReceiptUpdated={refreshReceipts.afterEdit}
+              isStale={receiptsArePlaceholder}
             />
-            {hasNextPage && (
+            {hasNextPage && !receiptsError && (
               <LoadMoreButton onClick={() => fetchNextPage()} loading={isFetchingNextPage} />
             )}
           </>

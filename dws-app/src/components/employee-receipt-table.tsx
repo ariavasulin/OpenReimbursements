@@ -33,6 +33,8 @@ interface EmployeeReceiptTableProps {
   statusFilter: ReceiptStatusFilter
   onStatusFilterChange: (status: ReceiptStatusFilter) => void
   onReceiptUpdated?: (updatedReceipt: Receipt) => void
+  /** The rows belong to the previous filter while the new one is in flight. */
+  isStale?: boolean
 }
 
 export default function EmployeeReceiptTable({
@@ -40,6 +42,7 @@ export default function EmployeeReceiptTable({
   statusFilter,
   onStatusFilterChange,
   onReceiptUpdated,
+  isStale = false,
 }: EmployeeReceiptTableProps) {
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null)
@@ -84,7 +87,10 @@ export default function EmployeeReceiptTable({
         </Select>
       </div>
 
-      <div className="border border-[#4e4e4e] rounded-lg overflow-hidden bg-[#2e2e2e]">
+      <div
+        className={`border border-[#4e4e4e] rounded-lg overflow-hidden bg-[#2e2e2e] transition-opacity ${isStale ? "opacity-50" : ""}`}
+        aria-busy={isStale}
+      >
         <Table>
           <TableHeader className="bg-[#3e3e3e] hover:bg-[#3e3e3e]">
             <TableRow className="border-[#4e4e4e]">
@@ -142,7 +148,9 @@ export default function EmployeeReceiptTable({
       </div>
 
       <div className="text-sm text-center text-gray-400">
-        Showing {receipts.length} receipts
+        {isStale
+          ? "Loading…"
+          : `${receipts.length} loaded`}
       </div>
 
       {/* Edit Receipt - Drawer on mobile, Dialog on desktop */}
