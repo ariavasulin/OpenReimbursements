@@ -1,17 +1,12 @@
 -- Baseline capture of the RLS posture on public.receipts and public.categories,
--- carried forward from the pre-migrations db/ directory. Kept as the record of
--- the original schema, not as something to re-run by hand; it exists so a fresh
--- database can be rebuilt from the repo alone.
+-- carried forward from the pre-migrations db/ directory.
 
 begin;
 
 -- ---------------------------------------------------------------------------
--- is_admin(): does the calling user have the 'admin' role?
---
--- SECURITY DEFINER so the lookup against user_profiles is not itself subject to
--- the caller's RLS on user_profiles. STABLE because it performs no writes and
--- returns the same result within a statement. Locks search_path to a safe value
--- to avoid search_path-hijacking under SECURITY DEFINER.
+-- is_admin(): SECURITY DEFINER so the lookup against user_profiles is not
+-- itself subject to the caller's RLS on user_profiles; search_path locked
+-- against hijacking under SECURITY DEFINER.
 -- ---------------------------------------------------------------------------
 create or replace function public.is_admin()
 returns boolean

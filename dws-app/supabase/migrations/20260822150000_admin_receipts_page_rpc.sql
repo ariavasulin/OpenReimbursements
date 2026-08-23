@@ -2,10 +2,7 @@
 -- list, joins, filters, and ordering — is copied verbatim from the baseline
 -- capture of that function (00000000000000_baseline.sql), including the
 -- EXCLUSIVE to_date bound (r.receipt_date < to_date; the dashboard passes
--- to+1day for inclusive ranges). It adds only:
---   * a bounded page (limit/offset from page_num/page_size), and
---   * total_count / total_amount over the whole filtered set, so the caller
---     gets the filtered totals without a second query.
+-- to+1day for inclusive ranges).
 --
 -- Superseded by 20260823120000_admin_receipts_page_search_sort.sql, which
 -- drops and re-creates the function with search and sort.

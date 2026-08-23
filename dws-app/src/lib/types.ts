@@ -85,9 +85,8 @@ export interface ReceiptSort {
 }
 
 /**
- * Employee display fields derived from an admin receipts RPC row. The dashboard
- * and the payroll export must agree on these, or an exported CSV names people
- * differently than the table the admin was looking at.
+ * The dashboard and the payroll export must agree on these fields, or an
+ * exported CSV names people differently than the table the admin was looking at.
  */
 export function employeeIdentity(row: {
   preferred_name?: string | null;

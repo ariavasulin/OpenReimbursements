@@ -3,10 +3,9 @@ import { requireAdmin } from '@/lib/requireAdmin';
 import { buildPayrollCsv, type PayrollReceiptRow } from '@/lib/payrollCsv';
 import { employeeIdentity } from '@/lib/types';
 
-// PostgREST caps a response at ~1000 rows, so the export pages the same RPC
-// the dashboard reads, a few pages at a time: each page materialises only
-// its own rows, and the concurrency bound keeps a large export from opening
-// dozens of connections at once.
+// PostgREST caps a response at ~1000 rows, so the export pages the RPC; the
+// concurrency bound keeps a large export from opening dozens of connections
+// at once.
 const PAGE_SIZE = 1000;
 const PAGE_CONCURRENCY = 4;
 // Above this the export refuses rather than returning a short file: a
@@ -20,15 +19,16 @@ export async function GET(request: Request) {
 
   try {
     const { searchParams } = new URL(request.url);
+    const filterArgs = {
+      status_filter: searchParams.get('status') || null,
+      from_date: searchParams.get('fromDate') || null,
+      to_date: searchParams.get('toDate') || null,
+      search_term: searchParams.get('q') || null,
+    };
     const fetchPage = (pageNum: number) =>
-      supabase.rpc('get_admin_receipts_page', {
-        status_filter: searchParams.get('status') || null,
-        from_date: searchParams.get('fromDate') || null,
-        to_date: searchParams.get('toDate') || null,
-        page_num: pageNum,
-        page_size: PAGE_SIZE,
-        search_term: searchParams.get('q') || null,
-      });
+      supabase
+        .rpc('get_admin_receipts_page', { ...filterArgs, page_num: pageNum, page_size: PAGE_SIZE })
+        .select('id,total_count,preferred_name,full_name,employee_id_internal,amount');
 
     const rows: PayrollReceiptRow[] = [];
     const collect = (data: any[] | null) => {

@@ -51,9 +51,9 @@ async function buildSearchFilter(
   q: string,
   job: string | null
 ): Promise<string | null> {
-  const rpcQuery = escapeIlikeWildcards(q);
-  const escaped = escapeForIlike(rpcQuery);
+  const escaped = escapeForIlike(q);
   if (!escaped) return null;
+  const rpcQuery = escapeIlikeWildcards(q);
   const pattern = `%${escaped}%`;
 
   const [jobsResult, uploadersResult, tagRowsResult] = await Promise.all([
@@ -67,7 +67,7 @@ async function buildSearchFilter(
       .select('user_id')
       .ilike('full_name', pattern)
       .limit(200),
-    supabase.rpc('get_photo_tags', { job_filter: job, q: rpcQuery }),
+    supabase.rpc('get_photo_tags', { job_filter: job || null, q: rpcQuery }),
   ]);
 
   const firstError =

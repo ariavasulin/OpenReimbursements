@@ -180,12 +180,11 @@ export async function GET(request: Request) {
     const nextCursor =
       rows.length > limit ? encodeKeysetCursor(last.receipt_date, last.created_at) : null;
 
+    const bucket = supabase.storage.from('receipt-images');
     const mappedReceipts = page.map((item: any) => {
       let publicImageUrl = item.image_url;
       if (item.image_url) {
-        const { data: publicUrlData } = supabase.storage
-          .from('receipt-images')
-          .getPublicUrl(item.image_url);
+        const { data: publicUrlData } = bucket.getPublicUrl(item.image_url);
 
         if (publicUrlData && publicUrlData.publicUrl) {
           publicImageUrl = publicUrlData.publicUrl;

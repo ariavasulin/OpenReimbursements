@@ -1,6 +1,5 @@
 // Payroll CSV builder. The payroll system consumes this output — do not change
-// its format; payrollCsv.test.ts pins it with a golden fixture, and
-// byte-identical output is the contract.
+// its format.
 //
 // The one deliberate departure from pure quoting: a text cell that starts with
 // =, +, - or @ gets a leading apostrophe. Spreadsheets strip CSV quoting before
@@ -9,7 +8,6 @@
 
 const FORMULA_LEADERS = /^[=+\-@]/
 
-// quoteCsv always wraps values in quotes, even when not required.
 export function quoteCsv(value: string): string {
   const neutralised = FORMULA_LEADERS.test(value) ? `'${value}` : value
   const escaped = neutralised.replace(/"/g, '""')
@@ -27,12 +25,12 @@ export function buildPayrollCsv(rows: PayrollReceiptRow[]): string {
 
   const totalsMap = new Map<string, { lastName: string; firstName: string; employeeNumber: string; total: number }>()
 
-  const parseLastFirst = (name?: string): { last: string; first: string } => {
-    if (name && name.includes(',')) {
+  const parseLastFirst = (name: string): { last: string; first: string } => {
+    if (name.includes(',')) {
       const [l, f] = name.split(',')
       return { last: (l || '').trim(), first: (f || '').trim() }
     }
-    return { last: '', first: (name || '').trim() }
+    return { last: '', first: name.trim() }
   }
 
   for (const r of rows) {

@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { Receipt, ReceiptStatusFilter } from "@/lib/types"
+import { RECEIPT_STATUS_VALUES, type Receipt, type ReceiptStatusFilter } from "@/lib/types"
 import { formatCurrency, formatDate, formatDateShort } from "@/lib/utils"
 import { useMobile } from "@/hooks/use-mobile"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -28,7 +28,6 @@ import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 
 interface EmployeeReceiptTableProps {
   receipts: Receipt[]
-  /** Owned by the page: it is a query parameter of the receipts request. */
   statusFilter: ReceiptStatusFilter
   onStatusFilterChange: (status: ReceiptStatusFilter) => void
   onReceiptUpdated?: (updatedReceipt: Receipt) => void
@@ -78,10 +77,11 @@ export default function EmployeeReceiptTable({
           </SelectTrigger>
           <SelectContent position="popper" className="bg-[#2e2e2e] text-white border-[#4e4e4e]">
             <SelectItem value="all" className="hover:bg-[#4e4e4e]">All</SelectItem>
-            <SelectItem value="pending" className="hover:bg-[#4e4e4e]">Pending</SelectItem>
-            <SelectItem value="approved" className="hover:bg-[#4e4e4e]">Approved</SelectItem>
-            <SelectItem value="rejected" className="hover:bg-[#4e4e4e]">Rejected</SelectItem>
-            <SelectItem value="reimbursed" className="hover:bg-[#4e4e4e]">Reimbursed</SelectItem>
+            {RECEIPT_STATUS_VALUES.map((status) => (
+              <SelectItem key={status} value={status.toLowerCase()} className="hover:bg-[#4e4e4e]">
+                {status}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

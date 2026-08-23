@@ -2,17 +2,13 @@ import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/re
 import { fetchJson } from '@/lib/photos/api'
 import type { Receipt, ReceiptStatusFilter } from '@/lib/types'
 
-/** One page of GET /api/receipts (keyset-paginated, 50 rows per page). */
+/** One page of GET /api/receipts (keyset-paginated). */
 export interface ReceiptsPage {
   receipts: Receipt[]
   nextCursor: string | null
 }
 
-/**
- * Cache keys for the employee's own receipts. Keyed by user id and status:
- * statuses are separate server-side result sets, and cache entries must not
- * cross accounts.
- */
+/** Cache entries must not cross accounts, and statuses are separate result sets. */
 export const receiptsKeys = {
   mine: (userId: string | null | undefined, status: ReceiptStatusFilter) =>
     ['receipts', 'mine', userId ?? null, status] as const,
@@ -57,12 +53,7 @@ export function useMyReceipts({
   })
 }
 
-/**
- * Post-mutation refresh of the employee's list, an infinite query. After an
- * edit, invalidateQueries refetches every loaded page — sequentially, since
- * keyset pages only fetch in cursor order — so the user keeps their place.
- * After an upload, resetQueries drops the loaded pages and fetches page 1 once.
- */
+/** afterEdit refetches loaded pages so the user keeps their place; afterUpload drops back to page 1. */
 export function useRefreshMyReceipts(userId: string | null | undefined) {
   const queryClient = useQueryClient()
   const queryKey = receiptsKeys.mineForUser(userId)

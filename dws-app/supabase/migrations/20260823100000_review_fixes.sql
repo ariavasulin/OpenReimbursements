@@ -4,20 +4,11 @@
 -- `db query -f` run.
 
 
--- 1. get_admin_receipts_page: add the missing authorization gate, and stop
---    erasing the totals on an empty page.
---
---    The function is `security definer` and executable by `authenticated`, so
---    until now any signed-in employee could call it over PostgREST and read
---    every receipt plus employee names and phone numbers. The API route's admin
---    check does not protect the function; the function has to check for itself.
---
---    The totals were `cross join`ed onto the page CTE, so a page past the end
---    of the result set (empty page CTE) produced zero rows and the caller read
---    total_count 0 / total_amount 0 instead of the real filtered totals. The
---    join is now `totals left join page`, which always yields at least one row:
---    when the page is empty that row carries the totals with every receipt
---    column null. Callers must skip rows with a null id (the API route does).
+-- 1. get_admin_receipts_page: authorization gate and empty-page totals.
+--    The API route's admin check does not protect a `security definer`
+--    function reachable over PostgREST, so the function checks is_admin()
+--    itself. `totals left join page` always yields at least one row; callers
+--    must skip rows with a null id (the API route does).
 create or replace function public.get_admin_receipts_page(
     status_filter text default null,
     from_date date default null,

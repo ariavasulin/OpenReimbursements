@@ -5,8 +5,7 @@
 -- and reject anything else, so a NULL in either column at a page boundary
 -- would emit a cursor the next request answers with 400 — a dead end rather
 -- than a skipped row. receipts.created_at defaults to now() and the photos
--- upload always sets captured_at; a pre-existing NULL fails this migration
--- rather than being rewritten.
+-- upload always sets captured_at.
 
 alter table public.receipts
   alter column created_at set not null;

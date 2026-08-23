@@ -155,13 +155,10 @@ BEGIN
   FROM auth.users au
   LEFT JOIN public.user_profiles up ON au.id = up.user_id
   WHERE
-    -- Exclude auth-deleted users
     au.deleted_at IS NULL
     -- Exclude test account
     AND au.phone != '1234'
-    -- Handle soft-deleted profiles
     AND (include_deleted OR up.deleted_at IS NULL)
-    -- Search filter (case-insensitive partial match)
     AND (
       search_query IS NULL
       OR search_query = ''
@@ -414,14 +411,11 @@ ALTER TABLE ONLY "public"."user_profiles"
 
 
 
--- The row-level security POLICIES for these tables are NOT defined here.
--- This dump originally re-created all of them with a bare `auth.uid()`, which
--- silently reverted the wrapped `(select auth.uid())` versions whenever the
--- file was replayed. Their source of truth is:
+-- Policies are deliberately omitted here: re-creating them from a dump reverts
+-- the wrapped (select auth.uid()) forms. Source of truth:
 --   00000000000003_photos_schema.sql                   (jobs_select, photos_select)
 --   20260822130000_rls_scalar_subqueries.sql           (receipts, categories, user_profiles)
 --   20260822130100_rls_photos_tighten_update.sql       (photos write policies)
--- Only the `ALTER TABLE … ENABLE ROW LEVEL SECURITY` statements stay below.
 
 ALTER TABLE "public"."categories" ENABLE ROW LEVEL SECURITY;
 

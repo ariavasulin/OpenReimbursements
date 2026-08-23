@@ -5,9 +5,9 @@
 --    function is security invoker, so current_user is the caller, not the
 --    definer.
 --
--- 2. user_profiles INSERT: a signed-in caller may create their own row, as an
---    employee. The signup trigger runs as the table owner and the admin routes
---    use the service role, so neither is affected.
+-- 2. user_profiles INSERT: the signup trigger runs as the table owner and the
+--    admin routes use the service role, so neither is affected by the
+--    tightened policy.
 
 create or replace function public.receipts_guard_status_change()
 returns trigger

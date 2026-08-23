@@ -21,7 +21,7 @@ describe("quoteCsv", () => {
 });
 
 describe("buildPayrollCsv", () => {
-  it("reproduces the pre-refactor output for a known set of rows", () => {
+  it("matches the payroll golden fixture", () => {
     // Golden fixture: byte-identical output is required.
     const rows = [
       { employeeId: "1001", employeeName: "Smith, John", amount: 12.5 },

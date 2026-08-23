@@ -1,7 +1,5 @@
 import { decodeKeysetCursor, isIsoTimestamp } from "./keysetCursor";
 
-// Keyset-pagination cursor for GET /api/receipts, keyed on
-// (receipt_date, created_at).
 export type ReceiptCursor = { receiptDate: string; createdAt: string };
 
 export function decodeReceiptCursor(raw: string): ReceiptCursor | null {

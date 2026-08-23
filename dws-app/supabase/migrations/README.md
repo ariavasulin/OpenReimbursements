@@ -7,9 +7,8 @@ The `00000000000000`–`00000000000003` files are the captured baseline of what
 production already had before migrations were checked in. Do not re-apply them
 to the existing project; they exist so a fresh database can be rebuilt. The
 baseline is not a byte-faithful dump: `00000000000000` defines `photos` with
-the fifteen columns the table had when the dump was taken, and
-`00000000000003` adds the six later ones (`captured_at_source`, `sidecar_path`,
-`sidecar_name`, `playback_path`, `playback_skipped_reason`, `content_sha256`).
+the columns the table had when the dump was taken, and `00000000000003` adds
+the later ones.
 
 Naming: `<UTC timestamp>_<snake_case_name>.sql`, e.g. `20260822120000_add_receipts_indexes.sql`
 Generate a timestamp with: `date -u +%Y%m%d%H%M%S`
@@ -57,8 +56,8 @@ done
 After every `CREATE INDEX CONCURRENTLY`, and before dropping the index it
 replaces, check that nothing was left invalid. An interrupted concurrent build
 leaves an index marked `indisvalid = false`; a re-run of
-`create index concurrently if not exists` sees the name, skips with a NOTICE,
-and the queries go back to sorting under a green apply log:
+`create index concurrently if not exists` sees the name and skips with a
+NOTICE:
 
 ```bash
 env -u SUPABASE_ACCESS_TOKEN supabase db query --linked \

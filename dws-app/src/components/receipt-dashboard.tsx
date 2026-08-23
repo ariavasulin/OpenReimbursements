@@ -43,14 +43,6 @@ import {
 } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
 
-const TAB_EMPTY_MESSAGES = {
-  all: "No receipts found for the current filters.",
-  pending: "No pending receipts found.",
-  approved: "No approved receipts found.",
-  reimbursed: "No reimbursed receipts found.",
-  rejected: "No rejected receipts found.",
-}
-
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   useAdminPrefetch()
 
@@ -147,7 +139,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     enabled: shouldFetch,
   })
 
-  const rawReceipts = receiptsPage?.receipts ?? []
+  const receipts = receiptsPage?.receipts ?? []
   const totalCount = receiptsPage?.totalCount ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
@@ -168,11 +160,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const error = queryError?.message || null
   const invalidateReceipts = useInvalidateAdminReceipts()
   const deleteReceiptMutation = useDeleteReceipt()
-
-  const receipts: Receipt[] = rawReceipts.map((receipt: Receipt) => ({
-    ...receipt,
-    status: receipt.status.toLowerCase() as Receipt['status'],
-  }))
 
   const downloadPayrollCSV = async () => {
     const params = adminReceiptsFilterParams({
@@ -396,7 +383,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
             <CardContent>
               <div className="text-2xl font-bold text-white">{totalCount}</div>
               <p className="text-xs text-gray-400">
-                Total amount: ${totalAmount.toFixed(2)}
+                Total amount: {formatCurrency(totalAmount)}
                 {isNarrowed && " (matching current filters)"}
               </p>
             </CardContent>
@@ -598,7 +585,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         <p className="text-[#999999]">
                           {debouncedSearch
                             ? `No receipts match "${searchQuery.trim()}".`
-                            : TAB_EMPTY_MESSAGES[activeTab]}
+                            : activeTab === "all"
+                              ? "No receipts found for the current filters."
+                              : `No ${activeTab} receipts found.`}
                         </p>
                       </div>
                     )}

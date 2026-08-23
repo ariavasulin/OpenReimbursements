@@ -1,8 +1,4 @@
 -- DWS Photos hub schema: jobs + photos tables, RLS, and the two read policies.
--- Strictly additive: no existing table, bucket, or policy is altered.
---
--- Historical baseline for the photos hub, kept as the record of the original
--- schema, not as something to re-run by hand.
 
 create table if not exists public.jobs (
   id          uuid primary key default gen_random_uuid(),

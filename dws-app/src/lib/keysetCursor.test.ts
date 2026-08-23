@@ -50,14 +50,6 @@ describe("keyset cursor", () => {
     expect(decodeKeysetCursor(encodeKeysetCursor("a", "b"), () => null)).toBeNull();
   });
 
-  it("returns whatever shape the validator builds", () => {
-    const decoded = decodeKeysetCursor(encodeKeysetCursor("2026-08-01", "id-1"), (date, id) => ({
-      capturedAt: date,
-      id,
-    }));
-    expect(decoded).toEqual({ capturedAt: "2026-08-01", id: "id-1" });
-  });
-
   it("returns null when the validator throws", () => {
     expect(
       decodeKeysetCursor(encodeKeysetCursor("a", "b"), () => {

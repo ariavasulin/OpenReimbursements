@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { supabase } from '@/lib/supabaseClient'
 
@@ -31,19 +31,15 @@ function getQueryClient() {
   }
 }
 
-/**
- * Drops the whole cache whenever the signed-in identity changes.
- *
- * The QueryClient is a module-level singleton with a 5-minute staleTime, so
- * cached data must not survive an identity change. A per-page handler cannot
- * do it — the page unmounts on navigation to /login.
- */
-function AuthIdentityBoundary() {
-  const queryClient = useQueryClient()
+export function QueryProvider({ children }: { children: React.ReactNode }) {
+  const [queryClient] = useState(() => getQueryClient())
   // undefined = no identity observed yet, so the first observation is the
   // baseline rather than a transition.
   const lastIdentityRef = useRef<string | null | undefined>(undefined)
 
+  // Drop the whole cache whenever the signed-in identity changes: the
+  // QueryClient is a module-level singleton with a 5-minute staleTime, so
+  // cached data must not survive an identity change.
   useEffect(() => {
     const observe = (userId: string | null) => {
       if (lastIdentityRef.current === undefined) {
@@ -63,15 +59,8 @@ function AuthIdentityBoundary() {
     return () => authListener?.subscription?.unsubscribe()
   }, [queryClient])
 
-  return null
-}
-
-export function QueryProvider({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => getQueryClient())
-
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthIdentityBoundary />
       {children}
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>

@@ -46,10 +46,8 @@ as $$
       or j.job_number ilike '%' || search_query || '%'
       or j.name       ilike '%' || search_query || '%'
     )
-  -- Tiebreaker for jobs with no photos. The JS this replaces used
-  -- localeCompare(..., { numeric: true }), which orders '100' above '99';
-  -- a plain text sort would invert that as soon as job numbers differ in
-  -- length. Zero-pad all-digit job numbers so the SQL sort matches.
+  -- Tiebreaker for jobs with no photos. Zero-pad all-digit job numbers so
+  -- '100' sorts above '99' rather than under it.
   order by a.latest_upload desc nulls last,
            (case when j.job_number ~ '^[0-9]+$'
                  then lpad(j.job_number, 20, '0')

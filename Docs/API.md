@@ -128,8 +128,7 @@ Creates receipt record and finalizes image storage.
 
 ### GET /api/receipts
 
-Fetches the signed-in user's own receipts with category names, newest first.
-Keyset-paginated: one page per request, `nextCursor` fetches the next.
+Fetches the signed-in user's own receipts with category names.
 
 **Auth**: Required
 
@@ -158,8 +157,7 @@ Keyset-paginated: one page per request, `nextCursor` fetches the next.
 ```
 
 `nextCursor` is `null` on the last page. Ordering is
-`receipt_date DESC, created_at DESC`, and the cursor encodes that pair, so pages
-must be requested in order.
+`receipt_date DESC, created_at DESC`.
 
 ---
 
@@ -264,8 +262,7 @@ over the whole filtered set.
 ```
 
 `totalCount` / `totalAmount` describe every receipt matching the status, date
-and search filters, not just the returned page, and stay correct on a page past
-the end of the result set (which returns an empty `receipts` array).
+and search filters, not just the returned page.
 
 ---
 

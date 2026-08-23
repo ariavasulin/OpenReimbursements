@@ -9,8 +9,7 @@ import EmployeeReceiptTable from '@/components/employee-receipt-table';
 import LoadMoreButton from '@/components/photos/load-more-button';
 import StatusLine from '@/components/photos/status-line';
 import { useMyReceipts, useRefreshMyReceipts } from '@/hooks/use-receipts';
-import type { ReceiptStatusFilter } from '@/lib/types';
-import type { UserProfile } from '@/lib/types';
+import type { ReceiptStatusFilter, UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Toaster as SonnerToaster } from 'sonner';
 

@@ -1,5 +1,3 @@
--- Indexes for the receipts hot paths.
---
 -- CONCURRENTLY so this does not lock out writes.
 --
 -- Apply each statement individually via the positional form — see

@@ -90,7 +90,7 @@ what keeps that update from being an approval.
 | name | text | Category name (unique) |
 | created_at | timestamp | Auto-generated |
 
-**RLS**: Enabled — authenticated read, admin write. `categories_select` allows `SELECT` to any `authenticated` user; `categories_insert`/`update`/`delete` require `public.is_admin()`. See `dws-app/supabase/migrations/00000000000002_enable_rls_receipts_categories.sql`.
+**RLS**: Enabled — authenticated read, admin write. `categories_select` allows `SELECT` to any `authenticated` user; `categories_insert`/`update`/`delete` require `public.is_admin()`. `categories_select` is in `dws-app/supabase/migrations/00000000000002_enable_rls_receipts_categories.sql`; the write policies are in `20260822130000_rls_scalar_subqueries.sql`.
 
 **Default Categories**: Parking, Gas, Meals & Entertainment, Office Supplies, Other
 
@@ -161,23 +161,11 @@ interface Category {
 
 ## RLS Bypass
 
-For admin operations needing phone numbers (in auth.users):
-
-```sql
--- Postgres RPC function
-CREATE FUNCTION get_admin_receipts_with_phone(...)
-RETURNS TABLE(...)
-SECURITY DEFINER  -- Runs with elevated privileges
-AS $$
-  SELECT r.*, au.phone
-  FROM receipts r
-  JOIN auth.users au ON r.user_id = au.id
-  ...
-$$;
-```
-
-No route calls it any more: both `GET /api/admin/receipts` and the payroll CSV
-export page through `get_admin_receipts_page` below.
+For admin operations needing phone numbers (in auth.users), a `SECURITY
+DEFINER` RPC joins `auth.users`. `get_admin_receipts_with_phone` (baseline,
+`00000000000000_baseline.sql`) still exists but no route calls it; both
+`GET /api/admin/receipts` and the payroll CSV export use
+`get_admin_receipts_page` below.
 
 ### get_admin_receipts_page(status_filter, from_date, to_date, page_num, page_size, search_term, sort_field, sort_dir)
 

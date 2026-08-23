@@ -17,16 +17,12 @@ describe("receipt cursor", () => {
   });
 
   it("rejects an injected filter string in receiptDate", () => {
-    const hostile = Buffer.from(
-      JSON.stringify(["2026-08-01,or(status.eq.Approved)", "2026-08-01T00:00:00Z"])
-    ).toString("base64url");
+    const hostile = encodeKeysetCursor("2026-08-01,or(status.eq.Approved)", "2026-08-01T00:00:00Z");
     expect(decodeReceiptCursor(hostile)).toBeNull();
   });
 
   it("rejects an injected filter string in createdAt", () => {
-    const hostile = Buffer.from(
-      JSON.stringify(["2026-08-01", "2026-08-01T00:00:00Z,or(status.eq.Approved)"])
-    ).toString("base64url");
+    const hostile = encodeKeysetCursor("2026-08-01", "2026-08-01T00:00:00Z,or(status.eq.Approved)");
     expect(decodeReceiptCursor(hostile)).toBeNull();
   });
 });

@@ -1,6 +1,3 @@
-// One keyset-pagination cursor idiom for the whole codebase: a two-element
-// string tuple, JSON encoded, base64url wrapped.
-//
 // Decoding deliberately stops at "it is a pair of strings" and hands off to a
 // caller-supplied validator, because what counts as a *valid* pair differs per
 // endpoint — and the decoded values get interpolated into PostgREST filter

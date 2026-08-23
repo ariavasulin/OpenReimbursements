@@ -70,6 +70,7 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<AdminRec
   return {
     receipts: data.receipts.map((r: Receipt) => ({
       ...r,
+      status: r.status.toLowerCase() as Receipt['status'],
       date: r.date || r.receipt_date || '',
       category: r.category || 'Uncategorized',
     })),
@@ -83,9 +84,8 @@ export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsPar
     queryKey: adminReceiptsKeys.list(params),
     queryFn: () => fetchAdminReceipts(params),
     enabled,
-    // Every filter, sort and page is part of the key. Without this each change
-    // drops `data` to undefined mid-fetch: the table unmounts, the totals read
-    // 0, and the pager computes a page count of 1.
+    // Every filter, sort and page is in the key; without this each change
+    // drops `data` to undefined mid-fetch.
     placeholderData: keepPreviousData,
   })
 }

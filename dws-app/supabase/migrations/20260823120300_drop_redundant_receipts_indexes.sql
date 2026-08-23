@@ -7,9 +7,7 @@
 -- A composite index serves every lookup its prefix did, so the prefixes are
 -- write amplification on the busiest write table and nothing else.
 --
--- Do NOT apply this file with `supabase db query -f`: DROP INDEX CONCURRENTLY
--- cannot run inside the transaction that wraps a multi-statement file. Apply
--- each statement on its own via the positional form — see
+-- Apply each statement on its own via the positional form — see
 -- supabase/migrations/README.md § Files that must be applied statement by
 -- statement.
 

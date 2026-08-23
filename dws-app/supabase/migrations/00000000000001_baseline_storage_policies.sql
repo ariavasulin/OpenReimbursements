@@ -1,10 +1,6 @@
 -- Baseline capture of the four receipt-images policies on storage.objects,
 -- transcribed from live pg_policies output (2026-08-22). These were created by
--- hand in the Supabase dashboard before migrations were checked in; this file
--- records that they existed so a fresh database can be rebuilt from the repo
--- alone.
+-- hand in the Supabase dashboard before migrations were checked in.
 --
 -- The policy bodies live in 20260822130200_rls_storage_scalar_subqueries.sql,
 -- with their roles, commands and WITH CHECK fidelity notes.
--- The photos-bucket storage policies live in the same 20260822130200 file; the
--- photos table's own policies live in 20260822130100_rls_photos_tighten_update.sql.
