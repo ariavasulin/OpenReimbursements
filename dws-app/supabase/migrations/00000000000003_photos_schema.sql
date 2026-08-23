@@ -7,7 +7,7 @@
 --   on conflict (id) do nothing;
 --
 -- Idempotent end to end; apply to production with:
---   env -u SUPABASE_ACCESS_TOKEN supabase db query --linked --project-ref qebbmojnqzwwdpkhuyyd -f dws-app/db/photos-schema.sql
+--   env -u SUPABASE_ACCESS_TOKEN supabase db query --linked --project-ref qebbmojnqzwwdpkhuyyd -f dws-app/supabase/migrations/00000000000003_photos_schema.sql
 
 create table if not exists public.jobs (
   id          uuid primary key default gen_random_uuid(),
