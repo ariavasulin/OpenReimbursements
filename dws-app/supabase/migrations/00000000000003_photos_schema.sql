@@ -43,6 +43,22 @@ create index if not exists photos_sheet        on public.photos (job_id, sheet_n
 alter table public.jobs   enable row level security;
 alter table public.photos enable row level security;
 
+-- ⚠️  SUPERSEDED POLICIES BELOW — DO NOT RE-APPLY THIS FILE TO AN EXISTING DB.
+--
+-- The policies from here down are the ORIGINAL versions, kept as a historical
+-- baseline. They were later replaced by:
+--   20260822130100_rls_photos_tighten_update.sql       (photos table)
+--   20260822130200_rls_storage_scalar_subqueries.sql   (photos bucket)
+-- which wrap auth.uid()/is_admin() in scalar subqueries so they evaluate once
+-- per statement instead of once per row, and narrow photos UPDATE to
+-- job_id/sheet_number/tags via column grants.
+--
+-- Re-applying this file out of order silently reverts both of those changes:
+-- the policy drop/create pairs below win, while the column grants (which live
+-- only in 130100) survive — leaving a half-reverted state that still passes a
+-- grants check. This happened once during Phase 4. Apply the full sequence in
+-- filename order, or not at all.
+
 -- jobs: read-only for signed-in users; writes are service-role only (bypasses RLS)
 drop policy if exists jobs_select on public.jobs;
 create policy jobs_select on public.jobs
