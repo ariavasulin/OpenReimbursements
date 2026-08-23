@@ -16,14 +16,7 @@ describe("quoteCsv", () => {
 
 describe("buildPayrollCsv", () => {
   it("reproduces the pre-refactor output for a known set of rows", () => {
-    // Golden fixture: this exact expected string was produced by running the
-    // pre-refactor inline implementation (receipt-dashboard.tsx quoteCsv +
-    // downloadPayrollCSV, copied verbatim into a standalone script) over these
-    // rows, before the refactor. It covers: "Last, First" names, a no-comma
-    // name, multiple receipts summing per employee, empty employeeId rows
-    // collapsing into one keyed-on-'' bucket (first name wins, amounts sum),
-    // quotes in names, a string amount, a NaN amount (-> 0.00), an empty
-    // name, and last/first sorting.
+    // Golden fixture: the expected string is pinned to the pre-refactor bytes.
     const rows = [
       { employeeId: "1001", employeeName: "Smith, John", amount: 12.5 },
       { employeeId: "1002", employeeName: "Cher", amount: 100 },

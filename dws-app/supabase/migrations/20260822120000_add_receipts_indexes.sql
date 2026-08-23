@@ -1,5 +1,4 @@
--- Indexes for the receipts hot paths identified in
--- .artifacts/db-query-performance/00-diagnosis-pg-stat-statements.md
+-- Indexes for the receipts hot paths identified by pg_stat_statements.
 --
 -- CONCURRENTLY so this does not lock out writes.
 --

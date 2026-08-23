@@ -69,7 +69,6 @@ function AuthIdentityBoundary() {
     supabase.auth
       .getSession()
       .then(({ data }) => observe(data.session?.user?.id ?? null))
-      .catch(() => {})
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, session) => observe(session?.user?.id ?? null)

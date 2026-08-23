@@ -3,12 +3,8 @@ import { requireAdmin } from '@/lib/requireAdmin';
 import { buildPayrollCsv } from '@/lib/payrollCsv';
 import { normalizeReceiptSearch, receiptMatchesSearch } from '@/lib/receiptSearch';
 
-// The admin dashboard's payroll export needs every matching row. That is a
-// legitimate bulk read — it just must not happen on every dashboard load,
-// which is what it used to do when the dashboard fetched the full result set
-// to render a 10-row table. The counts-then-parallel-pages fan-out below is
-// lifted verbatim from the old GET /api/admin/receipts handler; it is the
-// right shape for a bulk export and runs only when someone clicks Export.
+// The admin dashboard's payroll export needs every matching row: a bulk read,
+// run only when someone clicks Export, paged around PostgREST's ~1000-row cap.
 export async function GET(request: Request) {
   const gate = await requireAdmin();
   if (gate.response) return gate.response;

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Receipt } from '@/lib/types'
+import { Receipt, toDbReceiptStatus } from '@/lib/types'
 
 interface AdminReceiptsParams {
   status?: string
@@ -40,8 +40,7 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<AdminRec
   const urlParams = new URLSearchParams()
 
   if (params.status && params.status !== 'all') {
-    const dbStatus = params.status.charAt(0).toUpperCase() + params.status.slice(1)
-    urlParams.append('status', dbStatus)
+    urlParams.append('status', toDbReceiptStatus(params.status))
   }
 
   if (params.fromDate) {

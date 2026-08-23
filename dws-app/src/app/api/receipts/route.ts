@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { isStorageNotFound } from '@/lib/storageErrors';
+import { keysetOrFilter } from '@/lib/keysetCursor';
 import { decodeReceiptCursor, encodeReceiptCursor } from '@/lib/receiptCursor';
-import type { Receipt } from '@/lib/types';
+import { RECEIPT_STATUS_VALUES, type Receipt } from '@/lib/types';
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -56,7 +57,6 @@ export async function POST(request: Request) {
     // up the orphan receipt row. The check that used to live here compiled to
     // storage.search(), which cost 29.6% of all database time (85ms mean,
     // 1527ms p-max, 3213 calls) for information the move already gives us.
-    // See .artifacts/db-query-performance/00-diagnosis-pg-stat-statements.md
     const { error: moveError } = await supabase.storage
       .from(bucketName)
       .move(tempFilePath, finalImagePath);
@@ -104,12 +104,9 @@ const DEFAULT_RECEIPTS_LIMIT = 50;
 const MAX_RECEIPTS_LIMIT = 200;
 
 /** Status values stored in receipts.status, keyed by their lowercase form. */
-const RECEIPT_STATUSES: Record<string, string> = {
-  pending: 'Pending',
-  approved: 'Approved',
-  rejected: 'Rejected',
-  reimbursed: 'Reimbursed',
-};
+const RECEIPT_STATUSES: Record<string, string> = Object.fromEntries(
+  RECEIPT_STATUS_VALUES.map((status) => [status.toLowerCase(), status])
+);
 
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -179,8 +176,7 @@ export async function GET(request: Request) {
       // GET /api/photos. Separate or() calls are ANDed by PostgREST, so this
       // composes with the user_id filter.
       query = query.or(
-        `receipt_date.lt.${cursor.receiptDate},` +
-        `and(receipt_date.eq.${cursor.receiptDate},created_at.lt.${cursor.createdAt})`
+        keysetOrFilter('receipt_date', cursor.receiptDate, 'created_at', cursor.createdAt)
       );
     }
 

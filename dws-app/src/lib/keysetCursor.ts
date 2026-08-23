@@ -31,3 +31,21 @@ export function decodeKeysetCursor<T>(
     return null;
   }
 }
+
+/**
+ * PostgREST `or()` filter for "strictly past this keyset position" under a
+ * descending sort: the sort key is smaller, or it ties and the tiebreaker is
+ * smaller. Callers must have validated both values — they are interpolated
+ * into the filter string.
+ */
+export function keysetOrFilter(
+  sortField: string,
+  sortValue: string,
+  tiebreakField: string,
+  tiebreakValue: string
+): string {
+  return (
+    `${sortField}.lt.${sortValue},` +
+    `and(${sortField}.eq.${sortValue},${tiebreakField}.lt.${tiebreakValue})`
+  );
+}

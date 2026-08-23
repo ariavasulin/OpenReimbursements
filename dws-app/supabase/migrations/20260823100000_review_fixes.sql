@@ -57,15 +57,9 @@ begin
   end if;
 
   return query
-  with totals as (
-    select count(*) as total_count, coalesce(sum(r.amount), 0) as total_amount
-    from public.receipts r
-    where
-      (status_filter is null or status_filter = 'all' or r.status = status_filter)
-      and (from_date is null or r.receipt_date >= from_date)
-      and (to_date is null or r.receipt_date < to_date)
-  ),
-  page as (
+  -- The filter is applied once, in `filtered`. `totals` and `page` both read
+  -- from it, so the totals cannot drift out of step with the paged rows.
+  with filtered as (
     select
       r.id,
       r.receipt_date,
@@ -76,21 +70,39 @@ begin
       r.category_id,
       r.user_id,
       r.created_at,
-      r.updated_at,
+      r.updated_at
+    from public.receipts r
+    where
+      (status_filter is null or status_filter = 'all' or r.status = status_filter)
+      and (from_date is null or r.receipt_date >= from_date)
+      and (to_date is null or r.receipt_date < to_date)
+  ),
+  totals as (
+    select count(*) as total_count, coalesce(sum(f.amount), 0) as total_amount
+    from filtered f
+  ),
+  page as (
+    select
+      f.id,
+      f.receipt_date,
+      f.amount,
+      f.status,
+      f.description,
+      f.image_url,
+      f.category_id,
+      f.user_id,
+      f.created_at,
+      f.updated_at,
       c.name as category_name,
       up.full_name,
       up.preferred_name,
       up.employee_id_internal,
       au.phone
-    from public.receipts r
-    left join public.user_profiles up on r.user_id = up.user_id
-    left join auth.users au on r.user_id = au.id
-    left join public.categories c on r.category_id = c.id
-    where
-      (status_filter is null or status_filter = 'all' or r.status = status_filter)
-      and (from_date is null or r.receipt_date >= from_date)
-      and (to_date is null or r.receipt_date < to_date)
-    order by r.receipt_date desc, r.created_at desc
+    from filtered f
+    left join public.user_profiles up on f.user_id = up.user_id
+    left join auth.users au on f.user_id = au.id
+    left join public.categories c on f.category_id = c.id
+    order by f.receipt_date desc, f.created_at desc
     limit greatest(page_size, 1)
     offset greatest(page_num - 1, 0) * greatest(page_size, 1)
   )
@@ -121,8 +133,7 @@ $$;
 comment on function public.get_admin_receipts_page(text, date, date, int, int) is
   'Paginated admin receipts listing with user profile data and phone numbers. Same body as get_admin_receipts_with_phone plus a bounded page and total_count/total_amount aggregated over public.receipts alone. Security definer for auth-schema access; raises "not authorized" unless public.is_admin(). An out-of-range page returns a single row whose receipt columns are null and which carries the totals — callers must skip rows with a null id.';
 
-revoke all on function public.get_admin_receipts_page(text, date, date, int, int) from public;
-revoke all on function public.get_admin_receipts_page(text, date, date, int, int) from anon;
+revoke all on function public.get_admin_receipts_page(text, date, date, int, int) from public, anon;
 grant execute on function public.get_admin_receipts_page(text, date, date, int, int) to authenticated, service_role;
 
 

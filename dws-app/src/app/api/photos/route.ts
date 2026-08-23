@@ -13,7 +13,11 @@ import {
   PHOTO_KINDS,
   type PhotoRow,
 } from '@/lib/photos/types';
-import { decodeKeysetCursor, encodeKeysetCursor } from '@/lib/keysetCursor';
+import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  keysetOrFilter,
+} from '@/lib/keysetCursor';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
 //      Filtered photo list, newest capture first, keyset-paginated on
@@ -24,16 +28,6 @@ import { decodeKeysetCursor, encodeKeysetCursor } from '@/lib/keysetCursor';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
-
-function encodeCursor(capturedAt: string, id: string): string {
-  return encodeKeysetCursor(capturedAt, id);
-}
-
-function decodeCursor(cursor: string): { capturedAt: string; id: string } | null {
-  return decodeKeysetCursor(cursor, (capturedAt, id) =>
-    isUuid(id) ? { capturedAt, id } : null
-  );
-}
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -167,13 +161,15 @@ export async function GET(request: Request) {
 
   const rawCursor = params.get('cursor');
   if (rawCursor) {
-    const cursor = decodeCursor(rawCursor);
+    const cursor = decodeKeysetCursor(rawCursor, (capturedAt, id) =>
+      isUuid(id) ? { capturedAt, id } : null
+    );
     if (!cursor) {
       return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
     }
     // Separate or() calls are ANDed by PostgREST, so this composes with q.
     query = query.or(
-      `captured_at.lt.${cursor.capturedAt},and(captured_at.eq.${cursor.capturedAt},id.lt.${cursor.id})`
+      keysetOrFilter('captured_at', cursor.capturedAt, 'id', cursor.id)
     );
   }
 
@@ -186,7 +182,7 @@ export async function GET(request: Request) {
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   const nextCursor =
-    rows.length > limit ? encodeCursor(last.captured_at, last.id) : null;
+    rows.length > limit ? encodeKeysetCursor(last.captured_at, last.id) : null;
 
   return NextResponse.json({ success: true, photos: page, nextCursor });
 }

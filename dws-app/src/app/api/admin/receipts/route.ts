@@ -23,8 +23,9 @@ export async function GET(request: Request) {
     // parallel get_admin_receipts_with_phone RPCs fired on every request to
     // render a 10-row table. The full-result-set path lives on in
     // ./export/route.ts, where it runs only when someone exports the payroll
-    // CSV. Every returned row carries the filtered total_count/total_amount
-    // as window aggregates, so no separate counts round-trip is needed here.
+    // CSV. The function aggregates the filtered totals in a CTE and joins it
+    // to the page, so every returned row repeats total_count/total_amount and
+    // no separate counts round-trip is needed here.
     const { data, error } = await supabase.rpc('get_admin_receipts_page', {
       status_filter: statusFilter || null,
       from_date: fromDate || null,

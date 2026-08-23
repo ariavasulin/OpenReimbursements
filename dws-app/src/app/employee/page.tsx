@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
@@ -39,7 +39,10 @@ export default function EmployeePage() {
     enabled: Boolean(user && userProfile?.role === 'employee'),
   });
 
-  const receipts = receiptsData?.pages.flatMap((page) => page.receipts) ?? [];
+  const receipts = useMemo(
+    () => receiptsData?.pages.flatMap((page) => page.receipts) ?? [],
+    [receiptsData]
+  );
   const receiptsError =
     receiptsQueryError instanceof Error ? receiptsQueryError.message : null;
 

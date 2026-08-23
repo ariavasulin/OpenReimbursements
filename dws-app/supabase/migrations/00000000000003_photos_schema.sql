@@ -61,6 +61,7 @@ create policy jobs_select on public.jobs
 drop policy if exists photos_select on public.photos;
 create policy photos_select on public.photos
   for select to authenticated using (true);
+
 -- Date provenance. Legacy rows default to 'upload' (their captured_at may be
 -- the server's now() fallback).
 alter table public.photos

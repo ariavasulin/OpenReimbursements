@@ -25,14 +25,6 @@ import { formatCurrency, formatDate, formatDateShort } from "@/lib/utils"
 import { useMobile } from "@/hooks/use-mobile"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ExternalLink, Pencil } from "lucide-react"
-import {
-  Pagination,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationNext,
-  PaginationPrevious,
-} from "@/components/ui/pagination"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 
 interface EmployeeReceiptTableProps {
@@ -45,8 +37,6 @@ interface EmployeeReceiptTableProps {
   onReceiptUpdated?: (updatedReceipt: Receipt) => void
 }
 
-const ITEMS_PER_PAGE = 10
-
 export default function EmployeeReceiptTable({
   receipts,
   statusFilter,
@@ -54,7 +44,6 @@ export default function EmployeeReceiptTable({
   hasMore = false,
   onReceiptUpdated,
 }: EmployeeReceiptTableProps) {
-  const [currentPage, setCurrentPage] = useState(1)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null)
   const [contactAdminReceipt, setContactAdminReceipt] = useState<Receipt | null>(null)
@@ -77,23 +66,11 @@ export default function EmployeeReceiptTable({
     }
   }
 
-  // No client-side status filter: `receipts` is already the server's answer for
-  // `statusFilter`. Filtering here searched only the loaded prefix (50 rows),
-  // so an employee whose only Approved receipt sat further back in their
-  // history was told they had none.
-  const totalPages = Math.max(1, Math.ceil(receipts.length / ITEMS_PER_PAGE))
-
-  if (currentPage > totalPages && totalPages > 0) {
-    setCurrentPage(totalPages)
-  }
-
-  const currentReceipts = receipts.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
-
-  const handlePageChange = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page)
-    }
-  }
+  // `receipts` is rendered whole: it is already the server's answer for
+  // `statusFilter`, and the page above grows it with Load More. Neither the
+  // status filter nor pagination belongs here — a client-side status filter
+  // searched only the loaded prefix, and a client-side pager turned Load More
+  // into "add another page number" instead of "show more rows".
 
   return (
     <div className="space-y-4 text-white">
@@ -101,10 +78,7 @@ export default function EmployeeReceiptTable({
         <h2 className="text-xl font-semibold">Your Receipts</h2>
         <Select
           value={statusFilter}
-          onValueChange={(value) => {
-            onStatusFilterChange(value as ReceiptStatusFilter)
-            setCurrentPage(1)
-          }}
+          onValueChange={(value) => onStatusFilterChange(value as ReceiptStatusFilter)}
         >
           <SelectTrigger className="w-[130px] bg-[#3e3e3e] border-[#4e4e4e] text-white">
             <SelectValue placeholder="Filter" />
@@ -130,8 +104,8 @@ export default function EmployeeReceiptTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {currentReceipts.length > 0
-              ? currentReceipts.map((receipt) => (
+            {receipts.length > 0
+              ? receipts.map((receipt) => (
                   <TableRow key={receipt.id} className="border-[#4e4e4e] hover:bg-[#383838]">
                     <TableCell className="text-xs sm:text-sm px-1.5 sm:px-2">
                       {receipt.date ? (isMobile ? formatDateShort(receipt.date) : formatDate(receipt.date)) : 'N/A'}
@@ -176,60 +150,8 @@ export default function EmployeeReceiptTable({
         </Table>
       </div>
 
-      {totalPages > 1 && (
-        <div className="mt-4">
-          <Pagination>
-            <PaginationContent>
-              <PaginationItem>
-                <PaginationPrevious
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  className={currentPage === 1 ? "opacity-50 cursor-not-allowed text-gray-600 hover:bg-transparent hover:text-gray-600" : "text-white hover:bg-[#4e4e4e]"}
-                />
-              </PaginationItem>
-
-              {Array.from({ length: totalPages }).map((_, index) => {
-                const pageNumber = index + 1
-                if (
-                  pageNumber === 1 ||
-                  pageNumber === totalPages ||
-                  (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1)
-                ) {
-                  return (
-                    <PaginationItem key={pageNumber}>
-                      <PaginationLink
-                        isActive={pageNumber === currentPage}
-                        onClick={() => handlePageChange(pageNumber)}
-                        className={pageNumber === currentPage ? "bg-[#2680FC] text-white border-[#2680FC] hover:bg-[#2680FC]" : "text-white hover:bg-[#4e4e4e]"}
-                      >
-                        {pageNumber}
-                      </PaginationLink>
-                    </PaginationItem>
-                  )
-                }
-                if (
-                  (pageNumber === 2 && currentPage > 3) ||
-                  (pageNumber === totalPages - 1 && currentPage < totalPages - 2)
-                ) {
-                  return <PaginationItem key={`ellipsis-${pageNumber}`} className="text-white">...</PaginationItem>
-                }
-                return null
-              })}
-
-              <PaginationItem>
-                <PaginationNext
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  className={currentPage === totalPages ? "opacity-50 cursor-not-allowed text-gray-600 hover:bg-transparent hover:text-gray-600" : "text-white hover:bg-[#4e4e4e]"}
-                />
-              </PaginationItem>
-            </PaginationContent>
-          </Pagination>
-        </div>
-      )}
-
       <div className="text-sm text-center text-gray-400">
-        Showing {currentReceipts.length > 0 ? Math.min(receipts.length, 1 + (currentPage - 1) * ITEMS_PER_PAGE) : 0}-
-        {Math.min(receipts.length, currentPage * ITEMS_PER_PAGE)} of {receipts.length}
-        {hasMore ? "+" : ""} receipts
+        Showing {receipts.length}{hasMore ? "+" : ""} receipts
         {hasMore && (
           <span className="block text-xs">More receipts are available — use Load More below.</span>
         )}

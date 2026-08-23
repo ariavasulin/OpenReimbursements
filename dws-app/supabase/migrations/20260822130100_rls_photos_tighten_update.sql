@@ -5,8 +5,8 @@ create policy photos_insert on public.photos
   for insert to authenticated
   with check (uploader_id = (select auth.uid()));
 
--- The product rule is "anyone signed in may fix a photo's job, sheet, or tags"
--- (02-tdd-photo-hub.md). The previous policy implemented that as
+-- The product rule is "anyone signed in may fix a photo's job, sheet, or tags".
+-- The previous policy implemented that as
 -- `using (true) with check (true)`, which also let any signed-in user rewrite
 -- uploader_id, original_path, thumb_path, preview_path, kind, and captured_at
 -- on any row via a direct PostgREST call with the anon key. Column-level grants

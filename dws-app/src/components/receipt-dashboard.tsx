@@ -34,9 +34,17 @@ import ReceiptTable from "@/components/receipt-table"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 import { formatCurrency } from "@/lib/utils"
 import { normalizeReceiptSearch, receiptMatchesSearch } from "@/lib/receiptSearch"
-import type { Receipt, BulkUpdateResponse } from "@/lib/types"
+import { toDbReceiptStatus, type Receipt, type BulkUpdateResponse } from "@/lib/types"
 import { useAdminReceipts, useAdminReceiptCounts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
+
+const TAB_EMPTY_MESSAGES: Record<string, string> = {
+  all: "No receipts found for the current filters.",
+  pending: "No pending receipts found.",
+  approved: "No approved receipts found.",
+  reimbursed: "No reimbursed receipts found.",
+  rejected: "No rejected receipts found.",
+}
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   useAdminPrefetch()
@@ -85,7 +93,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     setCurrentPage(1)
   }
 
-  // Calculate toDate with +1 day for inclusive filtering
+  // Query-string forms of the picked range, computed once.
+  const fromDateParam = dateRange.from?.toISOString().split('T')[0]
+  // toDate carries +1 day so the picked end date is included.
   const toDateParam = dateRange.to ? (() => {
     const toDate = new Date(dateRange.to)
     toDate.setDate(toDate.getDate() + 1)
@@ -105,7 +115,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     // down to the API, which returns one bounded page plus the filtered
     // totals. This used to fetch every matching receipt on every load.
     status: filterStatus,
-    fromDate: dateRange.from?.toISOString().split('T')[0],
+    fromDate: fromDateParam,
     toDate: toDateParam,
     page: currentPage,
     pageSize,
@@ -116,7 +126,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const totalCount = receiptsPage?.totalCount ?? 0
 
   const { data: receiptCounts } = useAdminReceiptCounts({
-    fromDate: dateRange.from?.toISOString().split('T')[0],
+    fromDate: fromDateParam,
     toDate: toDateParam,
     enabled: shouldFetch,
   })
@@ -147,9 +157,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     // when someone actually exports — not on every dashboard load.
     const params = new URLSearchParams()
     if (filterStatus && filterStatus !== 'all') {
-      params.set('status', filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1))
+      params.set('status', toDbReceiptStatus(filterStatus))
     }
-    if (dateRange.from) params.set('fromDate', dateRange.from.toISOString().split('T')[0])
+    if (fromDateParam) params.set('fromDate', fromDateParam)
     if (toDateParam) params.set('toDate', toDateParam)
     // Carry the search box through: the CSV must describe what the admin is
     // looking at, not everyone.
@@ -519,89 +529,18 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                   </div>
                 </div>
 
-                <TabsContent value="all" className="space-y-4">
+                {/* One body for every tab: the status filter is pushed to the
+                    server, so all five tabs render the same fetched page and
+                    differ only in what they say when it is empty. */}
+                <TabsContent value={activeTab} className="space-y-4">
                   <div className="w-full">
                     {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-64">
-                         <p className="text-[#999999]">No receipts found for the current filters.</p>
-                       </div>
+                      <div className="flex items-center justify-center h-64">
+                        <p className="text-[#999999]">{TAB_EMPTY_MESSAGES[activeTab] ?? TAB_EMPTY_MESSAGES.all}</p>
+                      </div>
                     )}
                     {filteredReceipts.length > 0 && (
-                       <ReceiptTable
-                        rowData={filteredReceipts}
-                        selectedRows={selectedRows}
-                        onSelectedRowsChange={handleSelectedRowsChange}
-                        onEdit={setEditingReceipt}
-                        onDelete={setDeletingReceipt}
-                      />
-                    )}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="pending" className="space-y-4">
-                  <div className="w-full">
-                     {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-64">
-                         <p className="text-[#999999]">No pending receipts found.</p>
-                       </div>
-                    )}
-                    {filteredReceipts.length > 0 && (
-                       <ReceiptTable
-                        rowData={filteredReceipts}
-                        selectedRows={selectedRows}
-                        onSelectedRowsChange={handleSelectedRowsChange}
-                        onEdit={setEditingReceipt}
-                        onDelete={setDeletingReceipt}
-                      />
-                    )}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="approved" className="space-y-4">
-                  <div className="w-full">
-                    {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-64">
-                         <p className="text-[#999999]">No approved receipts found.</p>
-                       </div>
-                    )}
-                    {filteredReceipts.length > 0 && (
-                       <ReceiptTable
-                        rowData={filteredReceipts}
-                        selectedRows={selectedRows}
-                        onSelectedRowsChange={handleSelectedRowsChange}
-                        onEdit={setEditingReceipt}
-                        onDelete={setDeletingReceipt}
-                      />
-                    )}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="reimbursed" className="space-y-4">
-                  <div className="w-full">
-                     {filteredReceipts.length === 0 && !loading && (
-                       <div className="flex items-center justify-center h-64">
-                         <p className="text-[#999999]">No reimbursed receipts found.</p>
-                       </div>
-                    )}
-                    {filteredReceipts.length > 0 && (
-                       <ReceiptTable
-                        rowData={filteredReceipts}
-                        selectedRows={selectedRows}
-                        onSelectedRowsChange={handleSelectedRowsChange}
-                        onEdit={setEditingReceipt}
-                        onDelete={setDeletingReceipt}
-                      />
-                    )}
-                  </div>
-                </TabsContent>
-                 <TabsContent value="rejected" className="space-y-4">
-                  <div className="w-full">
-                    {loading ? null : filteredReceipts.length === 0 ? (
-                       <div className="flex items-center justify-center h-64">
-                         <p className="text-[#999999]">No rejected receipts found.</p>
-                       </div>
-                    ) : (
-                       <ReceiptTable
+                      <ReceiptTable
                         rowData={filteredReceipts}
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}

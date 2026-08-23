@@ -414,91 +414,29 @@ ALTER TABLE ONLY "public"."user_profiles"
 
 
 
-CREATE POLICY "Users can update their own profile" ON "public"."user_profiles" FOR UPDATE USING (("auth"."uid"() = "user_id")) WITH CHECK (("auth"."uid"() = "user_id"));
-
-
-
-CREATE POLICY "Users can view their own profile" ON "public"."user_profiles" FOR SELECT USING (("auth"."uid"() = "user_id"));
-
-
+-- The row-level security POLICIES for these tables are NOT defined here.
+-- This dump originally re-created all of them with a bare `auth.uid()`, which
+-- silently reverted the wrapped `(select auth.uid())` versions whenever the
+-- file was replayed. Their source of truth is:
+--   00000000000002_enable_rls_receipts_categories.sql  (receipts, categories)
+--   00000000000003_photos_schema.sql                   (jobs_select, photos_select)
+--   20260822130000_rls_scalar_subqueries.sql           (receipts, categories, user_profiles)
+--   20260822130100_rls_photos_tighten_update.sql       (photos write policies)
+-- Only the `ALTER TABLE … ENABLE ROW LEVEL SECURITY` statements stay below.
 
 ALTER TABLE "public"."categories" ENABLE ROW LEVEL SECURITY;
-
-
-CREATE POLICY "categories_delete" ON "public"."categories" FOR DELETE TO "authenticated" USING ("public"."is_admin"());
-
-
-
-CREATE POLICY "categories_insert" ON "public"."categories" FOR INSERT TO "authenticated" WITH CHECK ("public"."is_admin"());
-
-
-
-CREATE POLICY "categories_select" ON "public"."categories" FOR SELECT TO "authenticated" USING (true);
-
-
-
-CREATE POLICY "categories_update" ON "public"."categories" FOR UPDATE TO "authenticated" USING ("public"."is_admin"()) WITH CHECK ("public"."is_admin"());
-
 
 
 ALTER TABLE "public"."jobs" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "jobs_select" ON "public"."jobs" FOR SELECT TO "authenticated" USING (true);
-
-
-
 ALTER TABLE "public"."photos" ENABLE ROW LEVEL SECURITY;
-
-
-CREATE POLICY "photos_delete" ON "public"."photos" FOR DELETE TO "authenticated" USING ((("uploader_id" = "auth"."uid"()) OR "public"."is_admin"()));
-
-
-
-CREATE POLICY "photos_insert" ON "public"."photos" FOR INSERT TO "authenticated" WITH CHECK (("uploader_id" = "auth"."uid"()));
-
-
-
-CREATE POLICY "photos_select" ON "public"."photos" FOR SELECT TO "authenticated" USING (true);
-
-
-
-CREATE POLICY "photos_update" ON "public"."photos" FOR UPDATE TO "authenticated" USING (true) WITH CHECK (true);
-
 
 
 ALTER TABLE "public"."receipts" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "receipts_delete" ON "public"."receipts" FOR DELETE USING ((("user_id" = "auth"."uid"()) OR "public"."is_admin"()));
-
-
-
-CREATE POLICY "receipts_insert" ON "public"."receipts" FOR INSERT WITH CHECK ((("user_id" = "auth"."uid"()) OR "public"."is_admin"()));
-
-
-
-CREATE POLICY "receipts_select" ON "public"."receipts" FOR SELECT USING ((("user_id" = "auth"."uid"()) OR "public"."is_admin"()));
-
-
-
-CREATE POLICY "receipts_update" ON "public"."receipts" FOR UPDATE USING ((("user_id" = "auth"."uid"()) OR "public"."is_admin"())) WITH CHECK ((("user_id" = "auth"."uid"()) OR "public"."is_admin"()));
-
-
-
 ALTER TABLE "public"."user_profiles" ENABLE ROW LEVEL SECURITY;
-
-
-CREATE POLICY "user_profiles_insert_policy" ON "public"."user_profiles" FOR INSERT WITH CHECK (("auth"."uid"() IS NOT NULL));
-
-
-
-CREATE POLICY "user_profiles_select_policy" ON "public"."user_profiles" FOR SELECT USING (("auth"."uid"() IS NOT NULL));
-
-
-
-CREATE POLICY "user_profiles_update_policy" ON "public"."user_profiles" FOR UPDATE USING (("auth"."uid"() = "user_id"));
-
 
 
 GRANT USAGE ON SCHEMA "public" TO "postgres";

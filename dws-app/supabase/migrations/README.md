@@ -56,6 +56,4 @@ configuration. A rebuilt project needs those re-entered by hand.
 
 Every `create policy` / `create function` fires a PostgREST schema-cache reload.
 Each reload scans `pg_timezone_names` (~390ms) plus several `pg_proc` /
-`pg_constraint` introspection queries. The diagnosis snapshot recorded 92 reloads
-costing ~52s of database time — a meaningful share of it from re-running the
-idempotent photos schema file during development. Apply once, verify, move on.
+`pg_constraint` introspection queries. Apply once, verify, move on.

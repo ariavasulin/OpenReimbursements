@@ -58,6 +58,14 @@ export const RECEIPT_STATUS_VALUES = ["Pending", "Approved", "Rejected", "Reimbu
 
 export type ReceiptStatusValue = (typeof RECEIPT_STATUS_VALUES)[number];
 
+/**
+ * The UI carries statuses lowercased; receipts.status stores them capitalized.
+ * One transform so the API query string and the export query string agree.
+ */
+export function toDbReceiptStatus(status: string): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
 export interface BatchStatusDecision {
   id: string;
   status: ReceiptStatusValue;

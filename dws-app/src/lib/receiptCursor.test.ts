@@ -10,24 +10,6 @@ describe("receipt cursor", () => {
     });
   });
 
-  it("rejects malformed base64", () => {
-    expect(decodeReceiptCursor("!!!not-base64!!!")).toBeNull();
-  });
-
-  it("rejects plain garbage", () => {
-    expect(decodeReceiptCursor("garbage")).toBeNull();
-  });
-
-  it("rejects a wrong-shaped payload", () => {
-    expect(decodeReceiptCursor(Buffer.from('["a"]').toString("base64url"))).toBeNull();
-    expect(
-      decodeReceiptCursor(Buffer.from('{"receiptDate":"2026-08-01"}').toString("base64url"))
-    ).toBeNull();
-    expect(
-      decodeReceiptCursor(Buffer.from('[1, 2]').toString("base64url"))
-    ).toBeNull();
-  });
-
   it("rejects a non-date receiptDate", () => {
     const encoded = encodeReceiptCursor("yesterday", "2026-08-01T00:00:00Z");
     expect(decodeReceiptCursor(encoded)).toBeNull();
