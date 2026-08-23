@@ -8,6 +8,7 @@ import {
   type CapturedAt,
 } from "./exif";
 import { classifyFile, rewrap } from "./classify";
+import { sha256 } from "./hash";
 import { readSidecarMeta } from "./sidecar";
 import {
   makeDerivatives as defaultMakeDerivatives,
@@ -50,6 +51,9 @@ export interface FinalizePayload {
    * upload failed — the row still lands). */
   sidecar_path: string | null;
   sidecar_name: string | null;
+  /** SHA-256 of the original's bytes; null over the hashing cap. The server's
+   * per-job unique index on it is what makes dedupe stick. */
+  content_sha256: string | null;
 }
 
 export interface PhotoStorage {
@@ -58,6 +62,9 @@ export interface PhotoStorage {
     body: Blob | File,
     options?: { contentType?: string; upsert?: boolean }
   ): Promise<{ error: { message: string } | null }>;
+  /** Best-effort cleanup when finalize reports a duplicate (optional: the
+   * repair sweep eventually deletes row-less originals anyway). */
+  remove?(paths: string[]): Promise<{ error: { message: string } | null }>;
 }
 
 /** Byte-level progress for one file (only TUS uploads report mid-file). */
@@ -76,8 +83,14 @@ export type ResumableUpload = (
 export interface UploadDeps {
   storage: PhotoStorage;
   /** POST /api/photos; must throw on failure. Resolves alreadyExists on an
-   * idempotent replay (same photoId retried after the row already landed). */
-  finalize: (payload: FinalizePayload) => Promise<{ alreadyExists?: boolean }>;
+   * idempotent replay (same photoId retried after the row already landed) and
+   * duplicate when the job already has a row with these exact bytes. */
+  finalize: (
+    payload: FinalizePayload
+  ) => Promise<{ alreadyExists?: boolean; duplicate?: boolean }>;
+  /** GET /api/photos/exists — pre-flight dedupe check, called for files big
+   * enough that uploading a duplicate would hurt (optional). */
+  exists?: (jobId: string, contentSha256: string) => Promise<boolean>;
   /** TUS path for originals over RESUMABLE_THRESHOLD_BYTES (optional: tests
    * and environments without TUS fall back to plain uploads). */
   resumableUpload?: ResumableUpload;
@@ -257,6 +270,22 @@ export async function uploadOne(
     // the browser's guess.
     const classified = classifyFile(rawFile);
     const file = rewrap(rawFile, classified.mime);
+
+    // Content hash for dedupe (null over the cap). Big files pre-flight a
+    // server check so duplicate bytes never leave the phone; small ones just
+    // upload — the finalize unique index catches theirs cheaply.
+    const contentSha256 = await sha256(file);
+    if (
+      contentSha256 &&
+      file.size > RESUMABLE_THRESHOLD_BYTES &&
+      deps.exists
+    ) {
+      const alreadyInJob = await deps
+        .exists(meta.jobId, contentSha256)
+        .catch(() => false); // a broken check must never block an upload
+      if (alreadyInJob) return { status: "duplicate" };
+    }
+
     const [capturedAt, derivatives] = await Promise.all([
       (async (): Promise<CapturedAt> => {
         // The sidecar's date only matters when the image itself has no EXIF
@@ -350,11 +379,26 @@ export async function uploadOne(
       // Both or neither: a name without a stored object is useless.
       sidecar_path: sidecarPath,
       sidecar_name: sidecarPath ? (opts.sidecar?.name ?? null) : null,
+      content_sha256: contentSha256,
     };
 
     // alreadyExists (an idempotent replay of a photoId that finalized before
     // the client heard about it) is still "done" — the photo is in.
-    await deps.finalize(payload);
+    // duplicate (this job already has these bytes under ANOTHER photoId)
+    // means the objects just uploaded are orphans: best-effort remove them.
+    const finalizeResult = await deps.finalize(payload);
+    if (finalizeResult?.duplicate) {
+      try {
+        await deps.storage.remove?.(
+          [paths.original, sidecarPath, thumbPath, previewPath].filter(
+            (path): path is string => Boolean(path)
+          )
+        );
+      } catch {
+        // The repair sweep deletes row-less originals after 24 h anyway.
+      }
+      return { status: "duplicate" };
+    }
 
     return { status: "done" };
   } catch (error) {

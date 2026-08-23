@@ -123,3 +123,13 @@ alter table public.photos
 alter table public.photos
   add column if not exists playback_path text,
   add column if not exists playback_skipped_reason text;
+
+-- Upload pipeline hardening, Phase 7: content-hash dedupe. content_sha256 is
+-- the SHA-256 of the original's bytes (null for files over the 100 MB hashing
+-- cap or clients without WebCrypto). The partial unique index makes the same
+-- bytes land at most once PER JOB — the same photo in two jobs is two rows.
+alter table public.photos
+  add column if not exists content_sha256 text;
+create unique index if not exists photos_job_sha
+  on public.photos (job_id, content_sha256)
+  where content_sha256 is not null;

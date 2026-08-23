@@ -230,6 +230,7 @@ export async function POST(request: Request) {
     duration_secs,
     sidecar_path,
     sidecar_name,
+    content_sha256,
   } = body;
 
   if (typeof id !== 'string' || !isUuid(id)) {
@@ -322,14 +323,25 @@ export async function POST(request: Request) {
         sidecar_name
           ? sidecar_name
           : null,
+      // Lowercase hex SHA-256 or nothing — the per-job unique index
+      // (photos_job_sha) only bites on real hashes.
+      content_sha256:
+        typeof content_sha256 === 'string' && /^[0-9a-f]{64}$/.test(content_sha256)
+          ? content_sha256
+          : null,
     })
     .select(PHOTO_COLUMNS)
     .single();
 
   if (error) {
-    // 23505 = the row already exists (a retry of a finalize that actually
-    // landed); treat as success so retries converge.
+    // 23505 on photos_job_sha = the JOB already has these exact bytes under
+    // another photo id — a duplicate, so the client discards its upload.
+    // Any other 23505 (the pkey) = a retry of a finalize that actually
+    // landed; treat as success so retries converge.
     if (error.code === '23505') {
+      if (error.message.includes('photos_job_sha')) {
+        return NextResponse.json({ success: true, duplicate: true });
+      }
       return NextResponse.json({ success: true, alreadyExists: true });
     }
     const status = error.code === '23503' ? 400 : 500; // bad FK vs. real failure

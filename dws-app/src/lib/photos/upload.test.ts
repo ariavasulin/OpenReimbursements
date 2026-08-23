@@ -17,6 +17,7 @@ import {
   type UploadDeps,
   type UploadMeta,
 } from "./upload";
+import { sha256 } from "./hash";
 
 const META: UploadMeta = {
   jobId: "0b7f0000-0000-4000-8000-000000000001",
@@ -308,6 +309,119 @@ describe("uploadOne with a sidecar", () => {
       sidecar_path: null,
       sidecar_name: null,
     });
+  });
+});
+
+describe("content-hash dedupe in uploadOne", () => {
+  const bigSize = RESUMABLE_THRESHOLD_BYTES + 1;
+
+  it("pre-flights big files: a hit uploads NOTHING and reports duplicate", async () => {
+    const { deps, uploads } = makeDeps();
+    deps.exists = vi.fn(async () => true);
+    deps.resumableUpload = vi.fn(async () => ({ error: null }));
+    const file = makeFile("big.mp4", "video/mp4", bigSize);
+
+    const result = await uploadOne(file, "photo-1", META, deps);
+
+    expect(result).toEqual({ status: "duplicate" });
+    expect(deps.exists).toHaveBeenCalledWith(
+      META.jobId,
+      await sha256(file)
+    );
+    expect(uploads).toHaveLength(0);
+    expect(deps.resumableUpload).not.toHaveBeenCalled();
+    expect(deps.finalize).not.toHaveBeenCalled();
+  });
+
+  it("skips the pre-flight for small files (finalize's index catches theirs)", async () => {
+    const { deps } = makeDeps();
+    deps.exists = vi.fn(async () => true);
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result.status).toBe("done");
+    expect(deps.exists).not.toHaveBeenCalled();
+  });
+
+  it("uploads anyway when the pre-flight check itself fails", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.exists = vi.fn(async () => {
+      throw new Error("exists endpoint down");
+    });
+    deps.resumableUpload = vi.fn(async () => ({ error: null }));
+
+    const result = await uploadOne(
+      makeFile("big.mp4", "video/mp4", bigSize),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized).toHaveLength(1);
+  });
+
+  it("finalize saying duplicate → removes the just-uploaded objects, reports duplicate", async () => {
+    const { deps, uploads } = makeDeps();
+    const removed: string[][] = [];
+    deps.storage.remove = async (paths) => {
+      removed.push(paths);
+      return { error: null };
+    };
+    deps.finalize = vi.fn(async () => ({ duplicate: true }));
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result).toEqual({ status: "duplicate" });
+    expect(uploads.map((u) => u.path)).toEqual([
+      "originals/user-1/photo-1/a.jpg",
+      "derived/user-1/photo-1_thumb.webp",
+      "derived/user-1/photo-1_preview.webp",
+    ]);
+    expect(removed).toEqual([
+      [
+        "originals/user-1/photo-1/a.jpg",
+        "derived/user-1/photo-1_thumb.webp",
+        "derived/user-1/photo-1_preview.webp",
+      ],
+    ]);
+  });
+
+  it("stays duplicate even when the cleanup remove throws", async () => {
+    const { deps } = makeDeps();
+    deps.storage.remove = async () => {
+      throw new Error("remove exploded");
+    };
+    deps.finalize = vi.fn(async () => ({ duplicate: true }));
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result).toEqual({ status: "duplicate" });
+  });
+
+  it("finalize payload carries the file's content_sha256", async () => {
+    const { deps, finalized } = makeDeps();
+    const file = makeFile("a.jpg", "image/jpeg", 10);
+
+    await uploadOne(file, "photo-1", META, deps);
+
+    expect(finalized[0].content_sha256).toBe(await sha256(file));
+    expect(finalized[0].content_sha256).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

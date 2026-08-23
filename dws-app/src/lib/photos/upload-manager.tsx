@@ -99,6 +99,10 @@ function buildDeps(): UploadDeps {
           .upload(path, body, options);
         return { error };
       },
+      async remove(paths) {
+        const { error } = await supabase.storage.from("photos").remove(paths);
+        return { error };
+      },
     },
     resumableUpload: createResumableUpload({
       supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -106,11 +110,22 @@ function buildDeps(): UploadDeps {
         (await supabase.auth.getSession()).data.session?.access_token ?? null,
     }),
     finalize: (payload) =>
-      fetchJson<{ alreadyExists?: boolean }>("/api/photos", "Saving failed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      }),
+      fetchJson<{ alreadyExists?: boolean; duplicate?: boolean }>(
+        "/api/photos",
+        "Saving failed",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      ),
+    exists: async (jobId, sha) => {
+      const data = await fetchJson<{ exists: boolean }>(
+        `/api/photos/exists?job=${encodeURIComponent(jobId)}&sha=${encodeURIComponent(sha)}`,
+        "Duplicate check failed"
+      );
+      return data.exists;
+    },
   };
 }
 
