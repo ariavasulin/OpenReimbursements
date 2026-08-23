@@ -8,6 +8,7 @@ import {
   escapeIlikeWildcards,
   isSha256,
   PHOTO_COLUMNS,
+  PHOTOS_PAGE_SIZE,
 } from '@/lib/photos/apiShared';
 import {
   CAPTURED_AT_SOURCES,
@@ -30,7 +31,6 @@ import {
 // POST /api/photos — finalize an upload: insert the row for files the browser
 //      already put in storage. The row existing is what makes a photo "in".
 
-const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 // Upper bound on tags spliced into one or() filter — a URL-length guard, not a
 // recall choice; the type-ahead (/api/photo-tags) is unbounded.
@@ -129,7 +129,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const limit = parseLimit(params.get('limit'), DEFAULT_LIMIT, MAX_LIMIT);
+  const limit = parseLimit(params.get('limit'), PHOTOS_PAGE_SIZE, MAX_LIMIT);
   if (limit === null) {
     return NextResponse.json({ error: 'Invalid limit' }, { status: 400 });
   }

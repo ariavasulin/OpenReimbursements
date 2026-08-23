@@ -1,4 +1,8 @@
-import { useQuery, type QueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useQuery,
+  type QueryClient,
+} from "@tanstack/react-query";
 import type { PhotoJobSummary, PhotoRow } from "./types";
 
 /** fetch + JSON; a non-OK response throws the server's `error` message. */
@@ -44,11 +48,15 @@ export async function fetchTags(jobId?: string): Promise<string[]> {
 }
 
 /** All jobs (unfiltered), for job pickers. Shares a cache entry across sheets. */
-export function usePhotoJobs(enabled: boolean) {
+export function usePhotoJobs(enabled: boolean, q = "") {
   return useQuery({
-    queryKey: ["photo-jobs", ""],
-    queryFn: () => fetchJobs(),
+    queryKey: ["photo-jobs", q],
+    queryFn: () => fetchJobs(q),
     enabled,
+    staleTime: 60_000,
+    // Each debounced prefix is a cold key; keep the list the user is reading
+    // (and the rail's active row) on screen until the new one lands.
+    placeholderData: keepPreviousData,
   });
 }
 

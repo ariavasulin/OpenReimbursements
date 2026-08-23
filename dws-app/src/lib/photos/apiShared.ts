@@ -9,6 +9,9 @@ export const PHOTO_COLUMNS =
   'created_at, ' +
   'uploader:user_profiles(full_name), job:jobs(id, job_number, name)';
 
+/** Rows one GET /api/photos page returns when the caller names no `limit`. */
+export const PHOTOS_PAGE_SIZE = 100;
+
 /**
  * Escape ILIKE wildcards for a value bound as an RPC argument. The RPCs
  * interpolate it into `ilike '%' || q || '%'`, so a typed % or _ would match

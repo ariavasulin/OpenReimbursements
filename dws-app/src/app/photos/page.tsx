@@ -1,54 +1,53 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/lib/supabaseClient";
-import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
+import { useDesktop } from "@/hooks/use-desktop";
+import { signOut } from "@/hooks/use-session-guard";
 import JobCard from "@/components/photos/job-card";
-import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
+import { CaptureBar } from "@/components/photos/capture-bar";
+import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import SearchInput from "@/components/photos/search-input";
 import StatusLine from "@/components/photos/status-line";
-import UploadSheet from "@/components/photos/upload-sheet";
-import { fetchJobs } from "@/lib/photos/api";
+import { usePhotoJobs } from "@/lib/photos/api";
+import { photoSearchHref } from "@/lib/photos/photo-link";
 
 export default function PhotosHomePage() {
   const router = useRouter();
-  const ready = useSessionGuard("/photos");
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const batch = useCaptureBatch();
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
-    return () => clearTimeout(timer);
-  }, [search]);
+  const isDesktop = useDesktop();
+  // Job search state lives on the shell, shared with the desktop TopBar input
+  // and the jobs rail, so all of them agree and there is one fetch.
+  const { query, setQuery, debouncedQuery } = usePhotosShell();
 
   const {
     data: jobs,
     isLoading,
     error,
-  } = useQuery({
-    queryKey: ["photo-jobs", debouncedSearch],
-    queryFn: () => fetchJobs(debouncedSearch),
-    enabled: ready,
-  });
+  } = usePhotoJobs(true, debouncedQuery);
 
-  // The auth cookie is apex-scoped (.dws-receipts.com), so this signs out of
-  // Receipts too — intended: one account. useSessionGuard handles the redirect.
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-  };
+  // At desktop the rail is already the job list, so this page would show the
+  // same jobs twice. Land on the most recent one instead. replace(), not
+  // push(): Back from a job must not bounce straight back here and forward
+  // again. With no jobs there is nowhere to go, so the empty state still
+  // renders.
+  const firstJobId = jobs?.[0]?.id;
+  const goingToFirstJob = isDesktop && firstJobId !== undefined;
 
-  if (!ready) return <AuthLoading />;
+  useEffect(() => {
+    if (goingToFirstJob) router.replace(`/photos/${firstJobId}`);
+  }, [goingToFirstJob, firstJobId, router]);
+
+  // Also while loading at desktop: a cold load would otherwise paint the
+  // overview this route is about to leave.
+  if (goingToFirstJob || (isDesktop && isLoading)) return null;
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-28 pt-5">
-      <header className="relative mb-3 text-center">
+    <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-5 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-8">
+      <header className="desktop:hidden relative mb-3 text-center">
         <button
           type="button"
-          onClick={handleSignOut}
+          onClick={signOut}
           className="absolute left-0 top-0 text-[13px] text-[#a0a0a0] hover:text-white"
         >
           Sign out
@@ -64,25 +63,25 @@ export default function PhotosHomePage() {
         </a>
       </header>
 
-      <SearchInput
-        value={search}
-        onChange={setSearch}
-        onSubmit={() => {
-          if (search.trim()) {
-            router.push(`/photos/search?q=${encodeURIComponent(search.trim())}`);
-          }
-        }}
-      />
+      <div className="desktop:hidden">
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          onSubmit={() => {
+            if (query.trim()) {
+              router.push(photoSearchHref(query.trim()));
+            }
+          }}
+        />
+      </div>
 
-      {debouncedSearch ? (
+      {debouncedQuery && (
         <Link
-          href={`/photos/search?q=${encodeURIComponent(debouncedSearch)}`}
-          className="mb-3 block text-xs text-[#2680FC] hover:text-[#1a6fd8]"
+          href={photoSearchHref(debouncedQuery)}
+          className="desktop:hidden mb-3 block text-xs text-[#2680FC] hover:text-[#1a6fd8]"
         >
-          Search all photos for &ldquo;{debouncedSearch}&rdquo; ›
+          Search all photos for &ldquo;{debouncedQuery}&rdquo; ›
         </Link>
-      ) : (
-        <div className="mb-1" />
       )}
 
       {isLoading && <StatusLine>Loading jobs...</StatusLine>}
@@ -93,25 +92,17 @@ export default function PhotosHomePage() {
       )}
       {jobs && jobs.length === 0 && (
         <StatusLine>
-          {debouncedSearch
-            ? `No jobs match "${debouncedSearch}"`
+          {debouncedQuery
+            ? `No jobs match "${debouncedQuery}"`
             : "No jobs yet"}
         </StatusLine>
       )}
 
-      <div className="space-y-2.5">
+      <div className="mt-1 space-y-2.5">
         {jobs?.map((job) => <JobCard key={job.id} job={job} />)}
       </div>
 
-      <CaptureBar batch={batch} maxWidthClass="max-w-3xl" />
-
-      <UploadSheet
-        files={batch.pickedFiles}
-        open={batch.sheetOpen}
-        onOpenChange={batch.setSheetOpen}
-        capturedAtOverrides={batch.capturedAtOverrides}
-        sidecars={batch.sidecars}
-      />
+      <CaptureBar maxWidthClass="max-w-2xl" />
     </main>
   );
 }

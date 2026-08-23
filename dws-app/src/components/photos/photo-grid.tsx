@@ -2,7 +2,13 @@
 
 import { useMemo } from "react";
 import { Download, FileText, Play, Video } from "lucide-react";
-import { formatBytes, formatDuration, plural } from "@/lib/photos/format";
+import {
+  formatBytes,
+  formatCaptureDay,
+  formatDuration,
+  plural,
+} from "@/lib/photos/format";
+import { useDesktop } from "@/hooks/use-desktop";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
@@ -25,12 +31,32 @@ interface PhotoGridProps {
 
 type OnOpen = (photo: PhotoRow) => void;
 
-function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
+function Tile({
+  photo,
+  onOpen,
+  showMeta,
+}: {
+  photo: PhotoRow;
+  onOpen?: OnOpen;
+  /** Desktop only: the hover/focus overlay. A phone renders no <span> at all. */
+  showMeta: boolean;
+}) {
   if (isOpenable(photo) && photo.thumb_path) {
+    const meta = showMeta
+      ? [formatCaptureDay(photo.captured_at), photo.uploader?.full_name]
+          .filter(Boolean)
+          .join(" · ")
+      : "";
     return (
       <button
         type="button"
-        onClick={() => onOpen?.(photo)}
+        onClick={(event) => {
+          // Focus before opening: the viewer restores focus to
+          // document.activeElement on close, and macOS Safari does not focus
+          // a <button> on mouse-down, so the opener would be <body>.
+          event.currentTarget.focus();
+          onOpen?.(photo);
+        }}
         className="group relative aspect-square overflow-hidden rounded-md bg-[#2e2e2e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -40,6 +66,13 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
           loading="lazy"
           className="h-full w-full object-cover"
         />
+        {/* TODO(#13): tile hover/focus metadata reads ~3.25:1 over bright photos; needs the rendered pass to settle, not a blind token change. */}
+        {/* TODO(#14): prefers-reduced-motion is unhandled app-wide (this transition, the rail skeleton pulse, dialog animations); wants one pass across both apps rather than here alone. */}
+        {meta && (
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+            {meta}
+          </span>
+        )}
         {photo.kind === "video" && (
           <span className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded bg-black/65 px-[5px] py-px text-[9px] font-medium text-white">
             <Play className="h-2 w-2 fill-current" />
@@ -75,11 +108,29 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
   );
 }
 
-function TileGrid({ photos, onOpen }: { photos: PhotoRow[]; onOpen?: OnOpen }) {
+/*
+ * The desktop track is minmax(140px, 1fr), not a capped max: auto-fill counts
+ * repetitions off the *definite* track size, so a capped max under-counts the
+ * columns. The 140px min pairs with JobsRail narrowing to 200px below 1280.
+ */
+function TileGrid({
+  photos,
+  onOpen,
+  showMeta,
+}: {
+  photos: PhotoRow[];
+  onOpen?: OnOpen;
+  showMeta: boolean;
+}) {
   return (
-    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
+    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
       {photos.map((photo) => (
-        <Tile key={photo.id} photo={photo} onOpen={onOpen} />
+        <Tile
+          key={photo.id}
+          photo={photo}
+          onOpen={onOpen}
+          showMeta={showMeta}
+        />
       ))}
     </div>
   );
@@ -93,6 +144,7 @@ export default function PhotoGrid({
   pinnedLabel,
   onExpandPinned,
 }: PhotoGridProps) {
+  const isDesktop = useDesktop();
   const pinned = useMemo(
     () =>
       pinnedTag && groupBy === "date"
@@ -114,12 +166,19 @@ export default function PhotoGrid({
           >
             {pinnedLabel ?? pinnedTag} · {pinned.length} ›
           </button>
-          <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpenPhoto} />
+          {/* TODO(#15): design-standard drift — this pinned-row slice(0, 3), the lightbox close icon size, and the TopBar search max-width are separate cosmetic calls to settle together. */}
+          <TileGrid
+            photos={pinned.slice(0, 3)}
+            onOpen={onOpenPhoto}
+            showMeta={isDesktop}
+          />
         </section>
       )}
       {groups.map((group) => (
         <section key={group.key}>
-          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0]">
+          {/* A stuck header must sit flush with the scrollport edge, with its
+              own tiles never scrolling through an unpainted band above it. */}
+          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0] desktop:sticky desktop:top-0 desktop:z-10 desktop:mt-0 desktop:bg-[#222222]/95 desktop:pb-1.5 desktop:pt-3 desktop:backdrop-blur">
             {group.label}
             {groupBy !== "date" && (
               <span className="text-[#7e7e7e]">
@@ -128,7 +187,11 @@ export default function PhotoGrid({
               </span>
             )}
           </h2>
-          <TileGrid photos={group.photos} onOpen={onOpenPhoto} />
+          <TileGrid
+            photos={group.photos}
+            onOpen={onOpenPhoto}
+            showMeta={isDesktop}
+          />
         </section>
       ))}
     </div>

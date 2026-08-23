@@ -2,6 +2,8 @@
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
+/* Keep in sync with DESKTOP_MQ in hooks/use-desktop.ts. */
+@custom-variant desktop (@media (min-width:1024px) and (hover:hover));
 
 @theme inline {
   --color-background: var(--background);
@@ -125,6 +127,10 @@
   html,
   body {
     background-color: #222222;
+    /* Both apps are dark-only. Without this the browser still paints its
+       light-mode scrollbars and form controls over the dark background —
+       most visibly as a white bar down the JobsRail's own scroller. */
+    color-scheme: dark;
   }
 }
 

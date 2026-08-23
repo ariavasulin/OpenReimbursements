@@ -6,7 +6,7 @@
 // on Chrome, RAW, companion files) — those rows converge later via the
 // repair loop.
 
-export const THUMB_MAX_DIM = 400;
+export const THUMB_MAX_DIM = 640;
 export const PREVIEW_MAX_DIM = 2048;
 /** Poster frame target: ~1s in (frame 0 is often black), capped mid-clip. */
 export const POSTER_SEEK_SECS = 1;
@@ -14,7 +14,7 @@ const WEBP_QUALITY = 0.8;
 const VIDEO_DECODE_TIMEOUT_MS = 15_000;
 
 export interface Derivatives {
-  /** ~400px WebP for grids. */
+  /** ~640px WebP for grids (sharp in a ~190px tile on a 2x display). */
   thumb: Blob;
   /** ~2048px WebP for the lightbox (a video's poster frame). */
   preview: Blob;

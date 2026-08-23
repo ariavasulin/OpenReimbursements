@@ -38,7 +38,12 @@ export default function PhotoMetaFields({
   disabled,
   jobFallback,
 }: PhotoMetaFieldsProps) {
-  const { data: jobs, isLoading: jobsLoading } = usePhotoJobs(enabled);
+  const {
+    data: jobs,
+    isLoading: jobsLoading,
+    error: jobsError,
+    refetch: refetchJobs,
+  } = usePhotoJobs(enabled);
   const { data: knownTags } = usePhotoTags(enabled);
   const id = useId();
   const jobInputId = `${id}-job`;
@@ -62,6 +67,20 @@ export default function PhotoMetaFields({
         onChange={(jobId) => patch({ jobId })}
         disabled={disabled}
       />
+      {/* A failed jobs fetch must not pass for an empty list: the field keeps
+          the photo's current job via `fallback`. */}
+      {jobsError && (
+        <p className="-mt-2 mb-3.5 text-xs text-red-300">
+          Couldn&apos;t load jobs.{" "}
+          <button
+            type="button"
+            onClick={() => refetchJobs()}
+            className="underline hover:text-white"
+          >
+            Retry
+          </button>
+        </p>
+      )}
 
       <label htmlFor={sheetInputId} className={labelClass}>
         Sheet # (optional)

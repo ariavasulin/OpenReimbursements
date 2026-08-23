@@ -4,8 +4,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChevronDown, ChevronUp, RotateCw, X } from "lucide-react";
 import { useUploadManager } from "@/lib/photos/upload-manager";
-import { pickerAccept } from "@/components/photos/capture-bar";
-import { readPickedFiles } from "@/components/photos/multi-shot-camera";
+import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
 import UploadProgress, { type UploadRow } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";
 import type { QueueItem } from "@/lib/photos/upload-queue";
@@ -51,7 +50,7 @@ export default function UploadTray({
   );
 
   const handleRepicked = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = readPickedFiles(event);
+    const files = readInputFiles(event.target);
     if (files.length === 0) return;
     const unmatched = manager.repick(files);
     for (const file of unmatched) {
@@ -87,7 +86,8 @@ export default function UploadTray({
 
   return (
     <div
-      className={`fixed bottom-[calc(4.5rem_+_env(safe-area-inset-bottom))] left-0 right-0 z-40 mx-auto w-full ${maxWidthClass} px-4`}
+      // 4.5rem clears the phone CaptureBar; at desktop that bar is hidden.
+      className={`fixed bottom-[calc(4.5rem_+_env(safe-area-inset-bottom))] left-0 right-0 z-40 mx-auto w-full ${maxWidthClass} px-4 desktop:bottom-4`}
     >
       <input
         ref={repickInputRef}
