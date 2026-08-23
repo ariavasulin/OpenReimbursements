@@ -7,18 +7,18 @@ import UploadTray from "@/components/photos/upload-tray";
 // the queue and the tray that reports it. The toaster they both talk through is
 // mounted once app-wide in app/layout.tsx.
 
+/** Tailwind max-width class matching the page's <main>. */
+const TRAY_MAX_WIDTH = "max-w-3xl";
+
 export default function UploadShell({
   children,
-  maxWidthClass = "max-w-3xl",
 }: {
   children: React.ReactNode;
-  /** Tailwind max-width class matching the page's <main>. */
-  maxWidthClass?: string;
 }) {
   return (
     <UploadManagerProvider>
       {children}
-      <UploadTray maxWidthClass={maxWidthClass} />
+      <UploadTray maxWidthClass={TRAY_MAX_WIDTH} />
     </UploadManagerProvider>
   );
 }

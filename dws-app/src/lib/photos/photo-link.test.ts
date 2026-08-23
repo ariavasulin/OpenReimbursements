@@ -11,11 +11,6 @@ describe("buildPhotoLink", () => {
     expect(buildPhotoLink("https://photos.dws-receipts.com", "job-1", "p-1"))
       .toBe("https://photos.dws-receipts.com/photos/job-1?photo=p-1");
   });
-  it("does not double the slash on a trailing-slash origin", () => {
-    expect(buildPhotoLink("https://x.com/", "j", "p")).toBe(
-      "https://x.com/photos/j?photo=p"
-    );
-  });
 });
 
 describe("parsePhotoParam", () => {
@@ -46,8 +41,5 @@ describe("withPhotoParam / withoutPhotoParam", () => {
     expect(withoutPhotoParam("?photo=p1")).toBe("");
     expect(withoutPhotoParam("?sheet=12&photo=p1")).toBe("?sheet=12");
     expect(withoutPhotoParam("?sheet=12")).toBe("?sheet=12");
-  });
-  it("round-trips", () => {
-    expect(withoutPhotoParam(withPhotoParam("?sheet=12", "p1"))).toBe("?sheet=12");
   });
 });

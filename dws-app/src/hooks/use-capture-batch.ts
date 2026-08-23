@@ -6,19 +6,6 @@ import { readInputFiles } from "@/lib/photos/batch";
 import { pairByBasename } from "@/lib/photos/sidecar";
 import type { CameraShot } from "@/components/photos/multi-shot-camera";
 
-/**
- * File-picker accept attribute: generic `image/*,video/*` on iOS ONLY —
- * explicitly listing image/heic defeats Safari's automatic HEIC→JPEG
- * conversion. Everywhere else the picker stays unrestricted so companion
- * files (XMP sidecars, RAW) remain pickable.
- */
-export function pickerAccept(): string | undefined {
-  if (typeof navigator === "undefined") return undefined;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent)
-    ? "image/*,video/*"
-    : undefined;
-}
-
 // The shared "get files into a batch" state: the native picker and the in-app
 // multi-shot camera both end with pickedFiles + capturedAtOverrides and the
 // upload sheet open.
@@ -76,7 +63,7 @@ export function useCaptureBatch(initialCameraOpen = false) {
     openSheet(readInputFiles(event.target), jobId);
   };
 
-  /** Opens the camera *and* snapshots its job — openSheet's counterpart. */
+  /** Opens the camera and snapshots its job. */
   const openCamera = (jobId?: string) => {
     setCameraJobId(jobId);
     setCameraOpen(true);

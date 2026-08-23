@@ -44,7 +44,6 @@ export default function PhotosHomePage() {
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-5 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-8">
-      {/* Phone-only header; the TopBar replaces it at desktop. */}
       <header className="desktop:hidden relative mb-3 text-center">
         <button
           type="button"
@@ -76,7 +75,6 @@ export default function PhotosHomePage() {
         />
       </div>
 
-      {/* At desktop the TopBar's "Search photos" hint replaces this link. */}
       {debouncedQuery && (
         <Link
           href={photoSearchHref(debouncedQuery)}
@@ -100,7 +98,9 @@ export default function PhotosHomePage() {
         </StatusLine>
       )}
 
-      <div className="mt-1 space-y-2.5 desktop:mt-0 desktop:grid desktop:grid-cols-2 desktop:gap-3 desktop:space-y-0 xl:desktop:grid-cols-4">
+      {/* Desktop only ever reaches this page with no jobs to list — with a
+          first job it redirects to it above. */}
+      <div className="mt-1 space-y-2.5">
         {jobs?.map((job) => <JobCard key={job.id} job={job} />)}
       </div>
 

@@ -1,6 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import {
   DropdownMenu,
@@ -8,8 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import GroupByToggle from "@/components/photos/group-by-toggle";
-import type { GroupBy } from "@/lib/photos/group";
+import type { FilterOption } from "@/lib/photos/filter-options";
 
 export const chipClass = (active: boolean) =>
   `rounded-full border px-3 py-1.5 text-xs ${
@@ -28,7 +26,7 @@ export function FilterChip({
 }: {
   label: string;
   active: string | null;
-  options: { value: string; label: string }[];
+  options: FilterOption[];
   onSelect(value: string): void;
   onClear(): void;
 }) {
@@ -68,37 +66,5 @@ export function FilterChip({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-/**
- * Lays out the filter chips (children) and the GroupByToggle: stacked at
- * phone width exactly as before, one row at desktop.
- */
-export default function FilterBar<T extends GroupBy>({
-  children,
-  groupModes,
-  groupBy,
-  onGroupByChange,
-}: {
-  /** The "All" reset chip plus the FilterChips. */
-  children: ReactNode;
-  groupModes: readonly T[];
-  groupBy: T;
-  onGroupByChange(mode: T): void;
-}) {
-  return (
-    <div className="desktop:mb-1 desktop:flex desktop:items-center desktop:justify-between desktop:gap-3">
-      <div className="mb-3 flex flex-wrap gap-1.5 desktop:mb-0">{children}</div>
-      {/* Block-level at phone width (full-width segmented control); a
-          shrink-to-fit flex item in the desktop row. */}
-      <div className="desktop:shrink-0">
-        <GroupByToggle
-          modes={groupModes}
-          value={groupBy}
-          onChange={onGroupByChange}
-        />
-      </div>
-    </div>
   );
 }

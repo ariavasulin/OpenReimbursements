@@ -15,11 +15,6 @@ export const DESKTOP_MQ = "(min-width: 1024px) and (hover: hover)";
  * Deliberately a different population from `useMobile` (UA-based), which
  * picks the sheet variant (Drawer vs Dialog): that one asks "is this a
  * phone", this one asks "is there room and a pointer for desktop chrome".
- * The one-render false
- * here is only invisible because PhotosShell gates on an async session read
- * that always outlasts the first effect; a consumer outside that gate would
- * see a phone-to-desktop flash and should move this to useSyncExternalStore
- * like useMobile.
  */
 export function useDesktop(): boolean {
   const [isDesktop, setIsDesktop] = useState(false);

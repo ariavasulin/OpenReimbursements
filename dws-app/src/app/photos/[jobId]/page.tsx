@@ -9,10 +9,8 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { CaptureBar } from "@/components/photos/capture-bar";
-import FilterBar, {
-  FilterChip,
-  chipClass,
-} from "@/components/photos/filter-bar";
+import { FilterChip, chipClass } from "@/components/photos/filter-bar";
+import GroupByToggle from "@/components/photos/group-by-toggle";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
@@ -33,7 +31,7 @@ import {
 import { plural } from "@/lib/photos/format";
 import { groupPhotos, openableInDisplayOrder } from "@/lib/photos/group";
 import {
-  useClearVanishedPhoto,
+  useLightboxByPhotoId,
   usePhotoDeepLink,
   useResolvePhotoDeepLink,
 } from "@/hooks/use-photo-deep-link";
@@ -53,13 +51,6 @@ export default function JobPhotosPage() {
   const queryClient = useQueryClient();
   const [groupBy, setGroupBy] = useState<"date" | "sheet">("date");
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  // The open photo is identified by id, never by list position: an edit that
-  // moves it to another job shrinks the set, and the same index would then
-  // address a different photo.
-  const [openPhotoId, setOpenPhotoId] = useState<string | null>(null);
-
-  // Filter options accumulate from every page of photos seen for this job,
-  // so picking a filter doesn't shrink the menus to the filtered set.
   const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
 
   // Always enabled: the shell holds the session guard, so this page only
@@ -105,7 +96,6 @@ export default function JobPhotosPage() {
     [data]
   );
 
-  // Remember every sheet/uploader we've seen on this job for the chip menus.
   useEffect(() => {
     setSeen((previous) => accumulateSeenOptions(previous, photos));
   }, [photos]);
@@ -122,14 +112,12 @@ export default function JobPhotosPage() {
   // with previews only (file tiles download instead).
   const openablePhotos = useMemo(() => openableInDisplayOrder(groups), [groups]);
 
-  // -1 once the open photo leaves the set (reassigned to another job), which
-  // closes the viewer instead of silently sliding to whoever took its slot.
-  const lightboxIndex =
-    openPhotoId === null
-      ? -1
-      : openablePhotos.findIndex((photo) => photo.id === openPhotoId);
-  const lightboxOpen = lightboxIndex !== -1;
-  useClearVanishedPhoto(lightboxIndex, setOpenPhotoId);
+  const {
+    openPhotoId,
+    setOpenPhotoId,
+    isOpen: lightboxOpen,
+    lightboxProps,
+  } = useLightboxByPhotoId(openablePhotos);
 
   useResolvePhotoDeepLink({
     photos: openablePhotos,
@@ -160,7 +148,6 @@ export default function JobPhotosPage() {
 
   return (
     <main className="mx-auto w-full max-w-3xl px-4 pb-28 pt-5 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-8">
-      {/* The rail replaces this back link at desktop. */}
       <Link
         href="/photos"
         className="desktop:hidden mb-2 block text-[13px] text-[#2680FC] hover:text-[#1a6fd8]"
@@ -186,56 +173,63 @@ export default function JobPhotosPage() {
           : " "}
       </p>
 
-      <FilterBar
-        groupModes={["date", "sheet"] as const}
-        groupBy={groupBy}
-        onGroupByChange={(mode) => setGroupBy(mode)}
-      >
-        <button
-          type="button"
-          onClick={() => setFilters(NO_FILTERS)}
-          className={chipClass(noFiltersActive)}
-        >
-          All
-        </button>
-        <FilterChip
-          label="Sheet"
-          active={filters.sheet ? `Sheet ${filters.sheet}` : null}
-          options={sheetOptions}
-          onSelect={(value) =>
-            setFilters((previous) => ({ ...previous, sheet: value }))
-          }
-          onClear={() =>
-            setFilters((previous) => ({ ...previous, sheet: null }))
-          }
-        />
-        <FilterChip
-          label="Uploader"
-          active={filters.uploader?.name ?? null}
-          options={uploaderOptions}
-          onSelect={(value) =>
-            setFilters((previous) => ({
-              ...previous,
-              uploader: {
-                id: value,
-                name: seen.uploaders.get(value) ?? "Uploader",
-              },
-            }))
-          }
-          onClear={() =>
-            setFilters((previous) => ({ ...previous, uploader: null }))
-          }
-        />
-        <FilterChip
-          label="Tags"
-          active={filters.tag}
-          options={tagOptions}
-          onSelect={(value) =>
-            setFilters((previous) => ({ ...previous, tag: value }))
-          }
-          onClear={() => setFilters((previous) => ({ ...previous, tag: null }))}
-        />
-      </FilterBar>
+      <div className="desktop:mb-1 desktop:flex desktop:items-center desktop:justify-between desktop:gap-3">
+        <div className="mb-3 flex flex-wrap gap-1.5 desktop:mb-0">
+          <button
+            type="button"
+            onClick={() => setFilters(NO_FILTERS)}
+            className={chipClass(noFiltersActive)}
+          >
+            All
+          </button>
+          <FilterChip
+            label="Sheet"
+            active={filters.sheet ? `Sheet ${filters.sheet}` : null}
+            options={sheetOptions}
+            onSelect={(value) =>
+              setFilters((previous) => ({ ...previous, sheet: value }))
+            }
+            onClear={() =>
+              setFilters((previous) => ({ ...previous, sheet: null }))
+            }
+          />
+          <FilterChip
+            label="Uploader"
+            active={filters.uploader?.name ?? null}
+            options={uploaderOptions}
+            onSelect={(value) =>
+              setFilters((previous) => ({
+                ...previous,
+                uploader: {
+                  id: value,
+                  name: seen.uploaders.get(value) ?? "Uploader",
+                },
+              }))
+            }
+            onClear={() =>
+              setFilters((previous) => ({ ...previous, uploader: null }))
+            }
+          />
+          <FilterChip
+            label="Tags"
+            active={filters.tag}
+            options={tagOptions}
+            onSelect={(value) =>
+              setFilters((previous) => ({ ...previous, tag: value }))
+            }
+            onClear={() => setFilters((previous) => ({ ...previous, tag: null }))}
+          />
+        </div>
+        {/* Block-level at phone width (full-width segmented control); a
+            shrink-to-fit flex item in the desktop row. */}
+        <div className="desktop:shrink-0">
+          <GroupByToggle
+            modes={["date", "sheet"] as const}
+            value={groupBy}
+            onChange={(mode) => setGroupBy(mode)}
+          />
+        </div>
+      </div>
 
       {isLoading && <StatusLine>Loading photos...</StatusLine>}
       {/* A failed next page is the sentinel's to report (it keeps the loaded
@@ -273,16 +267,7 @@ export default function JobPhotosPage() {
 
       <CaptureBar maxWidthClass="max-w-3xl" />
 
-      <PhotoLightbox
-        photos={openablePhotos}
-        open={lightboxOpen}
-        index={lightboxOpen ? lightboxIndex : 0}
-        onIndexChange={(next) =>
-          setOpenPhotoId(openablePhotos[next]?.id ?? null)
-        }
-        onClose={() => setOpenPhotoId(null)}
-        onChanged={refetchPhotos}
-      />
+      <PhotoLightbox {...lightboxProps} onChanged={refetchPhotos} />
     </main>
   );
 }

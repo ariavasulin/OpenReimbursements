@@ -20,6 +20,24 @@ function urlWithSearch(search: string): string {
   return `${window.location.pathname}${search}${window.location.hash}`;
 }
 
+/** Rewrites the current entry with the photo param set. */
+function replacePhotoParam(photoId: string): void {
+  window.history.replaceState(
+    null,
+    "",
+    urlWithSearch(withPhotoParam(window.location.search, photoId))
+  );
+}
+
+/** Rewrites the current entry with the photo param removed. */
+function stripPhotoParam(): void {
+  window.history.replaceState(
+    null,
+    "",
+    urlWithSearch(withoutPhotoParam(window.location.search))
+  );
+}
+
 interface UsePhotoDeepLinkOptions {
   /** Id of the photo the lightbox is showing, or null when closed. */
   openPhotoId: string | null;
@@ -40,22 +58,8 @@ interface UsePhotoDeepLinkOptions {
  * opening, arrowing, and closing change the address bar without re-running
  * the route's data fetching.
  *
- * Contract:
- * - Opening (null → id): pushState if the URL has no photo param yet — that
- *   entry is what makes Back dismiss the lightbox. If the URL already carries
- *   the param (the user arrived on a pasted link), the entry already exists,
- *   so do NOT push.
- * - Changing slides (id → other id): replaceState, so arrowing through fifty
- *   photos does not stack fifty history entries.
- * - Closing (id → null): history.back() only if this hook pushed the entry.
- *   On a pasted link, back() would leave the site entirely, so replaceState
- *   the param away instead.
- * - popstate: reconcile the viewer with whatever the entry says, in both
- *   directions — no param closes it, a param opens that photo. Back and
- *   Forward are inverses, so a one-directional handler would leave the URL
- *   and the screen disagreeing after the first Forward. An entry naming a
- *   photo the page no longer holds is settled on the spot: toast, param
- *   stripped, viewer closed — never a param over a closed viewer.
+ * Closing calls history.back() only when this hook pushed the entry: on a
+ * pasted link, back() would leave the site entirely.
  */
 export function usePhotoDeepLink({
   openPhotoId,
@@ -87,30 +91,16 @@ export function usePhotoDeepLink({
         pushedRef.current = true;
       } else {
         // Pasted-link arrival: the entry exists; just make the id match.
-        window.history.replaceState(
-          null,
-          "",
-          urlWithSearch(withPhotoParam(window.location.search, openPhotoId))
-        );
+        replacePhotoParam(openPhotoId);
         pushedRef.current = false;
       }
     } else if (openPhotoId !== null) {
-      window.history.replaceState(
-        null,
-        "",
-        urlWithSearch(withPhotoParam(window.location.search, openPhotoId))
-      );
+      replacePhotoParam(openPhotoId);
+    } else if (pushedRef.current) {
+      pushedRef.current = false;
+      window.history.back();
     } else {
-      if (pushedRef.current) {
-        pushedRef.current = false;
-        window.history.back();
-      } else {
-        window.history.replaceState(
-          null,
-          "",
-          urlWithSearch(withoutPhotoParam(window.location.search))
-        );
-      }
+      stripPhotoParam();
     }
   }, [openPhotoId]);
 
@@ -144,11 +134,7 @@ export function usePhotoDeepLink({
       previousIdRef.current = null;
       pushedRef.current = false;
       toast.error("That photo is no longer in this view");
-      window.history.replaceState(
-        null,
-        "",
-        urlWithSearch(withoutPhotoParam(window.location.search))
-      );
+      stripPhotoParam();
     };
     window.addEventListener("popstate", handlePop);
     return () => window.removeEventListener("popstate", handlePop);
@@ -156,17 +142,40 @@ export function usePhotoDeepLink({
 }
 
 /**
- * Once the open photo has left the set (`lightboxIndex` is -1) the viewer is
- * closed, but the id would otherwise linger — and the next filter to bring
- * the photo back would spring the viewer open with no user action.
+ * The lightbox addressed by photo **id**, never by list position: an edit that
+ * moves the open photo to another job shrinks the set, and the same index
+ * would then address a different photo. Index -1 is that photo having left the
+ * set, which closes the viewer instead of silently sliding to whoever took its
+ * slot — and clears the id, which would otherwise linger until the next filter
+ * brought the photo back and sprang the viewer open with no user action.
  */
-export function useClearVanishedPhoto(
-  lightboxIndex: number,
-  setOpenPhotoId: (id: string | null) => void
-): void {
+export function useLightboxByPhotoId(openablePhotos: PhotoRow[]) {
+  const [openPhotoId, setOpenPhotoId] = useState<string | null>(null);
+
+  const index =
+    openPhotoId === null
+      ? -1
+      : openablePhotos.findIndex((photo) => photo.id === openPhotoId);
+  const isOpen = index !== -1;
+
   useEffect(() => {
-    if (lightboxIndex === -1) setOpenPhotoId(null);
-  }, [lightboxIndex, setOpenPhotoId]);
+    if (index === -1) setOpenPhotoId(null);
+  }, [index]);
+
+  return {
+    openPhotoId,
+    setOpenPhotoId,
+    isOpen,
+    /** Spread into <PhotoLightbox>; the page adds its own `onChanged`. */
+    lightboxProps: {
+      photos: openablePhotos,
+      open: isOpen,
+      index: isOpen ? index : 0,
+      onIndexChange: (next: number) =>
+        setOpenPhotoId(openablePhotos[next]?.id ?? null),
+      onClose: () => setOpenPhotoId(null),
+    },
+  };
 }
 
 interface UseResolvePhotoDeepLinkOptions {
@@ -249,11 +258,7 @@ export function useResolvePhotoDeepLink({
       );
     } else {
       toast.error("Photo not found in this job");
-      window.history.replaceState(
-        null,
-        "",
-        urlWithSearch(withoutPhotoParam(window.location.search))
-      );
+      stripPhotoParam();
     }
     setDeepLinkId(null);
   }, [

@@ -30,16 +30,12 @@ interface PhotoGridProps {
 
 type OnOpen = (photo: PhotoRow) => void;
 
-/** "Capture date · uploader" for the desktop hover/focus overlay. */
-function tileMeta(photo: PhotoRow): string {
-  return [formatCaptureDay(photo.captured_at), photo.uploader?.full_name]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
   if (isOpenable(photo) && photo.thumb_path) {
-    const meta = tileMeta(photo);
+    // "Capture date · uploader" for the desktop hover/focus overlay.
+    const meta = [formatCaptureDay(photo.captured_at), photo.uploader?.full_name]
+      .filter(Boolean)
+      .join(" · ");
     return (
       <button
         type="button"
@@ -59,7 +55,6 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
           loading="lazy"
           className="h-full w-full object-cover"
         />
-        {/* Hover / focus-visible metadata — desktop only (no hover on touch). */}
         {/* TODO(#13): tile hover/focus metadata reads ~3.25:1 over bright photos; needs the rendered pass to settle, not a blind token change. */}
         {/* TODO(#14): prefers-reduced-motion is unhandled app-wide (this transition, the rail skeleton pulse, dialog animations); wants one pass across both apps rather than here alone. */}
         {meta && (

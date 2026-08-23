@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 // The upload shell lives HERE (not in a page) so in-flight uploads survive
 // navigating between photos pages; the tray shows their progress everywhere.
 // PhotosShell sits inside it — it mounts the upload sheet, which hands its
-// batch to the manager — and owns the scroll container and the desktop frame.
+// batch to the manager.
 //
 // PhotosShell calls useSearchParams(), so the Suspense boundary is required —
 // without it Next refuses to prerender /photos and /photos/search.

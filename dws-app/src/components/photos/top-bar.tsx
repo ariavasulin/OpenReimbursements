@@ -28,7 +28,7 @@ export default function TopBar() {
   // rail together (both read ["photo-jobs", debouncedQuery]) and Enter does
   // nothing extra; everywhere else Enter submits to photo search. On the
   // search route that is a replace — refining a query must not make Back walk
-  // every intermediate one — which is what the phone box there does too.
+  // every intermediate one.
   const handleSubmit = () => {
     if (onRoot || !trimmed) return;
     const href = photoSearchHref(trimmed);

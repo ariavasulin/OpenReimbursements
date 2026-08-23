@@ -21,10 +21,7 @@ export interface PhotosShellValue {
   ): void;
   /** From useParams(); jobs are UUIDs so there is no collision with "search". */
   activeJobId: string | null;
-  /** The search text, and the only copy of it: the TopBar input, each route's
-   *  phone SearchInput, the rail, and the /photos overview all read it, so
-   *  there is one control per route, they all agree, and there is one fetch.
-   *  /photos/search seeds it from `?q=`. */
+  /** Search text — the single copy; /photos/search seeds it from `?q=`. */
   query: string;
   setQuery(value: string): void;
   /** 250ms-debounced `query`; this is what goes into the react-query key. */

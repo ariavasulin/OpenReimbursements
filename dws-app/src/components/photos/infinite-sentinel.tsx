@@ -7,8 +7,7 @@ import { PHOTOS_SCROLLPORT_ID } from "@/components/photos/photos-shell-context";
 /**
  * Fires onVisible when the sentinel scrolls within 600px of the viewport of
  * the shell's content cell (#photos-scrollport). Renders the Load more button
- * inside itself as the always-available fallback, so a failed observer
- * degrades to click-to-load rather than a dead end.
+ * inside itself, so clicking to load stays available either way.
  */
 export default function InfiniteSentinel({
   hasNextPage,
@@ -36,7 +35,7 @@ export default function InfiniteSentinel({
   useEffect(() => {
     if (!hasNextPage || isFetching || failed) return;
     const element = ref.current;
-    if (!element || typeof IntersectionObserver === "undefined") return;
+    if (!element) return;
 
     const observer = new IntersectionObserver(
       (entries) => {

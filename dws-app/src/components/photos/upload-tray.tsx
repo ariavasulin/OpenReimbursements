@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChevronDown, ChevronUp, RotateCw, X } from "lucide-react";
 import { useUploadManager } from "@/lib/photos/upload-manager";
-import { pickerAccept } from "@/hooks/use-capture-batch";
+import { pickerAccept } from "@/lib/photos/batch";
 import { readInputFiles } from "@/lib/photos/batch";
 import UploadProgress, { type UploadRow } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";

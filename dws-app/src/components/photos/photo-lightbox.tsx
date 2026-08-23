@@ -40,11 +40,7 @@ import { videoSource } from "@/lib/photos/video-source";
 //   inside YARL's container its keydown handling would turn arrow keys into
 //   slide changes while the user types in a field. The Inline plugin
 //   does `replace(MODULE_PORTAL, …)`, and Portal is where YARL's overlay
-//   duties lived, so on the desktop path this file owns all of them:
-//   Esc-to-close, scroll-lock, backdrop-click dismissal, initial focus, and
-//   the modal contract Portal used to supply — a body-level portal,
-//   role/aria-modal/aria-label, inert + aria-hidden on every sibling, and
-//   focus restored to whatever opened the viewer.
+//   duties lived, so on the desktop path this file owns all of them.
 
 // Custom slide for videos this browser reports it can't decode: the poster
 // with a download card instead of a dead play button (rendered by
@@ -291,15 +287,9 @@ export default function PhotoLightbox({
   // because the order matters at both ends: the opener has to be read before
   // inert blurs it, and un-inerted before it can take focus again.
   //
-  // Seam worth knowing about: this is a whole-app rule written from one
-  // component. Body children present when the viewer opens are inerted;
-  // anything portalled to <body> afterwards is not swept at all, and so stays
-  // live. Neither side declares the rule. If you add a body-level portal,
-  // decide which it should be: mounted-before and meant to stay usable needs
-  // an exemption here (the toast region, and any open Radix layer, below),
-  // and mounted-after that must not be reachable behind the viewer needs its
-  // own handling. The edit sheet is the mounted-after case that MUST stay
-  // live, and it is.
+  // Only body children present when the viewer opens are swept; anything
+  // portalled to <body> afterwards is not, which is what keeps the edit sheet
+  // usable above the viewer.
   useEffect(() => {
     if (!(open && isDesktop)) return;
     const opener = document.activeElement;
@@ -332,20 +322,18 @@ export default function PhotoLightbox({
     };
   }, [open, isDesktop]);
 
-  // Scroll-lock while open. The body is already overflow-hidden app-wide;
-  // the photos scrollport is the real scroller behind the viewer, and the
-  // pointer sits over it while the viewer is up, so wheel events would chain
-  // into it.
+  // Scroll-lock while open. The body is already overflow-hidden app-wide, so
+  // only the photos scrollport needs it — it is the real scroller behind the
+  // viewer, and the pointer sits over it while the viewer is up, so wheel
+  // events would chain into it.
   useEffect(() => {
     if (!(open && isDesktop)) return;
     const scrollport = document.getElementById(PHOTOS_SCROLLPORT_ID);
-    const previousBody = document.body.style.overflow;
-    const previousPort = scrollport ? scrollport.style.overflow : "";
-    document.body.style.overflow = "hidden";
-    if (scrollport) scrollport.style.overflow = "hidden";
+    if (!scrollport) return;
+    const previousPort = scrollport.style.overflow;
+    scrollport.style.overflow = "hidden";
     return () => {
-      document.body.style.overflow = previousBody;
-      if (scrollport) scrollport.style.overflow = previousPort;
+      scrollport.style.overflow = previousPort;
     };
   }, [open, isDesktop]);
 

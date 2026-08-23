@@ -21,3 +21,16 @@ export function readInputFiles(input: HTMLInputElement): File[] {
   input.value = "";
   return files;
 }
+
+/**
+ * File-picker accept attribute: generic `image/*,video/*` on iOS ONLY —
+ * explicitly listing image/heic defeats Safari's automatic HEIC→JPEG
+ * conversion. Everywhere else the picker stays unrestricted so companion
+ * files (XMP sidecars, RAW) remain pickable.
+ */
+export function pickerAccept(): string | undefined {
+  if (typeof navigator === "undefined") return undefined;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    ? "image/*,video/*"
+    : undefined;
+}

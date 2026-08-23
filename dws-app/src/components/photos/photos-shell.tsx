@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, usePathname, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import {
   AuthLoading,
   PHOTOS_AUTH_LOADING_CLASS,
   useSessionGuard,
 } from "@/hooks/use-session-guard";
 import { useDesktop } from "@/hooks/use-desktop";
-import { pickerAccept, useCaptureBatch } from "@/hooks/use-capture-batch";
+import { useCaptureBatch } from "@/hooks/use-capture-batch";
+import { pickerAccept } from "@/lib/photos/batch";
 import DropZone from "@/components/photos/drop-zone";
 import JobsRail from "@/components/photos/jobs-rail";
 import MultiShotCamera from "@/components/photos/multi-shot-camera";
@@ -20,7 +20,7 @@ import {
   PhotosShellContext,
   type PhotosShellValue,
 } from "@/components/photos/photos-shell-context";
-import { fetchJobs } from "@/lib/photos/api";
+import { usePhotoJobs } from "@/lib/photos/api";
 import { jobLabel } from "@/lib/photos/format";
 
 /**
@@ -34,13 +34,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   const searchParams = useSearchParams();
   const params = useParams<{ jobId?: string }>();
 
-  const search = searchParams.toString();
-  // Armed on the route only: the lightbox rewrites `?photo=` in place on every
-  // slide, and re-arming there would re-check the session ~once per swipe.
-  const ready = useSessionGuard(
-    search ? `${pathname}?${search}` : pathname,
-    pathname
-  );
+  const ready = useSessionGuard(pathname, searchParams.toString());
   const isDesktop = useDesktop();
   const activeJobId = params?.jobId ?? null;
 
@@ -57,12 +51,9 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
 
   // Only for the drop overlay's "Drop to upload to #NNNN · Name" label.
   // Deduped with the job page's identical query by react-query.
-  const { data: jobsForLabel } = useQuery({
-    queryKey: ["photo-jobs", ""],
-    queryFn: () => fetchJobs(),
-    enabled: ready && isDesktop && activeJobId !== null,
-    staleTime: 60_000,
-  });
+  const { data: jobsForLabel } = usePhotoJobs(
+    ready && isDesktop && activeJobId !== null
+  );
   const activeJob = jobsForLabel?.find((job) => job.id === activeJobId);
 
   // Not memoized: batch.openSheet is a fresh closure every render, so any

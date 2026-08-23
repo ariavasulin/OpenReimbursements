@@ -1,5 +1,6 @@
-// The ?photo=<id> deep-link contract. Pure string work so it is testable;
-// all history manipulation lives in use-photo-deep-link.ts.
+// Photo URL helpers: the ?photo=<id> deep-link contract and the search-page
+// href. Pure string work so it is testable; all history manipulation lives in
+// use-photo-deep-link.ts.
 
 export const PHOTO_PARAM = "photo";
 
@@ -9,15 +10,10 @@ export function buildPhotoLink(
   jobId: string,
   photoId: string
 ): string {
-  return `${origin.replace(/\/$/, "")}/photos/${jobId}?${PHOTO_PARAM}=${encodeURIComponent(photoId)}`;
-}
-
-/** Route of the all-photos search page. */
-export const PHOTO_SEARCH_PATH = "/photos/search";
-
-/** The all-photos search page for a job/people/tag query. */
-export function photoSearchHref(query: string): string {
-  return `${PHOTO_SEARCH_PATH}?q=${encodeURIComponent(query)}`;
+  return new URL(
+    `/photos/${jobId}?${PHOTO_PARAM}=${encodeURIComponent(photoId)}`,
+    origin
+  ).toString();
 }
 
 /**
@@ -45,4 +41,12 @@ export function withoutPhotoParam(search: string): string {
   params.delete(PHOTO_PARAM);
   const next = params.toString();
   return next ? `?${next}` : "";
+}
+
+/** Route of the all-photos search page. */
+export const PHOTO_SEARCH_PATH = "/photos/search";
+
+/** The all-photos search page for a job/people/tag query. */
+export function photoSearchHref(query: string): string {
+  return `${PHOTO_SEARCH_PATH}?q=${encodeURIComponent(query)}`;
 }

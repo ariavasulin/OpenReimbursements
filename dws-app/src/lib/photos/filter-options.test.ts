@@ -38,11 +38,9 @@ describe("accumulateSeenOptions", () => {
       photo({ id: "a", sheet_number: "12", uploader_id: "u-1", uploader: { full_name: "Ada" } }),
       photo({ id: "b", sheet_number: " 7 ", uploader_id: "u-2", uploader: { full_name: "Bo" } }),
     ]);
-    expect([...seen.sheets]).toEqual(["12", "7"]);
-    expect([...seen.uploaders]).toEqual([
-      ["u-1", "Ada"],
-      ["u-2", "Bo"],
-    ]);
+    expect(seen.sheets).toEqual(new Set(["12", "7"]));
+    expect(seen.uploaders.get("u-1")).toBe("Ada");
+    expect(seen.uploaders.get("u-2")).toBe("Bo");
   });
 
   it("ignores blank sheets and nameless uploaders", () => {

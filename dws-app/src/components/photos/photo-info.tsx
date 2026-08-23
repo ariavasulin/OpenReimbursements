@@ -10,6 +10,7 @@ import {
   jobLabel,
 } from "@/lib/photos/format";
 import { downloadUrl, sidecarDownloadUrl } from "@/lib/photos/urls";
+import { cn } from "@/lib/utils";
 import type { PhotoRow } from "@/lib/photos/types";
 
 interface PhotoInfoProps {
@@ -67,9 +68,6 @@ export default function PhotoInfo({
     }
   };
 
-  const handleDeleteClick = () =>
-    confirmingDelete ? deletePhoto() : setConfirmingDelete(true);
-
   // The armed confirm is its own layer: Escape backs out of it, and must not
   // reach the desktop panel's handler, which would close the whole viewer.
   const handleDeleteKeyDown = (event: React.KeyboardEvent) => {
@@ -93,19 +91,21 @@ export default function PhotoInfo({
     fileInfo,
   ].filter((line): line is string => Boolean(line));
 
-  // Per-layout differences are class strings: the bar is a full-width gradient
-  // overlay, the panel is a stacked column (its wrapper is `contents` so
-  // header and actions stay its flex children).
   const outerClass = bar
     ? "pointer-events-auto bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10"
     : // break-words: job names, sheet numbers and 64-char tags are unconstrained
       // text inside a fixed 320px column.
       "flex flex-col gap-4 break-words p-4";
+  // `contents` so the panel's header and actions stay its flex children.
   const innerClass = bar ? "mx-auto w-full max-w-3xl" : "contents";
-  const actionClass = bar ? "flex-1 " : "";
+  const actionClass = bar && "flex-1";
   // #3e3e3e, not a fourth near-identical grey: it is the raised-surface value
   // the sheet's own fields use.
   const secondaryBg = bar ? "bg-[#2e2e2e]/90" : "bg-[#3e3e3e]";
+  const secondaryAction = cn(
+    "rounded-lg border border-[#4e4e4e] py-2 text-center text-xs font-medium text-white hover:border-[#2680FC]",
+    secondaryBg
+  );
 
   return (
     <div className={outerClass}>
@@ -151,14 +151,17 @@ export default function PhotoInfo({
         >
             <a
               href={downloadUrl(photo)}
-              className={`${actionClass}rounded-lg bg-[#2680FC] py-2 text-center text-xs font-medium text-white hover:bg-[#1a6fd8]`}
+              className={cn(
+                actionClass,
+                "rounded-lg bg-[#2680FC] py-2 text-center text-xs font-medium text-white hover:bg-[#1a6fd8]"
+              )}
             >
               Download original
             </a>
             {sidecarUrl && (
               <a
                 href={sidecarUrl}
-                className={`${actionClass}rounded-lg border border-[#4e4e4e] ${secondaryBg} py-2 text-center text-xs font-medium text-white hover:border-[#2680FC]`}
+                className={cn(actionClass, secondaryAction)}
               >
                 Download XMP
               </a>
@@ -166,7 +169,7 @@ export default function PhotoInfo({
             <button
               type="button"
               onClick={onEdit}
-              className={`${actionClass}rounded-lg border border-[#4e4e4e] ${secondaryBg} py-2 text-center text-xs font-medium text-white hover:border-[#2680FC]`}
+              className={cn(actionClass, secondaryAction)}
             >
               Edit tags
             </button>
@@ -174,22 +177,29 @@ export default function PhotoInfo({
               type="button"
               disabled={!photo.job}
               onClick={copyLink}
-              className={`${actionClass}rounded-lg border border-[#4e4e4e] ${secondaryBg} py-2 text-center text-xs font-medium text-white hover:border-[#2680FC] disabled:opacity-60`}
+              className={cn(actionClass, secondaryAction, "disabled:opacity-60")}
             >
               Copy link
             </button>
             {canDelete && (
               <button
                 type="button"
-                onClick={handleDeleteClick}
+                onClick={() =>
+                  confirmingDelete ? deletePhoto() : setConfirmingDelete(true)
+                }
                 onKeyDown={handleDeleteKeyDown}
                 disabled={busy}
-                className={`${actionClass}rounded-lg border py-2 text-center text-xs font-medium ${
+                className={cn(
+                  actionClass,
+                  "rounded-lg border py-2 text-center text-xs font-medium",
                   confirmingDelete
                     ? "border-red-500 bg-red-500/20 text-red-300"
                     : // red-400 is 3.87:1 on the panel's #3e3e3e; red-300 is 5.64:1.
-                      `border-[#4e4e4e] ${secondaryBg} text-red-300 hover:border-red-500`
-                }`}
+                      cn(
+                        "border-[#4e4e4e] text-red-300 hover:border-red-500",
+                        secondaryBg
+                      )
+                )}
               >
                 {confirmingDelete ? "Confirm delete?" : "Delete"}
               </button>
