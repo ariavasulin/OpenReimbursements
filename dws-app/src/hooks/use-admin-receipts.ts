@@ -1,11 +1,36 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Receipt } from '@/lib/types'
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { fetchJson } from '@/lib/photos/api'
+import { toDbReceiptStatus, type Receipt, type ReceiptSort, type ReceiptStatusFilter } from '@/lib/types'
 
-interface AdminReceiptsParams {
-  status?: string
+export interface AdminReceiptsFilter {
+  status?: ReceiptStatusFilter
   fromDate?: string
   toDate?: string
+  /** Free-text search over employee name and description, applied server-side. */
+  search?: string
+}
+
+interface AdminReceiptsParams extends AdminReceiptsFilter {
+  sort?: ReceiptSort | null
+  page?: number
+  pageSize?: number
   enabled?: boolean
+}
+
+/** Query string shared by the receipts page and the CSV export, so the two describe one set. */
+export function adminReceiptsFilterParams(filter: AdminReceiptsFilter): URLSearchParams {
+  const params = new URLSearchParams()
+  if (filter.status && filter.status !== 'all') params.set('status', toDbReceiptStatus(filter.status))
+  if (filter.fromDate) params.set('fromDate', filter.fromDate)
+  if (filter.toDate) params.set('toDate', filter.toDate)
+  if (filter.search) params.set('q', filter.search)
+  return params
+}
+
+export interface AdminReceiptsPage {
+  receipts: Receipt[]
+  totalCount: number
+  totalAmount: number
 }
 
 interface AdminReceiptCountsParams {
@@ -28,40 +53,30 @@ export const adminReceiptsKeys = {
   counts: (params: AdminReceiptCountsParams) => ['admin-receipts', 'counts', params] as const,
 }
 
-async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[]> {
-  const urlParams = new URLSearchParams()
-
-  if (params.status && params.status !== 'all') {
-    const dbStatus = params.status.charAt(0).toUpperCase() + params.status.slice(1)
-    urlParams.append('status', dbStatus)
+async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<AdminReceiptsPage> {
+  const urlParams = adminReceiptsFilterParams(params)
+  if (params.sort) {
+    urlParams.set('sort', params.sort.field)
+    urlParams.set('dir', params.sort.direction)
   }
+  if (params.page) urlParams.set('page', String(params.page))
+  if (params.pageSize) urlParams.set('pageSize', String(params.pageSize))
 
-  if (params.fromDate) {
-    urlParams.append('fromDate', params.fromDate)
+  const data = await fetchJson<AdminReceiptsPage>(
+    `/api/admin/receipts?${urlParams.toString()}`,
+    'Failed to fetch receipts'
+  )
+
+  return {
+    receipts: data.receipts.map((r: Receipt) => ({
+      ...r,
+      status: r.status.toLowerCase() as Receipt['status'],
+      date: r.date || r.receipt_date || '',
+      category: r.category || 'Uncategorized',
+    })),
+    totalCount: data.totalCount,
+    totalAmount: data.totalAmount,
   }
-
-  if (params.toDate) {
-    urlParams.append('toDate', params.toDate)
-  }
-
-  const response = await fetch(`/api/admin/receipts?${urlParams.toString()}`)
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.error || `Failed to fetch receipts: ${response.status}`)
-  }
-
-  const data = await response.json()
-
-  if (!data.success) {
-    throw new Error(data.error || 'Failed to fetch receipts')
-  }
-
-  return data.receipts.map((r: Receipt) => ({
-    ...r,
-    date: r.date || r.receipt_date,
-    category: r.category || 'Uncategorized',
-  }))
 }
 
 export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsParams) {
@@ -69,6 +84,9 @@ export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsPar
     queryKey: adminReceiptsKeys.list(params),
     queryFn: () => fetchAdminReceipts(params),
     enabled,
+    // Every filter, sort and page is in the key; without this each change
+    // drops `data` to undefined mid-fetch.
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -78,18 +96,11 @@ async function fetchAdminReceiptCounts(params: AdminReceiptCountsParams): Promis
   if (params.toDate) urlParams.append('toDate', params.toDate)
 
   const qs = urlParams.toString()
-  const response = await fetch(`/api/admin/receipts/status-counts${qs ? `?${qs}` : ''}`)
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.error || `Failed to fetch receipt counts: ${response.status}`)
-  }
-
-  const data = await response.json()
-  if (!data.success) {
-    throw new Error(data.error || 'Failed to fetch receipt counts')
-  }
-  return data.counts as AdminReceiptCounts
+  const data = await fetchJson<{ counts: AdminReceiptCounts }>(
+    `/api/admin/receipts/status-counts${qs ? `?${qs}` : ''}`,
+    'Failed to fetch receipt counts'
+  )
+  return data.counts
 }
 
 export function useAdminReceiptCounts({ enabled = true, ...params }: AdminReceiptCountsParams) {

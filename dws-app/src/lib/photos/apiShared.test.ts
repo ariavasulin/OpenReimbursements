@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deletionPaths } from "./apiShared";
+import { deletionPaths, escapeForIlike, escapeIlikeWildcards } from "./apiShared";
 
 // DELETE /api/photos/:id passes this straight to storage.remove.
 describe("deletionPaths", () => {
@@ -32,5 +32,18 @@ describe("deletionPaths", () => {
         sidecar_path: null,
       })
     ).toEqual(["originals/u/p/a.jpg"]);
+  });
+});
+
+describe("ILIKE escaping", () => {
+  it("escapeIlikeWildcards neutralises %, _ and \\ and keeps punctuation", () => {
+    expect(escapeIlikeWildcards("100%_done\\")).toBe("100\\%\\_done\\\\");
+    expect(escapeIlikeWildcards(" punch (list) ")).toBe("punch (list)");
+  });
+
+  it("escapeForIlike additionally strips PostgREST or() grammar", () => {
+    expect(escapeForIlike("punch (list)")).toBe("punch  list");
+    expect(escapeForIlike("a,b")).toBe("a b");
+    expect(escapeForIlike("()")).toBe("");
   });
 });

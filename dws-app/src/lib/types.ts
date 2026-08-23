@@ -58,6 +58,47 @@ export const RECEIPT_STATUS_VALUES = ["Pending", "Approved", "Rejected", "Reimbu
 
 export type ReceiptStatusValue = (typeof RECEIPT_STATUS_VALUES)[number];
 
+/** Status values a list filter can send; 'all' means no filter. */
+export type ReceiptStatusFilter = 'all' | Lowercase<ReceiptStatusValue>;
+
+const RECEIPT_STATUS_BY_LOWERCASE = new Map<string, ReceiptStatusValue>(
+  RECEIPT_STATUS_VALUES.map((status) => [status.toLowerCase(), status])
+);
+
+/** The receipts.status value named by a case-insensitive input, if any. */
+export function parseReceiptStatus(input: string): ReceiptStatusValue | undefined {
+  return RECEIPT_STATUS_BY_LOWERCASE.get(input.toLowerCase());
+}
+
+/** The UI carries statuses lowercased; receipts.status stores them capitalized. */
+export function toDbReceiptStatus(status: Lowercase<ReceiptStatusValue>): ReceiptStatusValue {
+  return RECEIPT_STATUS_BY_LOWERCASE.get(status)!;
+}
+
+/** Columns the admin table can sort by — the get_admin_receipts_page whitelist. */
+export const RECEIPT_SORT_FIELDS = ["date", "employee", "phone", "amount", "category", "description"] as const;
+export type ReceiptSortField = (typeof RECEIPT_SORT_FIELDS)[number];
+
+export interface ReceiptSort {
+  field: ReceiptSortField;
+  direction: "asc" | "desc";
+}
+
+/**
+ * The dashboard and the payroll export must agree on these fields, or an
+ * exported CSV names people differently than the table the admin was looking at.
+ */
+export function employeeIdentity(row: {
+  preferred_name?: string | null;
+  full_name?: string | null;
+  employee_id_internal?: string | null;
+}): { employeeName: string; employeeId: string } {
+  return {
+    employeeName: row.preferred_name || row.full_name || 'Unknown',
+    employeeId: row.employee_id_internal || '',
+  };
+}
+
 export interface BatchStatusDecision {
   id: string;
   status: ReceiptStatusValue;

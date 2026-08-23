@@ -1,33 +1,11 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { requireAdmin } from '@/lib/requireAdmin';
 import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 import type { AdminUser } from '@/lib/types';
 
 export async function GET(request: Request) {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
-  }
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('user_id', session.user.id)
-    .single();
-
-  if (profileError || !profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (gate.response) return gate.response;
 
   try {
     const { searchParams } = new URL(request.url);
@@ -101,30 +79,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
-  }
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('user_id', session.user.id)
-    .single();
-
-  if (profileError || !profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (gate.response) return gate.response;
 
   try {
     const body = await request.json();

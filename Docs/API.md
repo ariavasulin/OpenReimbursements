@@ -128,9 +128,15 @@ Creates receipt record and finalizes image storage.
 
 ### GET /api/receipts
 
-Fetches user's receipts with category names.
+Fetches the signed-in user's own receipts with category names.
 
 **Auth**: Required
+
+**Query Params** (an invalid value for any of them is a 400):
+- `status`: `pending` | `approved` | `rejected` | `reimbursed` (case-insensitive;
+  `all` or omitted means every status)
+- `limit`: page size, 1–200 (default 50)
+- `cursor`: opaque `nextCursor` from the previous response; omit for page 1
 
 **Response**:
 ```json
@@ -145,9 +151,13 @@ Fetches user's receipts with category names.
       "category": "Office Supplies",
       "image_url": "https://..."
     }
-  ]
+  ],
+  "nextCursor": "eyJ..."
 }
 ```
+
+`nextCursor` is `null` on the last page. Ordering is
+`receipt_date DESC, created_at DESC`.
 
 ---
 
@@ -169,8 +179,9 @@ Updates receipt fields.
 ```
 
 **Permissions**:
-- Employees: Own pending receipts only
-- Admins: Any receipt
+- Employees: Own pending receipts only, and never `status` — a body carrying
+  `status` from a non-admin is a 403.
+- Admins: Any receipt, any field
 
 ---
 
@@ -214,14 +225,23 @@ Bulk status update (admin only).
 
 ### GET /api/admin/receipts
 
-Fetches all receipts with user info and phone numbers.
+Fetches one page of receipts with user info and phone numbers, plus the totals
+over the whole filtered set.
 
 **Auth**: Admin required
 
-**Query Params**:
-- `status`: Filter by status
-- `fromDate`: Start date (YYYY-MM-DD)
-- `toDate`: End date (YYYY-MM-DD)
+**Query Params** (an invalid `sort` or `dir` is a 400):
+- `status`: Filter by status (capitalized, e.g. `Approved`; `all` or omitted for every status)
+- `fromDate`: Start date (YYYY-MM-DD), inclusive
+- `toDate`: End date (YYYY-MM-DD), **exclusive**
+- `q`: free-text search — case-insensitive substring over the employee's
+  display name and the receipt description
+- `sort`: `date` | `employee` | `phone` | `amount` | `category` | `description`;
+  omitted means `receipt_date DESC, created_at DESC`, which is also every
+  sort's tiebreak.
+- `dir`: `asc` | `desc` (default `asc`)
+- `page`: 1-based page number (default 1)
+- `pageSize`: rows per page, 1–200 (default 25)
 
 **Response**:
 ```json
@@ -233,11 +253,35 @@ Fetches all receipts with user info and phone numbers.
       "employeeName": "John Doe",
       "employeeId": "EMP123",
       "phone": "+12223334444",
-      ...
+      "...": "..."
     }
-  ]
+  ],
+  "totalCount": 3158,
+  "totalAmount": 81176.24
 }
 ```
+
+`totalCount` / `totalAmount` describe every receipt matching the status, date
+and search filters, not just the returned page.
+
+---
+
+### GET /api/admin/receipts/export
+
+Payroll CSV: one row per employee with their total for the filtered set.
+
+**Auth**: Admin required
+
+**Query Params**:
+- `status`, `fromDate`, `toDate`, `q`: as for `GET /api/admin/receipts`
+
+**Response**: `text/csv` attachment
+(`LastName,FirstName,EmployeeNumber,TotalAmount`), `Cache-Control: no-store`.
+Text cells that begin with `=`, `+`, `-` or `@` are prefixed with `'` so a
+spreadsheet does not evaluate them.
+
+**Errors**: 413 when more than 100,000 receipts match — the export refuses
+rather than returning a truncated file; narrow the filters.
 
 ---
 

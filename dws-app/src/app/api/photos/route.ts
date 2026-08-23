@@ -5,6 +5,7 @@ import {
   cleanSheet,
   cleanTags,
   escapeForIlike,
+  escapeIlikeWildcards,
   isSha256,
   PHOTO_COLUMNS,
 } from '@/lib/photos/apiShared';
@@ -12,7 +13,15 @@ import {
   CAPTURED_AT_SOURCES,
   PHOTO_KINDS,
   type PhotoRow,
+  type PhotoTagRow,
 } from '@/lib/photos/types';
+import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  isIsoTimestamp,
+  keysetOrFilter,
+  parseLimit,
+} from '@/lib/keysetCursor';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
 //      Filtered photo list, newest capture first, keyset-paginated on
@@ -23,27 +32,9 @@ import {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
-
-function encodeCursor(capturedAt: string, id: string): string {
-  return Buffer.from(JSON.stringify([capturedAt, id])).toString('base64url');
-}
-
-function decodeCursor(cursor: string): { capturedAt: string; id: string } | null {
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString());
-    if (
-      Array.isArray(parsed) &&
-      typeof parsed[0] === 'string' &&
-      typeof parsed[1] === 'string' &&
-      isUuid(parsed[1])
-    ) {
-      return { capturedAt: parsed[0], id: parsed[1] };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+// Upper bound on tags spliced into one or() filter — a URL-length guard, not a
+// recall choice; the type-ahead (/api/photo-tags) is unbounded.
+const MAX_SEARCH_TAGS = 500;
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -51,13 +42,18 @@ type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
  * Resolve a free-text query into a PostgREST or() filter over photos:
  * matching job ids, matching uploader ids, and overlapping tags.
  * Returns null when nothing matches (the result set is empty).
+ *
+ * `job` scopes the tag lookup, which would otherwise unnest the tags of every
+ * row in photos to answer a question scoped to one job.
  */
 async function buildSearchFilter(
   supabase: ServerClient,
-  q: string
+  q: string,
+  job: string | null
 ): Promise<string | null> {
   const escaped = escapeForIlike(q);
   if (!escaped) return null;
+  const rpcQuery = escapeIlikeWildcards(q);
   const pattern = `%${escaped}%`;
 
   const [jobsResult, uploadersResult, tagRowsResult] = await Promise.all([
@@ -71,7 +67,7 @@ async function buildSearchFilter(
       .select('user_id')
       .ilike('full_name', pattern)
       .limit(200),
-    supabase.from('photos').select('tags').limit(10000),
+    supabase.rpc('get_photo_tags', { job_filter: job || null, q: rpcQuery }),
   ]);
 
   const firstError =
@@ -88,19 +84,14 @@ async function buildSearchFilter(
     parts.push(`uploader_id.in.(${uploaderIds.join(',')})`);
   }
 
-  const query = q.toLowerCase();
-  const matchedTags = new Set<string>();
-  for (const row of tagRowsResult.data ?? []) {
-    for (const tag of row.tags) {
-      if (tag.toLowerCase().includes(query)) {
-        // Tags with or()/array syntax characters can't be embedded safely;
-        // the UI never produces them, so skipping is the safe trade.
-        if (!/[,(){}"\\]/.test(tag)) matchedTags.add(tag);
-      }
-    }
-  }
-  if (matchedTags.size > 0) {
-    parts.push(`tags.ov.{${[...matchedTags].join(',')}}`);
+  // Drop tags that can't be embedded in PostgREST's or()/array syntax. The UI
+  // never produces those, so skipping is the safe trade.
+  const matchedTags = ((tagRowsResult.data ?? []) as PhotoTagRow[])
+    .map((row) => row.tag)
+    .filter((tag) => !/[,(){}"\\]/.test(tag))
+    .slice(0, MAX_SEARCH_TAGS);
+  if (matchedTags.length > 0) {
+    parts.push(`tags.ov.{${matchedTags.join(',')}}`);
   }
 
   return parts.length > 0 ? parts.join(',') : null;
@@ -138,10 +129,10 @@ export async function GET(request: Request) {
     );
   }
 
-  const limit = Math.min(
-    Math.max(parseInt(params.get('limit') ?? '', 10) || DEFAULT_LIMIT, 1),
-    MAX_LIMIT
-  );
+  const limit = parseLimit(params.get('limit'), DEFAULT_LIMIT, MAX_LIMIT);
+  if (limit === null) {
+    return NextResponse.json({ error: 'Invalid limit' }, { status: 400 });
+  }
 
   let query = supabase
     .from('photos')
@@ -158,7 +149,7 @@ export async function GET(request: Request) {
   if (q) {
     let searchFilter: string | null;
     try {
-      searchFilter = await buildSearchFilter(supabase, q);
+      searchFilter = await buildSearchFilter(supabase, q, job);
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : 'Search failed' },
@@ -173,13 +164,15 @@ export async function GET(request: Request) {
 
   const rawCursor = params.get('cursor');
   if (rawCursor) {
-    const cursor = decodeCursor(rawCursor);
+    const cursor = decodeKeysetCursor(rawCursor, (capturedAt, id) =>
+      isIsoTimestamp(capturedAt) && isUuid(id) ? { capturedAt, id } : null
+    );
     if (!cursor) {
       return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
     }
     // Separate or() calls are ANDed by PostgREST, so this composes with q.
     query = query.or(
-      `captured_at.lt.${cursor.capturedAt},and(captured_at.eq.${cursor.capturedAt},id.lt.${cursor.id})`
+      keysetOrFilter('captured_at', cursor.capturedAt, 'id', cursor.id)
     );
   }
 
@@ -192,7 +185,7 @@ export async function GET(request: Request) {
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   const nextCursor =
-    rows.length > limit ? encodeCursor(last.captured_at, last.id) : null;
+    rows.length > limit ? encodeKeysetCursor(last.captured_at, last.id) : null;
 
   return NextResponse.json({ success: true, photos: page, nextCursor });
 }

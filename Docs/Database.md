@@ -74,7 +74,13 @@ export const supabaseAdmin = createClient(
 | created_at | timestamp | Auto-generated |
 | updated_at | timestamp | Auto-updated |
 
-**RLS**: Enabled. Policies (`receipts_select`/`insert`/`update`/`delete`) allow a row when `user_id = auth.uid() OR public.is_admin()` — owners see/modify only their own rows; admins see/modify all. See `dws-app/db/enable-rls.sql`.
+**RLS**: Enabled. Policies (`receipts_select`/`insert`/`update`/`delete`) allow a row when `user_id = auth.uid() OR public.is_admin()` — owners see/modify only their own rows; admins see/modify all. Predicates are written `(select auth.uid())` / `(select public.is_admin())` so Postgres evaluates them once per statement. Defined in `dws-app/supabase/migrations/20260822130000_rls_scalar_subqueries.sql`.
+
+**Status changes**: a `BEFORE UPDATE OF status` trigger
+(`receipts_guard_status_change`, `20260823120100_write_guards.sql`) raises
+`42501` unless the caller is an admin session (`public.is_admin()`) or the
+service role. RLS lets an owner update their own Pending row; the trigger is
+what keeps that update from being an approval.
 
 ### categories
 
@@ -84,7 +90,7 @@ export const supabaseAdmin = createClient(
 | name | text | Category name (unique) |
 | created_at | timestamp | Auto-generated |
 
-**RLS**: Enabled — authenticated read, admin write. `categories_select` allows `SELECT` to any `authenticated` user; `categories_insert`/`update`/`delete` require `public.is_admin()`. See `dws-app/db/enable-rls.sql`.
+**RLS**: Enabled — authenticated read, admin write. `categories_select` allows `SELECT` to any `authenticated` user; `categories_insert`/`update`/`delete` require `public.is_admin()`. `categories_select` is in `dws-app/supabase/migrations/00000000000002_enable_rls_receipts_categories.sql`; the write policies are in `20260822130000_rls_scalar_subqueries.sql`.
 
 **Default Categories**: Parking, Gas, Meals & Entertainment, Office Supplies, Other
 
@@ -101,7 +107,22 @@ export const supabaseAdmin = createClient(
 | updated_at | timestamp | Auto-updated |
 | deleted_at | timestamp | Soft delete |
 
-**RLS**: Enabled.
+**RLS**: Enabled — a user may update only the row where `user_id = auth.uid()`.
+Reads are broader than that: two permissive SELECT policies are live
+(`"Users can view their own profile"`, `auth.uid() = user_id`, and
+`user_profiles_select_policy`, `auth.uid() is not null`), and permissive
+policies OR together, so any authenticated user can read every profile row.
+
+**Column grants**: RLS says *which row*; grants say *which columns*. The
+`authenticated` role holds `UPDATE` on `full_name` only
+(`dws-app/supabase/migrations/20260823100000_review_fixes.sql`).
+`role`, `employee_id_internal`, and `deleted_at` are writable only by the
+admin API routes, which use the service-role key.
+
+**Inserts**: `user_profiles_insert_policy` (`20260823120100_write_guards.sql`)
+allows only `user_id = auth.uid()` with `role = 'employee'` — the shape
+`PATCH /api/profile` writes when the signup trigger did not. The trigger itself
+runs as the table owner and is unaffected.
 
 ## TypeScript Types
 
@@ -140,29 +161,33 @@ interface Category {
 
 ## RLS Bypass
 
-For admin operations needing phone numbers (in auth.users):
+For admin operations needing phone numbers (in auth.users), a `SECURITY
+DEFINER` RPC joins `auth.users`. `get_admin_receipts_with_phone` (baseline,
+`00000000000000_baseline.sql`) still exists but no route calls it; both
+`GET /api/admin/receipts` and the payroll CSV export use
+`get_admin_receipts_page` below.
 
-```sql
--- Postgres RPC function
-CREATE FUNCTION get_admin_receipts_with_phone(...)
-RETURNS TABLE(...)
-SECURITY DEFINER  -- Runs with elevated privileges
-AS $$
-  SELECT r.*, au.phone
-  FROM receipts r
-  JOIN auth.users au ON r.user_id = au.id
-  ...
-$$;
-```
+### get_admin_receipts_page(status_filter, from_date, to_date, page_num, page_size, search_term, sort_field, sort_dir)
 
-Called via: `supabase.rpc('get_admin_receipts_with_phone', { ... })`
+The paginated sibling used by `GET /api/admin/receipts`. Same columns and
+filters, plus the dashboard's search (`search_term`: case-insensitive substring
+over the employee's display name and the description) and column sort
+(`sort_field` from a whitelist of six, `sort_dir`), one bounded page, and
+`total_count` / `total_amount` over the whole filtered set.
+`SECURITY DEFINER` for the `auth.users` join, and it raises `not authorized`
+unless `public.is_admin()`. Executable by `authenticated` only (the
+service role cannot pass `is_admin()`). Current
+definition: `20260823120000_admin_receipts_page_search_sort.sql`.
+
+A page past the end of the result set returns a single row whose receipt columns
+are all `NULL`, carrying the totals; callers skip rows with a null `id`.
 
 ### is_admin()
 
 `SECURITY DEFINER` helper used by the `receipts` and `categories` RLS policies to
 encode the same admin semantics as the inline `user_profiles.role = 'admin'`
 check copy-pasted across the admin API routes. Defined in
-`dws-app/db/enable-rls.sql`.
+`dws-app/supabase/migrations/00000000000002_enable_rls_receipts_categories.sql`.
 
 ```sql
 CREATE OR REPLACE FUNCTION public.is_admin()
@@ -184,7 +209,13 @@ that table; `search_path` is locked to `public` to prevent search-path hijacking
 
 ## Storage
 
-**Bucket**: `receipt-images`
+**Buckets** (rows checked in by `20260823100000_review_fixes.sql` §5):
+
+- `receipt-images` — `public: true`
+- `photos` — `public: true`
+
+Because both are public, the storage SELECT policies gate only
+authenticated-API reads; anyone holding an object URL can fetch the file.
 
 **Path Structure**:
 ```

@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
-import type { Receipt } from '@/lib/types';
+import { isStorageNotFound } from '@/lib/storageErrors';
+import { encodeKeysetCursor, keysetOrFilter, parseLimit } from '@/lib/keysetCursor';
+import { decodeReceiptCursor } from '@/lib/receiptCursor';
+import { RECEIPT_STATUS_VALUES, parseReceiptStatus, type Receipt } from '@/lib/types';
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -49,44 +52,27 @@ export async function POST(request: Request) {
     const finalImagePath = `${userId}/${newReceiptId}.${originalFileExtension}`;
     const bucketName = 'receipt-images';
 
-    const pathParts = tempFilePath.split('/');
-    const fileNameToSearch = pathParts.pop();
-    const folderPathToList = pathParts.join('/');
-
-    const { data: fileList, error: listError } = await supabase.storage
-      .from(bucketName)
-      .list(folderPathToList, {
-        search: fileNameToSearch,
-        limit: 1
-      });
-
-    if (listError) {
-      return NextResponse.json({ error: `Error verifying temporary file before move: ${listError.message}` }, { status: 500 });
-    }
-
-    if (!fileList || fileList.length === 0) {
-      const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
-      // Best-effort cleanup, ignore deleteDbError
-      return NextResponse.json({ error: `Temporary file not found before move. Path: ${tempFilePath}` }, { status: 404 });
-    }
-
-    // Check if the found file exactly matches the name (list with search can be broad)
-    const foundFile = fileList.find(f => f.name === fileNameToSearch);
-    if (!foundFile) {
-        const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
-        // Best-effort cleanup, ignore deleteDbError
-        return NextResponse.json({ error: `Temporary file '${fileNameToSearch}' not found in expected folder '${folderPathToList}'.` }, { status: 404 });
-    }
-
     const { error: moveError } = await supabase.storage
       .from(bucketName)
       .move(tempFilePath, finalImagePath);
 
     if (moveError) {
+      console.error('POST /api/receipts: storage move failed', {
+        tempFilePath,
+        finalImagePath,
+        error: moveError,
+      });
       const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
       // Best-effort cleanup, ignore deleteDbError
-      // The temp file still exists in storage at tempFilePath
-      return NextResponse.json({ error: `Failed to finalize image storage during MOVE: ${moveError.message}` }, { status: 500 });
+      const notFound = isStorageNotFound(moveError);
+      return NextResponse.json(
+        {
+          error: notFound
+            ? `Temporary file not found before move. Path: ${tempFilePath}`
+            : `Failed to finalize image storage during MOVE: ${moveError.message}`,
+        },
+        { status: notFound ? 404 : 500 }
+      );
     }
 
     const { data: updatedReceipt, error: updateError } = await supabase
@@ -112,6 +98,9 @@ export async function POST(request: Request) {
   }
 }
 
+const DEFAULT_RECEIPTS_LIMIT = 50;
+const MAX_RECEIPTS_LIMIT = 200;
+
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
 
@@ -129,8 +118,21 @@ export async function GET(request: Request) {
   }
   const userId = session.user.id;
 
+  const params = new URL(request.url).searchParams;
+  const limit = parseLimit(params.get('limit'), DEFAULT_RECEIPTS_LIMIT, MAX_RECEIPTS_LIMIT);
+  if (limit === null) {
+    return NextResponse.json({ error: 'Invalid limit' }, { status: 400 });
+  }
+  const rawCursor = params.get('cursor');
+
+  const rawStatus = params.get('status');
+  const statusFilter = rawStatus ? parseReceiptStatus(rawStatus) : undefined;
+  if (rawStatus && rawStatus.toLowerCase() !== 'all' && !statusFilter) {
+    return NextResponse.json({ error: 'Invalid status filter' }, { status: 400 });
+  }
+
   try {
-    const { data: receipts, error: dbError } = await supabase
+    let query = supabase
       .from('receipts')
       .select(`
         id,
@@ -147,22 +149,42 @@ export async function GET(request: Request) {
       `)
       .eq('user_id', userId)
       .order('receipt_date', { ascending: false })
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
+
+    if (statusFilter) {
+      query = query.eq('status', statusFilter);
+    }
+
+    if (rawCursor) {
+      const cursor = decodeReceiptCursor(rawCursor);
+      if (!cursor) {
+        return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
+      }
+      // Separate or() calls are ANDed by PostgREST, so this composes with the
+      // user_id filter.
+      query = query.or(
+        keysetOrFilter('receipt_date', cursor.receiptDate, 'created_at', cursor.createdAt)
+      );
+    }
+
+    const { data, error: dbError } = await query;
 
     if (dbError) {
       return NextResponse.json({ error: dbError.message || 'Failed to fetch receipts from database' }, { status: 500 });
     }
 
-    if (!receipts) {
-      return NextResponse.json({ success: true, receipts: [] }, { status: 200 });
-    }
+    const rows = data ?? [];
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const nextCursor =
+      rows.length > limit ? encodeKeysetCursor(last.receipt_date, last.created_at) : null;
 
-    const mappedReceipts = receipts.map((item: any) => {
+    const bucket = supabase.storage.from('receipt-images');
+    const mappedReceipts = page.map((item: any) => {
       let publicImageUrl = item.image_url;
       if (item.image_url) {
-        const { data: publicUrlData } = supabase.storage
-          .from('receipt-images')
-          .getPublicUrl(item.image_url);
+        const { data: publicUrlData } = bucket.getPublicUrl(item.image_url);
 
         if (publicUrlData && publicUrlData.publicUrl) {
           publicImageUrl = publicUrlData.publicUrl;
@@ -187,7 +209,10 @@ export async function GET(request: Request) {
       };
     });
 
-    return NextResponse.json({ success: true, receipts: mappedReceipts as Receipt[] }, { status: 200 });
+    return NextResponse.json(
+      { success: true, receipts: mappedReceipts as Receipt[], nextCursor },
+      { status: 200 }
+    );
 
   } catch (error) {
     console.error('GET /api/receipts: Unhandled error in try block:', error);
@@ -237,22 +262,12 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
     }
 
-    let userIsAdmin = false;
     const isOwner = existingReceipt.user_id === userId;
-
-    if (!isOwner) {
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('user_id', userId)
-        .single();
-
-      if (!profile || profile.role !== 'admin') {
-        return NextResponse.json({ error: 'You can only edit your own receipts' }, { status: 403 });
-      }
-      userIsAdmin = true;
-    } else {
-      // Owner - check if also admin (needed for status check)
+    const isPending = existingReceipt.status.toLowerCase() === 'pending';
+    // The role only decides the cases below; an owner editing a Pending
+    // receipt's details never needs the lookup.
+    let userIsAdmin = false;
+    if (!isOwner || !isPending || status !== undefined) {
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('role')
@@ -261,10 +276,21 @@ export async function PATCH(request: Request) {
       userIsAdmin = profile?.role === 'admin';
     }
 
-    if (existingReceipt.status.toLowerCase() !== 'pending' && !userIsAdmin) {
+    if (!isOwner && !userIsAdmin) {
+      return NextResponse.json({ error: 'You can only edit your own receipts' }, { status: 403 });
+    }
+
+    if (!isPending && !userIsAdmin) {
       return NextResponse.json({
         error: `Cannot edit receipt with status "${existingReceipt.status}". Contact an admin.`
       }, { status: 403 });
+    }
+
+    // The owner of a Pending receipt may edit its details, not its status; the
+    // database enforces the same rule with a trigger
+    // (20260823120100_write_guards.sql), this just answers 403 instead of 500.
+    if (status !== undefined && !userIsAdmin) {
+      return NextResponse.json({ error: 'Only an admin can change a receipt status' }, { status: 403 });
     }
 
     const updateData: Record<string, unknown> = {
@@ -276,12 +302,11 @@ export async function PATCH(request: Request) {
     if (category_id !== undefined) updateData.category_id = category_id;
     if (notes !== undefined) updateData.description = notes;
     if (status !== undefined) {
-      const validStatuses = ['Pending', 'Approved', 'Rejected', 'Reimbursed'];
-      const capitalizedStatus = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
-      if (!validStatuses.includes(capitalizedStatus)) {
-        return NextResponse.json({ error: `Invalid status value. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 });
+      const canonical = parseReceiptStatus(String(status));
+      if (!canonical) {
+        return NextResponse.json({ error: `Invalid status value. Must be one of: ${RECEIPT_STATUS_VALUES.join(', ')}` }, { status: 400 });
       }
-      updateData.status = capitalizedStatus;
+      updateData.status = canonical;
     }
 
     const { data: updatedReceipt, error: updateError } = await supabase

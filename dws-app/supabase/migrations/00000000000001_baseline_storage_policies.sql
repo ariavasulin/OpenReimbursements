@@ -1,0 +1,6 @@
+-- Baseline capture of the four receipt-images policies on storage.objects,
+-- transcribed from live pg_policies output (2026-08-22). These were created by
+-- hand in the Supabase dashboard before migrations were checked in.
+--
+-- The policy bodies live in 20260822130200_rls_storage_scalar_subqueries.sql,
+-- with their roles, commands and WITH CHECK fidelity notes.

@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReceiptUploader from '@/components/receipt-uploader';
 import EmployeeReceiptTable from '@/components/employee-receipt-table';
-import type { Receipt, UserProfile } from '@/lib/types';
+import LoadMoreButton from '@/components/photos/load-more-button';
+import StatusLine from '@/components/photos/status-line';
+import { useMyReceipts, useRefreshMyReceipts } from '@/hooks/use-receipts';
+import type { ReceiptStatusFilter, UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Toaster as SonnerToaster } from 'sonner';
 
@@ -15,64 +18,36 @@ export default function EmployeePage() {
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [receiptsLoading, setReceiptsLoading] = useState(false);
-  const [receiptsError, setReceiptsError] = useState<string | null>(null);
-  
+
+  const [statusFilter, setStatusFilter] = useState<ReceiptStatusFilter>('all');
+
   const mountedRef = useRef(true);
   const authCheckCompleteRef = useRef(false);
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchReceipts = async () => {
-    if (!user || !userProfile || userProfile.role !== 'employee') {
-      setReceiptsLoading(false);
-      return;
-    }
+  const {
+    data: receiptsData,
+    isLoading: receiptsLoading,
+    isPlaceholderData: receiptsArePlaceholder,
+    error: receiptsQueryError,
+    refetch: refetchReceipts,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useMyReceipts({
+    userId: user?.id,
+    status: statusFilter,
+    enabled: Boolean(user && userProfile?.role === 'employee'),
+  });
 
-    setReceiptsLoading(true);
-    setReceiptsError(null);
-    try {
-      const response = await fetch('/api/receipts');
+  const receipts = useMemo(
+    () => receiptsData?.pages.flatMap((page) => page.receipts) ?? [],
+    [receiptsData]
+  );
+  const receiptsError =
+    receiptsQueryError instanceof Error ? receiptsQueryError.message : null;
 
-      if (!response.ok) {
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch (e) {
-          errorData = { error: `API request failed with status ${response.status}: ${response.statusText}` };
-        }
-        throw new Error(errorData.error || `Failed to fetch receipts (status ${response.status})`);
-      }
-      
-      const data = await response.json();
-
-      if (data.success && data.receipts) {
-        setReceipts(data.receipts);
-      } else {
-        throw new Error(data.error || 'Failed to parse receipts data or success was false');
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "An unknown error occurred during fetch";
-      setReceiptsError(message);
-    } finally {
-      setReceiptsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (user && userProfile && userProfile.role === 'employee') {
-      fetchReceipts();
-    }
-  }, [user, userProfile]);
-
-
-  const handleReceiptAdded = () => {
-    fetchReceipts();
-  };
-
-  const handleReceiptUpdated = () => {
-    fetchReceipts();
-  };
+  const refreshReceipts = useRefreshMyReceipts(user?.id);
 
   useEffect(() => {
     loadingTimeoutRef.current = setTimeout(() => {
@@ -183,7 +158,6 @@ export default function EmployeePage() {
         if (event === 'SIGNED_OUT' || !session) {
           setUser(null);
           setUserProfile(null);
-          setReceipts([]);
           router.replace('/login');
         }
       }
@@ -248,11 +222,35 @@ export default function EmployeePage() {
       </div>
       
       <div className="max-w-4xl mx-auto space-y-6">
-        <ReceiptUploader onReceiptAdded={handleReceiptAdded} />
+        <ReceiptUploader onReceiptAdded={refreshReceipts.afterUpload} />
         
-        {receiptsLoading && <p className="text-center">Loading receipts...</p>}
-        {receiptsError && <p className="text-center text-red-500">Error loading receipts: {receiptsError}</p>}
-        {!receiptsLoading && !receiptsError && <EmployeeReceiptTable receipts={receipts} onReceiptUpdated={handleReceiptUpdated} />}
+        {receiptsLoading && <StatusLine>Loading receipts...</StatusLine>}
+        {receiptsError && (
+          <div className="text-center space-y-2">
+            <StatusLine error>Error loading receipts: {receiptsError}</StatusLine>
+            <Button
+              variant="outline"
+              onClick={() => (receiptsData ? fetchNextPage() : refetchReceipts())}
+              className="border-[#4e4e4e] text-white hover:bg-[#383838]"
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+        {receiptsData && (
+          <>
+            <EmployeeReceiptTable
+              receipts={receipts}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              onReceiptUpdated={refreshReceipts.afterEdit}
+              isStale={receiptsArePlaceholder}
+            />
+            {hasNextPage && !receiptsError && (
+              <LoadMoreButton onClick={() => fetchNextPage()} loading={isFetchingNextPage} />
+            )}
+          </>
+        )}
       
         <div className="mt-8 text-center">
           <Button

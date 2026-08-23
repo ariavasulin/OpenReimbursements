@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { requireAdmin } from '@/lib/requireAdmin';
 import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 import type { AdminUser } from '@/lib/types';
 import type { User } from '@supabase/supabase-js';
@@ -10,30 +10,8 @@ type AuthUserWithBan = User & { banned_until?: string };
 
 export async function GET(request: Request, { params }: RouteParams) {
   const { id: userId } = await params;
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
-  }
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('user_id', session.user.id)
-    .single();
-
-  if (profileError || !profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (gate.response) return gate.response;
 
   try {
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -76,30 +54,8 @@ export async function GET(request: Request, { params }: RouteParams) {
 
 export async function PATCH(request: Request, { params }: RouteParams) {
   const { id: userId } = await params;
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
-  }
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('user_id', session.user.id)
-    .single();
-
-  if (profileError || !profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (gate.response) return gate.response;
 
   try {
     const body = await request.json();
@@ -210,32 +166,11 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
 export async function DELETE(request: Request, { params }: RouteParams) {
   const { id: userId } = await params;
-  const supabase = await createSupabaseServerClient();
+  const gate = await requireAdmin();
+  if (gate.response) return gate.response;
+  const { userId: callerId } = gate;
 
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
-  }
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('user_id', session.user.id)
-    .single();
-
-  if (profileError || !profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
-
-  if (userId === session.user.id) {
+  if (userId === callerId) {
     return NextResponse.json({ error: 'Cannot ban yourself' }, { status: 400 });
   }
 
