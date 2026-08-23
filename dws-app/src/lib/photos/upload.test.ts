@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   DetailedError,
   HttpRequest,
@@ -6,7 +8,6 @@ import type {
 } from "tus-js-client";
 import {
   createResumableUpload,
-  kindFromMime,
   RESUMABLE_THRESHOLD_BYTES,
   sanitizeFilename,
   storagePaths,
@@ -231,10 +232,10 @@ describe("uploadOne", () => {
 });
 
 describe("uploadOne with a sidecar", () => {
-  const XMP = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF>
-    <rdf:Description exif:DateTimeOriginal="2021-03-04T05:06:07.000Z"/>
-  </rdf:RDF></x:xmpmeta>`;
+  const XMP = readFileSync(join(__dirname, "__fixtures__", "sample.xmp"));
   const xmpFile = (name = "IMG_0001.xmp") => new File([XMP], name);
+  // The fixture's exif:DateTimeOriginal carries no offset -> local time.
+  const FIXTURE_CAPTURED = new Date("2026-08-14T14:41:00");
 
   it("uploads the sidecar AFTER the original and BEFORE derivatives, and finalizes both columns", async () => {
     const { deps, uploads, finalized } = makeDeps();
@@ -297,7 +298,7 @@ describe("uploadOne with a sidecar", () => {
 
     expect(result.status).toBe("done");
     expect(finalized[0]).toMatchObject({
-      captured_at: "2021-03-04T05:06:07.000Z",
+      captured_at: FIXTURE_CAPTURED.toISOString(),
       captured_at_source: "xmp",
     });
   });
@@ -807,14 +808,7 @@ describe("sanitizeFilename", () => {
   });
 });
 
-describe("kindFromMime / storagePaths", () => {
-  it("classifies mime types", () => {
-    expect(kindFromMime("image/jpeg")).toBe("image");
-    expect(kindFromMime("video/quicktime")).toBe("video");
-    expect(kindFromMime("application/octet-stream")).toBe("file");
-    expect(kindFromMime("")).toBe("file");
-  });
-
+describe("storagePaths", () => {
   it("builds own-prefix keys, the sidecar named after the original", () => {
     expect(storagePaths("u1", "p1", "a b.jpg")).toEqual({
       original: "originals/u1/p1/a_b.jpg",

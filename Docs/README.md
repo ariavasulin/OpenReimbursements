@@ -15,6 +15,7 @@
 | [[Employee-Features]] | Mobile receipt submission, OCR auto-fill |
 | [[Components]] | UI component library |
 | [[Configuration]] | Environment setup, deployment |
+| [[photos-runbook]] | Photos hub operations: repair sweep, upload triage, kill switches |
 
 ## What This App Does
 

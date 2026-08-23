@@ -228,17 +228,10 @@ export function sanitizeFilename(name: string): string {
   return cleanExt ? `${cleanBase}.${cleanExt}` : cleanBase;
 }
 
-export function kindFromMime(mime: string): PhotoKind {
-  if (mime.startsWith("image/")) return "image";
-  if (mime.startsWith("video/")) return "video";
-  return "file";
-}
-
 export function storagePaths(uploaderId: string, photoId: string, filename: string) {
   const sanitized = sanitizeFilename(filename);
   return {
     original: `originals/${uploaderId}/${photoId}/${sanitized}`,
-    // The paired .xmp lives beside its original, named after it.
     sidecar: `originals/${uploaderId}/${photoId}/${sanitized.replace(/\.[^.]*$/, "")}.xmp`,
     thumb: `derived/${uploaderId}/${photoId}_thumb.webp`,
     preview: `derived/${uploaderId}/${photoId}_preview.webp`,
@@ -265,28 +258,27 @@ export async function uploadOne(
       deps.extractCapturedAt ?? defaultExtractCapturedAt;
     const makeDerivatives = deps.makeDerivatives ?? defaultMakeDerivatives;
 
-    // Extension-first classification; the original is re-wrapped (same
-    // bytes) so the stored object's Content-Type is the canonical mime, not
-    // the browser's guess.
     const classified = classifyFile(rawFile);
     const file = rewrap(rawFile, classified.mime);
 
-    // Content hash for dedupe (null over the cap). Big files pre-flight a
-    // server check so duplicate bytes never leave the phone; small ones just
-    // upload — the finalize unique index catches theirs cheaply.
-    const contentSha256 = await sha256(file);
-    if (
-      contentSha256 &&
-      file.size > RESUMABLE_THRESHOLD_BYTES &&
-      deps.exists
-    ) {
-      const alreadyInJob = await deps
-        .exists(meta.jobId, contentSha256)
-        .catch(() => false); // a broken check must never block an upload
-      if (alreadyInJob) return { status: "duplicate" };
+    // Content hash for dedupe (null over the cap), started but not awaited:
+    // only the big-file pre-flight needs it early, so everything else lets it
+    // overlap EXIF parsing and derivative encoding.
+    const hashing = sha256(file);
+    if (file.size > RESUMABLE_THRESHOLD_BYTES && deps.exists) {
+      // Big files pre-flight a server check so duplicate bytes never leave the
+      // phone; small ones just upload — the finalize unique index catches
+      // theirs cheaply.
+      const digest = await hashing;
+      if (digest) {
+        const alreadyInJob = await deps
+          .exists(meta.jobId, digest)
+          .catch(() => false); // a broken check must never block an upload
+        if (alreadyInJob) return { status: "duplicate" };
+      }
     }
 
-    const [capturedAt, derivatives] = await Promise.all([
+    const [capturedAt, derivatives, contentSha256] = await Promise.all([
       (async (): Promise<CapturedAt> => {
         // The sidecar's date only matters when the image itself has no EXIF
         // (extractCapturedAt owns that priority).
@@ -296,6 +288,7 @@ export async function uploadOne(
         return extractCapturedAt(file, { shutter: opts.shutter, sidecarDate });
       })().catch((): CapturedAt => ({ date: null, source: "upload" })),
       makeDerivatives(file).catch(() => null),
+      hashing,
     ]);
     const paths = storagePaths(meta.uploaderId, photoId, file.name);
 
@@ -322,6 +315,7 @@ export async function uploadOne(
     // row still lands with null sidecar columns — but unlike derivatives the
     // repair sweep can't recreate an .xmp, so leave a trace in the console.
     let sidecarPath: string | null = null;
+    let sidecarName: string | null = null;
     if (opts.sidecar) {
       const { error: sidecarError } = await deps.storage.upload(
         paths.sidecar,
@@ -334,6 +328,7 @@ export async function uploadOne(
         );
       } else {
         sidecarPath = paths.sidecar;
+        sidecarName = opts.sidecar.name;
       }
     }
 
@@ -362,8 +357,6 @@ export async function uploadOne(
     const payload: FinalizePayload = {
       id: photoId,
       job_id: meta.jobId,
-      // 'sidecar' never lands as its own kind — until pairing (Phase 3) a
-      // lone .xmp stays a plain file tile.
       kind: classified.kind === "sidecar" ? "file" : classified.kind,
       sheet_number: meta.sheetNumber?.trim() || null,
       tags: meta.tags ?? [],
@@ -378,7 +371,7 @@ export async function uploadOne(
       duration_secs: derivatives?.durationSecs ?? null,
       // Both or neither: a name without a stored object is useless.
       sidecar_path: sidecarPath,
-      sidecar_name: sidecarPath ? (opts.sidecar?.name ?? null) : null,
+      sidecar_name: sidecarName,
       content_sha256: contentSha256,
     };
 
@@ -387,7 +380,7 @@ export async function uploadOne(
     // duplicate (this job already has these bytes under ANOTHER photoId)
     // means the objects just uploaded are orphans: best-effort remove them.
     const finalizeResult = await deps.finalize(payload);
-    if (finalizeResult?.duplicate) {
+    if (finalizeResult.duplicate) {
       try {
         await deps.storage.remove?.(
           [paths.original, sidecarPath, thumbPath, previewPath].filter(

@@ -22,7 +22,7 @@ describe("classifyFile", () => {
 
   it("classifies .MOV as video/quicktime even with the browser's type set", () => {
     const c = classifyFile(file("IMG_5011.MOV", "video/quicktime"));
-    expect(c).toMatchObject({ kind: "video", mime: "video/quicktime", ext: "mov" });
+    expect(c).toMatchObject({ kind: "video", mime: "video/quicktime" });
   });
 
   it("classifies .heic as an image even when the browser leaves type empty", () => {

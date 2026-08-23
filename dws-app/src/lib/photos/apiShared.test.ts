@@ -12,13 +12,16 @@ describe("deletionPaths", () => {
       sidecar_path: "originals/u/p/a.xmp",
       playback_path: "derived/u/p_playback.mp4",
     });
-    expect(paths).toEqual([
-      "originals/u/p/a.jpg",
-      "derived/u/p_thumb.webp",
-      "derived/u/p_preview.webp",
-      "originals/u/p/a.xmp",
-      "derived/u/p_playback.mp4",
-    ]);
+    expect(paths).toHaveLength(5);
+    expect(new Set(paths)).toEqual(
+      new Set([
+        "originals/u/p/a.jpg",
+        "derived/u/p_thumb.webp",
+        "derived/u/p_preview.webp",
+        "originals/u/p/a.xmp",
+        "derived/u/p_playback.mp4",
+      ])
+    );
   });
 
   it("drops null and undefined paths", () => {

@@ -5,13 +5,12 @@
 import type { PhotoKind } from "./types";
 
 /** Pick-time kind: PhotoKind plus 'sidecar' (.xmp), which never becomes its
- * own row — it attaches to an image (Phase 3) or falls back to kind 'file'. */
+ * own row — it attaches to an image or falls back to kind 'file'. */
 export type PickKind = PhotoKind | "sidecar";
 
 export interface Classified {
   kind: PickKind;
   mime: string;
-  ext: string;
   file: File;
 }
 
@@ -45,11 +44,11 @@ export function extensionOf(name: string): string {
 export function classifyFile(file: File): Classified {
   const ext = extensionOf(file.name);
   const known = EXT[ext];
-  if (known) return { ...known, ext, file };
+  if (known) return { ...known, file };
   const t = file.type;
-  if (t.startsWith("image/")) return { kind: "image", mime: t, ext, file };
-  if (t.startsWith("video/")) return { kind: "video", mime: t, ext, file };
-  return { kind: "file", mime: t || "application/octet-stream", ext, file };
+  if (t.startsWith("image/")) return { kind: "image", mime: t, file };
+  if (t.startsWith("video/")) return { kind: "video", mime: t, file };
+  return { kind: "file", mime: t || "application/octet-stream", file };
 }
 
 /** Same bytes, canonical type — so Storage records the right Content-Type

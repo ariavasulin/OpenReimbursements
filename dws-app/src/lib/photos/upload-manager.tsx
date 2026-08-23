@@ -18,7 +18,6 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
 import { invalidatePhotoCaches, fetchJson } from "./api";
 import * as Q from "./upload-queue";
-import { pairByBasename } from "./sidecar";
 import {
   createResumableUpload,
   uploadOne,
@@ -35,7 +34,7 @@ type Action =
   | { type: "progress"; photoId: string; sentBytes: number }
   | { type: "fail"; photoId: string; error: string }
   | { type: "restore"; saved: Q.Persisted[]; now: number }
-  | { type: "repick"; files: File[] }
+  | { type: "repick"; queue: Q.Queue }
   | { type: "dismissDone" };
 
 function reducer(q: Q.Queue, a: Action): Q.Queue {
@@ -59,7 +58,7 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
     case "restore":
       return Q.restoreManifest(a.saved, a.now);
     case "repick":
-      return Q.adoptRepick(q, a.files).queue;
+      return a.queue;
     case "dismissDone":
       return Q.clearSettled(q);
   }
@@ -135,8 +134,8 @@ export function UploadManagerProvider({
   const running = useRef(false);
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  const savedManifest = useRef<string | null>(null);
 
-  // Restore the manifest once; persist on every change.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(MANIFEST_KEY);
@@ -148,12 +147,14 @@ export function UploadManagerProvider({
       /* no storage / bad JSON: start empty */
     }
   }, []);
+  // The manifest carries no progress, so it is byte-identical across the
+  // progress ticks that dominate queue changes — skip those writes.
   useEffect(() => {
+    const manifest = JSON.stringify(Q.toManifest(queue, Date.now()));
+    if (manifest === savedManifest.current) return;
+    savedManifest.current = manifest;
     try {
-      localStorage.setItem(
-        MANIFEST_KEY,
-        JSON.stringify(Q.toManifest(queue, Date.now()))
-      );
+      localStorage.setItem(MANIFEST_KEY, manifest);
     } catch {
       /* ignore */
     }
@@ -256,18 +257,13 @@ export function UploadManagerProvider({
   const value: Manager = {
     items: queue.items,
     active,
-    enqueue: (files, meta) => {
-      // Safety net: pick-time pairing (useCaptureBatch) already rejected
-      // lone sidecars; anything that still slips through gets named here.
-      const { rejected } = pairByBasename(files);
-      for (const r of rejected) toast.error(`${r.name} ${r.reason}`);
-      dispatch({ type: "enqueue", files, meta, now: Date.now() });
-    },
+    enqueue: (files, meta) =>
+      dispatch({ type: "enqueue", files, meta, now: Date.now() }),
     retry: (photoId) => dispatch({ type: "retry", photoId }),
     remove: (photoId) => dispatch({ type: "remove", photoId }),
     repick: (files) => {
-      const { unmatched } = Q.adoptRepick(queueRef.current, files);
-      dispatch({ type: "repick", files });
+      const { queue: next, unmatched } = Q.adoptRepick(queueRef.current, files);
+      dispatch({ type: "repick", queue: next });
       return unmatched;
     },
     dismissDone: () => dispatch({ type: "dismissDone" }),

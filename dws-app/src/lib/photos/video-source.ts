@@ -1,6 +1,6 @@
 // Resolves the one <source> the lightbox should hand a video slide, or
 // declares the video unplayable so the UI can show a download card instead
-// of a dead player. Pure: the caller injects publicUrl and canPlayType.
+// of a dead player.
 //
 // Why relabel quicktime: iPhone .MOV files are H.264/AAC in a QuickTime
 // container, and browsers that decode them (Safari, and Chrome in practice)
@@ -15,7 +15,7 @@ export type VideoSource = { src: string; type: string } | { unplayable: true };
 type CanPlay = (type: string) => string;
 
 /** The MIME label to probe/serve for this row's container. */
-export function containerMime(
+function containerMime(
   row: Pick<PhotoRow, "mime_type" | "original_name">
 ): string {
   const m = row.mime_type ?? "";
@@ -34,8 +34,7 @@ export function videoSource(
   canPlayType: CanPlay
 ): VideoSource {
   // A transcoded MP4 rendition, when one exists, plays everywhere — use it
-  // unconditionally. (The column arrives with the transcode work; until
-  // then rows carry no playback_path and this is never taken.)
+  // unconditionally.
   if (row.playback_path) {
     return { src: publicUrl(row.playback_path), type: "video/mp4" };
   }

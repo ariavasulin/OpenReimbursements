@@ -19,8 +19,6 @@ import { nextPreviewIndex, removeAt } from "@/lib/photos/batch";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
 // The batch is copied into local state so files can be removed before upload.
-// The sheet is compose-only: Upload hands the batch to the app-level upload
-// manager and closes; the tray (upload-tray.tsx) shows progress from there.
 
 function makePreviews(files: File[]): (string | null)[] {
   return files.map((file) =>
@@ -98,7 +96,7 @@ export default function UploadSheet({
   const removeFile = (index: number) => {
     const url = previews[index];
     if (url) URL.revokeObjectURL(url);
-    const next = removeAt({ files, previews }, index);
+    const next = removeAt(files, previews, index);
     setFiles(next.files);
     previewsRef.current = next.previews;
     setPreviews(next.previews);
@@ -111,29 +109,37 @@ export default function UploadSheet({
   };
 
   // dc:subject keywords from paired sidecars — SUGGESTED only, never
-  // auto-applied (tags stay a human decision).
-  const [sidecarKeywords, setSidecarKeywords] = useState<string[]>([]);
+  // auto-applied (tags stay a human decision). Keyed by primary file and read
+  // once per batch, so removing a thumbnail never re-reads the other .xmps.
+  const [keywordsByFile, setKeywordsByFile] = useState<Map<File, string[]>>(
+    new Map()
+  );
   useEffect(() => {
     if (!open) return;
-    const xmps = files.flatMap((file) => {
-      const sidecar = sidecars?.get(file);
-      return sidecar ? [sidecar] : [];
-    });
-    if (xmps.length === 0) {
-      setSidecarKeywords([]);
+    const pairs = sidecars ? [...sidecars] : [];
+    if (pairs.length === 0) {
+      setKeywordsByFile(new Map());
       return;
     }
     let cancelled = false;
-    void Promise.all(xmps.map(readSidecarMeta)).then((metas) => {
+    void Promise.all(
+      pairs.map(async ([primary, xmp]) => {
+        const meta = await readSidecarMeta(xmp);
+        return [primary, meta.keywords] as const;
+      })
+    ).then((entries) => {
       if (cancelled) return;
-      setSidecarKeywords([...new Set(metas.flatMap((meta) => meta.keywords))]);
+      setKeywordsByFile(new Map(entries));
     });
     return () => {
       cancelled = true;
     };
-  }, [open, files, sidecars]);
+  }, [open, sidecars]);
 
   const tagSuggestions = useMemo(() => {
+    const sidecarKeywords = [
+      ...new Set(files.flatMap((file) => keywordsByFile.get(file) ?? [])),
+    ];
     const query = tagInput.trim().toLowerCase();
     const unused = (tag: string) => !tags.includes(tag);
     // No query yet: surface the sidecar keywords themselves as chips.
@@ -141,7 +147,7 @@ export default function UploadSheet({
     return [...new Set([...sidecarKeywords, ...(knownTags ?? [])])]
       .filter((tag) => tag.toLowerCase().includes(query) && unused(tag))
       .slice(0, 6);
-  }, [tagInput, knownTags, tags, sidecarKeywords]);
+  }, [tagInput, knownTags, tags, keywordsByFile, files]);
 
   const addTag = (tag: string) => {
     setTags((previous) => appendTag(previous, tag));

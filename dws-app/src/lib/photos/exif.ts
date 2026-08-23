@@ -1,8 +1,6 @@
 import exifr from "exifr";
 import type { CapturedAtSource } from "./types";
 
-export type { CapturedAtSource };
-
 /** A capture time plus where it came from (see CapturedAtSource). */
 export interface CapturedAt {
   date: Date | null;

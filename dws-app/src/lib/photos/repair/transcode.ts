@@ -1,8 +1,4 @@
-// Thin ffmpeg wrappers for the repair sweep's video actions: probe a clip's
-// duration, pull a poster frame, and make the H.264/AAC playback rendition
-// Chrome and Firefox can play. Pure process-spawning — the route
-// (app/api/photos/repair/route.ts) owns storage downloads/uploads and row
-// updates. Runs on local files only; on Vercel that means /tmp.
+// Runs on local files only; on Vercel that means /tmp.
 //
 // Duration comes from ffmpeg's own header dump rather than ffprobe:
 // ffprobe-static ships every platform's binary (345 MB installed, 62 MB for
@@ -20,7 +16,7 @@ const run = promisify(execFile);
  * clip transcodes comfortably inside the route's 300 s maxDuration. */
 export const CAP = { bytes: 200 * 1024 * 1024, secs: 300 };
 
-/** Phase 6 kill switch: transcodes are planned only when PHOTOS_TRANSCODE=1. */
+/** Kill switch: transcodes are planned only when PHOTOS_TRANSCODE=1. */
 export const ENABLED = () => process.env.PHOTOS_TRANSCODE === "1";
 
 /** Why a clip won't be transcoded, or null when it's within the caps. */
@@ -32,7 +28,7 @@ export function capReason(bytes: number, durationSecs: number): string | null {
 
 /** Seconds from the `Duration: HH:MM:SS.ss` line ffmpeg prints to stderr, or
  * 0 when it reports N/A (streams with no container duration) or says nothing
- * we recognize. Exported for tests — the parsing is the fragile part. */
+ * we recognize. */
 export function parseDuration(stderr: string): number {
   const m = /Duration:\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(stderr);
   if (!m) return 0;

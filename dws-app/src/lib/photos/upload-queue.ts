@@ -1,7 +1,6 @@
 // Pure state for the app-level upload queue. The manager (upload-manager.tsx)
 // dispatches these transitions; nothing here touches React, storage, or the
-// network, so every rule (retry keeps the photoId, manifests expire, re-picks
-// match by identity) is unit-testable.
+// network.
 
 import { classifyFile } from "./classify";
 import { pairByBasename, type Rejected } from "./sidecar";
@@ -40,7 +39,9 @@ export interface Queue {
   files: Map<string, { file: File; sidecar?: File }>;
 }
 
-export type Persisted = Omit<QueueItem, "status"> & { status: "interrupted" };
+export type Persisted = Omit<QueueItem, "status" | "sentBytes"> & {
+  status: "interrupted";
+};
 
 export const MANIFEST_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -135,7 +136,7 @@ export function toManifest(q: Queue, now: number): Persisted[] {
           i.status === "interrupted") &&
         now - i.enqueuedAt < MANIFEST_TTL_MS
     )
-    .map((i) => ({ ...i, status: "interrupted" as const }));
+    .map(({ sentBytes, ...i }) => ({ ...i, status: "interrupted" as const }));
 }
 
 export function restoreManifest(saved: Persisted[], now: number): Queue {

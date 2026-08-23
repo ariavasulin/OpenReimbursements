@@ -5,6 +5,7 @@ import {
   cleanSheet,
   cleanTags,
   escapeForIlike,
+  isSha256,
   PHOTO_COLUMNS,
 } from '@/lib/photos/apiShared';
 import {
@@ -325,10 +326,7 @@ export async function POST(request: Request) {
           : null,
       // Lowercase hex SHA-256 or nothing — the per-job unique index
       // (photos_job_sha) only bites on real hashes.
-      content_sha256:
-        typeof content_sha256 === 'string' && /^[0-9a-f]{64}$/.test(content_sha256)
-          ? content_sha256
-          : null,
+      content_sha256: isSha256(content_sha256) ? content_sha256 : null,
     })
     .select(PHOTO_COLUMNS)
     .single();

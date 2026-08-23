@@ -42,16 +42,26 @@ declare module "yet-another-react-lightbox" {
     poster: string;
     /** Content-Disposition download URL for the original. */
     download: string;
-    /** Original filename, for alt text. */
     name: string;
   }
 }
 
-/** `canPlayType` probe; SSR has no `document`, so report "can't play". */
-const canPlay = (type: string): string =>
-  typeof document === "undefined"
-    ? ""
-    : document.createElement("video").canPlayType(type);
+/**
+ * `canPlayType` probe; SSR has no `document`, so report "can't play". The
+ * answer depends only on the MIME string, so cache it — the slides memo
+ * re-probes every video row each time `photos` grows by a page.
+ */
+const canPlayCache = new Map<string, string>();
+const canPlay = (type: string): string => {
+  const cached = canPlayCache.get(type);
+  if (cached !== undefined) return cached;
+  const answer =
+    typeof document === "undefined"
+      ? ""
+      : document.createElement("video").canPlayType(type);
+  canPlayCache.set(type, answer);
+  return answer;
+};
 
 interface PhotoLightboxProps {
   /** Openable photos in display order (the current filtered/grouped set). */
@@ -116,10 +126,8 @@ export default function PhotoLightbox({
             alt: item.original_name ?? "",
           };
         }
-        // Playback streams the original (storage serves range requests;
-        // there's no transcode yet) behind the generated poster frame.
-        // videoSource relabels quicktime as video/mp4 and, where even that
-        // can't play, degrades to the download card.
+        // Playback streams from storage (which serves range requests)
+        // behind the generated poster frame.
         const source = videoSource(item, publicUrl, canPlay);
         if ("unplayable" in source) {
           return {
@@ -176,6 +184,7 @@ export default function PhotoLightbox({
   const canDelete =
     !!photo && !!me && (photo.uploader_id === me.id || me.role === "admin");
   const fileInfo = photo ? formatFileInfo(photo) : null;
+  const sidecarUrl = photo ? sidecarDownloadUrl(photo) : null;
 
   const startEditing = () => {
     if (!photo) return;
@@ -271,9 +280,9 @@ export default function PhotoLightbox({
           >
             Download original
           </a>
-          {sidecarDownloadUrl(photo) && (
+          {sidecarUrl && (
             <a
-              href={sidecarDownloadUrl(photo)!}
+              href={sidecarUrl}
               className="flex-1 rounded-lg border border-[#4e4e4e] bg-[#2e2e2e]/90 py-2 text-center text-xs font-medium text-white hover:border-[#2680FC]"
             >
               Download XMP

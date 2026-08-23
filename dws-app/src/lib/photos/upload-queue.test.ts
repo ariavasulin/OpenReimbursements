@@ -62,7 +62,7 @@ describe("upload-queue", () => {
   it("manifest strips files, restores as interrupted, expires after 24h", () => {
     const q = enq(Q.emptyQueue(), [f("a.jpg")]);
     const saved = Q.toManifest(q, 1);
-    expect(JSON.stringify(saved)).not.toContain("File");
+    expect(Q.restoreManifest(saved, 1).files.size).toBe(0);
     expect(Q.restoreManifest(saved, 1).items[0].status).toBe("interrupted");
     expect(Q.restoreManifest(saved, Q.MANIFEST_TTL_MS + 1).items).toHaveLength(0);
   });

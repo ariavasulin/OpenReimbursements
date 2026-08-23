@@ -4,13 +4,15 @@
 // with plain objects. Re-running an applied plan yields [] — idempotence is
 // what makes the daily cron and manual runs safely overlappable.
 
+import type { PhotoKind } from "../types";
+
 /** The columns the sweep needs from a photos row with a hole. playback_*
  * stay optional so plain test rows and callers that don't select them
  * still typecheck; absent reads as "no rendition, nothing skipped". */
 export interface RepairRow {
   id: string;
   uploader_id: string;
-  kind: "image" | "video" | "file";
+  kind: PhotoKind;
   mime_type: string | null;
   original_path: string;
   original_bytes: number | null;
@@ -32,7 +34,7 @@ export type Action =
   | { action: "fillImageDerivatives"; photoId: string }
   | { action: "markFileTile"; photoId: string; reason: string }
   | { action: "makeVideoPoster"; photoId: string }
-  /** Phase 6 — planned only when opts.transcode is on. */
+  /** Planned only when `opts.transcode` is on. */
   | { action: "transcodeVideo"; photoId: string }
   | { action: "deleteOrphanObject"; path: string }
   | { action: "deleteDeadRow"; photoId: string };
@@ -57,7 +59,7 @@ export const SETTLE_MS = 10 * 60 * 1000;
 export const ORPHAN_MS = 24 * 60 * 60 * 1000;
 
 export interface SweepOpts {
-  /** Phase 6 gate (PHOTOS_TRANSCODE=1). Off: transcodeVideo is never planned. */
+  /** Kill switch (PHOTOS_TRANSCODE=1). Off: transcodeVideo is never planned. */
   transcode?: boolean;
   /** Orphan age override for drills (?olderThan=0 on a manual POST). */
   orphanMs?: number;

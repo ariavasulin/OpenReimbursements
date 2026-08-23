@@ -33,8 +33,8 @@ export interface PhotoRow {
   duration_secs: number | null;
   /** Repair-cron H.264 rendition for browsers that can't play the original
    * container; null until the sweep transcodes the video (or forever, when
-   * playback_skipped_reason is set). Optional so cached pre-Phase-6 rows
-   * without the field stay assignable; treat `undefined` as null. */
+   * playback_skipped_reason is set). Optional so cached rows without the
+   * field stay assignable; treat `undefined` as null. */
   playback_path?: string | null;
   /** Attached XMP sidecar beside the original (image rows only). */
   sidecar_path: string | null;

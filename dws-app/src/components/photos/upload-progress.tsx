@@ -2,17 +2,14 @@
 
 import type { ReactNode } from "react";
 import { formatBytes } from "@/lib/photos/format";
-import type { UploadResult } from "@/lib/photos/upload";
+import type { QueueStatus } from "@/lib/photos/upload-queue";
 
-// Per-file progress rows for the upload tray. Callers pass a name + item per
-// row plus whatever action buttons that row needs (Retry, Remove, Re-pick) —
-// the rows themselves only render status. Done rows stay done — a partial batch keeps its successes
-// (4 of 5 photos landing on jobsite LTE is a success to keep).
+// Per-file progress rows for the upload tray.
 
 export interface UploadItem {
-  status: UploadResult["status"] | "pending" | "uploading" | "interrupted";
+  status: QueueStatus;
   sentBytes: number;
-  totalBytes: number;
+  size: number;
   error?: string;
 }
 
@@ -28,7 +25,7 @@ const STATUS_COLORS: Record<UploadItem["status"], { text: string; bar: string }>
     duplicate: { text: "text-[#a0a0a0]", bar: "bg-[#4ade80]" },
     failed: { text: "text-red-400", bar: "bg-red-500" },
     interrupted: { text: "text-amber-400", bar: "bg-amber-400" },
-    pending: { text: "text-[#a0a0a0]", bar: "bg-[#2680FC]" },
+    queued: { text: "text-[#a0a0a0]", bar: "bg-[#2680FC]" },
     uploading: { text: "text-[#a0a0a0]", bar: "bg-[#2680FC]" },
   };
 
@@ -42,19 +39,19 @@ function statusLabel(item: UploadItem): string {
       return "Failed";
     case "interrupted":
       return "Interrupted";
-    case "pending":
+    case "queued":
       return "Waiting";
     case "uploading":
       return item.sentBytes > 0
-        ? `${formatBytes(item.sentBytes)} / ${formatBytes(item.totalBytes)}`
+        ? `${formatBytes(item.sentBytes)} / ${formatBytes(item.size)}`
         : "Uploading...";
   }
 }
 
 function percent(item: UploadItem): number {
   if (item.status === "done" || item.status === "duplicate") return 100;
-  if (item.totalBytes <= 0) return 0;
-  return Math.min(100, Math.round((item.sentBytes / item.totalBytes) * 100));
+  if (item.size <= 0) return 0;
+  return Math.min(100, Math.round((item.sentBytes / item.size) * 100));
 }
 
 export default function UploadProgress({ rows }: { rows: UploadRow[] }) {

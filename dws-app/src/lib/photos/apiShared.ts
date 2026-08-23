@@ -36,6 +36,12 @@ export function cleanTags(input: unknown): string[] {
   ].slice(0, MAX_TAGS);
 }
 
+/** True for a lowercase hex SHA-256 digest — the only content_sha256 shape
+ * the per-job unique index (photos_job_sha) is meant to bite on. */
+export function isSha256(v: unknown): v is string {
+  return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+}
+
 /** Storage objects DELETE removes alongside a photos row (order is
  * irrelevant; nulls and absent columns drop out). */
 export function deletionPaths(row: {

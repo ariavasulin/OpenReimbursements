@@ -1,12 +1,6 @@
 #!/usr/bin/env node
 // One-time repair for .xmp files that uploaded as their own kind='file' rows
-// before sidecar pairing existed (Phase 3 of the upload pipeline hardening).
-//
-// For each kind='file' row whose name ends in .xmp, find THE image row with
-// the same uploader, job, and basename; move the stored object beside that
-// image's original (originals/{uploader}/{imageId}/{base}.xmp), set
-// sidecar_path/sidecar_name on the image row, and delete the orphan row.
-// Unmatched and ambiguous orphans are reported, never deleted.
+// before sidecar pairing existed.
 //
 // Env:   NEXT_PUBLIC_SUPABASE_URL (or SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY
 // Usage: node scripts/attach-orphan-sidecars.mjs            (dry run, default)

@@ -2,20 +2,13 @@
 // `previews` are two arrays indexed by the same file position, so any
 // removal has to shift both together.
 
-export interface BatchState<TFile, TPreview> {
-  files: TFile[];
-  previews: TPreview[];
-}
-
-export function removeAt<TFile, TPreview>(
-  state: BatchState<TFile, TPreview>,
+export function removeAt(
+  files: File[],
+  previews: (string | null)[],
   index: number
-): BatchState<TFile, TPreview> {
-  const drop = <T,>(list: T[]) => list.filter((_, i) => i !== index);
-  return {
-    files: drop(state.files),
-    previews: drop(state.previews),
-  };
+) {
+  const drop = <T>(list: T[]) => list.filter((_, i) => i !== index);
+  return { files: drop(files), previews: drop(previews) };
 }
 
 /** null when nothing is left. */

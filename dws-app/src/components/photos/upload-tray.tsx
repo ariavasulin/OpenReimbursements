@@ -8,7 +8,6 @@ import { pickerAccept } from "@/components/photos/capture-bar";
 import { readPickedFiles } from "@/components/photos/multi-shot-camera";
 import UploadProgress, {
   RowButton,
-  type UploadItem,
   type UploadRow,
 } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";
@@ -17,13 +16,6 @@ import type { QueueItem } from "@/lib/photos/upload-queue";
 // The always-visible upload status bar, pinned above the CaptureBar on every
 // photos page. Collapsed it is one summary line; expanded it lists per-file
 // rows with Retry (failed), Re-pick (interrupted after a reload), and Remove.
-
-const toItem = (i: QueueItem): UploadItem => ({
-  status: i.status === "queued" ? "pending" : i.status,
-  sentBytes: i.sentBytes,
-  totalBytes: i.size,
-  error: i.error,
-});
 
 function summary(items: QueueItem[], active: boolean): string {
   const count = (statuses: QueueItem["status"][]) =>
@@ -67,7 +59,7 @@ export default function UploadTray({
 
   const rows: UploadRow[] = items.map((item) => ({
     name: item.name,
-    item: toItem(item),
+    item,
     actions:
       item.status === "failed" ? (
         <>

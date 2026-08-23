@@ -1,10 +1,8 @@
-// Server-side derivative fill for images whose client-side pass failed
-// (HEIC picked on Chrome, killed tab, etc.): Supabase's image transform
-// endpoint renders the stored original, and the results land on the same
-// derived/ paths the client would have written.
-
+// Server-side derivative fill for images the browser could not decode — a HEIC
+// picked in Chrome, or a tab killed between the original and its derivatives.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { THUMB_MAX_DIM, PREVIEW_MAX_DIM } from "../derivatives";
+import type { RepairRow } from "./sweep";
 
 export type FillResult =
   | { ok: true }
@@ -12,24 +10,20 @@ export type FillResult =
      * caller downgrades the row to a deliberate file tile with this reason. */
     { ok: false; reason: string };
 
-export interface FillRow {
-  id: string;
-  uploader_id: string;
-  original_path: string;
-}
-
 /** Render the original at `width` px. The Accept header is what selects WebP
  * output (Supabase auto-formats on Accept; an explicit format param is not
  * part of the transform API). Non-2xx resolves null with the status. */
 async function render(
+  admin: SupabaseClient,
   originalPath: string,
   width: number
 ): Promise<{ body: Blob; contentType: string } | { status: number }> {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const url =
-    `${base}/storage/v1/render/image/public/photos/` +
-    `${encodeURI(originalPath)}?width=${width}&resize=contain&quality=80`;
-  const res = await fetch(url, { headers: { Accept: "image/webp" } });
+  const { data } = admin.storage.from("photos").getPublicUrl(originalPath, {
+    transform: { width, resize: "contain", quality: 80 },
+  });
+  const res = await fetch(data.publicUrl, {
+    headers: { Accept: "image/webp" },
+  });
   if (!res.ok) return { status: res.status };
   return {
     body: await res.blob(),
@@ -39,7 +33,7 @@ async function render(
 
 export async function fillImageDerivatives(
   admin: SupabaseClient,
-  row: FillRow
+  row: Pick<RepairRow, "id" | "uploader_id" | "original_path">
 ): Promise<FillResult> {
   // Same derived/ keys the client's storagePaths() builds — spelled out here
   // so the server bundle doesn't drag in the tus-js-client upload module.
@@ -49,8 +43,8 @@ export async function fillImageDerivatives(
   };
 
   const [thumb, preview] = await Promise.all([
-    render(row.original_path, THUMB_MAX_DIM),
-    render(row.original_path, PREVIEW_MAX_DIM),
+    render(admin, row.original_path, THUMB_MAX_DIM),
+    render(admin, row.original_path, PREVIEW_MAX_DIM),
   ]);
   if ("status" in thumb) return { ok: false, reason: `render ${thumb.status}` };
   if ("status" in preview)

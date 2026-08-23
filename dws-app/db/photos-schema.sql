@@ -102,20 +102,20 @@ create policy photos_storage_update on storage.objects
     and (storage.foldername(name))[2] = auth.uid()::text
   );
 
--- Upload pipeline hardening, Phase 2: date provenance. Legacy rows default to
--- 'upload' (their captured_at may be the server's now() fallback).
+-- Date provenance. Legacy rows default to 'upload' (their captured_at may be
+-- the server's now() fallback).
 alter table public.photos
   add column if not exists captured_at_source text not null default 'upload'
     check (captured_at_source in ('exif','xmp','camera','file','upload'));
 
--- Upload pipeline hardening, Phase 3: XMP sidecars attach to their image row.
+-- XMP sidecars attach to their image row.
 -- The .xmp object lives beside the original (originals/{uid}/{photo_id}/{base}.xmp);
 -- sidecar_name keeps the filename as uploaded so downloads restore it.
 alter table public.photos
   add column if not exists sidecar_path text,
   add column if not exists sidecar_name text;
 
--- Upload pipeline hardening, Phase 6: server-made H.264 playback rendition.
+-- Server-made H.264 playback rendition.
 -- playback_path points at derived/{uid}/{photo_id}_playback.mp4 once the
 -- repair cron transcodes the original; playback_skipped_reason records why a
 -- video was deliberately not transcoded (over the size/duration cap) so the
@@ -124,10 +124,10 @@ alter table public.photos
   add column if not exists playback_path text,
   add column if not exists playback_skipped_reason text;
 
--- Upload pipeline hardening, Phase 7: content-hash dedupe. content_sha256 is
--- the SHA-256 of the original's bytes (null for files over the 100 MB hashing
--- cap or clients without WebCrypto). The partial unique index makes the same
--- bytes land at most once PER JOB — the same photo in two jobs is two rows.
+-- Content-hash dedupe. content_sha256 is the SHA-256 of the original's bytes
+-- (null for files over the 100 MB hashing cap or clients without WebCrypto).
+-- The partial unique index makes the same bytes land at most once PER JOB —
+-- the same photo in two jobs is two rows.
 alter table public.photos
   add column if not exists content_sha256 text;
 create unique index if not exists photos_job_sha
