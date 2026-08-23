@@ -416,7 +416,7 @@ export default function UploadSheet({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex max-h-[85dvh] flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 sm:max-w-md">
+      <DialogContent className="flex h-[min(85dvh,640px)] max-h-[85dvh] flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 sm:max-w-md">
         <DialogTitle className="sr-only">{title}</DialogTitle>
         {body}
         {preview}
