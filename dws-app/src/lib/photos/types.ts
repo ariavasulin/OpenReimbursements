@@ -31,6 +31,10 @@ export interface PhotoRow {
   thumb_path: string | null;
   preview_path: string | null;
   duration_secs: number | null;
+  /** Attached XMP sidecar beside the original (image rows only). */
+  sidecar_path: string | null;
+  /** The sidecar's filename as uploaded (download restores it). */
+  sidecar_name: string | null;
   created_at: string;
   uploader: { full_name: string | null } | null;
   /** Embedded job, for cross-job grids (search results grouped by job). */

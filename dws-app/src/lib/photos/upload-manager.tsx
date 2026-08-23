@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
 import { invalidatePhotoCaches, fetchJson } from "./api";
 import * as Q from "./upload-queue";
+import { pairByBasename } from "./sidecar";
 import {
   createResumableUpload,
   uploadOne,
@@ -43,7 +44,7 @@ type Action =
 function reducer(q: Q.Queue, a: Action): Q.Queue {
   switch (a.type) {
     case "enqueue":
-      return Q.enqueue(q, a.files, a.meta, a.now);
+      return Q.enqueue(q, a.files, a.meta, a.now).queue;
     case "start":
       return Q.start(q, a.photoId);
     case "progress":
@@ -205,6 +206,7 @@ export function UploadManagerProvider({
               shutter: current.shutterAt
                 ? new Date(current.shutterAt)
                 : undefined,
+              sidecar: entry.sidecar,
             }
           );
           console.info(
@@ -244,8 +246,13 @@ export function UploadManagerProvider({
     enabled: ENABLED,
     items: queue.items,
     active,
-    enqueue: (files, meta) =>
-      dispatch({ type: "enqueue", files, meta, now: Date.now() }),
+    enqueue: (files, meta) => {
+      // Safety net: pick-time pairing (useCaptureBatch) already rejected
+      // lone sidecars; anything that still slips through gets named here.
+      const { rejected } = pairByBasename(files);
+      for (const r of rejected) toast.error(`${r.name} ${r.reason}`);
+      dispatch({ type: "enqueue", files, meta, now: Date.now() });
+    },
     retry: (photoId) => dispatch({ type: "retry", photoId }),
     remove: (photoId) => dispatch({ type: "remove", photoId }),
     repick: (files) => {

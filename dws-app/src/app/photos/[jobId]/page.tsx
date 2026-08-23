@@ -332,6 +332,7 @@ export default function JobPhotosPage() {
         defaultJobId={jobId}
         onUploaded={refetchPhotos}
         capturedAtOverrides={batch.capturedAtOverrides}
+        sidecars={batch.sidecars}
       />
 
       <PhotoLightbox

@@ -22,6 +22,8 @@ function makePhoto(overrides: Partial<PhotoRow> = {}): PhotoRow {
     thumb_path: "derived/user-1/x_thumb.webp",
     preview_path: "derived/user-1/x_preview.webp",
     duration_secs: null,
+    sidecar_path: null,
+    sidecar_name: null,
     created_at: "2026-08-14T15:00:00.000Z",
     uploader: { full_name: "Marco Reyes" },
     job: { id: "job-1", job_number: "3612", name: "Museum Tower Penthouse" },

@@ -13,7 +13,12 @@ import "yet-another-react-lightbox/plugins/counter.css";
 import { supabase } from "@/lib/supabaseClient";
 import { fetchJobs } from "@/lib/photos/api";
 import { formatBytes } from "@/lib/photos/format";
-import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
+import {
+  downloadUrl,
+  previewUrl,
+  publicUrl,
+  sidecarDownloadUrl,
+} from "@/lib/photos/urls";
 import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
 import type { PhotoRow } from "@/lib/photos/types";
 
@@ -231,6 +236,14 @@ export default function PhotoLightbox({
           >
             Download original
           </a>
+          {sidecarDownloadUrl(photo) && (
+            <a
+              href={sidecarDownloadUrl(photo)!}
+              className="flex-1 rounded-lg border border-[#4e4e4e] bg-[#2e2e2e]/90 py-2 text-center text-xs font-medium text-white hover:border-[#2680FC]"
+            >
+              Download XMP
+            </a>
+          )}
           <button
             type="button"
             onClick={startEditing}

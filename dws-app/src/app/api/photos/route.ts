@@ -228,6 +228,8 @@ export async function POST(request: Request) {
     thumb_path,
     preview_path,
     duration_secs,
+    sidecar_path,
+    sidecar_name,
   } = body;
 
   if (typeof id !== 'string' || !isUuid(id)) {
@@ -260,6 +262,18 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+  }
+
+  // The sidecar lives beside the original, under THIS photo's own prefix.
+  if (
+    sidecar_path != null &&
+    (typeof sidecar_path !== 'string' ||
+      !sidecar_path.startsWith(`originals/${userId}/${id}/`))
+  ) {
+    return NextResponse.json(
+      { error: "sidecar_path must be under this photo's own prefix" },
+      { status: 400 }
+    );
   }
 
   const capturedAtDate =
@@ -299,6 +313,14 @@ export async function POST(request: Request) {
       duration_secs:
         typeof duration_secs === 'number' && Number.isFinite(duration_secs)
           ? duration_secs
+          : null,
+      sidecar_path: typeof sidecar_path === 'string' ? sidecar_path : null,
+      // A name only makes sense alongside a stored sidecar object.
+      sidecar_name:
+        typeof sidecar_path === 'string' &&
+        typeof sidecar_name === 'string' &&
+        sidecar_name
+          ? sidecar_name
           : null,
     })
     .select(PHOTO_COLUMNS)

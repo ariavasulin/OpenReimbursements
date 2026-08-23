@@ -112,6 +112,7 @@ export default function PhotosHomePage() {
         onOpenChange={batch.setSheetOpen}
         onUploaded={() => invalidatePhotoCaches(queryClient)}
         capturedAtOverrides={batch.capturedAtOverrides}
+        sidecars={batch.sidecars}
       />
     </main>
   );

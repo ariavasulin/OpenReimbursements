@@ -55,6 +55,7 @@ export default function CapturePage() {
             uploadedRef.current = true;
           }}
           capturedAtOverrides={batch.capturedAtOverrides}
+          sidecars={batch.sidecars}
         />
 
         <UploadTray maxWidthClass="max-w-2xl" />

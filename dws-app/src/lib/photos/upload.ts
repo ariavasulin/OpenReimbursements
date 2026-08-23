@@ -8,6 +8,7 @@ import {
   type CapturedAt,
 } from "./exif";
 import { classifyFile, rewrap } from "./classify";
+import { readSidecarMeta } from "./sidecar";
 import {
   makeDerivatives as defaultMakeDerivatives,
   type Derivatives,
@@ -45,6 +46,10 @@ export interface FinalizePayload {
   thumb_path: string | null;
   preview_path: string | null;
   duration_secs: number | null;
+  /** Attached .xmp beside the original; both null when there is none (or its
+   * upload failed — the row still lands). */
+  sidecar_path: string | null;
+  sidecar_name: string | null;
 }
 
 export interface PhotoStorage {
@@ -217,8 +222,11 @@ export function kindFromMime(mime: string): PhotoKind {
 }
 
 export function storagePaths(uploaderId: string, photoId: string, filename: string) {
+  const sanitized = sanitizeFilename(filename);
   return {
-    original: `originals/${uploaderId}/${photoId}/${sanitizeFilename(filename)}`,
+    original: `originals/${uploaderId}/${photoId}/${sanitized}`,
+    // The paired .xmp lives beside its original, named after it.
+    sidecar: `originals/${uploaderId}/${photoId}/${sanitized.replace(/\.[^.]*$/, "")}.xmp`,
     thumb: `derived/${uploaderId}/${photoId}_thumb.webp`,
     preview: `derived/${uploaderId}/${photoId}_preview.webp`,
   };
@@ -233,8 +241,9 @@ export async function uploadOne(
   meta: UploadMeta,
   deps: UploadDeps,
   onBytes?: ByteProgress,
-  /** Per-file extras: the in-app camera shutter time (date source 'camera'). */
-  opts: { shutter?: Date } = {}
+  /** Per-file extras: the in-app camera shutter time (date source 'camera')
+   * and the paired .xmp sidecar (uploaded beside the original). */
+  opts: { shutter?: Date; sidecar?: File } = {}
 ): Promise<UploadResult> {
   const failed = (error: string): UploadResult => ({ status: "failed", error });
 
@@ -249,9 +258,14 @@ export async function uploadOne(
     const classified = classifyFile(rawFile);
     const file = rewrap(rawFile, classified.mime);
     const [capturedAt, derivatives] = await Promise.all([
-      extractCapturedAt(file, { shutter: opts.shutter }).catch(
-        (): CapturedAt => ({ date: null, source: "upload" })
-      ),
+      (async (): Promise<CapturedAt> => {
+        // The sidecar's date only matters when the image itself has no EXIF
+        // (extractCapturedAt owns that priority).
+        const sidecarDate = opts.sidecar
+          ? (await readSidecarMeta(opts.sidecar)).capturedAt
+          : null;
+        return extractCapturedAt(file, { shutter: opts.shutter, sidecarDate });
+      })().catch((): CapturedAt => ({ date: null, source: "upload" })),
       makeDerivatives(file).catch(() => null),
     ]);
     const paths = storagePaths(meta.uploaderId, photoId, file.name);
@@ -275,7 +289,26 @@ export async function uploadOne(
     }
     onBytes?.(file.size, file.size);
 
-    // 2. Derivatives (small, best-effort). If one fails the row still lands
+    // 2. Sidecar (tiny, best-effort) right after its original. On failure the
+    // row still lands with null sidecar columns — but unlike derivatives the
+    // repair sweep can't recreate an .xmp, so leave a trace in the console.
+    let sidecarPath: string | null = null;
+    if (opts.sidecar) {
+      const { error: sidecarError } = await deps.storage.upload(
+        paths.sidecar,
+        opts.sidecar,
+        { contentType: "application/rdf+xml", upsert: true }
+      );
+      if (sidecarError) {
+        console.warn(
+          `photos.upload sidecar failed photoId=${photoId} err=${sidecarError.message}`
+        );
+      } else {
+        sidecarPath = paths.sidecar;
+      }
+    }
+
+    // 3. Derivatives (small, best-effort). If one fails the row still lands
     // with null paths — exactly the state the repair loop fills.
     let thumbPath: string | null = null;
     let previewPath: string | null = null;
@@ -296,7 +329,7 @@ export async function uploadOne(
       }
     }
 
-    // 3. Finalize — the row existing is what makes the photo "in".
+    // 4. Finalize — the row existing is what makes the photo "in".
     const payload: FinalizePayload = {
       id: photoId,
       job_id: meta.jobId,
@@ -314,6 +347,9 @@ export async function uploadOne(
       thumb_path: thumbPath,
       preview_path: previewPath,
       duration_secs: derivatives?.durationSecs ?? null,
+      // Both or neither: a name without a stored object is useless.
+      sidecar_path: sidecarPath,
+      sidecar_name: sidecarPath ? (opts.sidecar?.name ?? null) : null,
     };
 
     // alreadyExists (an idempotent replay of a photoId that finalized before

@@ -3,6 +3,8 @@
 // network, so every rule (retry keeps the photoId, manifests expire, re-picks
 // match by identity) is unit-testable.
 
+import { classifyFile } from "./classify";
+import { pairByBasename, type Rejected } from "./sidecar";
 import type { BatchMeta } from "./upload";
 
 export type QueueStatus =
@@ -28,7 +30,7 @@ export interface QueueItem {
   error?: string;
   /** Shutter time for in-app camera shots (ISO). */
   shutterAt?: string;
-  /** Phase 3: paired .xmp filename. */
+  /** Paired .xmp filename (the sidecar File rides in Queue.files). */
   sidecarName?: string;
 }
 
@@ -44,16 +46,24 @@ export const MANIFEST_TTL_MS = 24 * 60 * 60 * 1000;
 
 export const emptyQueue = (): Queue => ({ items: [], files: new Map() });
 
+/**
+ * Add a picked batch. Runs sidecar pairing internally: a .xmp never becomes
+ * its own item — it rides on its image's entry (and manifest as sidecarName).
+ * Rejected sidecars (no same-basename image in this batch) surface to the
+ * caller for a toast.
+ */
 export function enqueue(
   q: Queue,
   files: File[],
   meta: BatchMeta,
   now: number,
   newId: () => string = () => crypto.randomUUID()
-): Queue {
+): { queue: Queue; rejected: Rejected[] } {
+  const { pairs, rejected } = pairByBasename(files);
   const items = [...q.items];
   const map = new Map(q.files);
-  for (const file of files) {
+  for (const pair of pairs) {
+    const file = pair.primary.file;
     const photoId = newId();
     items.push({
       photoId,
@@ -68,10 +78,11 @@ export function enqueue(
       status: "queued",
       sentBytes: 0,
       shutterAt: meta.shutterAt?.get(file)?.toISOString(),
+      sidecarName: pair.sidecar?.file.name,
     });
-    map.set(photoId, { file });
+    map.set(photoId, { file, sidecar: pair.sidecar?.file });
   }
-  return { items, files: map };
+  return { queue: { items, files: map }, rejected };
 }
 
 const patch = (q: Queue, photoId: string, p: Partial<QueueItem>): Queue => ({
@@ -136,7 +147,11 @@ export function restoreManifest(saved: Persisted[], now: number): Queue {
   };
 }
 
-/** Re-picked files that match an interrupted entry (name+size+mtime) become queued again. */
+/**
+ * Re-picked files that match an interrupted entry (name+size+mtime) become
+ * queued again. A re-picked .xmp re-attaches to the entry that recorded it as
+ * sidecarName (primaries adopt first, so picking the pair together works).
+ */
 export function adoptRepick(
   q: Queue,
   files: File[]
@@ -144,7 +159,12 @@ export function adoptRepick(
   const map = new Map(q.files);
   let items = q.items;
   const unmatched: File[] = [];
+  const sidecars: File[] = [];
   for (const file of files) {
+    if (classifyFile(file).kind === "sidecar") {
+      sidecars.push(file);
+      continue;
+    }
     const hit = items.find(
       (i) =>
         i.status === "interrupted" &&
@@ -158,6 +178,20 @@ export function adoptRepick(
     }
     map.set(hit.photoId, { file });
     items = items.map((i) => (i === hit ? { ...i, status: "queued" as const } : i));
+  }
+  for (const file of sidecars) {
+    const owner = items.find(
+      (i) =>
+        (i.status === "queued" || i.status === "interrupted") &&
+        i.sidecarName === file.name &&
+        map.has(i.photoId)
+    );
+    const entry = owner ? map.get(owner.photoId) : undefined;
+    if (!owner || !entry) {
+      unmatched.push(file);
+      continue;
+    }
+    map.set(owner.photoId, { ...entry, sidecar: file });
   }
   return { queue: { items, files: map }, unmatched };
 }

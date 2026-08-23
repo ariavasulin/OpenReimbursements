@@ -25,6 +25,7 @@ import UploadProgress, {
 } from "@/components/photos/upload-progress";
 import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
 import { fetchJobs, fetchJson, fetchTags } from "@/lib/photos/api";
+import { readSidecarMeta } from "@/lib/photos/sidecar";
 import { plural } from "@/lib/photos/format";
 import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
 
@@ -85,6 +86,8 @@ interface UploadSheetProps {
   onUploaded(): void;
   /** Shutter times for in-app camera shots (see CameraShot). */
   capturedAtOverrides?: Map<File, Date>;
+  /** Paired .xmp per primary image (pairByBasename ran at pick time). */
+  sidecars?: Map<File, File>;
 }
 
 export default function UploadSheet({
@@ -94,6 +97,7 @@ export default function UploadSheet({
   defaultJobId,
   onUploaded,
   capturedAtOverrides,
+  sidecars,
 }: UploadSheetProps) {
   const isMobile = useMobile();
   const manager = useUploadManager();
@@ -167,15 +171,38 @@ export default function UploadSheet({
     if (next.files.length === 0) onOpenChange(false);
   };
 
+  // dc:subject keywords from paired sidecars — SUGGESTED only, never
+  // auto-applied (tags stay a human decision).
+  const [sidecarKeywords, setSidecarKeywords] = useState<string[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    const xmps = files.flatMap((file) => {
+      const sidecar = sidecars?.get(file);
+      return sidecar ? [sidecar] : [];
+    });
+    if (xmps.length === 0) {
+      setSidecarKeywords([]);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(xmps.map(readSidecarMeta)).then((metas) => {
+      if (cancelled) return;
+      setSidecarKeywords([...new Set(metas.flatMap((meta) => meta.keywords))]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, files, sidecars]);
+
   const tagSuggestions = useMemo(() => {
     const query = tagInput.trim().toLowerCase();
-    if (!query) return [];
-    return (knownTags ?? [])
-      .filter(
-        (tag) => tag.toLowerCase().includes(query) && !tags.includes(tag)
-      )
+    const unused = (tag: string) => !tags.includes(tag);
+    // No query yet: surface the sidecar keywords themselves as chips.
+    if (!query) return sidecarKeywords.filter(unused).slice(0, 6);
+    return [...new Set([...sidecarKeywords, ...(knownTags ?? [])])]
+      .filter((tag) => tag.toLowerCase().includes(query) && unused(tag))
       .slice(0, 6);
-  }, [tagInput, knownTags, tags]);
+  }, [tagInput, knownTags, tags, sidecarKeywords]);
 
   const addTag = (tag: string) => {
     setTags((previous) => appendTag(previous, tag));
@@ -195,7 +222,13 @@ export default function UploadSheet({
       toast.error("Pick a job first");
       return;
     }
-    manager.enqueue(files, {
+    // The queue pairs by basename itself, so hand it each primary WITH its
+    // sidecar (a sidecar whose primary was removed simply stays behind).
+    const batchFiles = files.flatMap((file) => {
+      const sidecar = sidecars?.get(file);
+      return sidecar ? [file, sidecar] : [file];
+    });
+    manager.enqueue(batchFiles, {
       jobId,
       sheetNumber: sheetNumber || null,
       tags: withPendingTag(tags, tagInput),
@@ -248,7 +281,7 @@ export default function UploadSheet({
             next[fileIndex] = { ...next[fileIndex], sentBytes, totalBytes };
             return next;
           }),
-        { shutter: capturedAtOverrides?.get(file) }
+        { shutter: capturedAtOverrides?.get(file), sidecar: sidecars?.get(file) }
       );
       results.push(result);
       patchItem(fileIndex, { status: result.status, error: result.error });

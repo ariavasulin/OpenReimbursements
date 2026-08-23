@@ -107,3 +107,10 @@ create policy photos_storage_update on storage.objects
 alter table public.photos
   add column if not exists captured_at_source text not null default 'upload'
     check (captured_at_source in ('exif','xmp','camera','file','upload'));
+
+-- Upload pipeline hardening, Phase 3: XMP sidecars attach to their image row.
+-- The .xmp object lives beside the original (originals/{uid}/{photo_id}/{base}.xmp);
+-- sidecar_name keeps the filename as uploaded so downloads restore it.
+alter table public.photos
+  add column if not exists sidecar_path text,
+  add column if not exists sidecar_name text;

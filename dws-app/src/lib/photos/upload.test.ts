@@ -229,6 +229,88 @@ describe("uploadOne", () => {
   });
 });
 
+describe("uploadOne with a sidecar", () => {
+  const XMP = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF>
+    <rdf:Description exif:DateTimeOriginal="2021-03-04T05:06:07.000Z"/>
+  </rdf:RDF></x:xmpmeta>`;
+  const xmpFile = (name = "IMG_0001.xmp") => new File([XMP], name);
+
+  it("uploads the sidecar AFTER the original and BEFORE derivatives, and finalizes both columns", async () => {
+    const { deps, uploads, finalized } = makeDeps();
+    const file = makeFile("IMG_0001.jpg", "image/jpeg", 10);
+
+    const result = await uploadOne(file, "photo-1", META, deps, undefined, {
+      sidecar: xmpFile(),
+    });
+
+    expect(result.status).toBe("done");
+    expect(uploads.map((u) => u.path)).toEqual([
+      "originals/user-1/photo-1/IMG_0001.jpg",
+      "originals/user-1/photo-1/IMG_0001.xmp",
+      "derived/user-1/photo-1_thumb.webp",
+      "derived/user-1/photo-1_preview.webp",
+    ]);
+    expect(uploads[1].contentType).toBe("application/rdf+xml");
+    expect(finalized[0]).toMatchObject({
+      sidecar_path: "originals/user-1/photo-1/IMG_0001.xmp",
+      sidecar_name: "IMG_0001.xmp",
+    });
+  });
+
+  it("still lands the row (null sidecar columns) when the sidecar upload fails", async () => {
+    const { deps, finalized } = makeDeps({
+      failUploadPaths: (path) => path.endsWith(".xmp"),
+    });
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps,
+      undefined,
+      { sidecar: xmpFile("a.xmp") }
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      sidecar_path: null,
+      sidecar_name: null,
+    });
+  });
+
+  it("feeds the sidecar's XMP date into extractCapturedAt (source 'xmp' when no EXIF)", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.extractCapturedAt = async (_file, opts) =>
+      opts?.sidecarDate
+        ? { date: opts.sidecarDate, source: "xmp" }
+        : { date: null, source: "upload" };
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps,
+      undefined,
+      { sidecar: xmpFile("a.xmp") }
+    );
+
+    expect(result.status).toBe("done");
+    expect(finalized[0]).toMatchObject({
+      captured_at: "2021-03-04T05:06:07.000Z",
+      captured_at_source: "xmp",
+    });
+  });
+
+  it("finalizes without sidecar columns when none is passed", async () => {
+    const { deps, finalized } = makeDeps();
+    await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    expect(finalized[0]).toMatchObject({
+      sidecar_path: null,
+      sidecar_name: null,
+    });
+  });
+});
+
 describe("resumable (TUS) routing in uploadOne", () => {
   const bigSize = RESUMABLE_THRESHOLD_BYTES + 1;
 
@@ -619,9 +701,10 @@ describe("kindFromMime / storagePaths", () => {
     expect(kindFromMime("")).toBe("file");
   });
 
-  it("builds own-prefix keys", () => {
+  it("builds own-prefix keys, the sidecar named after the original", () => {
     expect(storagePaths("u1", "p1", "a b.jpg")).toEqual({
       original: "originals/u1/p1/a_b.jpg",
+      sidecar: "originals/u1/p1/a_b.xmp",
       thumb: "derived/u1/p1_thumb.webp",
       preview: "derived/u1/p1_preview.webp",
     });
