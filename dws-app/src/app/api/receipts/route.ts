@@ -103,6 +103,14 @@ export async function POST(request: Request) {
 const DEFAULT_RECEIPTS_LIMIT = 50;
 const MAX_RECEIPTS_LIMIT = 200;
 
+/** Status values stored in receipts.status, keyed by their lowercase form. */
+const RECEIPT_STATUSES: Record<string, string> = {
+  pending: 'Pending',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  reimbursed: 'Reimbursed',
+};
+
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
 
@@ -127,6 +135,16 @@ export async function GET(request: Request) {
   );
   const rawCursor = params.get('cursor');
 
+  // The employee table's status filter is applied here, not over the returned
+  // rows: only one page is loaded at a time, so a client-side filter searched
+  // a 50-row prefix and reported "No receipts found" for anyone whose matching
+  // receipt sat further back in their history.
+  const rawStatus = params.get('status');
+  const statusFilter = rawStatus ? RECEIPT_STATUSES[rawStatus.toLowerCase()] : undefined;
+  if (rawStatus && rawStatus.toLowerCase() !== 'all' && !statusFilter) {
+    return NextResponse.json({ error: 'Invalid status filter' }, { status: 400 });
+  }
+
   try {
     let query = supabase
       .from('receipts')
@@ -147,6 +165,10 @@ export async function GET(request: Request) {
       .order('receipt_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(limit + 1);
+
+    if (statusFilter) {
+      query = query.eq('status', statusFilter);
+    }
 
     if (rawCursor) {
       const cursor = decodeReceiptCursor(rawCursor);

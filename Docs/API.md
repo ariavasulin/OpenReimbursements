@@ -128,9 +128,18 @@ Creates receipt record and finalizes image storage.
 
 ### GET /api/receipts
 
-Fetches user's receipts with category names.
+Fetches the signed-in user's own receipts with category names, newest first.
+Keyset-paginated: one page per request, `nextCursor` fetches the next.
 
 **Auth**: Required
+
+**Query Params**:
+- `status`: `pending` | `approved` | `rejected` | `reimbursed` (case-insensitive;
+  `all` or omitted means every status). Applied in the database, not over the
+  returned page — the employee table's filter has to span the user's whole
+  history, not just the rows already loaded. Anything else is a 400.
+- `limit`: page size, 1–200 (default 50)
+- `cursor`: opaque `nextCursor` from the previous response; omit for page 1
 
 **Response**:
 ```json
@@ -145,9 +154,14 @@ Fetches user's receipts with category names.
       "category": "Office Supplies",
       "image_url": "https://..."
     }
-  ]
+  ],
+  "nextCursor": "eyJ..."
 }
 ```
+
+`nextCursor` is `null` on the last page. Ordering is
+`receipt_date DESC, created_at DESC`, and the cursor encodes that pair, so pages
+must be requested in order.
 
 ---
 
@@ -214,14 +228,17 @@ Bulk status update (admin only).
 
 ### GET /api/admin/receipts
 
-Fetches all receipts with user info and phone numbers.
+Fetches one page of receipts with user info and phone numbers, plus the totals
+over the whole filtered set. Backed by the `get_admin_receipts_page` RPC.
 
 **Auth**: Admin required
 
 **Query Params**:
-- `status`: Filter by status
-- `fromDate`: Start date (YYYY-MM-DD)
-- `toDate`: End date (YYYY-MM-DD)
+- `status`: Filter by status (capitalized, e.g. `Approved`; `all` or omitted for every status)
+- `fromDate`: Start date (YYYY-MM-DD), inclusive
+- `toDate`: End date (YYYY-MM-DD), **exclusive** — the dashboard passes to+1day
+- `page`: 1-based page number (default 1)
+- `pageSize`: rows per page, 1–200 (default 25)
 
 **Response**:
 ```json
@@ -233,11 +250,38 @@ Fetches all receipts with user info and phone numbers.
       "employeeName": "John Doe",
       "employeeId": "EMP123",
       "phone": "+12223334444",
-      ...
+      "...": "..."
     }
-  ]
+  ],
+  "totalCount": 3158,
+  "totalAmount": 81176.24,
+  "page": 1,
+  "pageSize": 25
 }
 ```
+
+`totalCount` / `totalAmount` describe every receipt matching the status and date
+filters, not just the returned page, and stay correct on a page past the end of
+the result set (which returns an empty `receipts` array).
+
+---
+
+### GET /api/admin/receipts/export
+
+Payroll CSV: one row per employee with their total for the filtered set. This is
+the only endpoint that reads the full result set, and it runs only when an admin
+clicks Export.
+
+**Auth**: Admin required
+
+**Query Params**:
+- `status`, `fromDate`, `toDate`: as for `GET /api/admin/receipts`
+- `q`: the dashboard's search term — case-insensitive substring over employee
+  name and receipt description, the same match the table applies. Omit it and
+  the CSV covers everyone.
+
+**Response**: `text/csv` attachment
+(`LastName,FirstName,EmployeeNumber,TotalAmount`).
 
 ---
 

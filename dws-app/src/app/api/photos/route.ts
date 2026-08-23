@@ -67,7 +67,10 @@ async function buildSearchFilter(
       .select('user_id')
       .ilike('full_name', pattern)
       .limit(200),
-    supabase.rpc('get_photo_tags', { job_filter: job, q, max_tags: 200 }),
+    // `escaped`, not the raw `q`: the RPC interpolates its argument into
+    // ilike '%' || q || '%', so an unescaped % or _ from the search box would
+    // match every tag.
+    supabase.rpc('get_photo_tags', { job_filter: job, q: escaped, max_tags: 200 }),
   ]);
 
   const firstError =

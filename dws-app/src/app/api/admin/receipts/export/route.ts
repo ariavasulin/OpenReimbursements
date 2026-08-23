@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { buildPayrollCsv } from '@/lib/payrollCsv';
+import { normalizeReceiptSearch, receiptMatchesSearch } from '@/lib/receiptSearch';
 
 // The admin dashboard's payroll export needs every matching row. That is a
 // legitimate bulk read — it just must not happen on every dashboard load,
@@ -18,6 +19,11 @@ export async function GET(request: Request) {
     const statusFilter = searchParams.get('status');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
+    // The dashboard's search box is part of what the admin sees when they hit
+    // Export. Without it the CSV covered every employee no matter what was
+    // typed. Applied here with the same matcher the table uses, over the whole
+    // filtered result set rather than the page on screen.
+    const search = normalizeReceiptSearch(searchParams.get('q'));
 
     // PostgREST caps RPC responses at ~1000 rows. Strategy: ask for the total
     // count first, then fire one Range-based fetch per page in parallel. Two
@@ -62,12 +68,15 @@ export async function GET(request: Request) {
 
     // Same employeeName/employeeId derivation the dashboard applied to these
     // rows before the CSV logic moved server-side.
+    const rows = receiptsData.map((item: any) => ({
+      employeeId: item.employee_id_internal || '',
+      employeeName: item.preferred_name || item.full_name || 'Unknown',
+      description: item.description ?? '',
+      amount: item.amount,
+    }));
+
     const csv = buildPayrollCsv(
-      receiptsData.map((item: any) => ({
-        employeeId: item.employee_id_internal || '',
-        employeeName: item.preferred_name || item.full_name || 'Unknown',
-        amount: item.amount,
-      }))
+      rows.filter((row) => receiptMatchesSearch(row, search))
     );
 
     return new NextResponse(csv, {

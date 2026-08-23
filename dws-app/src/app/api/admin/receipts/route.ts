@@ -36,9 +36,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const receiptsData: any[] = data ?? [];
-    const totalCount = receiptsData.length > 0 ? Number(receiptsData[0].total_count) : 0;
-    const totalAmount = receiptsData.length > 0 ? Number(receiptsData[0].total_amount) : 0;
+    // Every row carries the filtered totals. A page past the end of the result
+    // set returns a single row with null receipt columns so the totals still
+    // come back (the old cross join returned nothing there, and the dashboard
+    // reported 0 receipts / $0.00 for an out-of-range page).
+    const rows: any[] = data ?? [];
+    const totalCount = rows.length > 0 ? Number(rows[0].total_count) : 0;
+    const totalAmount = rows.length > 0 ? Number(rows[0].total_amount) : 0;
+    const receiptsData = rows.filter((row) => row.id !== null);
 
     const mappedReceipts = (receiptsData || []).map((item: any) => {
       let publicImageUrl = item.image_url;

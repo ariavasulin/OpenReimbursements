@@ -33,6 +33,7 @@ import { toast } from "sonner"
 import ReceiptTable from "@/components/receipt-table"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 import { formatCurrency } from "@/lib/utils"
+import { normalizeReceiptSearch, receiptMatchesSearch } from "@/lib/receiptSearch"
 import type { Receipt, BulkUpdateResponse } from "@/lib/types"
 import { useAdminReceipts, useAdminReceiptCounts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
@@ -130,19 +131,13 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   }))
 
   // Status filtering happens server-side now; search still filters
-  // client-side, so it applies within the currently loaded page.
-  const filteredReceipts = receipts.filter(receipt => {
-    if (searchQuery) {
-      const searchLower = searchQuery.toLowerCase()
-      const employeeName = receipt.employeeName?.toLowerCase() || ''
-      const description = receipt.description?.toLowerCase() || ''
-      if (!employeeName.includes(searchLower) && !description.includes(searchLower)) {
-        return false
-      }
-    }
-
-    return true
-  })
+  // client-side, so it applies within the currently loaded page. The export
+  // sends the same term to the server (see downloadPayrollCSV) and applies
+  // this same matcher there, over the whole filtered result set.
+  const normalizedSearch = normalizeReceiptSearch(searchQuery)
+  const filteredReceipts = receipts.filter(receipt =>
+    receiptMatchesSearch(receipt, normalizedSearch)
+  )
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
@@ -156,6 +151,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     }
     if (dateRange.from) params.set('fromDate', dateRange.from.toISOString().split('T')[0])
     if (toDateParam) params.set('toDate', toDateParam)
+    // Carry the search box through: the CSV must describe what the admin is
+    // looking at, not everyone.
+    if (normalizedSearch) params.set('q', normalizedSearch)
     window.location.href = `/api/admin/receipts/export?${params.toString()}`
   }
 

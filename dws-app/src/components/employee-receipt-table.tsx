@@ -20,6 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import type { Receipt } from "@/lib/types"
+import type { ReceiptStatusFilter } from "@/hooks/use-receipts"
 import { formatCurrency, formatDate, formatDateShort } from "@/lib/utils"
 import { useMobile } from "@/hooks/use-mobile"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -36,13 +37,23 @@ import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 
 interface EmployeeReceiptTableProps {
   receipts: Receipt[]
+  /** Owned by the page: it is a query parameter of the receipts request. */
+  statusFilter: ReceiptStatusFilter
+  onStatusFilterChange: (status: ReceiptStatusFilter) => void
+  /** True when the server has more receipts for this filter than are loaded. */
+  hasMore?: boolean
   onReceiptUpdated?: (updatedReceipt: Receipt) => void
 }
 
 const ITEMS_PER_PAGE = 10
 
-export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: EmployeeReceiptTableProps) {
-  const [filter, setFilter] = useState<string>("all")
+export default function EmployeeReceiptTable({
+  receipts,
+  statusFilter,
+  onStatusFilterChange,
+  hasMore = false,
+  onReceiptUpdated,
+}: EmployeeReceiptTableProps) {
   const [currentPage, setCurrentPage] = useState(1)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null)
@@ -66,17 +77,17 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
     }
   }
 
-  const filteredReceipts = filter === "all" ? receipts : receipts.filter((receipt) => {
-    return receipt.status.toLowerCase() === filter.toLowerCase()
-  })
-
-  const totalPages = Math.max(1, Math.ceil(filteredReceipts.length / ITEMS_PER_PAGE))
+  // No client-side status filter: `receipts` is already the server's answer for
+  // `statusFilter`. Filtering here searched only the loaded prefix (50 rows),
+  // so an employee whose only Approved receipt sat further back in their
+  // history was told they had none.
+  const totalPages = Math.max(1, Math.ceil(receipts.length / ITEMS_PER_PAGE))
 
   if (currentPage > totalPages && totalPages > 0) {
     setCurrentPage(totalPages)
   }
 
-  const currentReceipts = filteredReceipts.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
+  const currentReceipts = receipts.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE)
 
   const handlePageChange = (page: number) => {
     if (page >= 1 && page <= totalPages) {
@@ -89,9 +100,9 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Your Receipts</h2>
         <Select
-          value={filter}
+          value={statusFilter}
           onValueChange={(value) => {
-            setFilter(value)
+            onStatusFilterChange(value as ReceiptStatusFilter)
             setCurrentPage(1)
           }}
         >
@@ -216,8 +227,12 @@ export default function EmployeeReceiptTable({ receipts, onReceiptUpdated }: Emp
       )}
 
       <div className="text-sm text-center text-gray-400">
-        Showing {currentReceipts.length > 0 ? Math.min(filteredReceipts.length, 1 + (currentPage - 1) * ITEMS_PER_PAGE) : 0}-
-        {Math.min(filteredReceipts.length, currentPage * ITEMS_PER_PAGE)} of {filteredReceipts.length} receipts
+        Showing {currentReceipts.length > 0 ? Math.min(receipts.length, 1 + (currentPage - 1) * ITEMS_PER_PAGE) : 0}-
+        {Math.min(receipts.length, currentPage * ITEMS_PER_PAGE)} of {receipts.length}
+        {hasMore ? "+" : ""} receipts
+        {hasMore && (
+          <span className="block text-xs">More receipts are available — use Load More below.</span>
+        )}
       </div>
 
       {/* Edit Receipt - Drawer on mobile, Dialog on desktop */}

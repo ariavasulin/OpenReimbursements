@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import { supabase } from '@/lib/supabaseClient'
 
 function makeQueryClient() {
   return new QueryClient({
@@ -30,11 +31,65 @@ function getQueryClient() {
   }
 }
 
+/**
+ * Drops the whole cache whenever the signed-in identity changes.
+ *
+ * The QueryClient is a module-level singleton that outlives every page, and
+ * cached data has a 5-minute staleTime. Without this, one employee signing out
+ * and another signing in on the same device (a shared phone, a manager's
+ * laptop) left the first account's receipts and photos in the cache for the
+ * second account to render with no request. Per-page sign-out handlers cannot
+ * cover it: the page that registered the handler unmounts as soon as the
+ * router navigates to /login.
+ *
+ * Renders nothing; it only watches auth state.
+ */
+function AuthIdentityBoundary() {
+  const queryClient = useQueryClient()
+  // undefined = no identity observed yet, so the first observation is the
+  // baseline rather than a transition.
+  const lastIdentityRef = useRef<string | null | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const observe = (userId: string | null) => {
+      if (cancelled) return
+      if (lastIdentityRef.current === undefined) {
+        lastIdentityRef.current = userId
+        return
+      }
+      if (lastIdentityRef.current === userId) return
+      lastIdentityRef.current = userId
+      queryClient.clear()
+    }
+
+    // getSession() and the INITIAL_SESSION event race; whichever lands first
+    // sets the baseline and the other is a no-op (same identity).
+    supabase.auth
+      .getSession()
+      .then(({ data }) => observe(data.session?.user?.id ?? null))
+      .catch(() => {})
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => observe(session?.user?.id ?? null)
+    )
+
+    return () => {
+      cancelled = true
+      authListener?.subscription?.unsubscribe()
+    }
+  }, [queryClient])
+
+  return null
+}
+
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => getQueryClient())
 
   return (
     <QueryClientProvider client={queryClient}>
+      <AuthIdentityBoundary />
       {children}
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>

@@ -2,13 +2,12 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
-import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReceiptUploader from '@/components/receipt-uploader';
 import EmployeeReceiptTable from '@/components/employee-receipt-table';
 import LoadMoreButton from '@/components/photos/load-more-button';
-import { receiptsKeys, useMyReceipts, useResetMyReceipts } from '@/hooks/use-receipts';
+import { useMyReceipts, useResetMyReceipts, type ReceiptStatusFilter } from '@/hooks/use-receipts';
 import type { UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Toaster as SonnerToaster } from 'sonner';
@@ -19,11 +18,13 @@ export default function EmployeePage() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // The status filter lives here, not in the table: it is a query parameter of
+  // the receipts request, so the table can only render what it is given.
+  const [statusFilter, setStatusFilter] = useState<ReceiptStatusFilter>('all');
+
   const mountedRef = useRef(true);
   const authCheckCompleteRef = useRef(false);
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const queryClient = useQueryClient();
 
   const {
     data: receiptsData,
@@ -32,13 +33,17 @@ export default function EmployeePage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useMyReceipts({ enabled: Boolean(user && userProfile?.role === 'employee') });
+  } = useMyReceipts({
+    userId: user?.id,
+    status: statusFilter,
+    enabled: Boolean(user && userProfile?.role === 'employee'),
+  });
 
   const receipts = receiptsData?.pages.flatMap((page) => page.receipts) ?? [];
   const receiptsError =
     receiptsQueryError instanceof Error ? receiptsQueryError.message : null;
 
-  const resetReceipts = useResetMyReceipts();
+  const resetReceipts = useResetMyReceipts(user?.id);
 
   const handleReceiptAdded = resetReceipts;
   const handleReceiptUpdated = resetReceipts;
@@ -152,7 +157,9 @@ export default function EmployeePage() {
         if (event === 'SIGNED_OUT' || !session) {
           setUser(null);
           setUserProfile(null);
-          queryClient.removeQueries({ queryKey: receiptsKeys.mine() });
+          // Cache eviction is not done here: this listener is gone once the
+          // router leaves /employee. AuthIdentityBoundary (query-provider.tsx)
+          // clears the cache on every identity change, from anywhere in the app.
           router.replace('/login');
         }
       }
@@ -223,7 +230,13 @@ export default function EmployeePage() {
         {receiptsError && <p className="text-center text-red-500">Error loading receipts: {receiptsError}</p>}
         {!receiptsLoading && !receiptsError && (
           <>
-            <EmployeeReceiptTable receipts={receipts} onReceiptUpdated={handleReceiptUpdated} />
+            <EmployeeReceiptTable
+              receipts={receipts}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+              hasMore={Boolean(hasNextPage)}
+              onReceiptUpdated={handleReceiptUpdated}
+            />
             {hasNextPage && (
               <LoadMoreButton onClick={() => fetchNextPage()} loading={isFetchingNextPage} />
             )}

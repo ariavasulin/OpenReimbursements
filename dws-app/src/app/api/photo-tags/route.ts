@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { validate as isUuid } from 'uuid';
+import { escapeForIlike } from '@/lib/photos/apiShared';
 
 // GET /api/photo-tags?job=&q= — distinct tags in use (optionally scoped to a
 // job, optionally substring-filtered), for the Tags filter and upload
@@ -26,9 +27,12 @@ export async function GET(request: Request) {
 
   // ilike '%q%' matches the old case-insensitive includes(); SQL `order by`
   // replaces localeCompare, which can order non-ASCII tags differently.
+  // The RPC interpolates its argument into the pattern, so wildcards typed in
+  // the type-ahead have to be escaped or a lone % would match every tag.
+  const escaped = escapeForIlike(q);
   const { data, error } = await supabase.rpc('get_photo_tags', {
     job_filter: job || null,
-    q: q || null,
+    q: escaped || null,
   });
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
