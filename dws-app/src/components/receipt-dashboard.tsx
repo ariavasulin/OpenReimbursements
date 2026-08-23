@@ -30,14 +30,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { toast } from "sonner"
-import ReceiptTable, { type ReceiptSort } from "@/components/receipt-table"
+import ReceiptTable from "@/components/receipt-table"
 import { ReceiptDetailsCard } from "@/components/receipt-details-card"
 import { formatCurrency } from "@/lib/utils"
-import { normalizeReceiptSearch } from "@/lib/receiptSearch"
-import { toDbReceiptStatus, type Receipt, type BulkUpdateResponse } from "@/lib/types"
-import { useAdminReceipts, useAdminReceiptCounts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
+import type { Receipt, ReceiptSort, ReceiptStatusFilter, BulkUpdateResponse } from "@/lib/types"
+import {
+  adminReceiptsFilterParams,
+  useAdminReceipts,
+  useAdminReceiptCounts,
+  useDeleteReceipt,
+  useInvalidateAdminReceipts,
+} from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
-import type { ReceiptStatusFilter } from "@/hooks/use-receipts"
 
 const TAB_EMPTY_MESSAGES = {
   all: "No receipts found for the current filters.",
@@ -73,7 +77,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const [isDeleting, setIsDeleting] = useState(false)
 
   useEffect(() => {
-    const handle = setTimeout(() => setDebouncedSearch(normalizeReceiptSearch(searchQuery)), 300)
+    const handle = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300)
     return () => clearTimeout(handle)
   }, [searchQuery])
 
@@ -83,13 +87,17 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     setSelectedRows(new Set())
   }
 
+  const resetToFirstPage = () => {
+    setCurrentPage(1)
+    handleClearSelection()
+  }
+
   const handleDateChange = (selectedDateRange: { from: Date | undefined; to: Date | undefined }) => {
     setDateRange({
       from: selectedDateRange?.from,
       to: selectedDateRange?.to,
     });
-    setCurrentPage(1);
-    handleClearSelection();
+    resetToFirstPage();
   };
 
   const handleSelectedRowsChange = (newSelectedRows: Set<string>) => {
@@ -103,14 +111,12 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
 
   const handlePageSizeChange = (newPageSize: number) => {
     setPageSize(newPageSize)
-    setCurrentPage(1)
-    handleClearSelection()
+    resetToFirstPage()
   }
 
   const handleSortChange = (nextSort: ReceiptSort | null) => {
     setSort(nextSort)
-    setCurrentPage(1)
-    handleClearSelection()
+    resetToFirstPage()
   }
 
   const fromDateParam = dateRange.from?.toISOString().split('T')[0]
@@ -169,15 +175,12 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   }))
 
   const downloadPayrollCSV = async () => {
-    const params = new URLSearchParams()
-    if (activeTab !== 'all') {
-      params.set('status', toDbReceiptStatus(activeTab))
-    }
-    if (fromDateParam) params.set('fromDate', fromDateParam)
-    if (toDateParam) params.set('toDate', toDateParam)
-    // Carry the search box through: the CSV must describe what the admin is
-    // looking at, not everyone.
-    if (debouncedSearch) params.set('q', debouncedSearch)
+    const params = adminReceiptsFilterParams({
+      status: activeTab,
+      fromDate: fromDateParam,
+      toDate: toDateParam,
+      search: debouncedSearch,
+    })
 
     // Fetched rather than navigated to: a 401/403/413/500 from the route is
     // JSON, and navigating would replace the dashboard with it.
@@ -291,11 +294,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     toast.success("Receipt updated successfully");
   }
 
-  // Two populations feed the summary cards. The Total Receipts card reads the
-  // paged RPC's totals, which honour the active tab, dates and search, so its
-  // count and amount always describe the same rows; it says so when narrowed.
-  // The three status cards read the per-status counts (dates only) and show
-  // their share of every receipt in range.
+  // The Total Receipts card follows the tab, dates and search; the three
+  // status cards follow the dates only.
   const totalReceipts = receiptCounts?.total ?? 0
   const totalAmount = receiptsPage?.totalAmount ?? 0
   const isNarrowed = activeTab !== 'all' || Boolean(debouncedSearch) || Boolean(dateRange.from)
@@ -491,8 +491,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 value={activeTab}
                 onValueChange={(value) => {
                   setActiveTab(value as ReceiptStatusFilter);
-                  setCurrentPage(1); // pagination is server-driven; a new filter starts at page 1
-                  handleClearSelection();
+                  resetToFirstPage();
                 }}
                 className="space-y-4"
               >
@@ -543,8 +542,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                           value={searchQuery}
                           onChange={(e) => {
                             setSearchQuery(e.target.value)
-                            setCurrentPage(1)
-                            handleClearSelection()
+                            resetToFirstPage()
                           }}
                         />
                       </div>
@@ -585,12 +583,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                   </div>
                 </div>
 
-                {/* One body for every tab: the status filter is pushed to the
-                    server, so all five tabs render the same fetched page and
-                    differ only in what they say when it is empty. */}
                 <TabsContent value={activeTab} className="space-y-4">
-                  {/* While the next page/filter is in flight the previous
-                      rows stay mounted, dimmed, so nothing jumps. */}
                   <div
                     className={`w-full transition-opacity ${isPlaceholderData ? "opacity-50" : ""}`}
                     aria-busy={isPlaceholderData || loading}

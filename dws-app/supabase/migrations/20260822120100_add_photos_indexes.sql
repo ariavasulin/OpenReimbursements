@@ -1,9 +1,8 @@
 -- CONCURRENTLY so this does not lock out writes.
 --
--- Do NOT apply this file with `supabase db query -f`: on CLI 2.115.0 that
--- wraps a multi-statement file in a transaction, and CREATE INDEX
--- CONCURRENTLY cannot run inside one (ERROR 25001). Apply each statement
--- individually via the positional form. See supabase/migrations/README.md.
+-- Apply each statement individually via the positional form — see
+-- supabase/migrations/README.md § Files that must be applied statement by
+-- statement.
 
 -- photos_job_captured is (job_id, captured_at desc) — it lacks the `id`
 -- tiebreaker that GET /api/photos keysets on, so every page still sorts.

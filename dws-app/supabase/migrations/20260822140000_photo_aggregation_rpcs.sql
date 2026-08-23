@@ -1,7 +1,6 @@
--- Replaces the 10,000-row scan + JS aggregation in
--- src/app/api/photo-jobs/route.ts. security invoker keeps RLS in force; the
--- photos_select policy is `to authenticated using (true)`, so a signed-in
--- caller sees the same rows it does today.
+-- security invoker keeps RLS in force; the photos_select policy is
+-- `to authenticated using (true)`, so a signed-in caller sees the same rows it
+-- does today.
 create or replace function public.get_photo_job_summaries(search_query text default null)
 returns table (
   id            uuid,
@@ -60,8 +59,6 @@ $$;
 revoke all on function public.get_photo_job_summaries(text) from public;
 grant execute on function public.get_photo_job_summaries(text) to authenticated;
 
--- Replaces the 10,000-row scans in src/app/api/photo-tags/route.ts and in
--- buildSearchFilter (src/app/api/photos/route.ts).
 create or replace function public.get_photo_tags(
   job_filter uuid default null,
   q          text default null,

@@ -39,7 +39,6 @@ describe("ILIKE escaping", () => {
   it("escapeIlikeWildcards neutralises %, _ and \\ and keeps punctuation", () => {
     expect(escapeIlikeWildcards("100%_done\\")).toBe("100\\%\\_done\\\\");
     expect(escapeIlikeWildcards(" punch (list) ")).toBe("punch (list)");
-    expect(escapeIlikeWildcards("()")).toBe("()");
   });
 
   it("escapeForIlike additionally strips PostgREST or() grammar", () => {

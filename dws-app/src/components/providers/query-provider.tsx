@@ -45,10 +45,7 @@ function AuthIdentityBoundary() {
   const lastIdentityRef = useRef<string | null | undefined>(undefined)
 
   useEffect(() => {
-    let cancelled = false
-
     const observe = (userId: string | null) => {
-      if (cancelled) return
       if (lastIdentityRef.current === undefined) {
         lastIdentityRef.current = userId
         return
@@ -58,20 +55,12 @@ function AuthIdentityBoundary() {
       queryClient.clear()
     }
 
-    // getSession() and the INITIAL_SESSION event race; whichever lands first
-    // sets the baseline and the other is a no-op (same identity).
-    supabase.auth
-      .getSession()
-      .then(({ data }) => observe(data.session?.user?.id ?? null))
-
+    // The subscription's INITIAL_SESSION event sets the baseline.
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, session) => observe(session?.user?.id ?? null)
     )
 
-    return () => {
-      cancelled = true
-      authListener?.subscription?.unsubscribe()
-    }
+    return () => authListener?.subscription?.unsubscribe()
   }, [queryClient])
 
   return null

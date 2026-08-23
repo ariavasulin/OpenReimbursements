@@ -11,10 +11,6 @@ export type AdminGate =
  * The admin gate for /api/admin/* route handlers: session -> user_profiles.role
  * -> 403. Returns either the response to send back, or the request-scoped
  * Supabase client and the caller's user id for the handler to keep using.
- *
- *   const gate = await requireAdmin();
- *   if (gate.response) return gate.response;
- *   const { supabase } = gate;
  */
 export async function requireAdmin(): Promise<AdminGate> {
   const supabase = await createSupabaseServerClient();

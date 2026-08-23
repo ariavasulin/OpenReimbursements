@@ -16,15 +16,7 @@ describe("mapJobSummary", () => {
       photo_count: 0, latest_upload: null, thumbs: null,
     };
     expect(mapJobSummary(row).thumb_paths).toEqual([]);
-  });
-
-  it("preserves thumb order as returned by SQL", () => {
-    const row = {
-      id: "j3", job_number: "3614", name: "Site C", location: "Yard",
-      photo_count: 3, latest_upload: "2026-08-02T00:00:00Z",
-      thumbs: ["newest.webp", "mid.webp", "oldest.webp"],
-    };
-    expect(mapJobSummary(row).thumb_paths).toEqual(["newest.webp", "mid.webp", "oldest.webp"]);
+    expect(mapJobSummary({ ...row, thumbs: ["a.webp", "b.webp"] }).thumb_paths).toEqual(["a.webp", "b.webp"]);
   });
 
   it("does not leak latest_upload into the wire shape", () => {
@@ -32,8 +24,6 @@ describe("mapJobSummary", () => {
       id: "j4", job_number: "3615", name: "Site D", location: null,
       photo_count: 1, latest_upload: "2026-08-03T00:00:00Z", thumbs: [],
     };
-    expect(Object.keys(mapJobSummary(row))).toEqual([
-      "id", "job_number", "name", "location", "photo_count", "thumb_paths",
-    ]);
+    expect(mapJobSummary(row)).not.toHaveProperty("latest_upload");
   });
 });

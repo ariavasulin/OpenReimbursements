@@ -2,23 +2,6 @@
 -- carried forward from the pre-migrations db/ directory. Kept as the record of
 -- the original schema, not as something to re-run by hand; it exists so a fresh
 -- database can be rebuilt from the repo alone.
---
--- What it does:
---   1. Defines public.is_admin() — a SECURITY DEFINER helper that encodes the
---      same admin semantics copy-pasted throughout the app
---      (user_profiles.role = 'admin' for the calling auth.uid()).
---   2. Enables RLS on public.receipts with owner-or-admin policies for
---      select / insert / update / delete.
---   3. Enables RLS on public.categories: read for any authenticated user,
---      writes restricted to admins.
---
--- These policies are intentionally compatible with all existing access paths:
---   - the server-anon /api/receipts routes already filter by user_id / role,
---     so they satisfy `user_id = auth.uid() OR is_admin()`;
---   - admin browser-direct paths run under an admin session that is_admin()
---     satisfies;
---   - the SECURITY DEFINER RPCs (get_admin_receipts_with_phone, etc.) run with
---     definer privileges and are unaffected by RLS.
 
 begin;
 
@@ -50,33 +33,15 @@ revoke all on function public.is_admin() from public;
 grant execute on function public.is_admin() to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- receipts: RLS on; owner-or-admin for every operation.
+-- receipts: RLS on.
 -- ---------------------------------------------------------------------------
 alter table public.receipts enable row level security;
 
-drop policy if exists receipts_select on public.receipts;
-create policy receipts_select on public.receipts
-  for select
-  using (user_id = auth.uid() or public.is_admin());
-
-drop policy if exists receipts_insert on public.receipts;
-create policy receipts_insert on public.receipts
-  for insert
-  with check (user_id = auth.uid() or public.is_admin());
-
-drop policy if exists receipts_update on public.receipts;
-create policy receipts_update on public.receipts
-  for update
-  using (user_id = auth.uid() or public.is_admin())
-  with check (user_id = auth.uid() or public.is_admin());
-
-drop policy if exists receipts_delete on public.receipts;
-create policy receipts_delete on public.receipts
-  for delete
-  using (user_id = auth.uid() or public.is_admin());
+-- The four receipts_* policies are defined in
+-- 20260822130000_rls_scalar_subqueries.sql.
 
 -- ---------------------------------------------------------------------------
--- categories: RLS on; authenticated read, admin-only write.
+-- categories: RLS on; authenticated read.
 -- ---------------------------------------------------------------------------
 alter table public.categories enable row level security;
 
@@ -86,34 +51,7 @@ create policy categories_select on public.categories
   to authenticated
   using (true);
 
-drop policy if exists categories_insert on public.categories;
-create policy categories_insert on public.categories
-  for insert
-  to authenticated
-  with check (public.is_admin());
-
-drop policy if exists categories_update on public.categories;
-create policy categories_update on public.categories
-  for update
-  to authenticated
-  using (public.is_admin())
-  with check (public.is_admin());
-
-drop policy if exists categories_delete on public.categories;
-create policy categories_delete on public.categories
-  for delete
-  to authenticated
-  using (public.is_admin());
+-- categories_insert/update/delete are defined in
+-- 20260822130000_rls_scalar_subqueries.sql.
 
 commit;
-
--- ---------------------------------------------------------------------------
--- Verification (run after committing):
---   select rowsecurity from pg_tables
---   where schemaname = 'public' and tablename in ('receipts', 'categories');
---   -- expect: true for both
---
---   select * from pg_policies where schemaname = 'public'
---   and tablename in ('receipts', 'categories');
---   -- expect: the receipts_* and categories_* policies above
--- ---------------------------------------------------------------------------

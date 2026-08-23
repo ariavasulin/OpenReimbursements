@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { buildPayrollCsv, quoteCsv } from "./payrollCsv";
 
 describe("quoteCsv", () => {
-  // quoteCsv always wraps values in quotes, even when unnecessary.
   it("quotes plain values", () => {
     expect(quoteCsv("Smith")).toBe('"Smith"');
   });

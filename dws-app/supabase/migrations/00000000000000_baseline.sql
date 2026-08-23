@@ -418,7 +418,6 @@ ALTER TABLE ONLY "public"."user_profiles"
 -- This dump originally re-created all of them with a bare `auth.uid()`, which
 -- silently reverted the wrapped `(select auth.uid())` versions whenever the
 -- file was replayed. Their source of truth is:
---   00000000000002_enable_rls_receipts_categories.sql  (receipts, categories)
 --   00000000000003_photos_schema.sql                   (jobs_select, photos_select)
 --   20260822130000_rls_scalar_subqueries.sql           (receipts, categories, user_profiles)
 --   20260822130100_rls_photos_tighten_update.sql       (photos write policies)

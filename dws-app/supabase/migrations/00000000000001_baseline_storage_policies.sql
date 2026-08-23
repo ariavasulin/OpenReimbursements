@@ -4,12 +4,7 @@
 -- records that they existed so a fresh database can be rebuilt from the repo
 -- alone.
 --
--- The policy bodies are NOT here. 20260822130200_rls_storage_scalar_subqueries.sql
--- re-creates all four with auth.uid() wrapped in a scalar subquery (evaluated
--- once per statement instead of once per row), and re-running a bare-auth.uid()
--- copy from this file would put the per-row form back — the same replay trap
--- the photos and public baselines had until their duplicate blocks were
--- removed. Roles, commands and WITH CHECK fidelity notes live with the bodies.
---
+-- The policy bodies live in 20260822130200_rls_storage_scalar_subqueries.sql,
+-- with their roles, commands and WITH CHECK fidelity notes.
 -- The photos-bucket storage policies live in the same 20260822130200 file; the
 -- photos table's own policies live in 20260822130100_rls_photos_tighten_update.sql.

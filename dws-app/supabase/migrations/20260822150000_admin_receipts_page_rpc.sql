@@ -7,22 +7,8 @@
 --   * total_count / total_amount over the whole filtered set, so the caller
 --     gets the filtered totals without a second query.
 --
--- The totals come from a CTE that aggregates public.receipts alone, cross
--- joined onto the page. The obvious spelling — count(*) over () / sum(amount)
--- over () alongside the page columns — puts the WindowAgg *below* the Limit,
--- so every filtered row is dragged through all three LEFT JOINs before the
--- 25-row page is taken. Aggregating the base table by itself skips the joins
--- entirely: 3871 -> 837 shared buffers for an unfiltered 25-row page.
---
--- The CTE's WHERE must stay character-for-character identical to the page
--- query's WHERE, or the totals stop describing the rows being paged.
---
--- The existing get_admin_receipts_with_phone is left in place: the payroll CSV
--- export legitimately needs the full result set and keeps using it.
---
--- security definer + the auth search_path mirror the baseline function's
--- posture (it joins auth.users for phone numbers); the admin gate lives in the
--- API route, same as for the existing function.
+-- Superseded by 20260823120000_admin_receipts_page_search_sort.sql, which
+-- drops and re-creates the function with search and sort.
 create or replace function public.get_admin_receipts_page(
     status_filter text default null,
     from_date date default null,

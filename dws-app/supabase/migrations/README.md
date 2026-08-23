@@ -3,6 +3,14 @@
 Every schema change ships as a file here. Nothing is applied by hand in the
 Supabase SQL editor.
 
+The `00000000000000`–`00000000000003` files are the captured baseline of what
+production already had before migrations were checked in. Do not re-apply them
+to the existing project; they exist so a fresh database can be rebuilt. The
+baseline is not a byte-faithful dump: `00000000000000` defines `photos` with
+the fifteen columns the table had when the dump was taken, and
+`00000000000003` adds the six later ones (`captured_at_source`, `sidecar_path`,
+`sidecar_name`, `playback_path`, `playback_skipped_reason`, `content_sha256`).
+
 Naming: `<UTC timestamp>_<snake_case_name>.sql`, e.g. `20260822120000_add_receipts_indexes.sql`
 Generate a timestamp with: `date -u +%Y%m%d%H%M%S`
 
@@ -63,14 +71,6 @@ Any row is an index to `drop index concurrently` and rebuild before moving on.
 Every migration must be idempotent — use `if not exists` and
 `drop … if exists` / `create` pairs so re-running is a no-op.
 
-The `00000000000000`–`00000000000003` files are the captured baseline of what
-production already had before migrations were checked in. Do not re-apply them
-to the existing project; they exist so a fresh database can be rebuilt. The
-baseline is not a byte-faithful dump: `00000000000000` defines `photos` with
-the fifteen columns the table had when the dump was taken, and
-`00000000000003` adds the six later ones (`captured_at_source`, `sidecar_path`,
-`sidecar_name`, `playback_path`, `playback_skipped_reason`, `content_sha256`).
-
 ## What the baseline does not contain
 
 `00000000000000_baseline.sql` was dumped with `--schema public`, so anything
@@ -93,6 +93,5 @@ configuration. A rebuilt project needs those re-entered by hand.
 
 ## Why not to re-run migrations casually
 
-Every `create policy` / `create function` fires a PostgREST schema-cache reload.
-Each reload scans `pg_timezone_names` (~390ms) plus several `pg_proc` /
-`pg_constraint` introspection queries. Apply once, verify, move on.
+Apply once, verify, move on — every `create policy` / `create function` fires a
+PostgREST schema-cache reload.

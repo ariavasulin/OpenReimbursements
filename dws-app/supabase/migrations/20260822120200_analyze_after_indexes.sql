@@ -1,4 +1,4 @@
--- New indexes are useless until the planner has statistics that reach for them.
+-- Refresh planner statistics after the index builds.
 analyze public.receipts;
 analyze public.photos;
 analyze public.jobs;

@@ -8,7 +8,8 @@ import ReceiptUploader from '@/components/receipt-uploader';
 import EmployeeReceiptTable from '@/components/employee-receipt-table';
 import LoadMoreButton from '@/components/photos/load-more-button';
 import StatusLine from '@/components/photos/status-line';
-import { useMyReceipts, useRefreshMyReceipts, type ReceiptStatusFilter } from '@/hooks/use-receipts';
+import { useMyReceipts, useRefreshMyReceipts } from '@/hooks/use-receipts';
+import type { ReceiptStatusFilter } from '@/lib/types';
 import type { UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Toaster as SonnerToaster } from 'sonner';
@@ -158,8 +159,6 @@ export default function EmployeePage() {
         if (event === 'SIGNED_OUT' || !session) {
           setUser(null);
           setUserProfile(null);
-          // Cache clearing is AuthIdentityBoundary's job (query-provider.tsx);
-          // this listener dies with the page.
           router.replace('/login');
         }
       }
@@ -227,8 +226,6 @@ export default function EmployeePage() {
         <ReceiptUploader onReceiptAdded={refreshReceipts.afterUpload} />
         
         {receiptsLoading && <StatusLine>Loading receipts...</StatusLine>}
-        {/* A failed fetch — first load or a later "Load more" — reports
-            itself here, but never takes already-loaded rows off the screen. */}
         {receiptsError && (
           <div className="text-center space-y-2">
             <StatusLine error>Error loading receipts: {receiptsError}</StatusLine>

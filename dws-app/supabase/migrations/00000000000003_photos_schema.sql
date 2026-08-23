@@ -1,14 +1,8 @@
 -- DWS Photos hub schema: jobs + photos tables, RLS, and the two read policies.
 -- Strictly additive: no existing table, bucket, or policy is altered.
 --
--- Prerequisite (storage, not table DDL): the 'photos' bucket. It is created by
--- 20260823100000_review_fixes.sql, along with 'receipt-images'; neither was in
--- the `--schema public` baseline dump.
---
--- Historical baseline for the photos hub. Production already has it; it is kept
--- as the record of the original schema, not as something to re-run by hand.
--- Apply the migrations in filename order (or via the Supabase CLI), never this
--- file on its own.
+-- Historical baseline for the photos hub, kept as the record of the original
+-- schema, not as something to re-run by hand.
 
 create table if not exists public.jobs (
   id          uuid primary key default gen_random_uuid(),
@@ -37,10 +31,6 @@ create table if not exists public.photos (
   created_at     timestamptz not null default now()
 );
 
--- photos_job_captured (job_id, captured_at desc) used to be created here. It was
--- superseded by photos_job_captured_id (job_id, captured_at desc, id desc) in
--- 20260822120100_add_photos_indexes.sql, which drops it. Leaving the create
--- here resurrected the dropped index every time this file was re-run.
 create index if not exists photos_tags_gin     on public.photos using gin (tags);
 create index if not exists photos_sheet        on public.photos (job_id, sheet_number);
 

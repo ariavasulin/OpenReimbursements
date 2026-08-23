@@ -1,23 +1,14 @@
--- get_admin_receipts_page: carry the dashboard's search box and column sort.
+-- get_admin_receipts_page: search and sort, applied in SQL with the page.
 --
--- Pagination moved server-side in 20260822150000 while the search box kept
--- filtering on the client, so the table searched one page while the totals,
--- the pager and the payroll CSV described the whole set.
+-- The old five-argument overload is dropped first: PostgREST cannot pick
+-- between overloads when the caller omits defaulted arguments.
 --
--- New signature (the old five-argument overload is dropped first: PostgREST
--- cannot pick between overloads when the caller omits defaulted arguments):
---
---   search_term  case-insensitive substring over the employee's display name
---                (preferred_name, then full_name, then 'Unknown' — the same
---                fallback as employeeIdentity() in src/lib/types.ts) and the
---                description. null or '' means no search.
 --   sort_field   one of date, employee, phone, amount, category, description;
 --                null means the default order (receipt_date desc,
 --                created_at desc), which is also every sort's tiebreak.
 --   sort_dir     asc or desc; anything else is treated as asc.
 --
--- The page CTE's ORDER BY puts nulls first ascending and last descending,
--- matching the client-side comparator this replaces.
+-- The page CTE's ORDER BY puts nulls first ascending and last descending.
 --
 -- service_role loses EXECUTE (the revoke is explicit because Supabase's
 -- default privileges would otherwise grant it): is_admin() reads auth.uid(),

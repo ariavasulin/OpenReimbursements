@@ -1,5 +1,4 @@
--- Review fixes: authorization, privilege, and convergence items raised by the
--- code review of the upload-pipeline-hardening branch.
+-- Review fixes: authorization, privilege, and convergence items.
 --
 -- Every statement is idempotent and transactional: the file applies as one
 -- `db query -f` run.
@@ -160,10 +159,8 @@ revoke update on public.photos from anon;
 
 
 -- 4. Re-apply 20260822130100 (photos-table write policies) and 20260822130200
---    (photos-bucket storage policies). Both were reverted in production by a
---    parallel worktree re-running the photos baseline; live policies had gone
---    back to a bare auth.uid(), which Postgres re-evaluates per row instead of
---    hoisting into an InitPlan. Bodies are copied verbatim from those files.
+--    (photos-bucket storage policies); bodies are copied verbatim from those
+--    files.
 
 drop policy if exists photos_insert on public.photos;
 create policy photos_insert on public.photos
@@ -215,17 +212,9 @@ create policy photos_storage_update on storage.objects
   );
 
 
--- 5. Rebuild-from-repo gaps. The captured baseline was dumped with
---    `--schema public`, so two things production has were never checked in:
---    the auth.users trigger that creates a user_profiles row on signup, and the
---    storage buckets. Without the trigger a rebuilt database cannot register a
---    user at all (no profile row, and receipts.user_id references it).
---
---    The trigger is created only when absent: production already has it, and
---    `create or replace trigger` on auth.users needs ownership of that table.
---    Definition transcribed from the live one
---    (pg_get_triggerdef: AFTER INSERT ... FOR EACH ROW EXECUTE FUNCTION
---    handle_new_user(); public.handle_new_user() is in 00000000000000_baseline).
+-- 5. Rebuild-from-repo gaps (see README § What the baseline does not contain).
+--    The trigger is created only when absent: `create or replace trigger` on
+--    auth.users needs ownership of that table.
 do $$
 begin
   if not exists (

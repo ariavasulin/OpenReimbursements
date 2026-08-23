@@ -58,16 +58,30 @@ export const RECEIPT_STATUS_VALUES = ["Pending", "Approved", "Rejected", "Reimbu
 
 export type ReceiptStatusValue = (typeof RECEIPT_STATUS_VALUES)[number];
 
+/** Status values a list filter can send; 'all' means no filter. */
+export type ReceiptStatusFilter = 'all' | Lowercase<ReceiptStatusValue>;
+
+const RECEIPT_STATUS_BY_LOWERCASE = new Map<string, ReceiptStatusValue>(
+  RECEIPT_STATUS_VALUES.map((status) => [status.toLowerCase(), status])
+);
+
+/** The receipts.status value named by a case-insensitive input, if any. */
+export function parseReceiptStatus(input: string): ReceiptStatusValue | undefined {
+  return RECEIPT_STATUS_BY_LOWERCASE.get(input.toLowerCase());
+}
+
+/** The UI carries statuses lowercased; receipts.status stores them capitalized. */
+export function toDbReceiptStatus(status: Lowercase<ReceiptStatusValue>): ReceiptStatusValue {
+  return RECEIPT_STATUS_BY_LOWERCASE.get(status)!;
+}
+
 /** Columns the admin table can sort by — the get_admin_receipts_page whitelist. */
 export const RECEIPT_SORT_FIELDS = ["date", "employee", "phone", "amount", "category", "description"] as const;
 export type ReceiptSortField = (typeof RECEIPT_SORT_FIELDS)[number];
 
-/**
- * The UI carries statuses lowercased; receipts.status stores them capitalized.
- * One transform so the API query string and the export query string agree.
- */
-export function toDbReceiptStatus(status: string): string {
-  return status.charAt(0).toUpperCase() + status.slice(1);
+export interface ReceiptSort {
+  field: ReceiptSortField;
+  direction: "asc" | "desc";
 }
 
 /**

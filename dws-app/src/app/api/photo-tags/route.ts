@@ -6,7 +6,7 @@ import type { PhotoTagRow } from '@/lib/photos/types';
 
 // GET /api/photo-tags?job=&q= — distinct tags in use (optionally scoped to a
 // job, optionally substring-filtered), for the Tags filter and upload
-// type-ahead. Aggregated in SQL by the get_photo_tags RPC.
+// type-ahead.
 
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -25,9 +25,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
 
-  // Tag order comes from SQL `order by`, which can sort non-ASCII tags
-  // differently than localeCompare. The RPC interpolates its argument into the
-  // ilike pattern, so a `%` or `_` in `q` would match every tag.
   const escaped = escapeIlikeWildcards(q);
   const { data, error } = await supabase.rpc('get_photo_tags', {
     job_filter: job || null,

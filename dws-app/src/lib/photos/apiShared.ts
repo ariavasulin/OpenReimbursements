@@ -12,8 +12,7 @@ export const PHOTO_COLUMNS =
 /**
  * Escape ILIKE wildcards for a value bound as an RPC argument. The RPCs
  * interpolate it into `ilike '%' || q || '%'`, so a typed % or _ would match
- * everything; nothing else needs touching, because a bound parameter cannot
- * break out of its query.
+ * everything.
  */
 export function escapeIlikeWildcards(raw: string): string {
   return raw.replace(/[%_\\]/g, (m) => `\\${m}`).trim();

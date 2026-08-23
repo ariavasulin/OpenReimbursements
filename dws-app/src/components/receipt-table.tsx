@@ -15,17 +15,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { formatDate } from "@/lib/utils"
-import type { Receipt, ReceiptSortField } from "@/lib/types"
+import type { Receipt, ReceiptSort, ReceiptSortField } from "@/lib/types"
 
-export type ReceiptSortDirection = "asc" | "desc"
-export interface ReceiptSort {
-  field: ReceiptSortField
-  direction: ReceiptSortDirection
-}
-
-// Renders exactly the rows it is handed, in the order it is handed them.
-// Sorting and paging happen server-side: the header controls only report the
-// requested sort to the caller, which sends it with the page request.
 interface ReceiptTableProps {
   rowData?: Receipt[]
   height?: number | string | "auto"
@@ -84,13 +75,9 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
     if (sortField !== field) {
       return <ChevronsUpDown className="ml-2 h-4 w-4" />
     }
-    if (sortDirection === "asc") {
-      return <ChevronUp className="ml-2 h-4 w-4" />
-    }
-    if (sortDirection === "desc") {
-      return <ChevronDown className="ml-2 h-4 w-4" />
-    }
-    return <ChevronsUpDown className="ml-2 h-4 w-4" />
+    return sortDirection === "asc"
+      ? <ChevronUp className="ml-2 h-4 w-4" />
+      : <ChevronDown className="ml-2 h-4 w-4" />
   }
 
   const handleSelectAll = (checked: boolean) => {

@@ -133,13 +133,11 @@ Keyset-paginated: one page per request, `nextCursor` fetches the next.
 
 **Auth**: Required
 
-**Query Params**:
+**Query Params** (an invalid value for any of them is a 400):
 - `status`: `pending` | `approved` | `rejected` | `reimbursed` (case-insensitive;
-  `all` or omitted means every status). Anything else is a 400.
-- `limit`: page size, 1–200 (default 50). Must be a positive integer; anything
-  else is a 400.
-- `cursor`: opaque `nextCursor` from the previous response; omit for page 1.
-  A cursor that does not decode to a valid `(date, timestamp)` pair is a 400.
+  `all` or omitted means every status)
+- `limit`: page size, 1–200 (default 50)
+- `cursor`: opaque `nextCursor` from the previous response; omit for page 1
 
 **Response**:
 ```json
@@ -184,8 +182,7 @@ Updates receipt fields.
 
 **Permissions**:
 - Employees: Own pending receipts only, and never `status` — a body carrying
-  `status` from a non-admin is a 403. (The database enforces the same rule with
-  a trigger, for any client.)
+  `status` from a non-admin is a 403.
 - Admins: Any receipt, any field
 
 ---
@@ -231,11 +228,11 @@ Bulk status update (admin only).
 ### GET /api/admin/receipts
 
 Fetches one page of receipts with user info and phone numbers, plus the totals
-over the whole filtered set. Backed by the `get_admin_receipts_page` RPC.
+over the whole filtered set.
 
 **Auth**: Admin required
 
-**Query Params**:
+**Query Params** (an invalid `sort` or `dir` is a 400):
 - `status`: Filter by status (capitalized, e.g. `Approved`; `all` or omitted for every status)
 - `fromDate`: Start date (YYYY-MM-DD), inclusive
 - `toDate`: End date (YYYY-MM-DD), **exclusive**
@@ -243,7 +240,7 @@ over the whole filtered set. Backed by the `get_admin_receipts_page` RPC.
   display name and the receipt description
 - `sort`: `date` | `employee` | `phone` | `amount` | `category` | `description`;
   omitted means `receipt_date DESC, created_at DESC`, which is also every
-  sort's tiebreak. Anything else is a 400.
+  sort's tiebreak.
 - `dir`: `asc` | `desc` (default `asc`)
 - `page`: 1-based page number (default 1)
 - `pageSize`: rows per page, 1–200 (default 25)
@@ -262,9 +259,7 @@ over the whole filtered set. Backed by the `get_admin_receipts_page` RPC.
     }
   ],
   "totalCount": 3158,
-  "totalAmount": 81176.24,
-  "page": 1,
-  "pageSize": 25
+  "totalAmount": 81176.24
 }
 ```
 
@@ -276,17 +271,12 @@ the end of the result set (which returns an empty `receipts` array).
 
 ### GET /api/admin/receipts/export
 
-Payroll CSV: one row per employee with their total for the filtered set. This is
-the only endpoint that reads the full result set, and it runs only when an admin
-clicks Export.
+Payroll CSV: one row per employee with their total for the filtered set.
 
 **Auth**: Admin required
 
 **Query Params**:
-- `status`, `fromDate`, `toDate`: as for `GET /api/admin/receipts`
-- `q`: the dashboard's search term — case-insensitive substring over employee
-  name and receipt description, the same match the table applies. Omit it and
-  the CSV covers everyone.
+- `status`, `fromDate`, `toDate`, `q`: as for `GET /api/admin/receipts`
 
 **Response**: `text/csv` attachment
 (`LastName,FirstName,EmployeeNumber,TotalAmount`), `Cache-Control: no-store`.
@@ -294,9 +284,7 @@ Text cells that begin with `=`, `+`, `-` or `@` are prefixed with `'` so a
 spreadsheet does not evaluate them.
 
 **Errors**: 413 when more than 100,000 receipts match — the export refuses
-rather than returning a truncated file; narrow the filters. The dashboard
-fetches this endpoint and shows the error message, so a failure never replaces
-the page.
+rather than returning a truncated file; narrow the filters.
 
 ---
 

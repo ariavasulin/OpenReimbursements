@@ -38,13 +38,12 @@ export function buildPayrollCsv(rows: PayrollReceiptRow[]): string {
   for (const r of rows) {
     const employeeNumber = r.employeeId || ''
     const { last, first } = parseLastFirst(r.employeeName)
-    const key = employeeNumber
     const amount = typeof r.amount === 'number' ? r.amount : Number(r.amount) || 0
-    const existing = totalsMap.get(key)
+    const existing = totalsMap.get(employeeNumber)
     if (existing) {
       existing.total += amount
     } else {
-      totalsMap.set(key, { lastName: last, firstName: first, employeeNumber, total: amount })
+      totalsMap.set(employeeNumber, { lastName: last, firstName: first, employeeNumber, total: amount })
     }
   }
 
@@ -56,9 +55,9 @@ export function buildPayrollCsv(rows: PayrollReceiptRow[]): string {
   const csvLines = [
     headers.join(','),
     ...sorted.map(r => [
-      quoteCsv(r.lastName || ''),
-      quoteCsv(r.firstName || ''),
-      quoteCsv(r.employeeNumber || ''),
+      quoteCsv(r.lastName),
+      quoteCsv(r.firstName),
+      quoteCsv(r.employeeNumber),
       (Number.isFinite(r.total) ? r.total.toFixed(2) : '0.00'),
     ].join(','))
   ]

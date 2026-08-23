@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { isStorageNotFound } from '@/lib/storageErrors';
-import { keysetOrFilter, parseLimit } from '@/lib/keysetCursor';
-import { decodeReceiptCursor, encodeReceiptCursor } from '@/lib/receiptCursor';
-import { RECEIPT_STATUS_VALUES, type Receipt } from '@/lib/types';
+import { encodeKeysetCursor, keysetOrFilter, parseLimit } from '@/lib/keysetCursor';
+import { decodeReceiptCursor } from '@/lib/receiptCursor';
+import { RECEIPT_STATUS_VALUES, parseReceiptStatus, type Receipt } from '@/lib/types';
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -52,15 +52,11 @@ export async function POST(request: Request) {
     const finalImagePath = `${userId}/${newReceiptId}.${originalFileExtension}`;
     const bucketName = 'receipt-images';
 
-    // No pre-flight existence check: storage.move() returns a 404 when the
-    // source object is missing, and the moveError branch below already cleans
-    // up the orphan receipt row.
     const { error: moveError } = await supabase.storage
       .from(bucketName)
       .move(tempFilePath, finalImagePath);
 
     if (moveError) {
-      // The 404 response below replaces moveError.message, so log it first.
       console.error('POST /api/receipts: storage move failed', {
         tempFilePath,
         finalImagePath,
@@ -105,11 +101,6 @@ export async function POST(request: Request) {
 const DEFAULT_RECEIPTS_LIMIT = 50;
 const MAX_RECEIPTS_LIMIT = 200;
 
-/** Status values stored in receipts.status, keyed by their lowercase form. */
-const RECEIPT_STATUSES = new Map(
-  RECEIPT_STATUS_VALUES.map((status) => [status.toLowerCase(), status])
-);
-
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
 
@@ -134,10 +125,8 @@ export async function GET(request: Request) {
   }
   const rawCursor = params.get('cursor');
 
-  // The employee table's status filter is applied here, not over the returned
-  // rows: only one page is loaded at a time.
   const rawStatus = params.get('status');
-  const statusFilter = rawStatus ? RECEIPT_STATUSES.get(rawStatus.toLowerCase()) : undefined;
+  const statusFilter = rawStatus ? parseReceiptStatus(rawStatus) : undefined;
   if (rawStatus && rawStatus.toLowerCase() !== 'all' && !statusFilter) {
     return NextResponse.json({ error: 'Invalid status filter' }, { status: 400 });
   }
@@ -172,26 +161,24 @@ export async function GET(request: Request) {
       if (!cursor) {
         return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
       }
-      // Keyset pagination on (receipt_date, created_at), same idiom as
-      // GET /api/photos. Separate or() calls are ANDed by PostgREST, so this
-      // composes with the user_id filter.
+      // Separate or() calls are ANDed by PostgREST, so this composes with the
+      // user_id filter.
       query = query.or(
         keysetOrFilter('receipt_date', cursor.receiptDate, 'created_at', cursor.createdAt)
       );
     }
 
-    const { data: rows, error: dbError } = await query;
+    const { data, error: dbError } = await query;
 
     if (dbError) {
       return NextResponse.json({ error: dbError.message || 'Failed to fetch receipts from database' }, { status: 500 });
     }
 
-    const page = (rows ?? []).slice(0, limit);
+    const rows = data ?? [];
+    const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     const nextCursor =
-      (rows ?? []).length > limit && last
-        ? encodeReceiptCursor(last.receipt_date, last.created_at)
-        : null;
+      rows.length > limit ? encodeKeysetCursor(last.receipt_date, last.created_at) : null;
 
     const mappedReceipts = page.map((item: any) => {
       let publicImageUrl = item.image_url;
@@ -277,18 +264,24 @@ export async function PATCH(request: Request) {
     }
 
     const isOwner = existingReceipt.user_id === userId;
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('role')
-      .eq('user_id', userId)
-      .single();
-    const userIsAdmin = profile?.role === 'admin';
+    const isPending = existingReceipt.status.toLowerCase() === 'pending';
+    // The role only decides the cases below; an owner editing a Pending
+    // receipt's details never needs the lookup.
+    let userIsAdmin = false;
+    if (!isOwner || !isPending || status !== undefined) {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role')
+        .eq('user_id', userId)
+        .single();
+      userIsAdmin = profile?.role === 'admin';
+    }
 
     if (!isOwner && !userIsAdmin) {
       return NextResponse.json({ error: 'You can only edit your own receipts' }, { status: 403 });
     }
 
-    if (existingReceipt.status.toLowerCase() !== 'pending' && !userIsAdmin) {
+    if (!isPending && !userIsAdmin) {
       return NextResponse.json({
         error: `Cannot edit receipt with status "${existingReceipt.status}". Contact an admin.`
       }, { status: 403 });
@@ -310,7 +303,7 @@ export async function PATCH(request: Request) {
     if (category_id !== undefined) updateData.category_id = category_id;
     if (notes !== undefined) updateData.description = notes;
     if (status !== undefined) {
-      const canonical = RECEIPT_STATUSES.get(String(status).toLowerCase());
+      const canonical = parseReceiptStatus(String(status));
       if (!canonical) {
         return NextResponse.json({ error: `Invalid status value. Must be one of: ${RECEIPT_STATUS_VALUES.join(', ')}` }, { status: 400 });
       }

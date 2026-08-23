@@ -43,21 +43,16 @@ type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
  * matching job ids, matching uploader ids, and overlapping tags.
  * Returns null when nothing matches (the result set is empty).
  *
- * `job` is the caller's already-validated job filter. It is only passed down to
- * the tag lookup, which would otherwise unnest the tags of every row in photos
- * to answer a question scoped to one job. The or() filter itself stays
- * job-agnostic; the outer query applies .eq('job_id', job) separately.
+ * `job` scopes the tag lookup, which would otherwise unnest the tags of every
+ * row in photos to answer a question scoped to one job.
  */
 async function buildSearchFilter(
   supabase: ServerClient,
   q: string,
   job: string | null
 ): Promise<string | null> {
-  // Two escapes of the same query: the RPC argument is bound, so it only
-  // needs its wildcards neutralised; the or() filter below is grammar, so it
-  // also loses PostgREST's syntax characters.
   const rpcQuery = escapeIlikeWildcards(q);
-  const escaped = escapeForIlike(q);
+  const escaped = escapeForIlike(rpcQuery);
   if (!escaped) return null;
   const pattern = `%${escaped}%`;
 
@@ -89,9 +84,8 @@ async function buildSearchFilter(
     parts.push(`uploader_id.in.(${uploaderIds.join(',')})`);
   }
 
-  // The RPC already applied the case-insensitive substring match, so this only
-  // has to drop tags that can't be embedded in PostgREST's or()/array syntax.
-  // The UI never produces those, so skipping is the safe trade.
+  // Drop tags that can't be embedded in PostgREST's or()/array syntax. The UI
+  // never produces those, so skipping is the safe trade.
   const matchedTags = ((tagRowsResult.data ?? []) as PhotoTagRow[])
     .map((row) => row.tag)
     .filter((tag) => !/[,(){}"\\]/.test(tag))

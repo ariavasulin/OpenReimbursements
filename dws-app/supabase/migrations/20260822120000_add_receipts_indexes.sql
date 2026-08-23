@@ -1,11 +1,10 @@
--- Indexes for the receipts hot paths identified by pg_stat_statements.
+-- Indexes for the receipts hot paths.
 --
 -- CONCURRENTLY so this does not lock out writes.
 --
--- Do NOT apply this file with `supabase db query -f`: on CLI 2.115.0 that
--- wraps a multi-statement file in a transaction, and CREATE INDEX
--- CONCURRENTLY cannot run inside one (ERROR 25001). Apply each statement
--- individually via the positional form. See supabase/migrations/README.md.
+-- Apply each statement individually via the positional form — see
+-- supabase/migrations/README.md § Files that must be applied statement by
+-- statement.
 
 -- GET /api/receipts: where user_id = $1 order by receipt_date desc, created_at desc
 -- Matches filter and sort, so the planner gets an ordered index scan with no sort node.

@@ -1,12 +1,8 @@
-import { decodeKeysetCursor, encodeKeysetCursor, isIsoTimestamp } from "./keysetCursor";
+import { decodeKeysetCursor, isIsoTimestamp } from "./keysetCursor";
 
 // Keyset-pagination cursor for GET /api/receipts, keyed on
 // (receipt_date, created_at).
 export type ReceiptCursor = { receiptDate: string; createdAt: string };
-
-export function encodeReceiptCursor(receiptDate: string, createdAt: string): string {
-  return encodeKeysetCursor(receiptDate, createdAt);
-}
 
 export function decodeReceiptCursor(raw: string): ReceiptCursor | null {
   return decodeKeysetCursor(raw, (receiptDate, createdAt) => {

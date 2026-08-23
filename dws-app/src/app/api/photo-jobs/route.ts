@@ -1,11 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { escapeIlikeWildcards } from '@/lib/photos/apiShared';
-import {
-  mapJobSummary,
-  type PhotoJobSummaryRow,
-} from '@/lib/photos/jobSummary';
-import type { PhotoJobSummary } from '@/lib/photos/types';
+import { mapJobSummary } from '@/lib/photos/jobSummary';
+import type { PhotoJobSummary, PhotoJobSummaryRow } from '@/lib/photos/types';
 
 // GET /api/photo-jobs?q= — job cards for the photos home screen and the
 // upload job dropdown: job number, name, photo count, up to 4 newest thumbs.
@@ -25,8 +22,6 @@ export async function GET(request: Request) {
 
   const q = new URL(request.url).searchParams.get('q')?.trim() ?? '';
 
-  // Counts, latest-upload ordering, and the 4 newest thumbs per job are all
-  // computed in SQL (get_photo_job_summaries).
   const escaped = escapeIlikeWildcards(q);
   const { data, error } = await supabase.rpc('get_photo_job_summaries', {
     search_query: escaped || null,

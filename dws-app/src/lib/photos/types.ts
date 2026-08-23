@@ -51,6 +51,18 @@ export interface PhotoTagRow {
   tag: string;
 }
 
+/** One row of the get_photo_job_summaries RPC. */
+export interface PhotoJobSummaryRow {
+  id: string;
+  job_number: string;
+  name: string;
+  location: string | null;
+  photo_count: number | string; // bigint arrives as a string over PostgREST
+  /** Drives the RPC's ordering; not part of the wire shape we return. */
+  latest_upload: string | null;
+  thumbs: string[] | null;
+}
+
 /** One job card on the photos home screen / job dropdown. */
 export interface PhotoJobSummary {
   id: string;

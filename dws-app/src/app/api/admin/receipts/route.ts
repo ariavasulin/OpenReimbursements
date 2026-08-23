@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { employeeIdentity, RECEIPT_SORT_FIELDS, type Receipt, type ReceiptSortField } from '@/lib/types';
-import { normalizeReceiptSearch } from '@/lib/receiptSearch';
 
 export async function GET(request: Request) {
   const gate = await requireAdmin();
@@ -13,7 +12,6 @@ export async function GET(request: Request) {
     const statusFilter = searchParams.get('status');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
-    const search = normalizeReceiptSearch(searchParams.get('q'));
     const sortField = searchParams.get('sort');
     const sortDir = searchParams.get('dir');
     // The RPC checks too; a 400 here beats its 500.
@@ -30,19 +28,13 @@ export async function GET(request: Request) {
       200
     );
 
-    // One bounded call. The full-result-set path lives on in ./export/route.ts,
-    // where it runs only when someone exports the payroll CSV. The function
-    // applies status, dates, search and sort once, aggregates the filtered
-    // totals in a CTE and joins them to the page, so every returned row
-    // repeats total_count/total_amount and the table, the summary card and
-    // the pager all describe the same set.
     const { data, error } = await supabase.rpc('get_admin_receipts_page', {
       status_filter: statusFilter || null,
       from_date: fromDate || null,
       to_date: toDate || null,
       page_num: page,
       page_size: pageSize,
-      search_term: search || null,
+      search_term: searchParams.get('q') || null,
       sort_field: sortField || null,
       sort_dir: sortDir || null,
     });
@@ -92,8 +84,6 @@ export async function GET(request: Request) {
       receipts: mappedReceipts as Receipt[],
       totalCount,
       totalAmount,
-      page,
-      pageSize,
     }, { status: 200 });
 
   } catch (error) {

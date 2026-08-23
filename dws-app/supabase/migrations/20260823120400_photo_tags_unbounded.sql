@@ -1,11 +1,8 @@
 -- get_photo_tags: drop the cap.
 --
--- The 10,000-row JS scan this RPC replaced collected every tag; the RPC
--- capped the distinct list at 500 (200 from photo search). Past the cap,
--- alphabetically late tags vanished from the Tags filter, and — because photo
--- search builds its tags.ov.{…} predicate from that list — photos carrying
--- them vanished from search results, in a normal-looking response. Neither
--- caller wants a cap, so the parameter goes with it.
+-- Photo search builds its tags.ov.{…} predicate from this list, so a cap here
+-- silently drops photos from search results; the only bound the search route
+-- keeps is its own URL-length guard on that predicate.
 --
 -- The signature changes, so the old overload is dropped first (PostgREST
 -- cannot choose between overloads when a caller omits defaulted arguments).

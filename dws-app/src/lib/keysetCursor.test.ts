@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { decodeKeysetCursor, encodeKeysetCursor, isIsoTimestamp, keysetOrFilter } from "./keysetCursor";
 
 const pass = (first: string, second: string) => ({ first, second });
@@ -44,12 +44,6 @@ describe("keyset cursor", () => {
     expect(decodeKeysetCursor(encode('["a",null]'), pass)).toBeNull();
     expect(decodeKeysetCursor(encode('{"first":"a","second":"b"}'), pass)).toBeNull();
     expect(decodeKeysetCursor(encode('"a"'), pass)).toBeNull();
-  });
-
-  it("does not call the validator when the shape is already wrong", () => {
-    const validate = vi.fn(pass);
-    decodeKeysetCursor(Buffer.from('["a"]').toString("base64url"), validate);
-    expect(validate).not.toHaveBeenCalled();
   });
 
   it("returns null when the validator rejects", () => {

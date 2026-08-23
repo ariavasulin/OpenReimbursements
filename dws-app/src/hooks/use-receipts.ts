@@ -1,6 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchJson } from '@/lib/photos/api'
-import type { Receipt, ReceiptStatusValue } from '@/lib/types'
+import type { Receipt, ReceiptStatusFilter } from '@/lib/types'
 
 /** One page of GET /api/receipts (keyset-paginated, 50 rows per page). */
 export interface ReceiptsPage {
@@ -8,17 +8,13 @@ export interface ReceiptsPage {
   nextCursor: string | null
 }
 
-/** Status values the employee filter can send; 'all' means no filter. */
-export type ReceiptStatusFilter = 'all' | Lowercase<ReceiptStatusValue>
-
 /**
  * Cache keys for the employee's own receipts. Keyed by user id and status:
  * statuses are separate server-side result sets, and cache entries must not
  * cross accounts.
  */
 export const receiptsKeys = {
-  all: ['receipts'] as const,
-  mine: (userId: string | null | undefined, status: ReceiptStatusFilter = 'all') =>
+  mine: (userId: string | null | undefined, status: ReceiptStatusFilter) =>
     ['receipts', 'mine', userId ?? null, status] as const,
   /** Every status for one user — the right scope for a post-mutation reset. */
   mineForUser: (userId: string | null | undefined) =>
@@ -39,12 +35,7 @@ function fetchMyReceiptsPage(
   )
 }
 
-/**
- * The signed-in employee's own receipts, newest first, optionally narrowed to
- * one status. Pages accumulate in the react-query cache (5-minute staleTime
- * from the app's QueryProvider), so remounting within that window renders from
- * cache instead of refetching.
- */
+/** The signed-in employee's own receipts, newest first, optionally narrowed to one status. */
 export function useMyReceipts({
   userId,
   status = 'all',

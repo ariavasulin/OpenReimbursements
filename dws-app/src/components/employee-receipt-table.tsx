@@ -19,8 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { Receipt } from "@/lib/types"
-import type { ReceiptStatusFilter } from "@/hooks/use-receipts"
+import type { Receipt, ReceiptStatusFilter } from "@/lib/types"
 import { formatCurrency, formatDate, formatDateShort } from "@/lib/utils"
 import { useMobile } from "@/hooks/use-mobile"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -34,7 +33,7 @@ interface EmployeeReceiptTableProps {
   onStatusFilterChange: (status: ReceiptStatusFilter) => void
   onReceiptUpdated?: (updatedReceipt: Receipt) => void
   /** The rows belong to the previous filter while the new one is in flight. */
-  isStale?: boolean
+  isStale: boolean
 }
 
 export default function EmployeeReceiptTable({
@@ -42,7 +41,7 @@ export default function EmployeeReceiptTable({
   statusFilter,
   onStatusFilterChange,
   onReceiptUpdated,
-  isStale = false,
+  isStale,
 }: EmployeeReceiptTableProps) {
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null)
