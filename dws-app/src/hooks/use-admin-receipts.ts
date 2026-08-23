@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { fetchJson } from '@/lib/photos/api'
 import { Receipt, toDbReceiptStatus } from '@/lib/types'
 
 interface AdminReceiptsParams {
@@ -59,27 +60,28 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<AdminRec
     urlParams.append('pageSize', String(params.pageSize))
   }
 
-  const response = await fetch(`/api/admin/receipts?${urlParams.toString()}`)
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.error || `Failed to fetch receipts: ${response.status}`)
-  }
-
-  const data = await response.json()
+  const data = await fetchJson<{
+    success: boolean
+    error?: string
+    receipts: Receipt[]
+    totalCount: number
+    totalAmount: number
+  }>(`/api/admin/receipts?${urlParams.toString()}`, 'Failed to fetch receipts')
 
   if (!data.success) {
     throw new Error(data.error || 'Failed to fetch receipts')
   }
 
   return {
+    // The route always sends `date`; `receipt_date` is the fallback for rows
+    // that predate it.
     receipts: data.receipts.map((r: Receipt) => ({
       ...r,
       date: r.date || r.receipt_date,
       category: r.category || 'Uncategorized',
-    })),
-    totalCount: data.totalCount ?? 0,
-    totalAmount: data.totalAmount ?? 0,
+    })) as Receipt[],
+    totalCount: data.totalCount,
+    totalAmount: data.totalAmount,
   }
 }
 
@@ -97,18 +99,18 @@ async function fetchAdminReceiptCounts(params: AdminReceiptCountsParams): Promis
   if (params.toDate) urlParams.append('toDate', params.toDate)
 
   const qs = urlParams.toString()
-  const response = await fetch(`/api/admin/receipts/status-counts${qs ? `?${qs}` : ''}`)
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(errorData.error || `Failed to fetch receipt counts: ${response.status}`)
-  }
-
-  const data = await response.json()
+  const data = await fetchJson<{
+    success: boolean
+    error?: string
+    counts: AdminReceiptCounts
+  }>(
+    `/api/admin/receipts/status-counts${qs ? `?${qs}` : ''}`,
+    'Failed to fetch receipt counts'
+  )
   if (!data.success) {
     throw new Error(data.error || 'Failed to fetch receipt counts')
   }
-  return data.counts as AdminReceiptCounts
+  return data.counts
 }
 
 export function useAdminReceiptCounts({ enabled = true, ...params }: AdminReceiptCountsParams) {

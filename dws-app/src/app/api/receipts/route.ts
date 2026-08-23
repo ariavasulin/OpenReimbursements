@@ -54,9 +54,7 @@ export async function POST(request: Request) {
 
     // No pre-flight existence check: storage.move() returns a 404 when the
     // source object is missing, and the moveError branch below already cleans
-    // up the orphan receipt row. The check that used to live here compiled to
-    // storage.search(), which cost 29.6% of all database time (85ms mean,
-    // 1527ms p-max, 3213 calls) for information the move already gives us.
+    // up the orphan receipt row.
     const { error: moveError } = await supabase.storage
       .from(bucketName)
       .move(tempFilePath, finalImagePath);
@@ -133,9 +131,7 @@ export async function GET(request: Request) {
   const rawCursor = params.get('cursor');
 
   // The employee table's status filter is applied here, not over the returned
-  // rows: only one page is loaded at a time, so a client-side filter searched
-  // a 50-row prefix and reported "No receipts found" for anyone whose matching
-  // receipt sat further back in their history.
+  // rows: only one page is loaded at a time.
   const rawStatus = params.get('status');
   const statusFilter = rawStatus ? RECEIPT_STATUSES[rawStatus.toLowerCase()] : undefined;
   if (rawStatus && rawStatus.toLowerCase() !== 'all' && !statusFilter) {

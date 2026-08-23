@@ -22,21 +22,17 @@ export function buildPayrollCsv(rows: PayrollReceiptRow[]): string {
 
   const totalsMap = new Map<string, { lastName: string; firstName: string; employeeNumber: string; total: number }>()
 
-  const parseLastFirst = (fullName?: string, fallbackName?: string): { last: string; first: string } => {
-    if (fullName && fullName.includes(',')) {
-      const [l, f] = fullName.split(',')
+  const parseLastFirst = (name?: string): { last: string; first: string } => {
+    if (name && name.includes(',')) {
+      const [l, f] = name.split(',')
       return { last: (l || '').trim(), first: (f || '').trim() }
     }
-    if (fallbackName && fallbackName.includes(',')) {
-      const [l, f] = fallbackName.split(',')
-      return { last: (l || '').trim(), first: (f || '').trim() }
-    }
-    return { last: '', first: (fallbackName || '').trim() }
+    return { last: '', first: (name || '').trim() }
   }
 
   for (const r of rows) {
     const employeeNumber = r.employeeId || ''
-    const { last, first } = parseLastFirst(r.employeeName, r.employeeName)
+    const { last, first } = parseLastFirst(r.employeeName)
     const key = employeeNumber
     const amount = typeof r.amount === 'number' ? r.amount : Number(r.amount) || 0
     const existing = totalsMap.get(key)

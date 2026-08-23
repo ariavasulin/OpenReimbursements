@@ -34,15 +34,9 @@ function getQueryClient() {
 /**
  * Drops the whole cache whenever the signed-in identity changes.
  *
- * The QueryClient is a module-level singleton that outlives every page, and
- * cached data has a 5-minute staleTime. Without this, one employee signing out
- * and another signing in on the same device (a shared phone, a manager's
- * laptop) left the first account's receipts and photos in the cache for the
- * second account to render with no request. Per-page sign-out handlers cannot
- * cover it: the page that registered the handler unmounts as soon as the
- * router navigates to /login.
- *
- * Renders nothing; it only watches auth state.
+ * The QueryClient is a module-level singleton with a 5-minute staleTime, so
+ * cached data must not survive an identity change. A per-page handler cannot
+ * do it — the page unmounts on navigation to /login.
  */
 function AuthIdentityBoundary() {
   const queryClient = useQueryClient()

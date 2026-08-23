@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { buildPayrollCsv } from '@/lib/payrollCsv';
 import { normalizeReceiptSearch, receiptMatchesSearch } from '@/lib/receiptSearch';
+import { employeeIdentity } from '@/lib/types';
 
 // The admin dashboard's payroll export needs every matching row: a bulk read,
 // run only when someone clicks Export, paged around PostgREST's ~1000-row cap.
@@ -15,9 +16,7 @@ export async function GET(request: Request) {
     const statusFilter = searchParams.get('status');
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
-    // The dashboard's search box is part of what the admin sees when they hit
-    // Export. Without it the CSV covered every employee no matter what was
-    // typed. Applied here with the same matcher the table uses, over the whole
+    // Applied here with the same matcher the table uses, over the whole
     // filtered result set rather than the page on screen.
     const search = normalizeReceiptSearch(searchParams.get('q'));
 
@@ -62,11 +61,8 @@ export async function GET(request: Request) {
     }
     const receiptsData: any[] = pageResults.flatMap((r) => r.data ?? []);
 
-    // Same employeeName/employeeId derivation the dashboard applied to these
-    // rows before the CSV logic moved server-side.
     const rows = receiptsData.map((item: any) => ({
-      employeeId: item.employee_id_internal || '',
-      employeeName: item.preferred_name || item.full_name || 'Unknown',
+      ...employeeIdentity(item),
       description: item.description ?? '',
       amount: item.amount,
     }));

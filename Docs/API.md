@@ -135,9 +135,8 @@ Keyset-paginated: one page per request, `nextCursor` fetches the next.
 
 **Query Params**:
 - `status`: `pending` | `approved` | `rejected` | `reimbursed` (case-insensitive;
-  `all` or omitted means every status). Applied in the database, not over the
-  returned page — the employee table's filter has to span the user's whole
-  history, not just the rows already loaded. Anything else is a 400.
+  `all` or omitted means every status). Applied in the database, across the
+  full result set rather than the current page. Anything else is a 400.
 - `limit`: page size, 1–200 (default 50)
 - `cursor`: opaque `nextCursor` from the previous response; omit for page 1
 
@@ -236,7 +235,7 @@ over the whole filtered set. Backed by the `get_admin_receipts_page` RPC.
 **Query Params**:
 - `status`: Filter by status (capitalized, e.g. `Approved`; `all` or omitted for every status)
 - `fromDate`: Start date (YYYY-MM-DD), inclusive
-- `toDate`: End date (YYYY-MM-DD), **exclusive** — the dashboard passes to+1day
+- `toDate`: End date (YYYY-MM-DD), **exclusive**
 - `page`: 1-based page number (default 1)
 - `pageSize`: rows per page, 1–200 (default 25)
 

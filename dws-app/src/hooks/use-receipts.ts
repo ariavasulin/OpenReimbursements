@@ -1,6 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchJson } from '@/lib/photos/api'
-import type { Receipt } from '@/lib/types'
+import type { Receipt, ReceiptStatusValue } from '@/lib/types'
 
 /** One page of GET /api/receipts (keyset-paginated, 50 rows per page). */
 export interface ReceiptsPage {
@@ -9,16 +9,12 @@ export interface ReceiptsPage {
 }
 
 /** Status values the employee filter can send; 'all' means no filter. */
-export type ReceiptStatusFilter = 'all' | 'pending' | 'approved' | 'rejected' | 'reimbursed'
+export type ReceiptStatusFilter = 'all' | Lowercase<ReceiptStatusValue>
 
 /**
- * Cache keys for the employee's own receipts.
- *
- * The user id is part of the key on purpose. With a constant key, two accounts
- * signing in on the same device within the 5-minute staleTime shared one cache
- * entry, so the second employee could be served the first one's receipts with
- * no request. The status is part of the key because filtering happens
- * server-side (see GET /api/receipts): each status is a different result set.
+ * Cache keys for the employee's own receipts. Keyed by user id and status:
+ * statuses are separate server-side result sets, and cache entries must not
+ * cross accounts.
  */
 export const receiptsKeys = {
   all: ['receipts'] as const,
@@ -48,11 +44,6 @@ function fetchMyReceiptsPage(
  * one status. Pages accumulate in the react-query cache (5-minute staleTime
  * from the app's QueryProvider), so remounting within that window renders from
  * cache instead of refetching.
- *
- * The status filter is a server-side query parameter rather than a filter over
- * the loaded rows: only the first page is loaded up front, so filtering
- * client-side searched a 50-row prefix and reported "No receipts found" for
- * employees whose matching receipt sat further back in their history.
  */
 export function useMyReceipts({
   userId,
@@ -81,8 +72,7 @@ export function useMyReceipts({
  * Deliberately reset, not invalidate: this is an infinite query, and
  * invalidateQueries refetches every cached page — sequentially, because keyset
  * pages can only be fetched in cursor order. resetQueries drops back to page 1
- * and fetches once, which is also the right view after a change (the new or
- * edited receipt is newest, so it belongs on page 1).
+ * and fetches once.
  */
 export function useResetMyReceipts(userId: string | null | undefined) {
   const queryClient = useQueryClient()

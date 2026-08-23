@@ -5,8 +5,7 @@ import { escapeForIlike } from '@/lib/photos/apiShared';
 
 // GET /api/photo-tags?job=&q= — distinct tags in use (optionally scoped to a
 // job, optionally substring-filtered), for the Tags filter and upload
-// type-ahead. Aggregated in SQL by the get_photo_tags RPC; this used to pull
-// up to 10,000 rows and dedupe in JS.
+// type-ahead. Aggregated in SQL by the get_photo_tags RPC.
 
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -19,16 +18,16 @@ export async function GET(request: Request) {
 
   const params = new URL(request.url).searchParams;
   const job = params.get('job');
-  const q = params.get('q')?.trim().toLowerCase() ?? '';
+  const q = params.get('q')?.trim() ?? '';
 
   if (job && !isUuid(job)) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
 
-  // ilike '%q%' matches the old case-insensitive includes(); SQL `order by`
-  // replaces localeCompare, which can order non-ASCII tags differently.
-  // The RPC interpolates its argument into the pattern, so wildcards typed in
-  // the type-ahead have to be escaped or a lone % would match every tag.
+  // Tag order comes from SQL `order by`, which can sort non-ASCII tags
+  // differently than localeCompare. The RPC interpolates its argument into the
+  // ilike pattern, so wildcards typed in the type-ahead have to be escaped or
+  // a lone % would match every tag.
   const escaped = escapeForIlike(q);
   const { data, error } = await supabase.rpc('get_photo_tags', {
     job_filter: job || null,

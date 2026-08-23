@@ -26,8 +26,7 @@ export async function GET(request: Request) {
   const q = new URL(request.url).searchParams.get('q')?.trim() ?? '';
 
   // Counts, latest-upload ordering, and the 4 newest thumbs per job are all
-  // computed in SQL (get_photo_job_summaries). This used to pull up to
-  // 10,000 photo rows per request and aggregate them in JS.
+  // computed in SQL (get_photo_job_summaries).
   const escaped = escapeForIlike(q);
   const { data, error } = await supabase.rpc('get_photo_job_summaries', {
     search_query: escaped || null,

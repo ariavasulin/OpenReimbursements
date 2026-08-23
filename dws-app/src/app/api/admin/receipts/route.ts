@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
-import type { Receipt } from '@/lib/types';
+import { employeeIdentity, type Receipt } from '@/lib/types';
 
 export async function GET(request: Request) {
   const gate = await requireAdmin();
@@ -19,13 +19,11 @@ export async function GET(request: Request) {
       200
     );
 
-    // One bounded call. This used to be a counts RPC plus ceil(total/1000)
-    // parallel get_admin_receipts_with_phone RPCs fired on every request to
-    // render a 10-row table. The full-result-set path lives on in
-    // ./export/route.ts, where it runs only when someone exports the payroll
-    // CSV. The function aggregates the filtered totals in a CTE and joins it
-    // to the page, so every returned row repeats total_count/total_amount and
-    // no separate counts round-trip is needed here.
+    // One bounded call. The full-result-set path lives on in ./export/route.ts,
+    // where it runs only when someone exports the payroll CSV. The function
+    // aggregates the filtered totals in a CTE and joins it to the page, so
+    // every returned row repeats total_count/total_amount and no separate
+    // counts round-trip is needed here.
     const { data, error } = await supabase.rpc('get_admin_receipts_page', {
       status_filter: statusFilter || null,
       from_date: fromDate || null,
@@ -39,14 +37,13 @@ export async function GET(request: Request) {
 
     // Every row carries the filtered totals. A page past the end of the result
     // set returns a single row with null receipt columns so the totals still
-    // come back (the old cross join returned nothing there, and the dashboard
-    // reported 0 receipts / $0.00 for an out-of-range page).
+    // come back.
     const rows: any[] = data ?? [];
     const totalCount = rows.length > 0 ? Number(rows[0].total_count) : 0;
     const totalAmount = rows.length > 0 ? Number(rows[0].total_amount) : 0;
     const receiptsData = rows.filter((row) => row.id !== null);
 
-    const mappedReceipts = (receiptsData || []).map((item: any) => {
+    const mappedReceipts = receiptsData.map((item: any) => {
       let publicImageUrl = item.image_url;
 
       if (item.image_url) {
@@ -62,8 +59,7 @@ export async function GET(request: Request) {
       return {
         id: item.id,
         user_id: item.user_id,
-        employeeName: item.preferred_name || item.full_name || "Unknown",
-        employeeId: item.employee_id_internal || "",
+        ...employeeIdentity(item),
         phone: item.phone || null,
         date: item.receipt_date,
         amount: item.amount,

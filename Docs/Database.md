@@ -101,8 +101,11 @@ export const supabaseAdmin = createClient(
 | updated_at | timestamp | Auto-updated |
 | deleted_at | timestamp | Soft delete |
 
-**RLS**: Enabled — a user may read and update only the row where
-`user_id = auth.uid()`.
+**RLS**: Enabled — a user may update only the row where `user_id = auth.uid()`.
+Reads are broader than that: two permissive SELECT policies are live
+(`"Users can view their own profile"`, `auth.uid() = user_id`, and
+`user_profiles_select_policy`, `auth.uid() is not null`), and permissive
+policies OR together, so any authenticated user can read every profile row.
 
 **Column grants**: RLS says *which row*; grants say *which columns*. The
 `authenticated` role holds `UPDATE` on `full_name` only

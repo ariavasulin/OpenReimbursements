@@ -66,6 +66,22 @@ export function toDbReceiptStatus(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
+/**
+ * Employee display fields derived from an admin receipts RPC row. The dashboard
+ * and the payroll export must agree on these, or an exported CSV names people
+ * differently than the table the admin was looking at.
+ */
+export function employeeIdentity(row: {
+  preferred_name?: string | null;
+  full_name?: string | null;
+  employee_id_internal?: string | null;
+}): { employeeName: string; employeeId: string } {
+  return {
+    employeeName: row.preferred_name || row.full_name || 'Unknown',
+    employeeId: row.employee_id_internal || '',
+  };
+}
+
 export interface BatchStatusDecision {
   id: string;
   status: ReceiptStatusValue;

@@ -18,8 +18,7 @@ import { formatDate } from "@/lib/utils"
 import type { Receipt } from "@/lib/types"
 
 // Renders exactly the rows it is handed, in whatever sort the header controls
-// select. Paging is the caller's job: /api/admin/receipts returns one server
-// page, and receipt-dashboard owns the pager UI and the "Showing X to Y of N".
+// select. Paging is the caller's job.
 interface ReceiptTableProps {
   rowData?: Receipt[]
   height?: number | string | "auto"

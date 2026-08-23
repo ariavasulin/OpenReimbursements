@@ -4,7 +4,8 @@
 -- records them so a fresh database can be rebuilt from the repo alone.
 --
 -- The photos-bucket storage policies are NOT here — they live in
--- 00000000000003_photos_schema.sql.
+-- 20260822130200_rls_storage_scalar_subqueries.sql (the photos table's own
+-- policies live in 20260822130100_rls_photos_tighten_update.sql).
 --
 -- Idempotent: drop-if-exists / create pairs. Do not re-apply to the existing
 -- project unless a policy has drifted.

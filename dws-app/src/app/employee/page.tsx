@@ -18,8 +18,6 @@ export default function EmployeePage() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // The status filter lives here, not in the table: it is a query parameter of
-  // the receipts request, so the table can only render what it is given.
   const [statusFilter, setStatusFilter] = useState<ReceiptStatusFilter>('all');
 
   const mountedRef = useRef(true);
@@ -47,9 +45,6 @@ export default function EmployeePage() {
     receiptsQueryError instanceof Error ? receiptsQueryError.message : null;
 
   const resetReceipts = useResetMyReceipts(user?.id);
-
-  const handleReceiptAdded = resetReceipts;
-  const handleReceiptUpdated = resetReceipts;
 
   useEffect(() => {
     loadingTimeoutRef.current = setTimeout(() => {
@@ -160,9 +155,8 @@ export default function EmployeePage() {
         if (event === 'SIGNED_OUT' || !session) {
           setUser(null);
           setUserProfile(null);
-          // Cache eviction is not done here: this listener is gone once the
-          // router leaves /employee. AuthIdentityBoundary (query-provider.tsx)
-          // clears the cache on every identity change, from anywhere in the app.
+          // Cache clearing is AuthIdentityBoundary's job (query-provider.tsx);
+          // this listener dies with the page.
           router.replace('/login');
         }
       }
@@ -227,7 +221,7 @@ export default function EmployeePage() {
       </div>
       
       <div className="max-w-4xl mx-auto space-y-6">
-        <ReceiptUploader onReceiptAdded={handleReceiptAdded} />
+        <ReceiptUploader onReceiptAdded={resetReceipts} />
         
         {receiptsLoading && <p className="text-center">Loading receipts...</p>}
         {receiptsError && <p className="text-center text-red-500">Error loading receipts: {receiptsError}</p>}
@@ -237,8 +231,7 @@ export default function EmployeePage() {
               receipts={receipts}
               statusFilter={statusFilter}
               onStatusFilterChange={setStatusFilter}
-              hasMore={Boolean(hasNextPage)}
-              onReceiptUpdated={handleReceiptUpdated}
+              onReceiptUpdated={resetReceipts}
             />
             {hasNextPage && (
               <LoadMoreButton onClick={() => fetchNextPage()} loading={isFetchingNextPage} />

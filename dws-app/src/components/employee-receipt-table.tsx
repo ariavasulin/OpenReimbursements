@@ -32,8 +32,6 @@ interface EmployeeReceiptTableProps {
   /** Owned by the page: it is a query parameter of the receipts request. */
   statusFilter: ReceiptStatusFilter
   onStatusFilterChange: (status: ReceiptStatusFilter) => void
-  /** True when the server has more receipts for this filter than are loaded. */
-  hasMore?: boolean
   onReceiptUpdated?: (updatedReceipt: Receipt) => void
 }
 
@@ -41,7 +39,6 @@ export default function EmployeeReceiptTable({
   receipts,
   statusFilter,
   onStatusFilterChange,
-  hasMore = false,
   onReceiptUpdated,
 }: EmployeeReceiptTableProps) {
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -65,12 +62,6 @@ export default function EmployeeReceiptTable({
       onReceiptUpdated(updatedReceipt)
     }
   }
-
-  // `receipts` is rendered whole: it is already the server's answer for
-  // `statusFilter`, and the page above grows it with Load More. Neither the
-  // status filter nor pagination belongs here — a client-side status filter
-  // searched only the loaded prefix, and a client-side pager turned Load More
-  // into "add another page number" instead of "show more rows".
 
   return (
     <div className="space-y-4 text-white">
@@ -151,10 +142,7 @@ export default function EmployeeReceiptTable({
       </div>
 
       <div className="text-sm text-center text-gray-400">
-        Showing {receipts.length}{hasMore ? "+" : ""} receipts
-        {hasMore && (
-          <span className="block text-xs">More receipts are available — use Load More below.</span>
-        )}
+        Showing {receipts.length} receipts
       </div>
 
       {/* Edit Receipt - Drawer on mobile, Dialog on desktop */}

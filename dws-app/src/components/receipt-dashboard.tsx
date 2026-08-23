@@ -38,7 +38,7 @@ import { toDbReceiptStatus, type Receipt, type BulkUpdateResponse } from "@/lib/
 import { useAdminReceipts, useAdminReceiptCounts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
 
-const TAB_EMPTY_MESSAGES: Record<string, string> = {
+const TAB_EMPTY_MESSAGES = {
   all: "No receipts found for the current filters.",
   pending: "No pending receipts found.",
   approved: "No approved receipts found.",
@@ -46,11 +46,12 @@ const TAB_EMPTY_MESSAGES: Record<string, string> = {
   rejected: "No rejected receipts found.",
 }
 
+type TabKey = keyof typeof TAB_EMPTY_MESSAGES
+
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   useAdminPrefetch()
 
-  const [activeTab, setActiveTab] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all")
+  const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [searchQuery, setSearchQuery] = useState<string>("")
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
@@ -73,7 +74,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
       from: selectedDateRange?.from,
       to: selectedDateRange?.to,
     });
-    setCurrentPage(1); // pagination is server-driven; a new filter starts at page 1
+    setCurrentPage(1);
   };
 
   const handleSelectedRowsChange = (newSelectedRows: Set<string>) => {
@@ -93,7 +94,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     setCurrentPage(1)
   }
 
-  // Query-string forms of the picked range, computed once.
   const fromDateParam = dateRange.from?.toISOString().split('T')[0]
   // toDate carries +1 day so the picked end date is included.
   const toDateParam = dateRange.to ? (() => {
@@ -111,10 +111,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     error: queryError,
     refetch
   } = useAdminReceipts({
-    // Server-driven pagination: status filter, page, and pageSize are pushed
-    // down to the API, which returns one bounded page plus the filtered
-    // totals. This used to fetch every matching receipt on every load.
-    status: filterStatus,
+    status: activeTab,
     fromDate: fromDateParam,
     toDate: toDateParam,
     page: currentPage,
@@ -140,10 +137,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     status: receipt.status.toLowerCase() as Receipt['status'],
   }))
 
-  // Status filtering happens server-side now; search still filters
-  // client-side, so it applies within the currently loaded page. The export
-  // sends the same term to the server (see downloadPayrollCSV) and applies
-  // this same matcher there, over the whole filtered result set.
+  // Search filters the loaded page; the export sends the same term and applies
+  // this matcher server-side.
   const normalizedSearch = normalizeReceiptSearch(searchQuery)
   const filteredReceipts = receipts.filter(receipt =>
     receiptMatchesSearch(receipt, normalizedSearch)
@@ -152,12 +147,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
   const downloadPayrollCSV = () => {
-    // The CSV aggregation lives server-side now (/api/admin/receipts/export,
-    // built on src/lib/payrollCsv.ts), so the full result set is fetched only
-    // when someone actually exports — not on every dashboard load.
     const params = new URLSearchParams()
-    if (filterStatus && filterStatus !== 'all') {
-      params.set('status', toDbReceiptStatus(filterStatus))
+    if (activeTab !== 'all') {
+      params.set('status', toDbReceiptStatus(activeTab))
     }
     if (fromDateParam) params.set('fromDate', fromDateParam)
     if (toDateParam) params.set('toDate', toDateParam)
@@ -445,8 +437,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
               <Tabs
                 value={activeTab}
                 onValueChange={(value) => {
-                  setActiveTab(value);
-                  setFilterStatus(value);
+                  setActiveTab(value as TabKey);
                   setCurrentPage(1); // pagination is server-driven; a new filter starts at page 1
                 }}
                 className="space-y-4"
@@ -536,7 +527,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                   <div className="w-full">
                     {filteredReceipts.length === 0 && !loading && (
                       <div className="flex items-center justify-center h-64">
-                        <p className="text-[#999999]">{TAB_EMPTY_MESSAGES[activeTab] ?? TAB_EMPTY_MESSAGES.all}</p>
+                        <p className="text-[#999999]">{TAB_EMPTY_MESSAGES[activeTab]}</p>
                       </div>
                     )}
                     {filteredReceipts.length > 0 && (
