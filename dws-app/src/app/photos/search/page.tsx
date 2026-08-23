@@ -9,6 +9,7 @@ import InfiniteSentinel from "@/components/photos/infinite-sentinel";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
+import { useClearVanishedPhoto } from "@/hooks/use-photo-deep-link";
 import SearchInput from "@/components/photos/search-input";
 import StatusLine from "@/components/photos/status-line";
 import { fetchPhotosPage, invalidatePhotoCaches } from "@/lib/photos/api";
@@ -35,6 +36,10 @@ function SearchResults() {
   const [openPhotoId, setOpenPhotoId] = useState<string | null>(null);
 
   useEffect(() => setQuery(q), [q, setQuery]);
+  // The string is the shell's, and it outlives this route: left alone it
+  // becomes the job filter on /photos and the rail, and picks the "most
+  // recent job" desktop lands on. Hand it back empty.
+  useEffect(() => () => setQuery(""), [setQuery]);
 
   const {
     data,
@@ -76,6 +81,7 @@ function SearchResults() {
       ? -1
       : openablePhotos.findIndex((photo) => photo.id === openPhotoId);
   const lightboxOpen = lightboxIndex !== -1;
+  useClearVanishedPhoto(lightboxIndex, setOpenPhotoId);
 
   const submit = () => {
     const next = query.trim();
@@ -110,15 +116,20 @@ function SearchResults() {
         </p>
       )}
 
-      <GroupByToggle
-        modes={["job", "date", "sheet"] as const}
-        value={groupBy}
-        onChange={(mode) => setGroupBy(mode)}
-      />
+      {/* Phone-width control; at desktop the column is full-bleed, so hold it
+          to its content width the way FilterBar holds the job page's. */}
+      <div className="desktop:flex">
+        <GroupByToggle
+          modes={["job", "date", "sheet"] as const}
+          value={groupBy}
+          onChange={(mode) => setGroupBy(mode)}
+        />
+      </div>
 
       {!q && <StatusLine>Search for a job, a person, or a tag.</StatusLine>}
       {isLoading && q && <StatusLine>Searching...</StatusLine>}
-      {error && (
+      {/* A failed next page is the sentinel's to report; see the job page. */}
+      {error && !isFetchNextPageError && (
         <StatusLine error>
           {error instanceof Error ? error.message : "Search failed"}
         </StatusLine>
@@ -137,6 +148,7 @@ function SearchResults() {
         onVisible={() => fetchNextPage()}
       />
 
+      {/* TODO(#12): /photos/search mounts the viewer without the ?photo= URL contract (usePhotoDeepLink/useResolvePhotoDeepLink); a cross-job route needs its own resolve semantics before it can share it. */}
       <PhotoLightbox
         photos={openablePhotos}
         open={lightboxOpen}

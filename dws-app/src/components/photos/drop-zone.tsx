@@ -8,8 +8,9 @@ interface DropZoneProps {
   onFiles(files: File[]): void;
   /** Job shown in the overlay, e.g. "#3962 · Westbridge". Omitted on /photos. */
   label?: string;
-  /** False while a sheet or the camera is already up — a drop then would
-   *  silently replace the batch the user is composing. */
+  /** False while a sheet, the camera, or the desktop photo viewer is already
+   *  up — a drop then would silently replace the batch the user is composing,
+   *  or stack the upload sheet over a layer that is still modal. */
   enabled?: boolean;
   /** Toast shown when a drop lands while `enabled` is false. */
   disabledReason?: string;

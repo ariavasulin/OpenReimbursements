@@ -60,6 +60,8 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
           className="h-full w-full object-cover"
         />
         {/* Hover / focus-visible metadata — desktop only (no hover on touch). */}
+        {/* TODO(#13): tile hover/focus metadata reads ~3.25:1 over bright photos; needs the rendered pass to settle, not a blind token change. */}
+        {/* TODO(#14): prefers-reduced-motion is unhandled app-wide (this transition, the rail skeleton pulse, dialog animations); wants one pass across both apps rather than here alone. */}
         {meta && (
           <span className="pointer-events-none absolute inset-x-0 bottom-0 hidden truncate bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 desktop:block">
             {meta}
@@ -144,12 +146,15 @@ export default function PhotoGrid({
           >
             {pinnedLabel ?? pinnedTag} · {pinned.length} ›
           </button>
+          {/* TODO(#15): design-standard drift — this pinned-row slice(0, 3), the lightbox close icon size, and the TopBar search max-width are separate cosmetic calls to settle together. */}
           <TileGrid photos={pinned.slice(0, 3)} onOpen={onOpenPhoto} />
         </section>
       )}
       {groups.map((group) => (
         <section key={group.key}>
-          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0] desktop:sticky desktop:top-0 desktop:z-10 desktop:bg-[#222222]/95 desktop:py-1.5 desktop:backdrop-blur">
+          {/* A stuck header must sit flush with the scrollport edge, with its
+              own tiles never scrolling through an unpainted band above it. */}
+          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0] desktop:sticky desktop:top-0 desktop:z-10 desktop:mt-0 desktop:bg-[#222222]/95 desktop:pb-1.5 desktop:pt-3 desktop:backdrop-blur">
             {group.label}
             {groupBy !== "date" && (
               <span className="text-[#7e7e7e]">

@@ -96,7 +96,9 @@ export default function TopBar() {
             variant="ghost"
             size="sm"
             onClick={signOut}
-            className="bg-red-500 text-white hover:bg-red-600"
+            // red-600, not the admin shell's red-500: white on red-500 is
+            // 3.82:1, under the 4.5:1 floor for this small label.
+            className="bg-red-600 text-white hover:bg-red-700"
           >
             Sign out
           </Button>

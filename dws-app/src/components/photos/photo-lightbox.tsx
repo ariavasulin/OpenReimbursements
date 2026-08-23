@@ -21,7 +21,10 @@ import { useDesktop } from "@/hooks/use-desktop";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
 import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
 import PhotoInfo from "@/components/photos/photo-info";
-import { PHOTOS_SCROLLPORT_ID } from "@/components/photos/photos-shell-context";
+import {
+  PHOTOS_SCROLLPORT_ID,
+  usePhotosShell,
+} from "@/components/photos/photos-shell-context";
 import { TOAST_REGION_ID } from "@/lib/toast-region";
 import type { PhotoRow } from "@/lib/photos/types";
 import { videoSource } from "@/lib/photos/video-source";
@@ -77,21 +80,32 @@ const canPlay = (type: string): string => {
   return answer;
 };
 
-/** Set an attribute and return the undo that puts the old value back. */
-function setAttribute(
+/**
+ * Set an attribute the element does not already carry, returning the undo
+ * that removes it again. Never restores a previous value: another writer
+ * (Radix's `hideOthers`) may clear its own `aria-hidden` while the viewer is
+ * up, and putting the stale value back would hide the app for the session.
+ */
+function addAttribute(
   element: Element,
   attribute: string,
   value: string
 ): () => void {
-  const previousValue = element.getAttribute(attribute);
+  if (element.hasAttribute(attribute)) return () => {};
   element.setAttribute(attribute, value);
-  return () => {
-    if (previousValue !== null) {
-      element.setAttribute(attribute, previousValue);
-    } else {
-      element.removeAttribute(attribute);
-    }
-  };
+  return () => element.removeAttribute(attribute);
+}
+
+/**
+ * A body child the sweep must leave alone: something another modal already
+ * hid (Radix marks those `data-aria-hidden`), or the live layer of that modal
+ * itself — a sheet open before the viewer stays usable above it.
+ */
+function ownedByAnotherLayer(element: Element): boolean {
+  return (
+    element.hasAttribute("data-aria-hidden") ||
+    element.querySelector('[role="dialog"][data-state="open"]') !== null
+  );
 }
 
 const FOCUSABLE_SELECTOR = [
@@ -176,7 +190,17 @@ export default function PhotoLightbox({
   onChanged,
 }: PhotoLightboxProps) {
   const isDesktop = useDesktop();
+  const { setViewerOpen } = usePhotosShell();
   const [editing, setEditing] = useState(false);
+
+  // The shell's drop intake treats an open desktop viewer as busy: a drop
+  // would otherwise open the upload sheet over a layer still asserting
+  // aria-modal, with one Escape then closing both.
+  useEffect(() => {
+    if (!(open && isDesktop)) return;
+    setViewerOpen(true);
+    return () => setViewerOpen(false);
+  }, [open, isDesktop, setViewerOpen]);
 
   const photo = photos[index] as PhotoRow | undefined;
 
@@ -272,9 +296,10 @@ export default function PhotoLightbox({
   // anything portalled to <body> afterwards is not swept at all, and so stays
   // live. Neither side declares the rule. If you add a body-level portal,
   // decide which it should be: mounted-before and meant to stay usable needs
-  // an exemption here (like the toast region below), and mounted-after that
-  // must not be reachable behind the viewer needs its own handling. The edit
-  // sheet is the mounted-after case that MUST stay live, and it is.
+  // an exemption here (the toast region, and any open Radix layer, below),
+  // and mounted-after that must not be reachable behind the viewer needs its
+  // own handling. The edit sheet is the mounted-after case that MUST stay
+  // live, and it is.
   useEffect(() => {
     if (!(open && isDesktop)) return;
     const opener = document.activeElement;
@@ -290,12 +315,20 @@ export default function PhotoLightbox({
       // silence its own feedback. Toasts render above the viewer, not behind
       // it.
       if (element.id === TOAST_REGION_ID) continue;
-      undo.push(setAttribute(element, "inert", ""));
-      undo.push(setAttribute(element, "aria-hidden", "true"));
+      if (ownedByAnotherLayer(element)) continue;
+      undo.push(addAttribute(element, "inert", ""));
+      undo.push(addAttribute(element, "aria-hidden", "true"));
     }
     return () => {
       undo.forEach((restore) => restore());
-      if (opener instanceof HTMLElement) opener.focus();
+      // The opener can be gone by now (deleted, or reassigned out of the
+      // filtered set); focusing a detached node is a silent no-op that dumps
+      // a keyboard user at the top of the document. Land on the scrollport.
+      if (opener instanceof HTMLElement && opener.isConnected) {
+        opener.focus();
+      } else {
+        document.getElementById(PHOTOS_SCROLLPORT_ID)?.focus();
+      }
     };
   }, [open, isDesktop]);
 

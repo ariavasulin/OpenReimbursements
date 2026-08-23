@@ -29,6 +29,9 @@ export interface PhotosShellValue {
   setQuery(value: string): void;
   /** 250ms-debounced `query`; this is what goes into the react-query key. */
   debouncedQuery: string;
+  /** The desktop photo viewer reports itself open here; the shell's drop
+   *  intake treats that as busy, like an open sheet or camera. */
+  setViewerOpen(open: boolean): void;
 }
 
 export const PhotosShellContext = createContext<PhotosShellValue | null>(null);

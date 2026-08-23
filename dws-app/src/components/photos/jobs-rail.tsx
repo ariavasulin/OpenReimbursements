@@ -2,9 +2,8 @@
 
 import { useRef } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
-import { fetchJobs } from "@/lib/photos/api";
+import { usePhotoJobs } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 
 /**
@@ -22,11 +21,7 @@ export default function JobsRail() {
     isLoading,
     error,
     refetch,
-  } = useQuery({
-    queryKey: ["photo-jobs", debouncedQuery],
-    queryFn: () => fetchJobs(debouncedQuery),
-    staleTime: 60_000,
-  });
+  } = usePhotoJobs(true, debouncedQuery);
 
   // ArrowUp/ArrowDown move focus between rows without scrolling the rail;
   // rows are <Link>s so Enter-to-open is native.
@@ -59,7 +54,11 @@ export default function JobsRail() {
     >
       {isLoading &&
         Array.from({ length: 6 }, (_, i) => (
-          <div key={i} className="animate-pulse space-y-1.5 px-4 py-3">
+          <div
+            key={i}
+            // Same box as a settled row, so the list does not shift on load.
+            className="animate-pulse space-y-1.5 border-l-2 border-transparent px-4 py-2.5"
+          >
             <div className="h-3.5 w-3/4 rounded bg-[#2e2e2e]" />
             <div className="h-2.5 w-1/3 rounded bg-[#2e2e2e]" />
           </div>

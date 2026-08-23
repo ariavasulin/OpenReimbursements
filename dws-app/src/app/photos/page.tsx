@@ -3,7 +3,6 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import { useDesktop } from "@/hooks/use-desktop";
 import { signOut } from "@/hooks/use-session-guard";
 import JobCard from "@/components/photos/job-card";
@@ -11,7 +10,7 @@ import { CaptureBar } from "@/components/photos/capture-bar";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import SearchInput from "@/components/photos/search-input";
 import StatusLine from "@/components/photos/status-line";
-import { fetchJobs } from "@/lib/photos/api";
+import { usePhotoJobs } from "@/lib/photos/api";
 import { photoSearchHref } from "@/lib/photos/photo-link";
 
 export default function PhotosHomePage() {
@@ -25,11 +24,7 @@ export default function PhotosHomePage() {
     data: jobs,
     isLoading,
     error,
-  } = useQuery({
-    queryKey: ["photo-jobs", debouncedQuery],
-    queryFn: () => fetchJobs(debouncedQuery),
-    staleTime: 60_000,
-  });
+  } = usePhotoJobs(true, debouncedQuery);
 
   // At desktop the rail is already the job list, so this page would show the
   // same jobs twice. Land on the most recent one instead. replace(), not
@@ -43,7 +38,9 @@ export default function PhotosHomePage() {
     if (goingToFirstJob) router.replace(`/photos/${firstJobId}`);
   }, [goingToFirstJob, firstJobId, router]);
 
-  if (goingToFirstJob) return null;
+  // Also while loading at desktop: a cold load would otherwise paint the
+  // overview this route is about to leave.
+  if (goingToFirstJob || (isDesktop && isLoading)) return null;
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 pb-28 pt-5 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-8">

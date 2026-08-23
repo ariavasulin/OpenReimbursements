@@ -22,11 +22,6 @@ interface TagInputProps {
   className?: string;
   /** id for the text input, so a host label can point at it. */
   inputId?: string;
-  /**
-   * Accessible name for the text field. The placeholder is cleared once there
-   * is a tag, so without this the field is unnamed exactly when it is in use.
-   */
-  inputLabel?: string;
 }
 
 export default function TagInput({
@@ -39,7 +34,6 @@ export default function TagInput({
   disabled,
   className = "",
   inputId,
-  inputLabel,
 }: TagInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const pairs = useMemo(() => toTagPairs(suggestions ?? []), [suggestions]);
@@ -73,7 +67,6 @@ export default function TagInput({
         <input
           ref={inputRef}
           id={inputId}
-          aria-label={inputLabel}
           type="text"
           value={input}
           onChange={(event) => onInputChange(event.target.value)}

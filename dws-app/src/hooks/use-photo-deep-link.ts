@@ -25,8 +25,12 @@ interface UsePhotoDeepLinkOptions {
   openPhotoId: string | null;
   /** Called when Back should dismiss the lightbox. */
   onPopClose(): void;
-  /** Called when Forward (or Back) lands on an entry that names a photo. */
-  onPopOpen(photoId: string): void;
+  /**
+   * Called when Forward (or Back) lands on an entry that names a photo.
+   * Returns false when the page cannot show that photo (it has since left the
+   * set); the hook then reports not-found and strips the param in place.
+   */
+  onPopOpen(photoId: string): boolean;
 }
 
 /**
@@ -49,7 +53,9 @@ interface UsePhotoDeepLinkOptions {
  * - popstate: reconcile the viewer with whatever the entry says, in both
  *   directions — no param closes it, a param opens that photo. Back and
  *   Forward are inverses, so a one-directional handler would leave the URL
- *   and the screen disagreeing after the first Forward.
+ *   and the screen disagreeing after the first Forward. An entry naming a
+ *   photo the page no longer holds is settled on the spot: toast, param
+ *   stripped, viewer closed — never a param over a closed viewer.
  */
 export function usePhotoDeepLink({
   openPhotoId,
@@ -65,6 +71,7 @@ export function usePhotoDeepLink({
   const onPopOpenRef = useRef(onPopOpen);
   onPopOpenRef.current = onPopOpen;
 
+  // TODO(#16): extract the push/replace/back decision into a pure decideHistoryAction({previousId, nextId, urlHasParam, pushed}) -> {kind, pushed} with a table-driven vitest test; the effect then only executes it.
   useEffect(() => {
     const previousId = previousIdRef.current;
     previousIdRef.current = openPhotoId;
@@ -130,11 +137,36 @@ export function usePhotoDeepLink({
       // Forward back onto an entry we pushed when the viewer first opened —
       // so closing from here can pop it the same way Back would.
       pushedRef.current = true;
-      onPopOpenRef.current(paramId);
+      if (onPopOpenRef.current(paramId)) return;
+      // The photo has left the set since (edited out, deleted). Settle in
+      // place rather than back() — that would walk history the user did not
+      // ask to leave.
+      previousIdRef.current = null;
+      pushedRef.current = false;
+      toast.error("That photo is no longer in this view");
+      window.history.replaceState(
+        null,
+        "",
+        urlWithSearch(withoutPhotoParam(window.location.search))
+      );
     };
     window.addEventListener("popstate", handlePop);
     return () => window.removeEventListener("popstate", handlePop);
   }, []);
+}
+
+/**
+ * Once the open photo has left the set (`lightboxIndex` is -1) the viewer is
+ * closed, but the id would otherwise linger — and the next filter to bring
+ * the photo back would spring the viewer open with no user action.
+ */
+export function useClearVanishedPhoto(
+  lightboxIndex: number,
+  setOpenPhotoId: (id: string | null) => void
+): void {
+  useEffect(() => {
+    if (lightboxIndex === -1) setOpenPhotoId(null);
+  }, [lightboxIndex, setOpenPhotoId]);
 }
 
 interface UseResolvePhotoDeepLinkOptions {

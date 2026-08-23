@@ -48,6 +48,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [viewerOpen, setViewerOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
@@ -74,6 +75,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
     query,
     setQuery,
     debouncedQuery,
+    setViewerOpen,
   };
 
   if (!ready) {
@@ -101,7 +103,10 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
               indicator, so it pads by the safe-area insets. */}
           <div
             id={PHOTOS_SCROLLPORT_ID}
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]"
+            // The desktop viewer lands focus here when the tile that opened
+            // it no longer exists.
+            tabIndex={-1}
+            className="min-h-0 flex-1 focus:outline-none overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]"
           >
             {children}
           </div>
@@ -113,11 +118,13 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
         <DropZone
           onFiles={(files) => batch.openSheet(files, activeJobId ?? undefined)}
           label={activeJob ? jobLabel(activeJob) : undefined}
-          enabled={!batch.sheetOpen && !batch.cameraOpen}
+          enabled={!batch.sheetOpen && !batch.cameraOpen && !viewerOpen}
           disabledReason={
             batch.cameraOpen
               ? "Close the camera before dropping files."
-              : undefined
+              : viewerOpen
+                ? "Close the photo before dropping files."
+                : undefined
           }
         />
       )}

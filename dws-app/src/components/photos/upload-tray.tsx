@@ -87,7 +87,8 @@ export default function UploadTray({
 
   return (
     <div
-      className={`fixed bottom-[calc(4.5rem_+_env(safe-area-inset-bottom))] left-0 right-0 z-40 mx-auto w-full ${maxWidthClass} px-4`}
+      // 4.5rem clears the phone CaptureBar; at desktop that bar is hidden.
+      className={`fixed bottom-[calc(4.5rem_+_env(safe-area-inset-bottom))] left-0 right-0 z-40 mx-auto w-full ${maxWidthClass} px-4 desktop:bottom-4`}
     >
       <input
         ref={repickInputRef}

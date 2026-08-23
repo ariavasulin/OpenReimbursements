@@ -33,6 +33,7 @@ import {
 import { plural } from "@/lib/photos/format";
 import { groupPhotos, openableInDisplayOrder } from "@/lib/photos/group";
 import {
+  useClearVanishedPhoto,
   usePhotoDeepLink,
   useResolvePhotoDeepLink,
 } from "@/hooks/use-photo-deep-link";
@@ -128,6 +129,7 @@ export default function JobPhotosPage() {
       ? -1
       : openablePhotos.findIndex((photo) => photo.id === openPhotoId);
   const lightboxOpen = lightboxIndex !== -1;
+  useClearVanishedPhoto(lightboxIndex, setOpenPhotoId);
 
   useResolvePhotoDeepLink({
     photos: openablePhotos,
@@ -143,7 +145,13 @@ export default function JobPhotosPage() {
   usePhotoDeepLink({
     openPhotoId: lightboxOpen ? openPhotoId : null,
     onPopClose: () => setOpenPhotoId(null),
-    onPopOpen: setOpenPhotoId,
+    onPopOpen: (photoId) => {
+      if (!openablePhotos.some((candidate) => candidate.id === photoId)) {
+        return false;
+      }
+      setOpenPhotoId(photoId);
+      return true;
+    },
   });
 
   const noFiltersActive = !filters.sheet && !filters.uploader && !filters.tag;
@@ -230,7 +238,9 @@ export default function JobPhotosPage() {
       </FilterBar>
 
       {isLoading && <StatusLine>Loading photos...</StatusLine>}
-      {error && (
+      {/* A failed next page is the sentinel's to report (it keeps the loaded
+          grid and offers retry); the banner is for the first page only. */}
+      {error && !isFetchNextPageError && (
         <StatusLine error>
           {error instanceof Error ? error.message : "Failed to load photos"}
         </StatusLine>

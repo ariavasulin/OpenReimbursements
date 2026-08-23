@@ -70,6 +70,14 @@ export default function PhotoInfo({
   const handleDeleteClick = () =>
     confirmingDelete ? deletePhoto() : setConfirmingDelete(true);
 
+  // The armed confirm is its own layer: Escape backs out of it, and must not
+  // reach the desktop panel's handler, which would close the whole viewer.
+  const handleDeleteKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key !== "Escape" || !confirmingDelete) return;
+    event.stopPropagation();
+    setConfirmingDelete(false);
+  };
+
   const bar = layout === "bar";
   const fileInfo = formatFileInfo(photo);
   const sidecarUrl = sidecarDownloadUrl(photo);
@@ -90,7 +98,9 @@ export default function PhotoInfo({
   // header and actions stay its flex children).
   const outerClass = bar
     ? "pointer-events-auto bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10"
-    : "flex flex-col gap-4 p-4";
+    : // break-words: job names, sheet numbers and 64-char tags are unconstrained
+      // text inside a fixed 320px column.
+      "flex flex-col gap-4 break-words p-4";
   const innerClass = bar ? "mx-auto w-full max-w-3xl" : "contents";
   const actionClass = bar ? "flex-1 " : "";
   // #3e3e3e, not a fourth near-identical grey: it is the raised-surface value
@@ -172,6 +182,7 @@ export default function PhotoInfo({
               <button
                 type="button"
                 onClick={handleDeleteClick}
+                onKeyDown={handleDeleteKeyDown}
                 disabled={busy}
                 className={`${actionClass}rounded-lg border py-2 text-center text-xs font-medium ${
                   confirmingDelete
