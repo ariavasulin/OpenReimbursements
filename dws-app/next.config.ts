@@ -12,6 +12,13 @@ const nextConfig: NextConfig = {
         port: "",
         pathname: "/storage/v1/object/public/**",
       },
+      {
+        // Repair sweep renders derivatives through the transform endpoint.
+        protocol: "https",
+        hostname: supabaseHostname,
+        port: "",
+        pathname: "/storage/v1/render/image/**",
+      },
     ],
   },
   typescript: {

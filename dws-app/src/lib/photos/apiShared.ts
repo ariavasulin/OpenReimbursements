@@ -34,3 +34,22 @@ export function cleanTags(input: unknown): string[] {
     ),
   ].slice(0, MAX_TAGS);
 }
+
+/** Storage objects DELETE removes alongside a photos row (order is
+ * irrelevant; nulls drop out). playback_path is Phase 6 schema — optional
+ * here so DELETE picks it up the moment its select includes the column. */
+export function deletionPaths(row: {
+  original_path: string | null;
+  thumb_path: string | null;
+  preview_path: string | null;
+  sidecar_path: string | null;
+  playback_path?: string | null;
+}): string[] {
+  return [
+    row.original_path,
+    row.thumb_path,
+    row.preview_path,
+    row.sidecar_path,
+    row.playback_path,
+  ].filter((path): path is string => Boolean(path));
+}

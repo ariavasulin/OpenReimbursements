@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 import { validate as isUuid } from 'uuid';
-import { cleanSheet, cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
+import {
+  cleanSheet,
+  cleanTags,
+  deletionPaths,
+  PHOTO_COLUMNS,
+} from '@/lib/photos/apiShared';
 
 // PATCH  /api/photos/:id — fix organizational metadata (job / sheet / tags).
 //        Any signed-in user. The editable columns are whitelisted here; RLS
@@ -109,7 +114,8 @@ export async function DELETE(request: Request, context: RouteContext) {
   // signed-in users, so this also distinguishes 404 from 403).
   const { data: existing, error: fetchError } = await supabase
     .from('photos')
-    .select('id, original_path, thumb_path, preview_path')
+    // playback_path joins this select once the Phase 6 column exists.
+    .select('id, original_path, thumb_path, preview_path, sidecar_path')
     .eq('id', id)
     .maybeSingle();
   if (fetchError) {
@@ -138,11 +144,7 @@ export async function DELETE(request: Request, context: RouteContext) {
   // Best-effort storage cleanup (service role — users have no storage DELETE
   // policy). Leftovers on failure are exactly the orphans the repair cron
   // sweeps, so errors here never fail the request.
-  const paths = [
-    existing.original_path,
-    existing.thumb_path,
-    existing.preview_path,
-  ].filter((path): path is string => Boolean(path));
+  const paths = deletionPaths(existing);
   if (paths.length > 0) {
     await supabaseAdmin.storage.from('photos').remove(paths);
   }
