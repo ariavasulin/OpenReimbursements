@@ -31,6 +31,10 @@ export interface PhotoRow {
   thumb_path: string | null;
   preview_path: string | null;
   duration_secs: number | null;
+  /** Transcoded MP4 rendition for browsers that can't play the original
+   * container. The column lands with the transcode work; PHOTO_COLUMNS
+   * doesn't select it yet, so rows read `undefined` until then. */
+  playback_path?: string | null;
   /** Attached XMP sidecar beside the original (image rows only). */
   sidecar_path: string | null;
   /** The sidecar's filename as uploaded (download restores it). */

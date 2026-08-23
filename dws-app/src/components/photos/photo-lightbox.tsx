@@ -4,7 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { X } from "lucide-react";
-import Lightbox from "yet-another-react-lightbox";
+import Lightbox, {
+  type GenericSlide,
+  type Slide,
+} from "yet-another-react-lightbox";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
 import Video from "yet-another-react-lightbox/plugins/video";
 import Counter from "yet-another-react-lightbox/plugins/counter";
@@ -21,9 +24,34 @@ import {
 } from "@/lib/photos/urls";
 import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
 import type { PhotoRow } from "@/lib/photos/types";
+import { videoSource } from "@/lib/photos/video-source";
 
 // Zoom/swipe run on the screen-quality preview, never the original —
 // "Download original" streams the untouched file.
+
+// Custom slide for videos this browser reports it can't decode: the poster
+// with a download card instead of a dead play button (rendered by
+// `render.slide` below).
+declare module "yet-another-react-lightbox" {
+  interface SlideTypes {
+    unplayable: SlideUnplayable;
+  }
+  interface SlideUnplayable extends GenericSlide {
+    type: "unplayable";
+    /** Poster/preview image behind the card; "" when none exists. */
+    poster: string;
+    /** Content-Disposition download URL for the original. */
+    download: string;
+    /** Original filename, for alt text. */
+    name: string;
+  }
+}
+
+/** `canPlayType` probe; SSR has no `document`, so report "can't play". */
+const canPlay = (type: string): string =>
+  typeof document === "undefined"
+    ? ""
+    : document.createElement("video").canPlayType(type);
 
 interface PhotoLightboxProps {
   /** Openable photos in display order (the current filtered/grouped set). */
@@ -81,28 +109,35 @@ export default function PhotoLightbox({
 
   const slides = useMemo(
     () =>
-      photos.map((item) =>
-        item.kind === "video"
-          ? {
-              // Playback streams the original (storage serves range requests;
-              // there's no transcode) behind the generated poster frame.
-              type: "video" as const,
-              poster: previewUrl(item) ?? undefined,
-              controls: true,
-              playsInline: true,
-              preload: "none",
-              sources: [
-                {
-                  src: publicUrl(item.original_path),
-                  type: item.mime_type ?? "video/mp4",
-                },
-              ],
-            }
-          : {
-              src: previewUrl(item) ?? "",
-              alt: item.original_name ?? "",
-            }
-      ),
+      photos.map((item): Slide => {
+        if (item.kind !== "video") {
+          return {
+            src: previewUrl(item) ?? "",
+            alt: item.original_name ?? "",
+          };
+        }
+        // Playback streams the original (storage serves range requests;
+        // there's no transcode yet) behind the generated poster frame.
+        // videoSource relabels quicktime as video/mp4 and, where even that
+        // can't play, degrades to the download card.
+        const source = videoSource(item, publicUrl, canPlay);
+        if ("unplayable" in source) {
+          return {
+            type: "unplayable",
+            poster: previewUrl(item) ?? "",
+            download: downloadUrl(item),
+            name: item.original_name ?? "video",
+          };
+        }
+        return {
+          type: "video",
+          poster: previewUrl(item) ?? undefined,
+          controls: true,
+          playsInline: true,
+          preload: "none",
+          sources: [source],
+        };
+      }),
     [photos]
   );
 
@@ -357,6 +392,33 @@ export default function PhotoLightbox({
         container: { backgroundColor: "rgba(0,0,0,.92)" },
       }}
       render={{
+        // Returning undefined falls through to the default slide renderers
+        // (image, and the Video plugin's player).
+        slide: ({ slide }) =>
+          slide.type === "unplayable" ? (
+            <div className="relative flex h-full w-full items-center justify-center">
+              {slide.poster && (
+                <img
+                  src={slide.poster}
+                  alt={slide.name}
+                  className="max-h-full max-w-full object-contain opacity-40"
+                />
+              )}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="pointer-events-auto mx-4 rounded-xl border border-[#4e4e4e] bg-[#2e2e2e]/95 px-6 py-5 text-center">
+                  <p className="text-sm text-white">
+                    Can&apos;t play this video in this browser
+                  </p>
+                  <a
+                    href={slide.download}
+                    className="mt-3 inline-block rounded-lg bg-[#2680FC] px-6 py-2 text-xs font-medium text-white hover:bg-[#1a6fd8]"
+                  >
+                    Download
+                  </a>
+                </div>
+              </div>
+            </div>
+          ) : undefined,
         controls: () => (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
             {infoBar}
