@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe("makeDerivatives", () => {
-  it("makes a ~400px thumb and ~2048px preview from a landscape image", async () => {
+  it("makes a ~640px thumb and ~2048px preview from a landscape image", async () => {
     const { canvases } = installCanvasMocks({ width: 4000, height: 3000 });
     const file = new File([new Uint8Array(8)], "photo.jpg", {
       type: "image/jpeg",
@@ -78,7 +78,7 @@ describe("makeDerivatives", () => {
     expect(result!.thumb.type).toBe("image/webp");
     expect(result!.preview.type).toBe("image/webp");
     // Longest side capped, aspect preserved.
-    expect(canvases[0]).toMatchObject({ width: THUMB_MAX_DIM, height: 300 });
+    expect(canvases[0]).toMatchObject({ width: THUMB_MAX_DIM, height: 480 });
     expect(canvases[1]).toMatchObject({
       width: PREVIEW_MAX_DIM,
       height: 1536,
@@ -100,7 +100,7 @@ describe("makeDerivatives", () => {
     const result = await makeDerivatives(file);
 
     expect(result).not.toBeNull();
-    expect(canvases[0]).toMatchObject({ width: 300, height: THUMB_MAX_DIM });
+    expect(canvases[0]).toMatchObject({ width: 480, height: THUMB_MAX_DIM });
     expect(canvases[1]).toMatchObject({
       width: 1536,
       height: PREVIEW_MAX_DIM,
@@ -225,8 +225,8 @@ describe("makeDerivatives (video)", () => {
     expect(result!.thumb.type).toBe("image/webp");
     expect(result!.preview.type).toBe("image/webp");
     expect(video.seekedTo).toBe(POSTER_SEEK_SECS);
-    // 1920x1080 poster -> 400x225 thumb; preview is never upscaled.
-    expect(canvases[0]).toMatchObject({ width: THUMB_MAX_DIM, height: 225 });
+    // 1920x1080 poster -> 640x360 thumb; preview is never upscaled.
+    expect(canvases[0]).toMatchObject({ width: THUMB_MAX_DIM, height: 360 });
     expect(canvases[1]).toMatchObject({ width: 1920, height: 1080 });
     expect(revoked).toEqual(["blob:fake-video"]);
   });

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
 import MultiShotCamera from "@/components/photos/multi-shot-camera";
-import { useCaptureBatch } from "@/components/photos/capture-bar";
+import { useCaptureBatch } from "@/hooks/use-capture-batch";
 import UploadSheet from "@/components/photos/upload-sheet";
 import UploadShell from "@/components/photos/upload-shell";
 
@@ -21,7 +21,7 @@ export default function CapturePage() {
   // the tray shows upload progress over it.
   const handleSheetChange = (open: boolean) => {
     batch.setSheetOpen(open);
-    if (!open) batch.setCameraOpen(true);
+    if (!open) batch.openCamera();
   };
 
   if (!ready) {

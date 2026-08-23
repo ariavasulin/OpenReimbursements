@@ -11,7 +11,6 @@ import StatusLine from '@/components/photos/status-line';
 import { useMyReceipts, useRefreshMyReceipts } from '@/hooks/use-receipts';
 import type { ReceiptStatusFilter, UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
-import { Toaster as SonnerToaster } from 'sonner';
 
 export default function EmployeePage() {
   const router = useRouter();
@@ -202,8 +201,6 @@ export default function EmployeePage() {
 
   return (
     <main className="min-h-screen bg-[#222222] text-white px-4 py-8">
-      <SonnerToaster richColors theme="dark" />
-      
       <div className="flex flex-col items-center justify-center pb-8">
         <Image
           src="/images/logo.png"

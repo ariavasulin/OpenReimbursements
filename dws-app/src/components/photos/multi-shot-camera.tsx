@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { readInputFiles } from "@/lib/photos/batch";
 
 // iOS mechanics: getUserMedia requires a secure context (the deployed HTTPS
 // URL — it silently fails on `next dev` over a LAN IP), the stream must start
@@ -51,15 +52,6 @@ export function useHasCamera(): boolean {
   }, []);
 
   return hasCamera;
-}
-
-/** The picked files; resets the input so the same files can be re-picked. */
-export function readPickedFiles(
-  event: React.ChangeEvent<HTMLInputElement>
-): File[] {
-  const files = Array.from(event.target.files ?? []);
-  event.target.value = "";
-  return files;
 }
 
 interface Shot extends CameraShot {
@@ -182,7 +174,7 @@ export default function MultiShotCamera({
   };
 
   const handleFallbackFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = readPickedFiles(event);
+    const files = readInputFiles(event.target);
     if (files.length > 0) onDone(files.map((file) => ({ file })));
   };
 

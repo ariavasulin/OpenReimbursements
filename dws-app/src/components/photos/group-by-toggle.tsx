@@ -19,7 +19,7 @@ export default function GroupByToggle<T extends GroupBy>({
           key={mode}
           type="button"
           onClick={() => onChange(mode)}
-          className={`flex-1 py-1.5 text-xs capitalize ${
+          className={`flex-1 px-4 py-1.5 text-xs capitalize ${
             value === mode
               ? "bg-[#3e3e3e] font-semibold text-white"
               : "text-[#a0a0a0]"

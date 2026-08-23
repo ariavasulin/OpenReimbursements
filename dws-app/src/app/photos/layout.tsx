@@ -1,4 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
+import {
+  AuthLoading,
+  PHOTOS_AUTH_LOADING_CLASS,
+} from "@/hooks/use-session-guard";
+import PhotosShell from "@/components/photos/photos-shell";
 import UploadShell from "@/components/photos/upload-shell";
 
 export const metadata: Metadata = {
@@ -6,19 +12,25 @@ export const metadata: Metadata = {
   description: "Project photo hub for Design Workshops",
 };
 
-// The root layout's <body> is overflow-hidden, so the photos app provides its
-// own scroll container — without this, the job list cannot scroll on a phone.
-// With viewport-fit=cover the container runs under the notch and home
-// indicator, so it pads by the safe-area insets.
-//
 // The upload shell lives HERE (not in a page) so in-flight uploads survive
 // navigating between photos pages; the tray shows their progress everywhere.
+// PhotosShell sits inside it — it mounts the upload sheet, which hands its
+// batch to the manager — and owns the scroll container and the desktop frame.
+//
+// PhotosShell calls useSearchParams(), so the Suspense boundary is required —
+// without it Next refuses to prerender /photos and /photos/search.
 export default function PhotosLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <div className="h-dvh overflow-y-auto overscroll-contain bg-[#222222] pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] text-white">
-      <UploadShell>{children}</UploadShell>
-    </div>
+    <Suspense
+      fallback={
+        <AuthLoading className={PHOTOS_AUTH_LOADING_CLASS} />
+      }
+    >
+      <UploadShell>
+        <PhotosShell>{children}</PhotosShell>
+      </UploadShell>
+    </Suspense>
   );
 }

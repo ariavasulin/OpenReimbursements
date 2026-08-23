@@ -8,29 +8,34 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
-import { AuthLoading, useSessionGuard } from "@/hooks/use-session-guard";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { CaptureBar, useCaptureBatch } from "@/components/photos/capture-bar";
-import GroupByToggle from "@/components/photos/group-by-toggle";
-import LoadMoreButton from "@/components/photos/load-more-button";
+import { CaptureBar } from "@/components/photos/capture-bar";
+import FilterBar, {
+  FilterChip,
+  chipClass,
+} from "@/components/photos/filter-bar";
+import InfiniteSentinel from "@/components/photos/infinite-sentinel";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
 import StatusLine from "@/components/photos/status-line";
-import UploadSheet from "@/components/photos/upload-sheet";
 import {
   fetchPhotosPage,
   fetchTags,
   invalidatePhotoCaches,
   usePhotoJobs,
 } from "@/lib/photos/api";
+import {
+  accumulateSeenOptions,
+  emptySeenOptions,
+  toSheetOptions,
+  toUploaderOptions,
+  type SeenOptions,
+} from "@/lib/photos/filter-options";
 import { plural } from "@/lib/photos/format";
 import { groupPhotos, openableInDisplayOrder } from "@/lib/photos/group";
+import {
+  usePhotoDeepLink,
+  useResolvePhotoDeepLink,
+} from "@/hooks/use-photo-deep-link";
 
 const PINNED_TAG = "professional";
 
@@ -42,93 +47,28 @@ interface Filters {
 
 const NO_FILTERS: Filters = { sheet: null, uploader: null, tag: null };
 
-const chipClass = (active: boolean) =>
-  `rounded-full border px-3 py-1.5 text-xs ${
-    active
-      ? "border-[#2680FC] bg-[#2680FC] text-white"
-      : "border-[#4e4e4e] bg-[#2e2e2e] text-[#d0d0d0]"
-  }`;
-
-interface SeenOptions {
-  sheets: Set<string>;
-  uploaders: Map<string, string>;
-}
-
-function FilterChip({
-  label,
-  active,
-  options,
-  onSelect,
-  onClear,
-}: {
-  label: string;
-  active: string | null;
-  options: { value: string; label: string }[];
-  onSelect(value: string): void;
-  onClear(): void;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={`flex items-center gap-1 ${chipClass(Boolean(active))}`}
-        >
-          {active ?? label}
-          <ChevronDown className="h-3 w-3" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="border-[#4e4e4e] bg-[#2e2e2e] text-white">
-        {active && (
-          <DropdownMenuItem
-            onClick={onClear}
-            className="text-[#a0a0a0] focus:bg-[#3e3e3e] focus:text-white"
-          >
-            Clear {label.toLowerCase()}
-          </DropdownMenuItem>
-        )}
-        {options.length === 0 && (
-          <DropdownMenuItem disabled className="text-[#7e7e7e]">
-            None yet
-          </DropdownMenuItem>
-        )}
-        {options.map((option) => (
-          <DropdownMenuItem
-            key={option.value}
-            onClick={() => onSelect(option.value)}
-            className="focus:bg-[#3e3e3e] focus:text-white"
-          >
-            {option.label}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 export default function JobPhotosPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const queryClient = useQueryClient();
-  const ready = useSessionGuard(`/photos/${jobId}`);
-  const batch = useCaptureBatch();
   const [groupBy, setGroupBy] = useState<"date" | "sheet">("date");
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  // The open photo is identified by id, never by list position: an edit that
+  // moves it to another job shrinks the set, and the same index would then
+  // address a different photo.
+  const [openPhotoId, setOpenPhotoId] = useState<string | null>(null);
 
   // Filter options accumulate from every page of photos seen for this job,
   // so picking a filter doesn't shrink the menus to the filtered set.
-  const [seen, setSeen] = useState<SeenOptions>(() => ({
-    sheets: new Set(),
-    uploaders: new Map(),
-  }));
+  const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
 
-  const { data: jobs } = usePhotoJobs(ready);
+  // Always enabled: the shell holds the session guard, so this page only
+  // renders once the session is ready.
+  const { data: jobs } = usePhotoJobs(true);
   const job = jobs?.find((candidate) => candidate.id === jobId);
 
   const { data: jobTags } = useQuery({
     queryKey: ["photo-tags", jobId],
     queryFn: () => fetchTags(jobId),
-    enabled: ready,
   });
 
   const {
@@ -138,6 +78,7 @@ export default function JobPhotosPage() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
+    isFetchNextPageError,
   } = useInfiniteQuery({
     queryKey: [
       "photos",
@@ -156,7 +97,6 @@ export default function JobPhotosPage() {
     },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    enabled: ready,
   });
 
   const photos = useMemo(
@@ -166,32 +106,14 @@ export default function JobPhotosPage() {
 
   // Remember every sheet/uploader we've seen on this job for the chip menus.
   useEffect(() => {
-    setSeen((previous) => {
-      let changed = false;
-      const sheets = new Set(previous.sheets);
-      const uploaders = new Map(previous.uploaders);
-      for (const photo of photos) {
-        const sheet = photo.sheet_number?.trim();
-        if (sheet && !sheets.has(sheet)) {
-          sheets.add(sheet);
-          changed = true;
-        }
-        const name = photo.uploader?.full_name;
-        if (name && uploaders.get(photo.uploader_id) !== name) {
-          uploaders.set(photo.uploader_id, name);
-          changed = true;
-        }
-      }
-      return changed ? { sheets, uploaders } : previous;
-    });
+    setSeen((previous) => accumulateSeenOptions(previous, photos));
   }, [photos]);
 
-  const sheetOptions = [...seen.sheets]
-    .sort((a, b) => Number(b) - Number(a) || a.localeCompare(b))
-    .map((sheet) => ({ value: sheet, label: `Sheet ${sheet}` }));
-  const uploaderOptions = [...seen.uploaders.entries()]
-    .sort((a, b) => a[1].localeCompare(b[1]))
-    .map(([id, name]) => ({ value: id, label: name }));
+  // Keyed on `seen`, which only changes when a page brings a new sheet or
+  // uploader — otherwise every scroll-appended page would re-partition and
+  // re-sort the whole accumulated set.
+  const sheetOptions = useMemo(() => toSheetOptions(seen), [seen]);
+  const uploaderOptions = useMemo(() => toUploaderOptions(seen), [seen]);
   const tagOptions = (jobTags ?? []).map((tag) => ({ value: tag, label: tag }));
 
   const groups = useMemo(() => groupPhotos(photos, groupBy), [photos, groupBy]);
@@ -199,17 +121,41 @@ export default function JobPhotosPage() {
   // with previews only (file tiles download instead).
   const openablePhotos = useMemo(() => openableInDisplayOrder(groups), [groups]);
 
+  // -1 once the open photo leaves the set (reassigned to another job), which
+  // closes the viewer instead of silently sliding to whoever took its slot.
+  const lightboxIndex =
+    openPhotoId === null
+      ? -1
+      : openablePhotos.findIndex((photo) => photo.id === openPhotoId);
+  const lightboxOpen = lightboxIndex !== -1;
+
+  useResolvePhotoDeepLink({
+    photos: openablePhotos,
+    pagesLoaded: data?.pages.length ?? 0,
+    isFetching: isLoading || isFetchingNextPage,
+    hasNextPage,
+    fetchFailed: isFetchNextPageError,
+    fetchNextPage,
+    isLightboxOpen: lightboxOpen,
+    onResolve: setOpenPhotoId,
+  });
+
+  usePhotoDeepLink({
+    openPhotoId: lightboxOpen ? openPhotoId : null,
+    onPopClose: () => setOpenPhotoId(null),
+    onPopOpen: setOpenPhotoId,
+  });
+
   const noFiltersActive = !filters.sheet && !filters.uploader && !filters.tag;
 
   const refetchPhotos = () => invalidatePhotoCaches(queryClient);
 
-  if (!ready) return <AuthLoading />;
-
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-28 pt-5">
+    <main className="mx-auto w-full max-w-3xl px-4 pb-28 pt-5 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-8">
+      {/* The rail replaces this back link at desktop. */}
       <Link
         href="/photos"
-        className="mb-2 block text-[13px] text-[#2680FC] hover:text-[#1a6fd8]"
+        className="desktop:hidden mb-2 block text-[13px] text-[#2680FC] hover:text-[#1a6fd8]"
       >
         &lsaquo; All jobs
       </Link>
@@ -232,7 +178,11 @@ export default function JobPhotosPage() {
           : " "}
       </p>
 
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      <FilterBar
+        groupModes={["date", "sheet"] as const}
+        groupBy={groupBy}
+        onGroupByChange={(mode) => setGroupBy(mode)}
+      >
         <button
           type="button"
           onClick={() => setFilters(NO_FILTERS)}
@@ -277,13 +227,7 @@ export default function JobPhotosPage() {
           }
           onClear={() => setFilters((previous) => ({ ...previous, tag: null }))}
         />
-      </div>
-
-      <GroupByToggle
-        modes={["date", "sheet"] as const}
-        value={groupBy}
-        onChange={(mode) => setGroupBy(mode)}
-      />
+      </FilterBar>
 
       {isLoading && <StatusLine>Loading photos...</StatusLine>}
       {error && (
@@ -302,9 +246,7 @@ export default function JobPhotosPage() {
       <PhotoGrid
         groups={groups}
         groupBy={groupBy}
-        onOpenPhoto={(photo) =>
-          setLightboxIndex(openablePhotos.findIndex((p) => p.id === photo.id))
-        }
+        onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
         pinnedTag={noFiltersActive ? PINNED_TAG : undefined}
         pinnedLabel="Professional Photography"
         onExpandPinned={() =>
@@ -312,30 +254,23 @@ export default function JobPhotosPage() {
         }
       />
 
-      {hasNextPage && (
-        <LoadMoreButton
-          onClick={() => fetchNextPage()}
-          loading={isFetchingNextPage}
-        />
-      )}
-
-      <CaptureBar batch={batch} maxWidthClass="max-w-3xl" />
-
-      <UploadSheet
-        files={batch.pickedFiles}
-        open={batch.sheetOpen}
-        onOpenChange={batch.setSheetOpen}
-        defaultJobId={jobId}
-        capturedAtOverrides={batch.capturedAtOverrides}
-        sidecars={batch.sidecars}
+      <InfiniteSentinel
+        hasNextPage={hasNextPage}
+        isFetching={isFetchingNextPage}
+        failed={isFetchNextPageError}
+        onVisible={() => fetchNextPage()}
       />
+
+      <CaptureBar maxWidthClass="max-w-3xl" />
 
       <PhotoLightbox
         photos={openablePhotos}
-        open={lightboxIndex !== null}
-        index={lightboxIndex ?? 0}
-        onIndexChange={setLightboxIndex}
-        onClose={() => setLightboxIndex(null)}
+        open={lightboxOpen}
+        index={lightboxOpen ? lightboxIndex : 0}
+        onIndexChange={(next) =>
+          setOpenPhotoId(openablePhotos[next]?.id ?? null)
+        }
+        onClose={() => setOpenPhotoId(null)}
         onChanged={refetchPhotos}
       />
     </main>

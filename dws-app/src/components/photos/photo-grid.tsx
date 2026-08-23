@@ -2,7 +2,12 @@
 
 import { useMemo } from "react";
 import { Download, FileText, Play, Video } from "lucide-react";
-import { formatBytes, formatDuration, plural } from "@/lib/photos/format";
+import {
+  formatBytes,
+  formatCaptureDay,
+  formatDuration,
+  plural,
+} from "@/lib/photos/format";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
@@ -25,12 +30,26 @@ interface PhotoGridProps {
 
 type OnOpen = (photo: PhotoRow) => void;
 
+/** "Capture date · uploader" for the desktop hover/focus overlay. */
+function tileMeta(photo: PhotoRow): string {
+  return [formatCaptureDay(photo.captured_at), photo.uploader?.full_name]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
   if (isOpenable(photo) && photo.thumb_path) {
+    const meta = tileMeta(photo);
     return (
       <button
         type="button"
-        onClick={() => onOpen?.(photo)}
+        onClick={(event) => {
+          // Focus before opening: the viewer restores focus to
+          // document.activeElement on close, and macOS Safari does not focus
+          // a <button> on mouse-down, so the opener would be <body>.
+          event.currentTarget.focus();
+          onOpen?.(photo);
+        }}
         className="group relative aspect-square overflow-hidden rounded-md bg-[#2e2e2e] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -40,6 +59,12 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
           loading="lazy"
           className="h-full w-full object-cover"
         />
+        {/* Hover / focus-visible metadata — desktop only (no hover on touch). */}
+        {meta && (
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 hidden truncate bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-5 text-left text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 desktop:block">
+            {meta}
+          </span>
+        )}
         {photo.kind === "video" && (
           <span className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded bg-black/65 px-[5px] py-px text-[9px] font-medium text-white">
             <Play className="h-2 w-2 fill-current" />
@@ -75,9 +100,14 @@ function Tile({ photo, onOpen }: { photo: PhotoRow; onOpen?: OnOpen }) {
   );
 }
 
+/*
+ * The desktop track is minmax(140px, 1fr), not a capped max: auto-fill counts
+ * repetitions off the *definite* track size, so a capped max under-counts the
+ * columns. The 140px min pairs with JobsRail narrowing to 200px below 1280.
+ */
 function TileGrid({ photos, onOpen }: { photos: PhotoRow[]; onOpen?: OnOpen }) {
   return (
-    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
+    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
       {photos.map((photo) => (
         <Tile key={photo.id} photo={photo} onOpen={onOpen} />
       ))}
@@ -119,7 +149,7 @@ export default function PhotoGrid({
       )}
       {groups.map((group) => (
         <section key={group.key}>
-          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0]">
+          <h2 className="mb-1.5 mt-3 text-xs text-[#a0a0a0] desktop:sticky desktop:top-0 desktop:z-10 desktop:bg-[#222222]/95 desktop:py-1.5 desktop:backdrop-blur">
             {group.label}
             {groupBy !== "date" && (
               <span className="text-[#7e7e7e]">

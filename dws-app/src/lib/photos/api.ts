@@ -49,6 +49,7 @@ export function usePhotoJobs(enabled: boolean) {
     queryKey: ["photo-jobs", ""],
     queryFn: () => fetchJobs(),
     enabled,
+    staleTime: 60_000,
   });
 }
 

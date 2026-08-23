@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "@/lib/local-storage-polyfill";
 import "./globals.css";
 import { QueryProvider } from "@/components/providers/query-provider";
+import { Toaster as SonnerToaster } from "sonner";
+import { TOAST_REGION_ID } from "@/lib/toast-region";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -44,6 +46,15 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased overflow-hidden`}
       >
         <QueryProvider>{children}</QueryProvider>
+        {/*
+          One app-wide mount; every surface calls toast(). The wrapper carries
+          the id because sonner's own [data-sonner-toaster] sits on an inner
+          <ol> that unmounts whenever no toast is up. Layout-neutral — the
+          toast list is position: fixed.
+        */}
+        <div id={TOAST_REGION_ID}>
+          <SonnerToaster richColors theme="dark" />
+        </div>
       </body>
     </html>
   );

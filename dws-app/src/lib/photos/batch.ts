@@ -11,3 +11,13 @@ export function nextPreviewIndex(
   const shifted = removed < current ? current - 1 : current;
   return Math.min(shifted, remaining - 1);
 }
+
+/**
+ * The files a file input holds, clearing the input on the way out — without
+ * the reset, re-picking the same file fires no `change` event.
+ */
+export function readInputFiles(input: HTMLInputElement): File[] {
+  const files = Array.from(input.files ?? []);
+  input.value = "";
+  return files;
+}

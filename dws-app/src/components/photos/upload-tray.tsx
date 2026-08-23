@@ -4,8 +4,8 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChevronDown, ChevronUp, RotateCw, X } from "lucide-react";
 import { useUploadManager } from "@/lib/photos/upload-manager";
-import { pickerAccept } from "@/components/photos/capture-bar";
-import { readPickedFiles } from "@/components/photos/multi-shot-camera";
+import { pickerAccept } from "@/hooks/use-capture-batch";
+import { readInputFiles } from "@/lib/photos/batch";
 import UploadProgress, { type UploadRow } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";
 import type { QueueItem } from "@/lib/photos/upload-queue";
@@ -51,7 +51,7 @@ export default function UploadTray({
   );
 
   const handleRepicked = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = readPickedFiles(event);
+    const files = readInputFiles(event.target);
     if (files.length === 0) return;
     const unmatched = manager.repick(files);
     for (const file of unmatched) {
