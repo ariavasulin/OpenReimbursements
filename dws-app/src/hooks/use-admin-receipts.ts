@@ -5,7 +5,15 @@ interface AdminReceiptsParams {
   status?: string
   fromDate?: string
   toDate?: string
+  page?: number
+  pageSize?: number
   enabled?: boolean
+}
+
+export interface AdminReceiptsPage {
+  receipts: Receipt[]
+  totalCount: number
+  totalAmount: number
 }
 
 interface AdminReceiptCountsParams {
@@ -28,7 +36,7 @@ export const adminReceiptsKeys = {
   counts: (params: AdminReceiptCountsParams) => ['admin-receipts', 'counts', params] as const,
 }
 
-async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[]> {
+async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<AdminReceiptsPage> {
   const urlParams = new URLSearchParams()
 
   if (params.status && params.status !== 'all') {
@@ -44,6 +52,14 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[
     urlParams.append('toDate', params.toDate)
   }
 
+  if (params.page) {
+    urlParams.append('page', String(params.page))
+  }
+
+  if (params.pageSize) {
+    urlParams.append('pageSize', String(params.pageSize))
+  }
+
   const response = await fetch(`/api/admin/receipts?${urlParams.toString()}`)
 
   if (!response.ok) {
@@ -57,11 +73,15 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<Receipt[
     throw new Error(data.error || 'Failed to fetch receipts')
   }
 
-  return data.receipts.map((r: Receipt) => ({
-    ...r,
-    date: r.date || r.receipt_date,
-    category: r.category || 'Uncategorized',
-  }))
+  return {
+    receipts: data.receipts.map((r: Receipt) => ({
+      ...r,
+      date: r.date || r.receipt_date,
+      category: r.category || 'Uncategorized',
+    })),
+    totalCount: data.totalCount ?? 0,
+    totalAmount: data.totalAmount ?? 0,
+  }
 }
 
 export function useAdminReceipts({ enabled = true, ...params }: AdminReceiptsParams) {

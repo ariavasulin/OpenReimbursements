@@ -17,15 +17,14 @@ import {
 import { formatDate } from "@/lib/utils"
 import type { Receipt } from "@/lib/types"
 
+// Renders exactly the rows it is handed, in whatever sort the header controls
+// select. Paging is the caller's job: /api/admin/receipts returns one server
+// page, and receipt-dashboard owns the pager UI and the "Showing X to Y of N".
 interface ReceiptTableProps {
   rowData?: Receipt[]
   height?: number | string | "auto"
   selectedRows?: Set<string>
   onSelectedRowsChange?: (selectedRows: Set<string>) => void
-  currentPage?: number
-  pageSize?: number
-  onPageChange?: (page: number) => void
-  onPageSizeChange?: (pageSize: number) => void
   onEdit?: (receipt: Receipt) => void
   onDelete?: (receipt: Receipt) => void
   showActions?: boolean
@@ -39,10 +38,6 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
   height = "auto",
   selectedRows: controlledSelectedRows,
   onSelectedRowsChange,
-  currentPage = 1,
-  pageSize = 10,
-  onPageChange,
-  onPageSizeChange,
   onEdit,
   onDelete,
   showActions = true,
@@ -89,11 +84,6 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
     })
   }, [rowData, sortField, sortDirection])
 
-  const paginatedData = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    return sortedData.slice(startIndex, startIndex + pageSize)
-  }, [sortedData, currentPage, pageSize])
-
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       if (sortDirection === "asc") {
@@ -125,7 +115,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      handleSelectedRowsChange(new Set(paginatedData.map((row) => row.id)))
+      handleSelectedRowsChange(new Set(sortedData.map((row) => row.id)))
     } else {
       handleSelectedRowsChange(new Set())
     }
@@ -141,8 +131,8 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
     handleSelectedRowsChange(newSelected)
   }
 
-  const isAllSelected = paginatedData.length > 0 && paginatedData.every((row) => selectedRows.has(row.id))
-  const isIndeterminate = paginatedData.some((row) => selectedRows.has(row.id)) && !isAllSelected
+  const isAllSelected = sortedData.length > 0 && sortedData.every((row) => selectedRows.has(row.id))
+  const isIndeterminate = sortedData.some((row) => selectedRows.has(row.id)) && !isAllSelected
 
   const formatPhoneNumber = (phone: string | null | undefined) => {
     if (!phone) return "N/A"
@@ -251,7 +241,7 @@ const ReceiptTable: React.FC<ReceiptTableProps> = ({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paginatedData.map((receipt) => (
+              {sortedData.map((receipt) => (
                 <TableRow key={receipt.id} className="border-[#444444] hover:bg-[#555555] text-white">
                 <TableCell className="text-center p-3">
                     <Checkbox

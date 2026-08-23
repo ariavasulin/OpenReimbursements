@@ -64,6 +64,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
       from: selectedDateRange?.from,
       to: selectedDateRange?.to,
     });
+    setCurrentPage(1); // pagination is server-driven; a new filter starts at page 1
   };
 
   const handleSelectedRowsChange = (newSelectedRows: Set<string>) => {
@@ -94,16 +95,24 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   const shouldFetch = !dateRange.from || Boolean(dateRange.from && dateRange.to)
 
   const {
-    data: rawReceipts = [],
+    data: receiptsPage,
     isLoading: loading,
     error: queryError,
     refetch
   } = useAdminReceipts({
-    // Always fetch all receipts - status filtering is done client-side for instant tab switching
+    // Server-driven pagination: status filter, page, and pageSize are pushed
+    // down to the API, which returns one bounded page plus the filtered
+    // totals. This used to fetch every matching receipt on every load.
+    status: filterStatus,
     fromDate: dateRange.from?.toISOString().split('T')[0],
     toDate: toDateParam,
+    page: currentPage,
+    pageSize,
     enabled: shouldFetch,
   })
+
+  const rawReceipts = receiptsPage?.receipts ?? []
+  const totalCount = receiptsPage?.totalCount ?? 0
 
   const { data: receiptCounts } = useAdminReceiptCounts({
     fromDate: dateRange.from?.toISOString().split('T')[0],
@@ -120,23 +129,9 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     status: receipt.status.toLowerCase() as Receipt['status'],
   }))
 
-  const employeeIdToProfile: Record<string, { full_name?: string; preferred_name?: string; employee_id_internal?: string }> = {}
-  receipts.forEach((receipt: Receipt) => {
-    if (receipt.employeeId) {
-      employeeIdToProfile[receipt.employeeId] = {
-        full_name: receipt.employeeName,
-        preferred_name: receipt.employeeName,
-        employee_id_internal: receipt.employeeId,
-      }
-    }
-  })
-
-  // Apply client-side filtering for status and search (enables instant tab switching)
+  // Status filtering happens server-side now; search still filters
+  // client-side, so it applies within the currently loaded page.
   const filteredReceipts = receipts.filter(receipt => {
-    if (filterStatus !== 'all' && receipt.status !== filterStatus) {
-      return false
-    }
-
     if (searchQuery) {
       const searchLower = searchQuery.toLowerCase()
       const employeeName = receipt.employeeName?.toLowerCase() || ''
@@ -149,69 +144,19 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
     return true
   })
 
-  const totalPages = Math.ceil(filteredReceipts.length / pageSize)
-
-  const quoteCsv = (value: string): string => {
-    const escaped = value.replace(/"/g, '""')
-    return `"${escaped}"`
-  }
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
 
   const downloadPayrollCSV = () => {
-    const headers = ['LastName', 'FirstName', 'EmployeeNumber', 'TotalAmount']
-
-    const totalsMap = new Map<string, { lastName: string; firstName: string; employeeNumber: string; total: number }>()
-
-    const parseLastFirst = (fullName?: string, fallbackName?: string): { last: string; first: string } => {
-      if (fullName && fullName.includes(',')) {
-        const [l, f] = fullName.split(',')
-        return { last: (l || '').trim(), first: (f || '').trim() }
-      }
-      if (fallbackName && fallbackName.includes(',')) {
-        const [l, f] = fallbackName.split(',')
-        return { last: (l || '').trim(), first: (f || '').trim() }
-      }
-      return { last: '', first: (fallbackName || '').trim() }
+    // The CSV aggregation lives server-side now (/api/admin/receipts/export,
+    // built on src/lib/payrollCsv.ts), so the full result set is fetched only
+    // when someone actually exports — not on every dashboard load.
+    const params = new URLSearchParams()
+    if (filterStatus && filterStatus !== 'all') {
+      params.set('status', filterStatus.charAt(0).toUpperCase() + filterStatus.slice(1))
     }
-
-    for (const r of filteredReceipts) {
-      const employeeNumber = r.employeeId || ''
-      const profile = employeeIdToProfile[employeeNumber]
-      const { last, first } = parseLastFirst(profile?.full_name, r.employeeName)
-      const key = employeeNumber
-      const amount = typeof r.amount === 'number' ? r.amount : Number(r.amount) || 0
-      const existing = totalsMap.get(key)
-      if (existing) {
-        existing.total += amount
-      } else {
-        totalsMap.set(key, { lastName: last, firstName: first, employeeNumber, total: amount })
-      }
-    }
-
-    const rows = Array.from(totalsMap.values()).sort((a, b) => {
-      const ln = a.lastName.localeCompare(b.lastName)
-      return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName)
-    })
-
-    const csvLines = [
-      headers.join(','),
-      ...rows.map(r => [
-        quoteCsv(r.lastName || ''),
-        quoteCsv(r.firstName || ''),
-        quoteCsv(r.employeeNumber || ''),
-        (Number.isFinite(r.total) ? r.total.toFixed(2) : '0.00'),
-      ].join(','))
-    ]
-
-    const csvContent = csvLines.join('\n')
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.setAttribute('href', url)
-    link.setAttribute('download', `receipts_totals_${new Date().toISOString().split('T')[0]}.csv`)
-    link.style.visibility = 'hidden'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    if (dateRange.from) params.set('fromDate', dateRange.from.toISOString().split('T')[0])
+    if (toDateParam) params.set('toDate', toDateParam)
+    window.location.href = `/api/admin/receipts/export?${params.toString()}`
   }
 
   const getTotalApprovedCount = async () => {
@@ -299,11 +244,11 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
   }
 
   // Counts come from a server-side aggregate so they're cap-proof and remain
-  // correct regardless of how many receipts exist. Total amount sums the
-  // currently-fetched rows, which is accurate because the receipts query
-  // explicitly raises the row cap.
+  // correct regardless of how many receipts exist. Total amount is a window
+  // aggregate over the full filtered set, computed by the paged RPC — the
+  // client only ever receives one page of rows.
   const totalReceipts = receiptCounts?.total ?? 0
-  const totalAmount = receipts.reduce((sum, receipt) => sum + receipt.amount, 0)
+  const totalAmount = receiptsPage?.totalAmount ?? 0
   const pendingCount = receiptCounts?.pending ?? 0
   const approvedCount = receiptCounts?.approved ?? 0
   const reimbursedCount = receiptCounts?.reimbursed ?? 0
@@ -494,6 +439,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                 onValueChange={(value) => {
                   setActiveTab(value);
                   setFilterStatus(value);
+                  setCurrentPage(1); // pagination is server-driven; a new filter starts at page 1
                 }}
                 className="space-y-4"
               >
@@ -587,10 +533,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         rowData={filteredReceipts}
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
-                        currentPage={currentPage}
-                        pageSize={pageSize}
-                        onPageChange={handlePageChange}
-                        onPageSizeChange={handlePageSizeChange}
                         onEdit={setEditingReceipt}
                         onDelete={setDeletingReceipt}
                       />
@@ -610,10 +552,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         rowData={filteredReceipts}
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
-                        currentPage={currentPage}
-                        pageSize={pageSize}
-                        onPageChange={handlePageChange}
-                        onPageSizeChange={handlePageSizeChange}
                         onEdit={setEditingReceipt}
                         onDelete={setDeletingReceipt}
                       />
@@ -633,10 +571,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         rowData={filteredReceipts}
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
-                        currentPage={currentPage}
-                        pageSize={pageSize}
-                        onPageChange={handlePageChange}
-                        onPageSizeChange={handlePageSizeChange}
                         onEdit={setEditingReceipt}
                         onDelete={setDeletingReceipt}
                       />
@@ -656,10 +590,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         rowData={filteredReceipts}
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
-                        currentPage={currentPage}
-                        pageSize={pageSize}
-                        onPageChange={handlePageChange}
-                        onPageSizeChange={handlePageSizeChange}
                         onEdit={setEditingReceipt}
                         onDelete={setDeletingReceipt}
                       />
@@ -677,10 +607,6 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
                         rowData={filteredReceipts}
                         selectedRows={selectedRows}
                         onSelectedRowsChange={handleSelectedRowsChange}
-                        currentPage={currentPage}
-                        pageSize={pageSize}
-                        onPageChange={handlePageChange}
-                        onPageSizeChange={handlePageSizeChange}
                         onEdit={setEditingReceipt}
                         onDelete={setDeletingReceipt}
                       />
@@ -711,8 +637,8 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
           <div className="flex items-center space-x-2">
             <p className="text-sm text-gray-400">
-              Showing {Math.min((currentPage - 1) * pageSize + 1, filteredReceipts.length)} to{" "}
-              {Math.min(currentPage * pageSize, filteredReceipts.length)} of {filteredReceipts.length} entries
+              Showing {Math.min((currentPage - 1) * pageSize + 1, totalCount)} to{" "}
+              {Math.min(currentPage * pageSize, totalCount)} of {totalCount} entries
             </p>
           </div>
           

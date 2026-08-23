@@ -1,32 +1,11 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { requireAdmin } from '@/lib/requireAdmin';
 import type { Receipt } from '@/lib/types';
 
 export async function GET(request: Request) {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { session },
-    error: sessionError,
-  } = await supabase.auth.getSession();
-
-  if (sessionError) {
-    return NextResponse.json({ error: 'Failed to get session' }, { status: 500 });
-  }
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('role')
-    .eq('user_id', session.user.id)
-    .single();
-
-  if (profileError || !profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
-  }
+  const gate = await requireAdmin();
+  if (gate.response) return gate.response;
+  const { supabase } = gate;
 
   try {
     const { searchParams } = new URL(request.url);
@@ -34,47 +13,32 @@ export async function GET(request: Request) {
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
 
-    // PostgREST caps RPC responses at ~1000 rows. We need the full result set
-    // for the admin dashboard's client-side counts/filters/CSV. Strategy:
-    // ask for the total count first, then fire one Range-based fetch per page
-    // in parallel. Two round-trips total, regardless of dataset size.
-    const PAGE_SIZE = 1000;
-    const MAX_ROWS = 100_000; // hard guard if the counts RPC ever returns wild values
+    const page = Math.max(parseInt(searchParams.get('page') ?? '', 10) || 1, 1);
+    const pageSize = Math.min(
+      Math.max(parseInt(searchParams.get('pageSize') ?? '', 10) || 25, 1),
+      200
+    );
 
-    const { data: countsData, error: countsError } = await supabase.rpc(
-      'get_admin_receipt_status_counts',
-      { from_date: fromDate || null, to_date: toDate || null }
-    );
-    if (countsError) {
-      return NextResponse.json({ error: countsError.message }, { status: 500 });
+    // One bounded call. This used to be a counts RPC plus ceil(total/1000)
+    // parallel get_admin_receipts_with_phone RPCs fired on every request to
+    // render a 10-row table. The full-result-set path lives on in
+    // ./export/route.ts, where it runs only when someone exports the payroll
+    // CSV. Every returned row carries the filtered total_count/total_amount
+    // as window aggregates, so no separate counts round-trip is needed here.
+    const { data, error } = await supabase.rpc('get_admin_receipts_page', {
+      status_filter: statusFilter || null,
+      from_date: fromDate || null,
+      to_date: toDate || null,
+      page_num: page,
+      page_size: pageSize,
+    });
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    const totalMatching = (countsData ?? []).reduce(
-      (sum: number, row: { status: string; count: number | string }) => {
-        if (statusFilter && statusFilter !== 'all' && row.status !== statusFilter) {
-          return sum;
-        }
-        return sum + Number(row.count);
-      },
-      0
-    );
-    const expectedRows = Math.min(totalMatching, MAX_ROWS);
-    const pageCount = Math.max(1, Math.ceil(expectedRows / PAGE_SIZE));
 
-    const pageFetches = Array.from({ length: pageCount }, (_, i) =>
-      supabase
-        .rpc('get_admin_receipts_with_phone', {
-          status_filter: statusFilter || null,
-          from_date: fromDate || null,
-          to_date: toDate || null,
-        })
-        .range(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1)
-    );
-    const pageResults = await Promise.all(pageFetches);
-    const failedPage = pageResults.find((r) => r.error);
-    if (failedPage?.error) {
-      return NextResponse.json({ error: failedPage.error.message }, { status: 500 });
-    }
-    const receiptsData: any[] = pageResults.flatMap((r) => r.data ?? []);
+    const receiptsData: any[] = data ?? [];
+    const totalCount = receiptsData.length > 0 ? Number(receiptsData[0].total_count) : 0;
+    const totalAmount = receiptsData.length > 0 ? Number(receiptsData[0].total_amount) : 0;
 
     const mappedReceipts = (receiptsData || []).map((item: any) => {
       let publicImageUrl = item.image_url;
@@ -109,7 +73,11 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      receipts: mappedReceipts as Receipt[]
+      receipts: mappedReceipts as Receipt[],
+      totalCount,
+      totalAmount,
+      page,
+      pageSize,
     }, { status: 200 });
 
   } catch (error) {
