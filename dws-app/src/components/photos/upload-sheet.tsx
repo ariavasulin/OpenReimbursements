@@ -324,6 +324,7 @@ export default function UploadSheet({
           value={jobId}
           onChange={setJobId}
           disabled={uploading}
+          mode={isMobile ? "picker" : "inline"}
         />
 
         <label className="mb-1.5 block text-xs text-[#a0a0a0]">

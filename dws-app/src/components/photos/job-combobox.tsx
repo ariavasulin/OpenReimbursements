@@ -1,19 +1,23 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
 import {
   Popover,
   PopoverAnchor,
   PopoverContent,
 } from "@/components/ui/popover";
+import JobPickerSheet from "@/components/photos/job-picker-sheet";
 import { filterJobs } from "@/lib/photos/job-filter";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 import { cn } from "@/lib/utils";
 
-// Text-field job picker for the upload sheet. Suggestions render in a
-// portaled Popover anchored to the field, so the list floats over the fields
-// below it and never changes the sheet's layout.
+// Job picker for the upload sheet. Two modes, chosen by the caller:
+// - "inline" (desktop): a text field whose suggestions render in a portaled
+//   Popover anchored to it, so the list floats over the fields below and never
+//   changes the sheet's layout.
+// - "picker" (phones): a button-like field that opens JobPickerSheet, a
+//   full-screen search step, so the keyboard never fights the drawer.
 
 interface JobComboboxProps {
   jobs: PhotoJobSummary[];
@@ -21,6 +25,8 @@ interface JobComboboxProps {
   value: string;
   onChange(jobId: string): void;
   disabled?: boolean;
+  /** "picker": button opens a full-screen search (phones). "inline": typeahead field (desktop). */
+  mode: "picker" | "inline";
 }
 
 function jobLabel(job: PhotoJobSummary) {
@@ -32,8 +38,10 @@ export default function JobCombobox({
   value,
   onChange,
   disabled,
+  mode,
 }: JobComboboxProps) {
   const [query, setQuery] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -61,6 +69,33 @@ export default function JobCombobox({
     onChange("");
     setQuery("");
   };
+
+  if (mode === "picker") {
+    return (
+      <div className="mb-3.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setPickerOpen(true)}
+          className="flex w-full items-center justify-between rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-left text-base text-white disabled:opacity-50"
+        >
+          <span className={selected ? "truncate" : "text-[#a0a0a0]"}>
+            {selected ? jobLabel(selected) : "Pick a job..."}
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-[#a0a0a0]" />
+        </button>
+        <JobPickerSheet
+          jobs={jobs}
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onSelect={(job) => {
+            onChange(job.id);
+            setPickerOpen(false);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="mb-3.5">
