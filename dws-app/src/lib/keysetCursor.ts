@@ -1,0 +1,33 @@
+// One keyset-pagination cursor idiom for the whole codebase: a two-element
+// string tuple, JSON encoded, base64url wrapped.
+//
+// Decoding deliberately stops at "it is a pair of strings" and hands off to a
+// caller-supplied validator, because what counts as a *valid* pair differs per
+// endpoint — and the decoded values get interpolated into PostgREST filter
+// strings, so each call site has to pin down its own accepted character set
+// rather than trusting the tuple shape.
+
+/** Encode a keyset position (the sort key, then its tiebreaker). */
+export function encodeKeysetCursor(first: string, second: string): string {
+  return Buffer.from(JSON.stringify([first, second])).toString("base64url");
+}
+
+/**
+ * Decode a cursor produced by `encodeKeysetCursor`. Returns null — never
+ * throws — for anything that isn't a two-string tuple, or that `validate`
+ * rejects by returning null.
+ */
+export function decodeKeysetCursor<T>(
+  raw: string,
+  validate: (first: string, second: string) => T | null
+): T | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    if (!Array.isArray(parsed) || parsed.length !== 2) return null;
+    const [first, second] = parsed;
+    if (typeof first !== "string" || typeof second !== "string") return null;
+    return validate(first, second);
+  } catch {
+    return null;
+  }
+}

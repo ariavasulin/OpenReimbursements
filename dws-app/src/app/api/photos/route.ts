@@ -13,6 +13,7 @@ import {
   PHOTO_KINDS,
   type PhotoRow,
 } from '@/lib/photos/types';
+import { decodeKeysetCursor, encodeKeysetCursor } from '@/lib/keysetCursor';
 
 // GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
 //      Filtered photo list, newest capture first, keyset-paginated on
@@ -25,24 +26,13 @@ const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 200;
 
 function encodeCursor(capturedAt: string, id: string): string {
-  return Buffer.from(JSON.stringify([capturedAt, id])).toString('base64url');
+  return encodeKeysetCursor(capturedAt, id);
 }
 
 function decodeCursor(cursor: string): { capturedAt: string; id: string } | null {
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString());
-    if (
-      Array.isArray(parsed) &&
-      typeof parsed[0] === 'string' &&
-      typeof parsed[1] === 'string' &&
-      isUuid(parsed[1])
-    ) {
-      return { capturedAt: parsed[0], id: parsed[1] };
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  return decodeKeysetCursor(cursor, (capturedAt, id) =>
+    isUuid(id) ? { capturedAt, id } : null
+  );
 }
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -51,10 +41,16 @@ type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
  * Resolve a free-text query into a PostgREST or() filter over photos:
  * matching job ids, matching uploader ids, and overlapping tags.
  * Returns null when nothing matches (the result set is empty).
+ *
+ * `job` is the caller's already-validated job filter. It is only passed down to
+ * the tag lookup, which would otherwise unnest the tags of every row in photos
+ * to answer a question scoped to one job. The or() filter itself stays
+ * job-agnostic; the outer query applies .eq('job_id', job) separately.
  */
 async function buildSearchFilter(
   supabase: ServerClient,
-  q: string
+  q: string,
+  job: string | null
 ): Promise<string | null> {
   const escaped = escapeForIlike(q);
   if (!escaped) return null;
@@ -71,7 +67,7 @@ async function buildSearchFilter(
       .select('user_id')
       .ilike('full_name', pattern)
       .limit(200),
-    supabase.rpc('get_photo_tags', { job_filter: null, q, max_tags: 200 }),
+    supabase.rpc('get_photo_tags', { job_filter: job, q, max_tags: 200 }),
   ]);
 
   const firstError =
@@ -153,7 +149,7 @@ export async function GET(request: Request) {
   if (q) {
     let searchFilter: string | null;
     try {
-      searchFilter = await buildSearchFilter(supabase, q);
+      searchFilter = await buildSearchFilter(supabase, q, job);
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : 'Search failed' },

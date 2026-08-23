@@ -72,3 +72,6 @@ hack.bak/
 
 # Supabase CLI scratch (created by `supabase db query --linked`)
 supabase/.temp/
+
+# Supabase CLI local link state
+dws-app/supabase/.temp/

@@ -2,19 +2,16 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReceiptUploader from '@/components/receipt-uploader';
 import EmployeeReceiptTable from '@/components/employee-receipt-table';
 import LoadMoreButton from '@/components/photos/load-more-button';
-import type { Receipt, UserProfile } from '@/lib/types';
+import { receiptsKeys, useMyReceipts, useResetMyReceipts } from '@/hooks/use-receipts';
+import type { UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Toaster as SonnerToaster } from 'sonner';
-
-const receiptsKeys = { list: () => ['receipts', 'mine'] as const };
-
-type ReceiptsPage = { receipts: Receipt[]; nextCursor: string | null };
 
 export default function EmployeePage() {
   const router = useRouter();
@@ -26,12 +23,7 @@ export default function EmployeePage() {
   const authCheckCompleteRef = useRef(false);
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Receipts live in the react-query cache (5-minute staleTime from the app's
-  // QueryProvider), so remounting this page within that window renders from
-  // cache instead of refetching the whole history — the endpoint is also
-  // keyset-paginated now, 50 rows per page.
   const queryClient = useQueryClient();
-  const receiptsEnabled = Boolean(user && userProfile?.role === 'employee');
 
   const {
     data: receiptsData,
@@ -40,31 +32,16 @@ export default function EmployeePage() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useInfiniteQuery({
-    queryKey: receiptsKeys.list(),
-    enabled: receiptsEnabled,
-    initialPageParam: null as string | null,
-    queryFn: async ({ pageParam }): Promise<ReceiptsPage> => {
-      const search = pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : '';
-      const response = await fetch(`/api/receipts${search}`);
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.error ?? `Failed to fetch receipts (status ${response.status})`);
-      }
-      return response.json();
-    },
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
-  });
+  } = useMyReceipts({ enabled: Boolean(user && userProfile?.role === 'employee') });
 
   const receipts = receiptsData?.pages.flatMap((page) => page.receipts) ?? [];
   const receiptsError =
     receiptsQueryError instanceof Error ? receiptsQueryError.message : null;
 
-  const invalidateReceipts = () =>
-    queryClient.invalidateQueries({ queryKey: receiptsKeys.list() });
+  const resetReceipts = useResetMyReceipts();
 
-  const handleReceiptAdded = invalidateReceipts;
-  const handleReceiptUpdated = invalidateReceipts;
+  const handleReceiptAdded = resetReceipts;
+  const handleReceiptUpdated = resetReceipts;
 
   useEffect(() => {
     loadingTimeoutRef.current = setTimeout(() => {
@@ -175,7 +152,7 @@ export default function EmployeePage() {
         if (event === 'SIGNED_OUT' || !session) {
           setUser(null);
           setUserProfile(null);
-          queryClient.removeQueries({ queryKey: receiptsKeys.list() });
+          queryClient.removeQueries({ queryKey: receiptsKeys.mine() });
           router.replace('/login');
         }
       }
