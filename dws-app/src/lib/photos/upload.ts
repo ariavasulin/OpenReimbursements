@@ -18,6 +18,11 @@ export interface UploadMeta {
   tags?: string[];
 }
 
+/** What the sheet hands the manager: meta plus per-file shutter times. */
+export interface BatchMeta extends Omit<UploadMeta, "uploaderId"> {
+  shutterAt?: Map<File, Date>;
+}
+
 /** Row payload POSTed to /api/photos once the files are in storage. */
 export interface FinalizePayload {
   id: string;
@@ -58,18 +63,18 @@ export type ResumableUpload = (
 
 export interface UploadDeps {
   storage: PhotoStorage;
-  /** POST /api/photos; must throw on failure. */
-  finalize: (payload: FinalizePayload) => Promise<void>;
+  /** POST /api/photos; must throw on failure. Resolves alreadyExists on an
+   * idempotent replay (same photoId retried after the row already landed). */
+  finalize: (payload: FinalizePayload) => Promise<{ alreadyExists?: boolean }>;
   /** TUS path for originals over RESUMABLE_THRESHOLD_BYTES (optional: tests
    * and environments without TUS fall back to plain uploads). */
   resumableUpload?: ResumableUpload;
   extractCapturedAt?: (file: File) => Promise<Date | null>;
   makeDerivatives?: (file: File) => Promise<Derivatives | null>;
-  generateId?: () => string;
 }
 
 export interface UploadResult {
-  status: "done" | "failed";
+  status: "done" | "failed" | "duplicate";
   error?: string;
 }
 
@@ -125,10 +130,10 @@ export function createResumableUpload(
         retryDelays: [0, 3000, 5000, 10000, 20000],
         uploadDataDuringCreation: true,
         removeFingerprintOnSuccess: true,
-        // tus-js-client's default fingerprint omits the objectName, so a retry
-        // (new photoId, new path) would resume the dead attempt and finish the
-        // bytes under the OLD path. Including the path makes a resume continue
-        // only THIS object.
+        // tus-js-client's default fingerprint omits the objectName. Including
+        // the path scopes resumes to THIS object: a retry with the same
+        // photoId (same path) resumes its own bytes, and an upload to a
+        // different path can never adopt a dead attempt's URL.
         fingerprint: async () =>
           [
             "tus-sb",
@@ -211,12 +216,14 @@ export function storagePaths(uploaderId: string, photoId: string, filename: stri
 
 export async function uploadOne(
   file: File,
+  /** Owned by the caller (the upload manager) and STABLE across retries — a
+   * retry resumes the same TUS fingerprint and replays the same row id
+   * instead of orphaning the first attempt. */
+  photoId: string,
   meta: UploadMeta,
   deps: UploadDeps,
   onBytes?: ByteProgress
 ): Promise<UploadResult> {
-  const generateId = deps.generateId ?? (() => crypto.randomUUID());
-  const photoId = generateId();
   const failed = (error: string): UploadResult => ({ status: "failed", error });
 
   try {
@@ -287,6 +294,8 @@ export async function uploadOne(
       duration_secs: derivatives?.durationSecs ?? null,
     };
 
+    // alreadyExists (an idempotent replay of a photoId that finalized before
+    // the client heard about it) is still "done" — the photo is in.
     await deps.finalize(payload);
 
     return { status: "done" };

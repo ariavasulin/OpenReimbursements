@@ -43,7 +43,6 @@ function makeDeps(overrides?: {
 }) {
   const uploads: Recorded[] = [];
   const finalized: FinalizePayload[] = [];
-  let idCounter = 0;
 
   const deps: UploadDeps = {
     storage: {
@@ -64,6 +63,7 @@ function makeDeps(overrides?: {
       if (overrides?.throwAt?.("finalize")) throw new Error("KILLED");
       if (overrides?.failFinalize) throw new Error("db says no");
       finalized.push(payload);
+      return {};
     }),
     extractCapturedAt: async () => CAPTURED,
     makeDerivatives: async () =>
@@ -74,7 +74,6 @@ function makeDeps(overrides?: {
             preview: new Blob(["p"], { type: "image/webp" }),
             durationSecs: null,
           },
-    generateId: () => `photo-${++idCounter}`,
   };
 
   return { deps, uploads, finalized };
@@ -89,7 +88,7 @@ describe("uploadOne", () => {
     const { deps, uploads, finalized } = makeDeps();
     const file = makeFile("IMG_0001.jpg", "image/jpeg", 10);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(uploads.map((u) => u.path)).toEqual([
@@ -114,9 +113,23 @@ describe("uploadOne", () => {
     });
   });
 
+  it("treats a finalize replay (alreadyExists) as done", async () => {
+    const { deps } = makeDeps();
+    deps.finalize = vi.fn(async () => ({ alreadyExists: true }));
+
+    const result = await uploadOne(
+      makeFile("a.jpg", "image/jpeg"),
+      "photo-1",
+      META,
+      deps
+    );
+
+    expect(result).toEqual({ status: "done" });
+  });
+
   it("marks the file failed when the row POST fails", async () => {
     const { deps, finalized } = makeDeps({ failFinalize: true });
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain("db says no");
@@ -127,7 +140,7 @@ describe("uploadOne", () => {
     const { deps, uploads } = makeDeps({
       failUploadPaths: (path) => path.startsWith("originals/"),
     });
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
 
     expect(result.status).toBe("failed");
     expect(uploads).toHaveLength(0); // derivatives never went up either
@@ -138,7 +151,7 @@ describe("uploadOne", () => {
     const { deps, finalized } = makeDeps({
       failUploadPaths: (path) => path.includes("_thumb"),
     });
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), META, deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(finalized[0].thumb_path).toBeNull();
@@ -149,7 +162,7 @@ describe("uploadOne", () => {
     const { deps, uploads, finalized } = makeDeps({ noDerivatives: true });
     const file = makeFile("shot.CR3", "", 6);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(uploads).toHaveLength(1); // only the original
@@ -187,7 +200,7 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const { deps, uploads, finalized, resumableCalls } = withResumable();
     const file = makeFile("big.mp4", "video/mp4", bigSize);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(resumableCalls).toEqual([
@@ -207,7 +220,7 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const { deps, uploads, resumableCalls } = withResumable();
     const file = makeFile("small.jpg", "image/jpeg", RESUMABLE_THRESHOLD_BYTES);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("done");
     expect(resumableCalls).toHaveLength(0);
@@ -219,7 +232,9 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const file = makeFile("big.mp4", "video/mp4", bigSize);
     const ticks: [number, number][] = [];
 
-    await uploadOne(file, META, deps, (sent, total) => ticks.push([sent, total]));
+    await uploadOne(file, "photo-1", META, deps, (sent, total) =>
+      ticks.push([sent, total])
+    );
 
     expect(ticks.at(-1)).toEqual([bigSize, bigSize]);
     for (let i = 1; i < ticks.length; i++) {
@@ -231,7 +246,7 @@ describe("resumable (TUS) routing in uploadOne", () => {
     const { deps, finalized } = withResumable({ failResumable: true });
     const file = makeFile("big.mp4", "video/mp4", bigSize);
 
-    const result = await uploadOne(file, META, deps);
+    const result = await uploadOne(file, "photo-1", META, deps);
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain("tus gave up");
@@ -464,9 +479,10 @@ describe("createResumableUpload", () => {
 describe("step-kill convergence", () => {
   // Simulate the tab dying at each step of uploadOne and assert every
   // partial state is repairable: derivatives never exist without their
-  // original, a row never exists without its original, and a plain retry
-  // (new photo id) converges to a complete photo. Leftover row-less
-  // objects are exactly what the repair cron's orphan sweep deletes.
+  // original, a row never exists without its original, and a retry (SAME
+  // photoId — the manager keeps it stable) converges to a complete photo.
+  // Leftover row-less objects are exactly what the repair cron's orphan
+  // sweep deletes.
   type KillPoint = "original" | "thumb" | "preview" | "finalize";
 
   const stepFor = (path: string): KillPoint =>
@@ -511,7 +527,7 @@ describe("step-kill convergence", () => {
       });
       const file = makeFile("IMG_0042.jpg", "image/jpeg", 10);
 
-      const killed = await uploadOne(file, META, deps);
+      const killed = await uploadOne(file, "photo-1", META, deps);
 
       expect(killed.status).toBe("failed");
       expect(rows).toHaveLength(0); // no kill point leaves a phantom row
@@ -519,7 +535,7 @@ describe("step-kill convergence", () => {
 
       // The user taps Retry (network is back): the file converges.
       kill.at = null;
-      const retried = await uploadOne(file, META, deps);
+      const retried = await uploadOne(file, "photo-1", META, deps);
 
       expect(retried.status).toBe("done");
       expect(rows).toHaveLength(1);

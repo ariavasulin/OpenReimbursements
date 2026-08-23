@@ -8,7 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
-import { X } from "lucide-react";
+import { RotateCw, X } from "lucide-react";
 import JobCombobox from "@/components/photos/job-combobox";
 import BatchPreview from "@/components/photos/batch-preview";
 import {
@@ -19,7 +19,9 @@ import {
   type UploadResult,
 } from "@/lib/photos/upload";
 import { extractCapturedAt } from "@/lib/photos/exif";
+import { useUploadManager } from "@/lib/photos/upload-manager";
 import UploadProgress, {
+  RowButton,
   type UploadItem,
 } from "@/components/photos/upload-progress";
 import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
@@ -29,6 +31,10 @@ import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
 
 // One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
 // The batch is copied into local state so files can be removed before upload.
+// With the upload manager on (the default), the sheet is compose-only: Upload
+// hands the batch to the manager and closes; the tray shows progress. The
+// legacy in-sheet loop remains behind NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER=0 for
+// one release (removed in Phase 8).
 
 function makePreviews(files: File[]): (string | null)[] {
   return files.map((file) =>
@@ -61,13 +67,12 @@ function buildUploadDeps(capturedAtOverrides?: Map<File, Date>): UploadDeps {
         return session?.access_token ?? null;
       },
     }),
-    async finalize(payload: FinalizePayload) {
-      await fetchJson("/api/photos", "Saving failed", {
+    finalize: (payload: FinalizePayload) =>
+      fetchJson<{ alreadyExists?: boolean }>("/api/photos", "Saving failed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      });
-    },
+      }),
   };
 }
 
@@ -78,7 +83,8 @@ interface UploadSheetProps {
   onOpenChange(open: boolean): void;
   /** Pre-selects the job when uploading from inside a job. */
   defaultJobId?: string;
-  /** Called after at least one file lands, so grids can refetch. */
+  /** Legacy loop only — the manager invalidates caches itself. Unused when
+   * the manager is enabled; the prop dies with the legacy loop in Phase 8. */
   onUploaded(): void;
   /** Shutter times for in-app camera shots (see CameraShot). */
   capturedAtOverrides?: Map<File, Date>;
@@ -93,6 +99,7 @@ export default function UploadSheet({
   capturedAtOverrides,
 }: UploadSheetProps) {
   const isMobile = useMobile();
+  const manager = useUploadManager();
   const [jobId, setJobId] = useState(defaultJobId ?? "");
   const [sheetNumber, setSheetNumber] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -143,7 +150,8 @@ export default function UploadSheet({
   }, []);
 
   const removableAt = (index: number) =>
-    !uploading && !!items[index] && canRemove(items[index].status);
+    manager.enabled ||
+    (!uploading && !!items[index] && canRemove(items[index].status));
 
   const removeFile = (index: number) => {
     if (!removableAt(index)) return;
@@ -184,7 +192,23 @@ export default function UploadSheet({
       return next;
     });
 
-  const runUpload = async (indices: number[]) => {
+  /** Manager path: hand the batch over and close — the tray takes it from here. */
+  const submit = () => {
+    if (!jobId) {
+      toast.error("Pick a job first");
+      return;
+    }
+    manager.enqueue(files, {
+      jobId,
+      sheetNumber: sheetNumber || null,
+      tags: withPendingTag(tags, tagInput),
+      shutterAt: capturedAtOverrides,
+    });
+    onOpenChange(false);
+  };
+
+  /** Legacy in-sheet loop, only when the manager kill switch is thrown. */
+  const legacyRunUpload = async (indices: number[]) => {
     if (!jobId) {
       toast.error("Pick a job first");
       return;
@@ -217,6 +241,7 @@ export default function UploadSheet({
       });
       const result = await uploadOne(
         file,
+        crypto.randomUUID(),
         meta,
         deps,
         (sentBytes, totalBytes) =>
@@ -257,7 +282,9 @@ export default function UploadSheet({
   const retrying = failedIndices.length > 0;
 
   const handleOpenChange = (next: boolean) => {
-    if (!next && uploading) return; // don't lose an in-flight batch
+    // Legacy loop only: closing would lose the in-flight batch. The manager
+    // survives the sheet closing, so it never blocks.
+    if (!next && !manager.enabled && uploading) return;
     onOpenChange(next);
   };
 
@@ -306,12 +333,22 @@ export default function UploadSheet({
         })}
       </div>
 
-      {uploadStarted && (
+      {!manager.enabled && uploadStarted && (
         <UploadProgress
-          files={files}
-          items={items}
-          onRetry={(index) => runUpload([index])}
-          retryDisabled={uploading}
+          rows={files.map((file, index) => ({
+            name: file.name,
+            item: items[index],
+            actions:
+              items[index]?.status === "failed" ? (
+                <RowButton
+                  onClick={() => legacyRunUpload([index])}
+                  disabled={uploading}
+                >
+                  <RotateCw className="h-3 w-3" />
+                  Retry
+                </RowButton>
+              ) : undefined,
+          }))}
         />
       )}
 
@@ -366,20 +403,33 @@ export default function UploadSheet({
       )}
 
       <div className="mt-3">
-        <Button
-          onClick={() => runUpload(retrying ? failedIndices : pendingIndices)}
-          disabled={uploading || (!retrying && pendingIndices.length === 0)}
-          className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
-          size="lg"
-        >
-          {uploading
-            ? retrying
-              ? "Uploading..."
-              : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
-            : retrying
-              ? `Retry ${failedIndices.length} failed`
-              : `Upload ${plural(pendingIndices.length, "file")}`}
-        </Button>
+        {manager.enabled ? (
+          <Button
+            onClick={submit}
+            disabled={files.length === 0}
+            className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
+            size="lg"
+          >
+            {`Upload ${plural(files.length, "file")}`}
+          </Button>
+        ) : (
+          <Button
+            onClick={() =>
+              legacyRunUpload(retrying ? failedIndices : pendingIndices)
+            }
+            disabled={uploading || (!retrying && pendingIndices.length === 0)}
+            className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
+            size="lg"
+          >
+            {uploading
+              ? retrying
+                ? "Uploading..."
+                : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
+              : retrying
+                ? `Retry ${failedIndices.length} failed`
+                : `Upload ${plural(pendingIndices.length, "file")}`}
+          </Button>
+        )}
       </div>
     </div>
   );

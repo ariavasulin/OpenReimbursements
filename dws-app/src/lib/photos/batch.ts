@@ -22,7 +22,13 @@ export function removeAt<TFile, TItem, TPreview>(
 
 /** Only pending and failed files may leave the batch; in-flight and landed stay. */
 export function canRemove(
-  status: "pending" | "uploading" | "done" | "failed"
+  status:
+    | "pending"
+    | "uploading"
+    | "done"
+    | "failed"
+    | "duplicate"
+    | "interrupted"
 ): boolean {
   return status === "pending" || status === "failed";
 }
