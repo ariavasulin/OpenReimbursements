@@ -4,12 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useMobile } from "@/hooks/use-mobile";
-import { useKeyboardInset } from "@/hooks/use-keyboard-inset";
 import { supabase } from "@/lib/supabaseClient";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
+import SheetShell from "@/components/photos/sheet-shell";
 import JobCombobox from "@/components/photos/job-combobox";
 import BatchPreview from "@/components/photos/batch-preview";
 import {
@@ -28,8 +26,9 @@ import { fetchJobs, fetchJson, fetchTags } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { canRemove, nextPreviewIndex, removeAt } from "@/lib/photos/batch";
 
-// One job, sheet, and tag set per batch. Drawer on mobile, Dialog on desktop.
-// The batch is copied into local state so files can be removed before upload.
+// One job, sheet, and tag set per batch, inside SheetShell (Drawer on mobile,
+// Dialog on desktop). The batch is copied into local state so files can be
+// removed before upload.
 
 function makePreviews(files: File[]): (string | null)[] {
   return files.map((file) =>
@@ -94,9 +93,6 @@ export default function UploadSheet({
   capturedAtOverrides,
 }: UploadSheetProps) {
   const isMobile = useMobile();
-  // Phase 4: we lift the drawer above the keyboard ourselves (vaul's
-  // repositionInputs is off), so the frame only ever moves, never resizes.
-  const keyboardInset = useKeyboardInset(isMobile && open);
   const [jobId, setJobId] = useState(defaultJobId ?? "");
   const [sheetNumber, setSheetNumber] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -265,187 +261,154 @@ export default function UploadSheet({
     onOpenChange(next);
   };
 
-  const body = (
+  const header = (
     <>
-      <div className="shrink-0 px-4 pt-1">
-        <div className="mb-3 text-[15px] font-semibold text-white">
-          Add {plural(files.length, "file")}
-        </div>
+      <div className="mb-3 text-[15px] font-semibold text-white">
+        Add {plural(files.length, "file")}
+      </div>
 
-        <div className="mb-2 flex gap-1.5 overflow-x-auto p-1">
-          {files.map((file, index) => {
-            const removable = removableAt(index);
-            return (
-              <div key={index} className="relative shrink-0">
+      <div className="mb-2 flex gap-1.5 overflow-x-auto p-1">
+        {files.map((file, index) => {
+          const removable = removableAt(index);
+          return (
+            <div key={index} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setPreviewIndex(index)}
+                aria-label={`Preview ${file.name}`}
+                className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
+              >
+                {previews[index] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={previews[index]}
+                    alt={file.name}
+                    className="h-14 w-14 rounded-lg object-cover"
+                  />
+                ) : (
+                  <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
+                    {file.name}
+                  </div>
+                )}
+              </button>
+              {removable && (
                 <button
                   type="button"
-                  onClick={() => setPreviewIndex(index)}
-                  aria-label={`Preview ${file.name}`}
-                  className="block rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]"
+                  onClick={() => removeFile(index)}
+                  aria-label={`Remove ${file.name}`}
+                  className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
                 >
-                  {previews[index] ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={previews[index]}
-                      alt={file.name}
-                      className="h-14 w-14 rounded-lg object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg bg-[#3e3e3e] px-1 text-center text-[9px] text-[#a0a0a0]">
-                      {file.name}
-                    </div>
-                  )}
+                  <X className="h-3 w-3" />
                 </button>
-                {removable && (
-                  <button
-                    type="button"
-                    onClick={() => removeFile(index)}
-                    aria-label={`Remove ${file.name}`}
-                    className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3"
-        onFocusCapture={(event) => {
-          const target = event.target as HTMLElement;
-          // After the keyboard animates in (~250ms) and the drawer has lifted.
-          setTimeout(
-            () => target.scrollIntoView({ block: "nearest", behavior: "smooth" }),
-            300
+              )}
+            </div>
           );
-        }}
-      >
-        {uploadStarted && (
-          <UploadProgress
-            files={files}
-            items={items}
-            onRetry={(index) => runUpload([index])}
-            retryDisabled={uploading}
-          />
-        )}
-
-        <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
-        <JobCombobox
-          jobs={jobs ?? []}
-          value={jobId}
-          onChange={setJobId}
-          disabled={uploading}
-          mode={isMobile ? "picker" : "inline"}
-        />
-
-        <label className="mb-1.5 block text-xs text-[#a0a0a0]">
-          Sheet # (optional)
-        </label>
-        <input
-          type="text"
-          inputMode="numeric"
-          value={sheetNumber}
-          onChange={(event) => setSheetNumber(event.target.value)}
-          placeholder="e.g. 12"
-          disabled={uploading}
-          className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
-        />
-
-        <label className="mb-1.5 block text-xs text-[#a0a0a0]">
-          Tags (optional)
-        </label>
-        <TagInput
-          className="mb-1"
-          tags={tags}
-          input={tagInput}
-          onInputChange={setTagInput}
-          onAdd={addTag}
-          onRemove={(tag) =>
-            setTags((previous) => previous.filter((t) => t !== tag))
-          }
-          disabled={uploading}
-        />
-        {tagSuggestions.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {tagSuggestions.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => addTag(tag)}
-                className="rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-[#d0d0d0] hover:border-[#2680FC]"
-              >
-                {tag}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="shrink-0 border-t border-[#3e3e3e] px-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] pt-3">
-        <Button
-          onClick={() => runUpload(retrying ? failedIndices : pendingIndices)}
-          disabled={uploading || (!retrying && pendingIndices.length === 0)}
-          className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
-          size="lg"
-        >
-          {uploading
-            ? retrying
-              ? "Uploading..."
-              : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
-            : retrying
-              ? `Retry ${failedIndices.length} failed`
-              : `Upload ${plural(pendingIndices.length, "file")}`}
-        </Button>
+        })}
       </div>
     </>
   );
 
-  const title = "Upload photos";
+  const fields = (
+    <>
+      {uploadStarted && (
+        <UploadProgress
+          files={files}
+          items={items}
+          onRetry={(index) => runUpload([index])}
+          retryDisabled={uploading}
+        />
+      )}
 
-  const preview = (
-    <BatchPreview
-      files={files}
-      previews={previews}
-      index={previewIndex}
-      onIndexChange={setPreviewIndex}
-      onClose={() => setPreviewIndex(null)}
-      onRemove={removeFile}
-      removeDisabled={previewIndex === null || !removableAt(previewIndex)}
-    />
+      <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
+      <JobCombobox
+        jobs={jobs ?? []}
+        value={jobId}
+        onChange={setJobId}
+        disabled={uploading}
+        mode={isMobile ? "picker" : "inline"}
+      />
+
+      <label className="mb-1.5 block text-xs text-[#a0a0a0]">
+        Sheet # (optional)
+      </label>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={sheetNumber}
+        onChange={(event) => setSheetNumber(event.target.value)}
+        placeholder="e.g. 12"
+        disabled={uploading}
+        className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
+      />
+
+      <label className="mb-1.5 block text-xs text-[#a0a0a0]">
+        Tags (optional)
+      </label>
+      <TagInput
+        className="mb-1"
+        tags={tags}
+        input={tagInput}
+        onInputChange={setTagInput}
+        onAdd={addTag}
+        onRemove={(tag) =>
+          setTags((previous) => previous.filter((t) => t !== tag))
+        }
+        disabled={uploading}
+      />
+      {tagSuggestions.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {tagSuggestions.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => addTag(tag)}
+              className="rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-[#d0d0d0] hover:border-[#2680FC]"
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
   );
 
-  if (isMobile) {
-    return (
-      <Drawer
-        open={open}
-        onOpenChange={handleOpenChange}
-        repositionInputs={false}
-      >
-        <DrawerContent
-          className="h-[85dvh] max-h-[85dvh] border-[#4e4e4e] bg-[#2e2e2e] transition-[bottom] duration-150"
-          style={{
-            bottom: keyboardInset,
-            maxHeight: `calc(100dvh - ${keyboardInset}px - 2rem)`,
-          }}
-        >
-          <DrawerTitle className="sr-only">{title}</DrawerTitle>
-          {body}
-          {preview}
-        </DrawerContent>
-      </Drawer>
-    );
-  }
+  const footer = (
+    <Button
+      onClick={() => runUpload(retrying ? failedIndices : pendingIndices)}
+      disabled={uploading || (!retrying && pendingIndices.length === 0)}
+      className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
+      size="lg"
+    >
+      {uploading
+        ? retrying
+          ? "Uploading..."
+          : `Uploading ${Math.min(doneCount + 1, files.length)} of ${files.length}...`
+        : retrying
+          ? `Retry ${failedIndices.length} failed`
+          : `Upload ${plural(pendingIndices.length, "file")}`}
+    </Button>
+  );
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex h-[min(85dvh,640px)] max-h-[85dvh] flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 sm:max-w-md">
-        <DialogTitle className="sr-only">{title}</DialogTitle>
-        {body}
-        {preview}
-      </DialogContent>
-    </Dialog>
+    <SheetShell
+      open={open}
+      onOpenChange={handleOpenChange}
+      title="Upload photos"
+      header={header}
+      footer={footer}
+      extra={
+        <BatchPreview
+          files={files}
+          previews={previews}
+          index={previewIndex}
+          onIndexChange={setPreviewIndex}
+          onClose={() => setPreviewIndex(null)}
+          onRemove={removeFile}
+          removeDisabled={previewIndex === null || !removableAt(previewIndex)}
+        />
+      }
+    >
+      {fields}
+    </SheetShell>
   );
 }

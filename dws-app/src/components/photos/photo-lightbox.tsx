@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X } from "lucide-react";
 import Lightbox from "yet-another-react-lightbox";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
 import Video from "yet-another-react-lightbox/plugins/video";
@@ -11,14 +10,15 @@ import Counter from "yet-another-react-lightbox/plugins/counter";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/counter.css";
 import { supabase } from "@/lib/supabaseClient";
-import { fetchJobs } from "@/lib/photos/api";
 import { formatBytes } from "@/lib/photos/format";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
-import TagInput, { appendTag, withPendingTag } from "@/components/photos/tag-input";
+import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
 import type { PhotoRow } from "@/lib/photos/types";
 
 // Zoom/swipe run on the screen-quality preview, never the original —
-// "Download original" streams the untouched file.
+// "Download original" streams the untouched file. Editing opens
+// EditPhotoSheet on top; the lightbox root is dropped to z-40 so the sheet
+// (z-50) and its nested pickers (z-[60]) stack above it.
 
 interface PhotoLightboxProps {
   /** Openable photos in display order (the current filtered/grouped set). */
@@ -65,12 +65,6 @@ export default function PhotoLightbox({
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  // Edit form state (seeded from the current photo when editing starts).
-  const [editJobId, setEditJobId] = useState("");
-  const [editSheet, setEditSheet] = useState("");
-  const [editTags, setEditTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
 
   const photo = photos[index] as PhotoRow | undefined;
 
@@ -121,12 +115,6 @@ export default function PhotoLightbox({
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: jobs } = useQuery({
-    queryKey: ["photo-jobs", ""],
-    queryFn: () => fetchJobs(),
-    enabled: open && editing,
-  });
-
   // Leaving a slide abandons any half-done edit/confirm on it.
   useEffect(() => {
     setEditing(false);
@@ -136,42 +124,6 @@ export default function PhotoLightbox({
   const canDelete =
     !!photo && !!me && (photo.uploader_id === me.id || me.role === "admin");
   const fileInfo = photo ? formatFileInfo(photo) : null;
-
-  const startEditing = () => {
-    if (!photo) return;
-    setEditJobId(photo.job_id);
-    setEditSheet(photo.sheet_number ?? "");
-    setEditTags(photo.tags);
-    setTagInput("");
-    setEditing(true);
-  };
-
-  const saveEdits = async () => {
-    if (!photo) return;
-    setBusy(true);
-    try {
-      const response = await fetch(`/api/photos/${photo.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          job_id: editJobId,
-          sheet_number: editSheet.trim() || null,
-          tags: withPendingTag(editTags, tagInput),
-        }),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        throw new Error(data?.error || `Saving failed (${response.status})`);
-      }
-      toast.success("Photo updated");
-      setEditing(false);
-      onChanged();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Saving failed");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const deletePhoto = async () => {
     if (!photo) return;
@@ -195,7 +147,7 @@ export default function PhotoLightbox({
     }
   };
 
-  const infoBar = photo && !editing && (
+  const infoBar = photo && (
     <div className="pointer-events-auto bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10">
       <div className="mx-auto w-full max-w-3xl">
         <div className="text-sm font-semibold text-white">
@@ -227,7 +179,7 @@ export default function PhotoLightbox({
           </a>
           <button
             type="button"
-            onClick={startEditing}
+            onClick={() => setEditing(true)}
             className="flex-1 rounded-lg border border-[#4e4e4e] bg-[#2e2e2e]/90 py-2 text-center text-xs font-medium text-white hover:border-[#2680FC]"
           >
             Edit tags
@@ -253,98 +205,37 @@ export default function PhotoLightbox({
     </div>
   );
 
-  const editPanel = photo && editing && (
-    <div className="pointer-events-auto bg-gradient-to-t from-black/95 via-black/85 to-transparent px-4 pb-4 pt-12">
-      <div className="mx-auto w-full max-w-3xl rounded-xl border border-[#4e4e4e] bg-[#2e2e2e] p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-sm font-semibold text-white">Edit photo</span>
-          <button
-            type="button"
-            aria-label="Cancel editing"
-            onClick={() => setEditing(false)}
-            disabled={busy}
-          >
-            <X className="h-4 w-4 text-[#a0a0a0]" />
-          </button>
-        </div>
-
-        <label className="mb-1.5 block text-xs text-[#a0a0a0]">Job</label>
-        <select
-          value={editJobId}
-          onChange={(event) => setEditJobId(event.target.value)}
-          disabled={busy}
-          className="mb-3 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white focus:border-[#2680FC] focus:outline-none md:text-sm"
-        >
-          {(jobs ?? []).map((job) => (
-            <option key={job.id} value={job.id}>
-              #{job.job_number} · {job.name}
-            </option>
-          ))}
-          {jobs && !jobs.some((job) => job.id === editJobId) && (
-            <option value={editJobId}>Current job</option>
-          )}
-        </select>
-
-        <label className="mb-1.5 block text-xs text-[#a0a0a0]">
-          Sheet # (optional)
-        </label>
-        <input
-          type="text"
-          inputMode="numeric"
-          value={editSheet}
-          onChange={(event) => setEditSheet(event.target.value)}
-          placeholder="e.g. 12"
-          disabled={busy}
-          className="mb-3 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#a0a0a0] focus:border-[#2680FC] focus:outline-none md:text-sm"
-        />
-
-        <label className="mb-1.5 block text-xs text-[#a0a0a0]">Tags</label>
-        <TagInput
-          className="mb-3"
-          tags={editTags}
-          input={tagInput}
-          onInputChange={setTagInput}
-          onAdd={(tag) => setEditTags((previous) => appendTag(previous, tag))}
-          onRemove={(tag) =>
-            setEditTags((previous) => previous.filter((t) => t !== tag))
-          }
-          disabled={busy}
-        />
-
-        <button
-          type="button"
-          onClick={saveEdits}
-          disabled={busy}
-          className="w-full rounded-lg bg-[#2680FC] py-2.5 text-sm font-medium text-white hover:bg-[#1a6fd8] disabled:opacity-60"
-        >
-          {busy ? "Saving..." : "Save"}
-        </button>
-      </div>
-    </div>
-  );
-
   return (
-    <Lightbox
-      open={open}
-      close={onClose}
-      index={index}
-      on={{ view: ({ index: viewIndex }) => onIndexChange(viewIndex) }}
-      slides={slides}
-      plugins={[Zoom, Video, Counter]}
-      zoom={{ maxZoomPixelRatio: 4, doubleTapDelay: 300 }}
-      carousel={{ finite: false }}
-      controller={{ closeOnBackdropClick: false }}
-      styles={{
-        container: { backgroundColor: "rgba(0,0,0,.92)" },
-      }}
-      render={{
-        controls: () => (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
-            {infoBar}
-            {editPanel}
-          </div>
-        ),
-      }}
-    />
+    <>
+      <Lightbox
+        open={open}
+        close={onClose}
+        index={index}
+        on={{ view: ({ index: viewIndex }) => onIndexChange(viewIndex) }}
+        slides={slides}
+        plugins={[Zoom, Video, Counter]}
+        zoom={{ maxZoomPixelRatio: 4, doubleTapDelay: 300 }}
+        carousel={{ finite: false }}
+        controller={{ closeOnBackdropClick: false }}
+        styles={{
+          // Below the edit sheet (z-50) and its nested pickers (z-[60]).
+          root: { zIndex: 40 },
+          container: { backgroundColor: "rgba(0,0,0,.92)" },
+        }}
+        render={{
+          controls: () => (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
+              {infoBar}
+            </div>
+          ),
+        }}
+      />
+      <EditPhotoSheet
+        photo={photo ?? null}
+        open={open && editing}
+        onOpenChange={setEditing}
+        onSaved={onChanged}
+      />
+    </>
   );
 }
