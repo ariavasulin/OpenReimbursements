@@ -71,5 +71,4 @@ hack.bak/
 .humanlayer/tasks/
 
 # Supabase CLI scratch (created by `supabase db query --linked`)
-supabase/.temp/
-dws-app/supabase/.temp/
+**/supabase/.temp/

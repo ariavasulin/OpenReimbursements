@@ -135,8 +135,7 @@ Keyset-paginated: one page per request, `nextCursor` fetches the next.
 
 **Query Params**:
 - `status`: `pending` | `approved` | `rejected` | `reimbursed` (case-insensitive;
-  `all` or omitted means every status). Applied in the database, across the
-  full result set rather than the current page. Anything else is a 400.
+  `all` or omitted means every status). Anything else is a 400.
 - `limit`: page size, 1–200 (default 50)
 - `cursor`: opaque `nextCursor` from the previous response; omit for page 1
 

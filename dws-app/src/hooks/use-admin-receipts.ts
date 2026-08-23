@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { fetchJson } from '@/lib/photos/api'
+import type { ReceiptStatusFilter } from '@/hooks/use-receipts'
 import { Receipt, toDbReceiptStatus } from '@/lib/types'
 
 interface AdminReceiptsParams {
-  status?: string
+  status?: ReceiptStatusFilter
   fromDate?: string
   toDate?: string
   page?: number
@@ -73,13 +74,11 @@ async function fetchAdminReceipts(params: AdminReceiptsParams): Promise<AdminRec
   }
 
   return {
-    // The route always sends `date`; `receipt_date` is the fallback for rows
-    // that predate it.
     receipts: data.receipts.map((r: Receipt) => ({
       ...r,
-      date: r.date || r.receipt_date,
+      date: r.date || r.receipt_date || '',
       category: r.category || 'Uncategorized',
-    })) as Receipt[],
+    })),
     totalCount: data.totalCount,
     totalAmount: data.totalAmount,
   }

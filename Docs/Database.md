@@ -109,10 +109,8 @@ policies OR together, so any authenticated user can read every profile row.
 
 **Column grants**: RLS says *which row*; grants say *which columns*. The
 `authenticated` role holds `UPDATE` on `full_name` only
-(`dws-app/supabase/migrations/20260823100000_review_fixes.sql`). With the
-table-wide grant it used to have, any employee could `PATCH` their own row to
-`{"role":"admin"}` through PostgREST and `is_admin()` would start returning
-true. `role`, `employee_id_internal`, and `deleted_at` are writable only by the
+(`dws-app/supabase/migrations/20260823100000_review_fixes.sql`).
+`role`, `employee_id_internal`, and `deleted_at` are writable only by the
 admin API routes, which use the service-role key.
 
 ## TypeScript Types

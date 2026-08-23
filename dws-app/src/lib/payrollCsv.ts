@@ -1,11 +1,8 @@
-// Payroll CSV builder, moved verbatim from the inline implementation in
-// components/receipt-dashboard.tsx (quoteCsv + the downloadPayrollCSV
-// aggregation body). The payroll system consumes this output — do not change
-// its format. payrollCsv.test.ts holds a golden fixture captured from the
-// pre-refactor code; byte-identical output is the contract.
+// Payroll CSV builder. The payroll system consumes this output — do not change
+// its format; payrollCsv.test.ts pins it with a golden fixture, and
+// byte-identical output is the contract.
 
-// The original always wraps values in quotes (it does not quote
-// conditionally); preserved exactly.
+// quoteCsv always wraps values in quotes, even when not required.
 export function quoteCsv(value: string): string {
   const escaped = value.replace(/"/g, '""')
   return `"${escaped}"`

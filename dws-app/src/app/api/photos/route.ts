@@ -12,6 +12,7 @@ import {
   CAPTURED_AT_SOURCES,
   PHOTO_KINDS,
   type PhotoRow,
+  type PhotoTagRow,
 } from '@/lib/photos/types';
 import {
   decodeKeysetCursor,
@@ -84,7 +85,7 @@ async function buildSearchFilter(
   // The RPC already applied the case-insensitive substring match, so this only
   // has to drop tags that can't be embedded in PostgREST's or()/array syntax.
   // The UI never produces those, so skipping is the safe trade.
-  const matchedTags = ((tagRowsResult.data ?? []) as { tag: string }[])
+  const matchedTags = ((tagRowsResult.data ?? []) as PhotoTagRow[])
     .map((row) => row.tag)
     .filter((tag) => !/[,(){}"\\]/.test(tag));
   if (matchedTags.length > 0) {

@@ -57,7 +57,7 @@ drop policy if exists jobs_select on public.jobs;
 create policy jobs_select on public.jobs
   for select to authenticated using (true);
 
--- photos: readable by every signed-in user; writes are governed by 130100/130200
+-- photos: readable by every signed-in user
 drop policy if exists photos_select on public.photos;
 create policy photos_select on public.photos
   for select to authenticated using (true);

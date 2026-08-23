@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildPayrollCsv, quoteCsv } from "./payrollCsv";
 
 describe("quoteCsv", () => {
-  // The pre-refactor implementation quotes EVERY value, plain or not.
+  // quoteCsv always wraps values in quotes, even when unnecessary.
   it("quotes plain values", () => {
     expect(quoteCsv("Smith")).toBe('"Smith"');
   });
@@ -16,7 +16,7 @@ describe("quoteCsv", () => {
 
 describe("buildPayrollCsv", () => {
   it("reproduces the pre-refactor output for a known set of rows", () => {
-    // Golden fixture: the expected string is pinned to the pre-refactor bytes.
+    // Golden fixture: byte-identical output is required.
     const rows = [
       { employeeId: "1001", employeeName: "Smith, John", amount: 12.5 },
       { employeeId: "1002", employeeName: "Cher", amount: 100 },

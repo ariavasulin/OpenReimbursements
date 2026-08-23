@@ -62,8 +62,6 @@ export async function POST(request: Request) {
     if (moveError) {
       const { error: deleteDbError } = await supabase.from('receipts').delete().eq('id', newReceiptId);
       // Best-effort cleanup, ignore deleteDbError
-      // A missing source is the "temp file not found" case the old pre-flight
-      // list() reported as 404; everything else is a genuine 500.
       const notFound = isStorageNotFound(moveError);
       return NextResponse.json(
         {

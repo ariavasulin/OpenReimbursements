@@ -37,8 +37,7 @@ drop policy if exists categories_delete on public.categories;
 create policy categories_delete on public.categories
   for delete to authenticated using ((select public.is_admin()));
 
--- The five user_profiles policies (created in the dashboard, captured in the
--- Phase 1 baseline at 00000000000000_baseline.sql:417-500) get the same
+-- The five user_profiles policies (created in the dashboard) get the same
 -- treatment. Names, commands, roles (no TO clause = public), and predicate
 -- semantics are unchanged; "user_profiles_update_policy" keeps no explicit
 -- WITH CHECK, matching the live NULL with_check in pg_policies.

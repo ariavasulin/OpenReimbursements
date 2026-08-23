@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { validate as isUuid } from 'uuid';
 import { escapeForIlike } from '@/lib/photos/apiShared';
+import type { PhotoTagRow } from '@/lib/photos/types';
 
 // GET /api/photo-tags?job=&q= — distinct tags in use (optionally scoped to a
 // job, optionally substring-filtered), for the Tags filter and upload
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const tags = ((data ?? []) as { tag: string }[]).map((row) => row.tag);
+  const tags = ((data ?? []) as PhotoTagRow[]).map((row) => row.tag);
 
   return NextResponse.json({ success: true, tags });
 }

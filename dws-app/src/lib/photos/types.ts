@@ -46,6 +46,11 @@ export interface PhotoRow {
   job: { id: string; job_number: string; name: string } | null;
 }
 
+/** One row of the get_photo_tags RPC. */
+export interface PhotoTagRow {
+  tag: string;
+}
+
 /** One job card on the photos home screen / job dropdown. */
 export interface PhotoJobSummary {
   id: string;

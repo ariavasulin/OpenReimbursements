@@ -1,8 +1,7 @@
--- enable-rls.sql
---
--- Source-of-truth migration for the RLS posture on public.receipts and
--- public.categories. Run this in the Supabase SQL editor (or via psql against
--- the project's connection string). It is idempotent — safe to re-run.
+-- Baseline capture of the RLS posture on public.receipts and public.categories,
+-- carried forward from the pre-migrations db/ directory. Kept as the record of
+-- the original schema, not as something to re-run by hand; it exists so a fresh
+-- database can be rebuilt from the repo alone.
 --
 -- What it does:
 --   1. Defines public.is_admin() — a SECURITY DEFINER helper that encodes the

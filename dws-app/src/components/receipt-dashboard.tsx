@@ -37,6 +37,7 @@ import { normalizeReceiptSearch, receiptMatchesSearch } from "@/lib/receiptSearc
 import { toDbReceiptStatus, type Receipt, type BulkUpdateResponse } from "@/lib/types"
 import { useAdminReceipts, useAdminReceiptCounts, useDeleteReceipt, useInvalidateAdminReceipts } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
+import type { ReceiptStatusFilter } from "@/hooks/use-receipts"
 
 const TAB_EMPTY_MESSAGES = {
   all: "No receipts found for the current filters.",
@@ -46,12 +47,10 @@ const TAB_EMPTY_MESSAGES = {
   rejected: "No rejected receipts found.",
 }
 
-type TabKey = keyof typeof TAB_EMPTY_MESSAGES
-
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   useAdminPrefetch()
 
-  const [activeTab, setActiveTab] = useState<TabKey>("all");
+  const [activeTab, setActiveTab] = useState<ReceiptStatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState<string>("")
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
@@ -437,7 +436,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
               <Tabs
                 value={activeTab}
                 onValueChange={(value) => {
-                  setActiveTab(value as TabKey);
+                  setActiveTab(value as ReceiptStatusFilter);
                   setCurrentPage(1); // pagination is server-driven; a new filter starts at page 1
                 }}
                 className="space-y-4"
