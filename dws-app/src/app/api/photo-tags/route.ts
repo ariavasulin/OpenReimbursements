@@ -3,8 +3,9 @@ import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { validate as isUuid } from 'uuid';
 
 // GET /api/photo-tags?job=&q= — distinct tags in use (optionally scoped to a
-// job, optionally prefix-filtered), for the Tags filter and upload type-ahead.
-// TODO: aggregate in SQL (view/RPC)
+// job, optionally substring-filtered), for the Tags filter and upload
+// type-ahead. Aggregated in SQL by the get_photo_tags RPC; this used to pull
+// up to 10,000 rows and dedupe in JS.
 
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -19,26 +20,21 @@ export async function GET(request: Request) {
   const job = params.get('job');
   const q = params.get('q')?.trim().toLowerCase() ?? '';
 
-  let query = supabase.from('photos').select('tags').limit(10000);
-  if (job) {
-    if (!isUuid(job)) {
-      return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
-    }
-    query = query.eq('job_id', job);
+  if (job && !isUuid(job)) {
+    return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
 
-  const { data, error } = await query;
+  // ilike '%q%' matches the old case-insensitive includes(); SQL `order by`
+  // replaces localeCompare, which can order non-ASCII tags differently.
+  const { data, error } = await supabase.rpc('get_photo_tags', {
+    job_filter: job || null,
+    q: q || null,
+  });
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const distinct = new Set<string>();
-  for (const row of data ?? []) {
-    for (const tag of row.tags) {
-      if (!q || tag.toLowerCase().includes(q)) distinct.add(tag);
-    }
-  }
-  const tags = [...distinct].sort((a, b) => a.localeCompare(b));
+  const tags = ((data ?? []) as { tag: string }[]).map((row) => row.tag);
 
   return NextResponse.json({ success: true, tags });
 }

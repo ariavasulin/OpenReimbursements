@@ -71,7 +71,7 @@ async function buildSearchFilter(
       .select('user_id')
       .ilike('full_name', pattern)
       .limit(200),
-    supabase.from('photos').select('tags').limit(10000),
+    supabase.rpc('get_photo_tags', { job_filter: null, q, max_tags: 200 }),
   ]);
 
   const firstError =
@@ -88,19 +88,14 @@ async function buildSearchFilter(
     parts.push(`uploader_id.in.(${uploaderIds.join(',')})`);
   }
 
-  const query = q.toLowerCase();
-  const matchedTags = new Set<string>();
-  for (const row of tagRowsResult.data ?? []) {
-    for (const tag of row.tags) {
-      if (tag.toLowerCase().includes(query)) {
-        // Tags with or()/array syntax characters can't be embedded safely;
-        // the UI never produces them, so skipping is the safe trade.
-        if (!/[,(){}"\\]/.test(tag)) matchedTags.add(tag);
-      }
-    }
-  }
-  if (matchedTags.size > 0) {
-    parts.push(`tags.ov.{${[...matchedTags].join(',')}}`);
+  // The RPC already applied the case-insensitive substring match, so this only
+  // has to drop tags that can't be embedded in PostgREST's or()/array syntax.
+  // The UI never produces those, so skipping is the safe trade.
+  const matchedTags = ((tagRowsResult.data ?? []) as { tag: string }[])
+    .map((row) => row.tag)
+    .filter((tag) => !/[,(){}"\\]/.test(tag));
+  if (matchedTags.length > 0) {
+    parts.push(`tags.ov.{${matchedTags.join(',')}}`);
   }
 
   return parts.length > 0 ? parts.join(',') : null;
