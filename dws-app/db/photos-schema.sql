@@ -114,3 +114,12 @@ alter table public.photos
 alter table public.photos
   add column if not exists sidecar_path text,
   add column if not exists sidecar_name text;
+
+-- Upload pipeline hardening, Phase 6: server-made H.264 playback rendition.
+-- playback_path points at derived/{uid}/{photo_id}_playback.mp4 once the
+-- repair cron transcodes the original; playback_skipped_reason records why a
+-- video was deliberately not transcoded (over the size/duration cap) so the
+-- sweep stops retrying it. Clear both to re-queue a video.
+alter table public.photos
+  add column if not exists playback_path text,
+  add column if not exists playback_skipped_reason text;

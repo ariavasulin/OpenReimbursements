@@ -114,8 +114,9 @@ export async function DELETE(request: Request, context: RouteContext) {
   // signed-in users, so this also distinguishes 404 from 403).
   const { data: existing, error: fetchError } = await supabase
     .from('photos')
-    // playback_path joins this select once the Phase 6 column exists.
-    .select('id, original_path, thumb_path, preview_path, sidecar_path')
+    .select(
+      'id, original_path, thumb_path, preview_path, sidecar_path, playback_path'
+    )
     .eq('id', id)
     .maybeSingle();
   if (fetchError) {

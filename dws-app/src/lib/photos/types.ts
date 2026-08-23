@@ -31,9 +31,10 @@ export interface PhotoRow {
   thumb_path: string | null;
   preview_path: string | null;
   duration_secs: number | null;
-  /** Transcoded MP4 rendition for browsers that can't play the original
-   * container. The column lands with the transcode work; PHOTO_COLUMNS
-   * doesn't select it yet, so rows read `undefined` until then. */
+  /** Repair-cron H.264 rendition for browsers that can't play the original
+   * container; null until the sweep transcodes the video (or forever, when
+   * playback_skipped_reason is set). Optional so cached pre-Phase-6 rows
+   * without the field stay assignable; treat `undefined` as null. */
   playback_path?: string | null;
   /** Attached XMP sidecar beside the original (image rows only). */
   sidecar_path: string | null;

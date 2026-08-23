@@ -3,7 +3,8 @@ export const PHOTO_COLUMNS =
   'id, job_id, uploader_id, kind, sheet_number, tags, captured_at, ' +
   'captured_at_source, ' +
   'original_path, original_bytes, mime_type, original_name, thumb_path, ' +
-  'preview_path, duration_secs, sidecar_path, sidecar_name, created_at, ' +
+  'preview_path, playback_path, duration_secs, sidecar_path, sidecar_name, ' +
+  'created_at, ' +
   'uploader:user_profiles(full_name), job:jobs(id, job_number, name)';
 
 /** Escape ILIKE wildcards and strip PostgREST or()-syntax characters. */
@@ -36,8 +37,7 @@ export function cleanTags(input: unknown): string[] {
 }
 
 /** Storage objects DELETE removes alongside a photos row (order is
- * irrelevant; nulls drop out). playback_path is Phase 6 schema — optional
- * here so DELETE picks it up the moment its select includes the column. */
+ * irrelevant; nulls and absent columns drop out). */
 export function deletionPaths(row: {
   original_path: string | null;
   thumb_path: string | null;

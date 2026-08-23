@@ -4,9 +4,9 @@
 // with plain objects. Re-running an applied plan yields [] — idempotence is
 // what makes the daily cron and manual runs safely overlappable.
 
-/** The columns the sweep needs from a photos row with a hole. playback_* are
- * Phase 6 schema — optional here so the planner is ready before the columns
- * exist (the route doesn't select them until then, so they read undefined). */
+/** The columns the sweep needs from a photos row with a hole. playback_*
+ * stay optional so plain test rows and callers that don't select them
+ * still typecheck; absent reads as "no rendition, nothing skipped". */
 export interface RepairRow {
   id: string;
   uploader_id: string;
