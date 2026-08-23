@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { isStorageNotFound } from '@/lib/storageErrors';
+import { decodeReceiptCursor, encodeReceiptCursor } from '@/lib/receiptCursor';
 import type { Receipt } from '@/lib/types';
 
 export async function POST(request: Request) {
@@ -99,6 +100,9 @@ export async function POST(request: Request) {
   }
 }
 
+const DEFAULT_RECEIPTS_LIMIT = 50;
+const MAX_RECEIPTS_LIMIT = 200;
+
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
 
@@ -116,8 +120,15 @@ export async function GET(request: Request) {
   }
   const userId = session.user.id;
 
+  const params = new URL(request.url).searchParams;
+  const limit = Math.min(
+    Math.max(parseInt(params.get('limit') ?? '', 10) || DEFAULT_RECEIPTS_LIMIT, 1),
+    MAX_RECEIPTS_LIMIT
+  );
+  const rawCursor = params.get('cursor');
+
   try {
-    const { data: receipts, error: dbError } = await supabase
+    let query = supabase
       .from('receipts')
       .select(`
         id,
@@ -134,17 +145,37 @@ export async function GET(request: Request) {
       `)
       .eq('user_id', userId)
       .order('receipt_date', { ascending: false })
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
+
+    if (rawCursor) {
+      const cursor = decodeReceiptCursor(rawCursor);
+      if (!cursor) {
+        return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
+      }
+      // Keyset pagination on (receipt_date, created_at), same idiom as
+      // GET /api/photos. Separate or() calls are ANDed by PostgREST, so this
+      // composes with the user_id filter.
+      query = query.or(
+        `receipt_date.lt.${cursor.receiptDate},` +
+        `and(receipt_date.eq.${cursor.receiptDate},created_at.lt.${cursor.createdAt})`
+      );
+    }
+
+    const { data: rows, error: dbError } = await query;
 
     if (dbError) {
       return NextResponse.json({ error: dbError.message || 'Failed to fetch receipts from database' }, { status: 500 });
     }
 
-    if (!receipts) {
-      return NextResponse.json({ success: true, receipts: [] }, { status: 200 });
-    }
+    const page = (rows ?? []).slice(0, limit);
+    const last = page[page.length - 1];
+    const nextCursor =
+      (rows ?? []).length > limit && last
+        ? encodeReceiptCursor(last.receipt_date, last.created_at)
+        : null;
 
-    const mappedReceipts = receipts.map((item: any) => {
+    const mappedReceipts = page.map((item: any) => {
       let publicImageUrl = item.image_url;
       if (item.image_url) {
         const { data: publicUrlData } = supabase.storage
@@ -174,7 +205,10 @@ export async function GET(request: Request) {
       };
     });
 
-    return NextResponse.json({ success: true, receipts: mappedReceipts as Receipt[] }, { status: 200 });
+    return NextResponse.json(
+      { success: true, receipts: mappedReceipts as Receipt[], nextCursor },
+      { status: 200 }
+    );
 
   } catch (error) {
     console.error('GET /api/receipts: Unhandled error in try block:', error);

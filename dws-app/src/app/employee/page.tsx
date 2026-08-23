@@ -2,77 +2,69 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import Image from 'next/image';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import ReceiptUploader from '@/components/receipt-uploader';
 import EmployeeReceiptTable from '@/components/employee-receipt-table';
+import LoadMoreButton from '@/components/photos/load-more-button';
 import type { Receipt, UserProfile } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Toaster as SonnerToaster } from 'sonner';
+
+const receiptsKeys = { list: () => ['receipts', 'mine'] as const };
+
+type ReceiptsPage = { receipts: Receipt[]; nextCursor: string | null };
 
 export default function EmployeePage() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [receipts, setReceipts] = useState<Receipt[]>([]);
-  const [receiptsLoading, setReceiptsLoading] = useState(false);
-  const [receiptsError, setReceiptsError] = useState<string | null>(null);
-  
+
   const mountedRef = useRef(true);
   const authCheckCompleteRef = useRef(false);
   const loadingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const fetchReceipts = async () => {
-    if (!user || !userProfile || userProfile.role !== 'employee') {
-      setReceiptsLoading(false);
-      return;
-    }
+  // Receipts live in the react-query cache (5-minute staleTime from the app's
+  // QueryProvider), so remounting this page within that window renders from
+  // cache instead of refetching the whole history — the endpoint is also
+  // keyset-paginated now, 50 rows per page.
+  const queryClient = useQueryClient();
+  const receiptsEnabled = Boolean(user && userProfile?.role === 'employee');
 
-    setReceiptsLoading(true);
-    setReceiptsError(null);
-    try {
-      const response = await fetch('/api/receipts');
-
+  const {
+    data: receiptsData,
+    isLoading: receiptsLoading,
+    error: receiptsQueryError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: receiptsKeys.list(),
+    enabled: receiptsEnabled,
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }): Promise<ReceiptsPage> => {
+      const search = pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : '';
+      const response = await fetch(`/api/receipts${search}`);
       if (!response.ok) {
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch (e) {
-          errorData = { error: `API request failed with status ${response.status}: ${response.statusText}` };
-        }
-        throw new Error(errorData.error || `Failed to fetch receipts (status ${response.status})`);
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? `Failed to fetch receipts (status ${response.status})`);
       }
-      
-      const data = await response.json();
+      return response.json();
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  });
 
-      if (data.success && data.receipts) {
-        setReceipts(data.receipts);
-      } else {
-        throw new Error(data.error || 'Failed to parse receipts data or success was false');
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "An unknown error occurred during fetch";
-      setReceiptsError(message);
-    } finally {
-      setReceiptsLoading(false);
-    }
-  };
+  const receipts = receiptsData?.pages.flatMap((page) => page.receipts) ?? [];
+  const receiptsError =
+    receiptsQueryError instanceof Error ? receiptsQueryError.message : null;
 
-  useEffect(() => {
-    if (user && userProfile && userProfile.role === 'employee') {
-      fetchReceipts();
-    }
-  }, [user, userProfile]);
+  const invalidateReceipts = () =>
+    queryClient.invalidateQueries({ queryKey: receiptsKeys.list() });
 
-
-  const handleReceiptAdded = () => {
-    fetchReceipts();
-  };
-
-  const handleReceiptUpdated = () => {
-    fetchReceipts();
-  };
+  const handleReceiptAdded = invalidateReceipts;
+  const handleReceiptUpdated = invalidateReceipts;
 
   useEffect(() => {
     loadingTimeoutRef.current = setTimeout(() => {
@@ -183,7 +175,7 @@ export default function EmployeePage() {
         if (event === 'SIGNED_OUT' || !session) {
           setUser(null);
           setUserProfile(null);
-          setReceipts([]);
+          queryClient.removeQueries({ queryKey: receiptsKeys.list() });
           router.replace('/login');
         }
       }
@@ -252,7 +244,14 @@ export default function EmployeePage() {
         
         {receiptsLoading && <p className="text-center">Loading receipts...</p>}
         {receiptsError && <p className="text-center text-red-500">Error loading receipts: {receiptsError}</p>}
-        {!receiptsLoading && !receiptsError && <EmployeeReceiptTable receipts={receipts} onReceiptUpdated={handleReceiptUpdated} />}
+        {!receiptsLoading && !receiptsError && (
+          <>
+            <EmployeeReceiptTable receipts={receipts} onReceiptUpdated={handleReceiptUpdated} />
+            {hasNextPage && (
+              <LoadMoreButton onClick={() => fetchNextPage()} loading={isFetchingNextPage} />
+            )}
+          </>
+        )}
       
         <div className="mt-8 text-center">
           <Button
