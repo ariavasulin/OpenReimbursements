@@ -58,6 +58,7 @@ export interface UploadTransferError {
   status?: number;
   retryable?: boolean;
   retryAt?: number;
+  newAttemptRequired?: boolean;
 }
 
 function transferFailure(error: UploadTransferError): UploadRequestError {
@@ -67,12 +68,14 @@ function transferFailure(error: UploadTransferError): UploadRequestError {
   });
 }
 
-function retryDetails(error: unknown): Pick<UploadResult, "retryAt" | "retryable"> {
+function retryDetails(error: unknown): Pick<UploadResult, "retryAt" | "retryable" | "newAttemptRequired" | "errorCode"> {
   if (error === null || typeof error !== "object") return {};
   const details = error as UploadTransferError;
   return {
     retryAt: typeof details.retryAt === "number" ? details.retryAt : undefined,
     retryable: typeof details.retryable === "boolean" ? details.retryable : undefined,
+    newAttemptRequired: details.newAttemptRequired,
+    errorCode: details.code,
   };
 }
 
@@ -119,6 +122,7 @@ export interface UploadDeps {
 export interface UploadResult {
   status: "done" | "failed" | "duplicate" | "job_conflict" | "restore_required" | "cancelled" | "waiting_claim";
   error?: string;
+  errorCode?: string;
   canonicalPhotoId?: string;
   canonicalJobId?: string;
   purgeAfter?: string;
@@ -126,6 +130,7 @@ export interface UploadResult {
   sidecarRetry?: boolean;
   retryAt?: number;
   retryable?: boolean;
+  newAttemptRequired?: boolean;
 }
 
 /** Plain .upload() is for <=6 MB; anything bigger goes resumable (TUS). */
@@ -488,7 +493,9 @@ export async function uploadOne(
     const leased = lease;
     const claimed = await run(() => deps.claimContent(leased, requestOptions));
     if (claimed.status === "waiting_claim") {
-      return { status: "waiting_claim", error: "Another upload is processing these bytes. Retry shortly.", warnings };
+      const retryAt = Date.parse(claimed.lease_expires_at);
+      return { status: "waiting_claim", error: "Another upload is processing these bytes. Retry shortly.", warnings,
+        retryable: true, retryAt: Number.isFinite(retryAt) ? retryAt : undefined };
     }
     if (claimed.status !== "claimed") {
       completed = true;

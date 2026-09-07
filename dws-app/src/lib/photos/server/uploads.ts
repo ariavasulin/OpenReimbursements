@@ -62,7 +62,7 @@ export async function createUploadAttempt(actor: PhotoActor, body: Body): Promis
     result: value.result ? await describeAttemptResult(actor, value) : null };
 }
 
-async function describeAttemptResult(actor: PhotoActor, bound: {
+export async function describeAttemptResult(actor: PhotoActor, bound: {
   result: CanonicalUploadOutcome; warnings: string[]; new_attempt_required?: boolean;
   job_id: string; original_path: string; sidecar_path: string; content_sha256: string;
 }): Promise<CanonicalUploadOutcome> {

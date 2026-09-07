@@ -1,4 +1,4 @@
-const OPERATIONS = new Set(["attempt", "acquire", "claim", "renew", "release", "sidecar", "original", "finalize"]);
+const OPERATIONS = new Set(["prepare", "attempt", "acquire", "claim", "renew", "release", "sidecar", "original", "finalize"]);
 export const MAX_UPLOAD_ATTEMPTS = 5;
 export const MAX_UPLOAD_RETRY_DELAY_MS = 20_000;
 
@@ -16,14 +16,16 @@ export class UploadRequestError extends Error {
   readonly retryable: boolean;
   /** Earliest suggested retry, in epoch milliseconds. */
   readonly retryAt?: number;
+  readonly newAttemptRequired?: boolean;
 
-  constructor(message: string, details: { code: string; status?: number; retryable: boolean; retryAt?: number }) {
+  constructor(message: string, details: { code: string; status?: number; retryable: boolean; retryAt?: number; newAttemptRequired?: boolean }) {
     super(message);
     this.name = "UploadRequestError";
     this.code = details.code;
     this.status = details.status;
     this.retryable = details.retryable;
     this.retryAt = details.retryAt;
+    this.newAttemptRequired = details.newAttemptRequired;
   }
 }
 
@@ -143,6 +145,7 @@ export function createUploadRequest(deps: UploadRetryDeps & { fetch?: typeof fet
         failure = new UploadRequestError(
           typeof error?.message === "string" ? error.message : `Upload request failed (HTTP ${response.status}).`,
           { code: typeof error?.code === "string" ? error.code : "upload_request_failed", status: response.status,
+            newAttemptRequired: object(payload)?.new_attempt_required === true,
             retryable: response.status === 429 || response.status >= 500 },
         );
       }

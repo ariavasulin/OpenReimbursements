@@ -8,7 +8,7 @@ export async function POST(request: Request) {
       return photoJson(await probeUploadOriginal(actor, await readPhotoJson(request)));
     } catch (error) {
       if (error instanceof OriginalUploadMismatch) return photoJson({ error: { code: 'conflict', retryable: false,
-        message: 'Stored upload differs from this file. Remove this upload from the tray and add the file again.' } }, 409);
+        message: 'Stored upload differs from this file. Start a fresh attempt before retrying.' }, new_attempt_required: true }, 409);
       throw error;
     }
   });

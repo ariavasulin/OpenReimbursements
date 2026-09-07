@@ -382,7 +382,9 @@ describe("canonical hash/attempt/claim/finalize contract", () => {
   it("waits on a contended claim without bytes and releases its owner lease", async () => {
     const { deps, uploads } = makeDeps();
     deps.claimContent = vi.fn(async () => ({ status: "waiting_claim" as const, lease_expires_at: "2026-09-07T00:02:00Z" }));
-    expect((await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).status).toBe("waiting_claim");
+    expect(await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).toMatchObject({
+      status: "waiting_claim", retryable: true, retryAt: Date.parse("2026-09-07T00:02:00Z"),
+    });
     expect(uploads).toEqual([]);
     expect(deps.releaseLease).toHaveBeenCalledWith({ owner_kind: "ordinary" as const, owner_id: "photo-1", lease_generation: 1, status: "retryable_failed" });
   });
@@ -1306,6 +1308,17 @@ describe("TUS retry policy through the real client's HTTP pipeline", () => {
 });
 
 describe("retry metadata survives the upload orchestrator", () => {
+  it("preserves the fresh-attempt remedy without transferring to an occupied path", async () => {
+    const { deps, uploads } = makeDeps();
+    deps.probeOriginal = vi.fn(async () => { throw new UploadRequestError("Start a fresh attempt", {
+      code: "conflict", status: 409, retryable: false, newAttemptRequired: true,
+    }); });
+    expect(await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).toMatchObject({
+      status: "failed", retryable: false, newAttemptRequired: true, errorCode: "conflict",
+    });
+    expect(uploads).toEqual([]);
+    expect(deps.finalize).not.toHaveBeenCalled();
+  });
   const limited = () => new UploadRequestError("Rate limited; retry later", {
     code: "rate_limited", status: 429, retryable: true, retryAt: 60_000,
   });

@@ -19,24 +19,14 @@ import { supabase } from "@/lib/supabaseClient";
 import { invalidatePhotoCaches } from "./api";
 import * as Q from "./upload-queue";
 import {
-  createResumableUpload,
   uploadOne,
   retrySidecar as uploadSidecar,
   type BatchMeta,
-  type UploadDeps,
   type UploadIdentity,
   type UploadResult,
 } from "./upload";
-import type {
-  UploadAttempt, AcquireUploadOutcome, ClaimUploadOutcome,
-  CanonicalUploadOutcome,
-  OriginalUploadState,
-} from "./upload-contract";
-import { extractCapturedAt } from "./exif";
 import { plural } from "./format";
-import { sha256 } from "./hash";
-import { createUploadRequest } from "./upload-http";
-import { createAbortablePhotoStorage, createRetryingPhotoStorage } from "./upload-storage";
+import { buildBrowserUploadDeps } from "./upload-browser";
 
 const MANIFEST_KEY = "photos.upload-manifest";
 
@@ -108,43 +98,6 @@ export const useUploadManager = () => {
   if (!m) throw new Error("useUploadManager outside UploadManagerProvider");
   return m;
 };
-
-function buildDeps(): UploadDeps {
-  return {
-    hash: sha256,
-    extractCapturedAt,
-    storage: createRetryingPhotoStorage({
-      storage: createAbortablePhotoStorage({
-        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        getAccessToken: getUploadAccessToken,
-      }),
-      refreshAuth: refreshUploadAuth,
-    }),
-    resumableUpload: createResumableUpload({
-      supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      getAccessToken: getUploadAccessToken,
-      refreshAuth: refreshUploadAuth,
-    }),
-    createAttempt: (input, options) => uploadRequest<UploadAttempt>("attempt", input, options),
-    acquireLease: (input, options) => uploadRequest<AcquireUploadOutcome>("acquire", input, options),
-    claimContent: (input, options) => uploadRequest<ClaimUploadOutcome>("claim", input, options),
-    probeOriginal: (input, options) => uploadRequest<OriginalUploadState>("original", input, options),
-    renewLease: (input, options) => uploadRequest("renew", input, options),
-    releaseLease: (input) => uploadRequest("release", input),
-    finalize: (input, options) => uploadRequest<CanonicalUploadOutcome>("finalize", input, options),
-    attachSidecar: (input, options) => uploadRequest<CanonicalUploadOutcome>("sidecar", input, options),
-  };
-}
-
-async function refreshUploadAuth() {
-  const { data, error } = await supabase.auth.refreshSession();
-  return !error && !!data.session;
-}
-async function getUploadAccessToken() {
-  return (await supabase.auth.getSession()).data.session?.access_token ?? null;
-}
-const uploadRequest = createUploadRequest({ refreshAuth: refreshUploadAuth });
 
 export function UploadManagerProvider({
   children,
@@ -224,7 +177,7 @@ export function UploadManagerProvider({
     if (!next) return;
     running.current = true;
     void (async () => {
-      const deps = buildDeps();
+      const deps = buildBrowserUploadDeps();
       let item: Q.QueueItem | null = next;
       let any = false;
       let failed = 0;
@@ -353,7 +306,7 @@ export function UploadManagerProvider({
           if (!session) throw new Error("Sign in to retry the XMP sidecar.");
           const result = await uploadSidecar(sidecar, identity, {
             uploaderId: session.user.id, jobId: item.jobId,
-          }, buildDeps(), { signal: controller.signal });
+          }, buildBrowserUploadDeps(), { signal: controller.signal });
           if (unmounted.current) return;
           // The original already committed. A failed XMP retry keeps that
           // success and its dedicated reselection action visible.

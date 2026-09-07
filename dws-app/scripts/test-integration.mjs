@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, cp, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { createServer } from 'node:net';
@@ -10,7 +10,7 @@ import { verifyExpansion } from './test-schema-expansion.mjs';
 import { assertLocalTestTarget } from './test-local-target.mjs';
 
 const suite = process.argv[2];
-if (!['db', 'routes'].includes(suite)) throw new Error('Usage: node scripts/test-integration.mjs db|routes [vitest arguments]');
+if (!['db', 'routes', 'browser'].includes(suite)) throw new Error('Usage: node scripts/test-integration.mjs db|routes|browser [runner arguments]');
 const app = resolve(import.meta.dirname, '..');
 const project = `dws-test-${randomBytes(6).toString('hex')}`;
 const workdir = await mkdtemp(resolve(tmpdir(), `${project}-`));
@@ -23,7 +23,8 @@ let activeChild;
 let interrupted = false;
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   interrupted = true;
-  activeChild?.kill('SIGTERM');
+  // Playwright handles SIGINT by closing browsers and its Next process group.
+  activeChild?.kill(activeChild.spawnargs.some(arg => arg.includes('@playwright/test')) ? 'SIGINT' : 'SIGTERM');
 });
 const cli = (...args) => run('supabase', [...args, '--workdir', workdir], { capture: true });
 function run(command, args, { capture = false, childEnv = env } = {}) {
@@ -79,7 +80,25 @@ try {
   await sql.query('insert into dws_test_harness.identity values ($1)', [project]);
   await verifyExpansion(sql, env);
   await sql.end(); sql = undefined;
-  await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.integration.config.ts', ...process.argv.slice(3)], { childEnv: { ...env, DWS_TEST_SUITE: suite } });
+  if (suite === 'browser') {
+    // Next automatically loads .env.local. Run an explicit source-only snapshot
+    // so neither live secrets nor a stale compiled public URL can enter this app.
+    const browserApp = resolve(workdir, 'app');
+    await mkdir(browserApp);
+    for (const name of ['src', 'public', 'baml_client', 'package.json', 'tsconfig.json', 'next.config.ts', 'postcss.config.mjs', 'next-env.d.ts']) {
+      try { await cp(resolve(app, name), resolve(browserApp, name), { recursive: true }); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    await symlink(resolve(app, 'node_modules'), resolve(browserApp, 'node_modules'), 'dir');
+    const port = await freePort();
+    await run(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', ...process.argv.slice(3)], {
+      childEnv: { ...env, NODE_ENV: 'development', NEXT_PUBLIC_PHOTOS_HOSTNAME: '',
+        NEXT_TELEMETRY_DISABLED: '1', DWS_BROWSER_APP_DIR: browserApp,
+        DWS_BROWSER_BASE_URL: `http://localhost:${port}`, DWS_BROWSER_PORT: String(port) },
+    });
+  } else {
+    await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.integration.config.ts', ...process.argv.slice(3)], { childEnv: { ...env, DWS_TEST_SUITE: suite } });
+  }
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
@@ -98,5 +117,5 @@ try {
     }
     catch (error) { console.error(error); console.error(`Local cleanup configuration retained at ${workdir}`); process.exitCode = 1; }
   }
-  if (removed) await rm(workdir, { recursive: true, force: true });
+  if (removed) await rm(workdir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

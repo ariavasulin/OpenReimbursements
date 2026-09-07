@@ -21,6 +21,16 @@ function setup() {
 afterEach(() => vi.useRealTimers());
 
 describe("upload HTTP requests", () => {
+  it("retains an occupied-path fresh-attempt remedy without replaying the request", async () => {
+    const { request, fetch, sleep } = setup();
+    fetch.mockResolvedValueOnce(Response.json({ error: { code: "conflict", message: "Start a fresh attempt" },
+      new_attempt_required: true }, { status: 409 }));
+    await expect(request("original", {})).rejects.toMatchObject({
+      code: "conflict", retryable: false, newAttemptRequired: true,
+    });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
   it.each(["attempt", "acquire", "claim", "renew", "release", "sidecar", "original", "finalize"])("posts %s to its allowlisted same-origin path", async (operation) => {
     const { request, fetch } = setup();
     const signal = new AbortController().signal;

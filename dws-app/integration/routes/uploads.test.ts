@@ -292,7 +292,7 @@ describe('shared upload HTTP boundaries with real Auth, SQL and Storage (AC-4, A
     const mismatched = await call(original, value.payload);
     expect(mismatched.status).toBe(409);
     expect(await mismatched.json()).toEqual({ error: { code: 'conflict', retryable: false,
-      message: 'Stored upload differs from this file. Remove this upload from the tray and add the file again.' } });
+      message: 'Stored upload differs from this file. Start a fresh attempt before retrying.' }, new_attempt_required: true });
     const storageClient = supabaseAdmin.storage;
     vi.spyOn(supabaseAdmin, 'storage', 'get').mockReturnValue(storageClient);
     const from = storageClient.from.bind(storageClient);
