@@ -73,7 +73,9 @@ describe('media executor commits and limits', () => {
     await mediaExecutor(f.admin, new WorkBudget())([
       { action: 'makeVideoPoster', photoId: row.id }, action,
     ], { ...row, original_bytes: CAP.bytes + 1, thumb_path: null }, f.count);
-    expect(f.count.mock.calls).toEqual([['playbackSkipped'], ['posterSkipped']]);
+    expect(f.count).toHaveBeenCalledTimes(2);
+    expect(f.count).toHaveBeenCalledWith('playbackSkipped');
+    expect(f.count).toHaveBeenCalledWith('posterSkipped');
     expect(f.update).toHaveBeenCalledWith({ poster_skipped_reason: expect.stringContaining(`original exceeds ${CAP.bytes} bytes`) });
     expect(f.update).toHaveBeenCalledTimes(2);
     expect(fetch).not.toHaveBeenCalled();

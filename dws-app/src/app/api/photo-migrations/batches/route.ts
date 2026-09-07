@@ -1,11 +1,11 @@
 import { photoId } from '@/lib/photos/server/reads';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
-import { photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, PhotoApiError } from '@/lib/photos/server/http';
-import { uploadRpc } from '@/lib/photos/server/uploads';
+import { photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, PhotoApiError, photoRpc } from '@/lib/photos/server/http';
+
 import { migrationInteger } from '@/lib/photos/server/migrations';
 export async function POST(request: Request) { return photoRoute(async () => {
   const actor = await requirePhotoActor(request, {mutation:true}); const body = await readPhotoJson(request);
-  return photoJson({batch:await uploadRpc(actor,'migration_create_batch',{p_actor:actor.actorId,p_script:body.script_name})});
+  return photoJson({batch:await photoRpc(actor,'migration_create_batch',{p_actor:actor.actorId,p_script:body.script_name})});
 }); }
 export async function GET(request: Request) { return photoRoute(async () => {
   const actor = await requirePhotoActor(request); const params = new URL(request.url).searchParams;

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabaseClient";
-import { createResumableUpload, type UploadDeps } from "./upload";
+import type { UploadDeps } from "./upload";
+import { createResumableUpload } from "./upload-tus";
 import type { UploadAttempt, AcquireUploadOutcome, ClaimUploadOutcome, CanonicalUploadOutcome, OriginalUploadState, CancelUploadInput, CancelUploadOutcome } from "./upload-contract";
 import { extractCapturedAt } from "./exif";
 import { sha256 } from "./hash";

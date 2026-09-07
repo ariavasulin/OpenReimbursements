@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { assertLocalTestTarget } from './scripts/test-local-target.mjs';
 
 assertLocalTestTarget();
-if (!['db', 'routes'].includes(process.env.DWS_TEST_SUITE ?? '')) throw new Error('Select test:db or test:routes');
+if (!['db', 'routes', 'cutover'].includes(process.env.DWS_TEST_SUITE ?? '')) throw new Error('Select test:db, test:routes, or test:cutover');
 export default defineConfig({
   envDir: false,
   resolve: { alias: {

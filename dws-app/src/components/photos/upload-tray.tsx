@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { usePathname } from "next/navigation";
@@ -81,26 +81,34 @@ export default function UploadTray({
 
   const rows: UploadRow[] = items.map((item) => {
     const retryDeferred = (item.retryAt ?? 0) > Date.now();
-    const primary =
-      item.status === "cancel_pending" ? (
+    let primary: ReactNode = null;
+    if (item.status === "cancel_pending") {
+      primary = (
         <RowButton onClick={() => manager.remove(item.photoId)}>Retry removal</RowButton>
-      ) : item.status === "done" && item.sidecarRetry ? (
+      );
+    } else if (item.status === "done" && item.sidecarRetry) {
+      primary = (
         <RowButton disabled={retryDeferred} onClick={() => {
           sidecarTarget.current = item.photoId;
           sidecarInputRef.current?.click();
         }}>
           {retryDeferred ? "Retry later" : "Re-pick XMP"}
         </RowButton>
-      ) : ["failed", "job_conflict", "restore_required", "waiting_claim"].includes(item.status) ? (
+      );
+    } else if (["failed", "job_conflict", "restore_required", "waiting_claim"].includes(item.status)) {
+      primary = (
         <RowButton disabled={retryDeferred} onClick={() => manager.retry(item.photoId)}>
           <RotateCw className="h-3 w-3" />
           {retryDeferred ? "Retry later" : item.status === "failed" ? "Retry" : "Check again"}
         </RowButton>
-      ) : item.status === "interrupted" ? (
+      );
+    } else if (item.status === "interrupted") {
+      primary = (
         <RowButton onClick={() => repickInputRef.current?.click()}>
           Re-pick
         </RowButton>
-      ) : null;
+      );
+    }
     return {
       item,
       actions: primary ? (

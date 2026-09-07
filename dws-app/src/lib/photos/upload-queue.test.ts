@@ -14,7 +14,7 @@ describe("upload-queue", () => {
     let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }, { file: f("b.jpg") }]);
     q = Q.start(q, q.items[0].photoId);
     q = Q.progress(q, q.items[0].photoId, 5);
-    q = Q.complete(q, q.items[0].photoId);
+    q = Q.recordOutcome(q, q.items[0].photoId, { status: "done" });
     expect(q.items.map((i) => i.status)).toEqual(["done", "queued"]);
   });
 
@@ -152,7 +152,7 @@ describe("upload-queue", () => {
     expect(q.items.map((i) => i.photoId)).toEqual([b]);
     expect(q.files.has(a)).toBe(false);
 
-    q = Q.complete(Q.start(q, b), b);
+    q = Q.recordOutcome(Q.start(q, b), b, { status: "done" });
     q = Q.clearSettled(q);
     expect(q.items).toHaveLength(0);
     expect(q.files.size).toBe(0);

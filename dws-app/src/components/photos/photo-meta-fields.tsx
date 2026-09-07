@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import JobField, { type JobLabelSource } from "@/components/photos/job-combobox";
+import JobField from "@/components/photos/job-combobox";
 import TagInput from "@/components/photos/tag-input";
 import { usePhotoJobs, usePhotoTags } from "@/lib/photos/api";
 import { addTagToMeta, type PhotoMeta } from "@/lib/photos/tags";
@@ -25,8 +25,6 @@ interface PhotoMetaFieldsProps {
   /** Whether to fetch jobs/tags (pass the sheet's `open`). */
   enabled?: boolean;
   disabled?: boolean;
-  /** Label for the selected job when it isn't in the jobs list (edit sheet). */
-  jobFallback?: JobLabelSource | null;
   showJob?: boolean;
 }
 
@@ -37,7 +35,6 @@ export default function PhotoMetaFields({
   onChange,
   enabled = true,
   disabled,
-  jobFallback,
   showJob = true,
 }: PhotoMetaFieldsProps) {
   const {
@@ -65,12 +62,9 @@ export default function PhotoMetaFields({
         jobs={jobs ?? []}
         jobsLoading={jobsLoading}
         value={value.jobId}
-        fallback={jobFallback}
         onChange={(jobId) => patch({ jobId })}
         disabled={disabled}
       />
-      {/* A failed jobs fetch must not pass for an empty list: the field keeps
-          the photo's current job via `fallback`. */}
       {jobsError && (
         <p className="-mt-2 mb-3.5 text-xs text-red-300">
           Couldn&apos;t load jobs.{" "}

@@ -2,7 +2,7 @@ import 'server-only';
 import type { ActionPhoto, PhotoActionBatch, PhotoActionBatchResponse, PhotoReference, PhotoSelector } from '../action-types';
 import { assertPhotoBatchActor, type PhotoActor } from './authority';
 import { photoId } from './reads';
-import { PhotoApiError, throwPhotoDatabaseError } from './http';
+import { PhotoApiError, throwPhotoDatabaseError, photoRpc, photoLinkIds } from './http';
 
 export const ACTION_PHOTO_COLUMNS = 'id,job_id,uploader_id,original_name,kind,thumb_path,deleted_at,purge_after,duplicate_of,job:jobs(id,job_number,name)';
 export function onlyKeys(value: Record<string, unknown>, keys: string[]) {
@@ -32,11 +32,6 @@ export function validateSelector(value: unknown): PhotoSelector {
   }
   return selector as PhotoSelector;
 }
-export async function actionRpc(actor:PhotoActor, name:string, args:Record<string,unknown>) {
-  const {data,error}=await actor.db.rpc(name,args);
-  if(error) throwPhotoDatabaseError(error);
-  return data;
-}
 export async function getActionBatch(actor:PhotoActor,id:string):Promise<PhotoActionBatch> {
   const {data,error}=await actor.db.from('photo_action_batches').select('*,destination_job:jobs(id,job_number,name)').eq('id',photoId(id)).maybeSingle();
   if(error) throwPhotoDatabaseError(error);
@@ -47,11 +42,9 @@ export async function getActionBatch(actor:PhotoActor,id:string):Promise<PhotoAc
 function referenceId(ref:PhotoReference, origin:string):string|null {
   if ('photo_id' in ref) return photoId(ref.photo_id);
   if (!('photo_url' in ref)) return null;
-  let url:URL;
-  try { url=new URL(ref.photo_url,origin); } catch {throw new PhotoApiError('invalid_input');}
-  if (![origin,'https://dws-receipts.com','https://www.dws-receipts.com','https://photos.dws-receipts.com'].includes(url.origin) || url.username || url.password || !/^\/photos\/[0-9a-f-]+\/?$/i.test(url.pathname)) throw new PhotoApiError('invalid_input');
-  photoId(url.pathname.split('/')[2]);
-  return photoId(url.searchParams.get('photo'));
+  const ids=photoLinkIds(ref.photo_url,origin);
+  photoId(ids.jobId);
+  return photoId(ids.photoId);
 }
 export async function referenceCandidates(actor:PhotoActor,ref:PhotoReference,origin:string,offset=0,limit=100) {
   const id=referenceId(ref,origin);
@@ -82,7 +75,7 @@ export async function readActionBatch(actor:PhotoActor,id:string,origin:string,o
     const index=Number(batch.materialization_cursor??0), ref=batch.selector.photos[index];
     if(ref) {const result=await referenceCandidates(actor,ref,origin);if(result.total!==1) unresolved.push({reference_index:index,reference:ref,reason:result.total?'ambiguous':'not_found',...result});}
   }
-  return {batch,items:(selected.data??[]).map(row=>({...row,photo:byId.get(row.photo_id)??null})) as PhotoActionBatchResponse['items'],total:selected.count??0,can_mutate,unresolved,materialization_complete:batch.materialization_complete};
+  return {batch,items:(selected.data??[]).map(row=>({...row,photo:byId.get(row.photo_id)??null})) as PhotoActionBatchResponse['items'],total:selected.count??0,can_mutate,unresolved};
 }
 export async function materializeAction(actor:PhotoActor,id:string,origin:string,body:Record<string,unknown>) {
   onlyKeys(body,['choices']);
@@ -99,7 +92,6 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
     const choice=(choices as Record<string,unknown>)[index];
     if(choice===null) { /* Explicit unresolved-reference skip; no target is added. */ }
     else {
-      const candidates=await referenceCandidates(actor,ref,origin);
       if(choice!==undefined) {
         const chosen=photoId(choice);
         // Validate choices independently of the candidate preview's pagination.
@@ -112,8 +104,11 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
           if(job.data?.id!==chosenRow.data.job_id||chosenRow.data.original_name!==ref.original_filename) throw new PhotoApiError('invalid_input');
         } else if(referenceId(ref,origin)!==chosen) throw new PhotoApiError('invalid_input');
         ids=[chosen];
-      } else if(candidates.total===1) ids=[candidates.candidates[0].id];
-      else return readActionBatch(actor,id,origin);
+      } else {
+        const candidates=await referenceCandidates(actor,ref,origin);
+        if(candidates.total===1) ids=[candidates.candidates[0].id];
+        else return readActionBatch(actor,id,origin);
+      }
     }
     next=String(index+1);complete=index+1===selector.photos.length;
   } else {
@@ -127,7 +122,7 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
     const {data,error}=await query;if(error) throwPhotoDatabaseError(error);
     ids=(data??[]).slice(0,100).map(row=>row.id);next=ids.at(-1)??batch.materialization_cursor;complete=(data??[]).length<=100;
   }
-  await actionRpc(actor,'photo_materialize_action',{p_actor:actor.actorId,p_batch_id:id,p_cursor:batch.materialization_cursor,p_ids:ids,p_next_cursor:next,p_complete:complete});
+  await photoRpc(actor,'photo_materialize_action',{p_actor:actor.actorId,p_batch_id:id,p_cursor:batch.materialization_cursor,p_ids:ids,p_next_cursor:next,p_complete:complete});
   return readActionBatch(actor,id,origin);
 }
 export async function createAction(actor:PhotoActor,body:Record<string,unknown>,origin:string) {

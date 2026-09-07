@@ -39,8 +39,7 @@ only their own fixture rows so scenarios can exercise global-index activation. N
 For route and browser suites, the runner copies only application source/configuration
 into its temporary directory, excluding `.env` files and `.next`. It supplies a
 random local `MCP_SHARED_KEY`, `DWS_BROWSER_ORIGIN`, a dummy Issues credential,
-and a loopback GitHub HTTP mock. The mock has runner-owned control endpoints;
-these are not application routes or production authentication bypasses. Browser
+and a loopback GitHub HTTP mock. The mock has runner-owned control endpoints. Browser
 suites use Playwright's existing Next lifecycle. Route suites start their own
 Next process and the SDK test restarts it while retaining the same client transport
 to verify that requests need no in-memory server session.
@@ -51,3 +50,17 @@ protocol/tool results, mock publication payloads, and retry outcomes in
 `test-results/phase6-mcp-http.json`, plus a redacted Next process log. Mock issue
 URLs are synthetic fixed-repository responses; no real GitHub issue is created.
 The full `test:routes` entry point also includes these scenarios.
+
+`npm run test:cutover` runs the actual `scripts/photo-identity-cutover.mjs`
+subprocess against another disposable stack. Its deterministic generator seeds
+102 cross-job collision groups, an existing inactive owning job, shared paths,
+three legacy null hashes, and an interrupted upload with a real Storage object. It exercises default dry-run,
+administrator approval (including an empty mapping), closed gates, row drift,
+SIGKILL after a database commit, bounded checkpoint/resume/replay, global index
+validation, old unfiltered session reads/RPC/Delete, and rollback/refusal. An
+independent run proves deletion authorization alone prevents rollback, with no
+intervening photo writes and no permanent-fence removal.
+CLI metadata lives in an OS temporary directory to obey the operator tool's
+outside-repository restriction. The runner copies only this synthetic evidence
+to ignored `test-results/phase7-cutover/` before removing the temporary directory.
+This is not production canonical selection or an office-drive drill.

@@ -99,7 +99,6 @@ export default function EditPhotoSheet({
         onChange={setMeta}
         enabled={open}
         disabled={busy}
-        jobFallback={photo?.job}
         showJob={false}
       />
       {photo && <div className="mt-4 border-t border-[#4e4e4e] pt-4 text-sm text-[#bbb]">

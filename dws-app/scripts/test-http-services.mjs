@@ -6,7 +6,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 /** Local-only GitHub fixture. Control URLs are never part of the application. */
-export async function startGitHubMock({ token, restartNext = async () => { throw new Error('No fixture Next server'); } }) {
+export async function startGitHubMock({ token, restartNext }) {
   let mode = 'normal', visible = true, markerPage = 1;
   const issues = [], requests = [];
   const server = createServer(async (request, response) => {

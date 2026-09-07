@@ -223,19 +223,13 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
    * run that under-reports committed work can never reach `errors: []`. */
   async function execute(
     a: Action,
-    rowsById: Map<string, RepairRow>,
+    row: RepairRow,
     video: VideoOpts,
     count: (key: CountKey) => void
   ): Promise<void> {
-    const rowFor = (photoId: string): RepairRow => {
-      const row = rowsById.get(photoId);
-      if (!row) throw new Error(`no repair row for ${photoId}`);
-      return row;
-    };
-
     switch (a.action) {
       case 'fillImageDerivatives': {
-        const result = await fillImageDerivatives(supabaseAdmin, rowFor(a.photoId), budget);
+        const result = await fillImageDerivatives(supabaseAdmin, row, budget);
         if (!result.ok) {
           await markFileTile(a.photoId, result.reason);
           count('markFileTile');
@@ -250,7 +244,6 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
         return;
       case 'makeVideoPoster':
         return withTempDir(async (dir) => {
-          const row = rowFor(a.photoId);
           try {
             const { input, durationSecs } = await fetchAndProbe(row, dir);
             await writePoster(row, dir, input, durationSecs);
@@ -262,7 +255,6 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
         });
       case 'transcodeVideo':
         return withTempDir(async (dir) => {
-          const row = rowFor(a.photoId);
           let source: Awaited<ReturnType<typeof fetchAndProbe>>;
           try {
             source = await fetchAndProbe(row, dir);
@@ -289,11 +281,10 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
   }
   return async (actions: Action[], row: RepairRow, count: (key: CountKey) => void) => {
     const paired = actions.some(a => a.action === 'transcodeVideo') && actions.some(a => a.action === 'makeVideoPoster');
-    const rows = new Map([[row.id, row]]);
     for (const action of actions) {
       if (paired && action.action === 'makeVideoPoster') continue;
       budget.check();
-      await execute(action, rows, { alsoPoster: paired }, count);
+      await execute(action, row, { alsoPoster: paired }, count);
     }
   };
 }

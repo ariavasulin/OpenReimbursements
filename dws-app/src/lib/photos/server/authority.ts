@@ -1,4 +1,5 @@
 import 'server-only';
+import type { PhotoAction } from '../action-types';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { PhotoApiError, requireSameOrigin, throwPhotoDatabaseError } from './http';
 
@@ -53,7 +54,7 @@ export async function isPhotoAdministrator(actor: PhotoActor): Promise<boolean> 
 
 /** Later mutations must call this with the route's action, never a client-selected permission. */
 export async function assertPhotoBatchActor(
-  actor: PhotoActor, batchId: string, kind: 'migration' | 'action', action?: 'move' | 'trash' | 'restore',
+  actor: PhotoActor, batchId: string, kind: 'migration' | 'action', action?: PhotoAction,
 ): Promise<void> {
   const { error } = await actor.db.rpc('photo_assert_batch_actor', {
     p_actor: actor.actorId, p_batch_id: batchId, p_kind: kind, p_action: action ?? null,

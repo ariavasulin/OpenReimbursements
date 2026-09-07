@@ -28,7 +28,7 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
  async function job(){const id=randomUUID();const number=`actions-${id}`;expect((await f.admin.from('jobs').insert({id,job_number:number,name:'Action fixture'})).error).toBeNull();return {id,number}}
  async function photo(jobId:string,extra:Record<string,unknown>={}){const id=randomUUID();expect((await f.admin.from('photos').insert({id,job_id:jobId,uploader_id:f.employeeA.id,kind:'image',captured_at:new Date().toISOString(),original_path:`originals/${f.employeeA.id}/${id}/file.jpg`,original_name:'file.jpg',...extra})).error).toBeNull();return id}
  async function draft(action:string,selector:unknown,destination?:string,actor=f.employeeA){return json(await call(create,'',{action,selector,...(destination?{destination_job_id:destination}:{})},actor)) as Promise<PhotoActionBatchResponse>}
- async function seal(id:string,actor=f.employeeA){let result:PhotoActionBatchResponse;do{result=await json(await call(materialize,id,{},actor));if(result.unresolved.length)throw new Error('Unexpected unresolved reference')}while(!result.materialization_complete);return result;}
+ async function seal(id:string,actor=f.employeeA){let result:PhotoActionBatchResponse;do{result=await json(await call(materialize,id,{},actor));if(result.unresolved.length)throw new Error('Unexpected unresolved reference')}while(!result.batch.materialization_complete);return result;}
  async function confirm(id:string,actor=f.employeeA){await seal(id,actor);return json(await call(approve,id,{},actor)) as Promise<PhotoActionBatchResponse>}
  async function handoff(action:string,selector:unknown,destination?:string,actor=f.employeeB){const token=randomBytes(32).toString('base64url'),script=action==='trash'?'remove_photos':`${action}_photos`;expect((await f.admin.from('dws_action_handoffs').insert({token_digest:createHash('sha256').update(token).digest('hex'),script_name:script,requested_input:{selector,...(destination?{destination_job_number:destination}:{})},expires_at:new Date(Date.now()+60_000).toISOString()})).error).toBeNull();return (await json(await call(consume,'',{token,script_name:script},actor))).photo_action_batch_id as string;}
  const selected=(ids:string[])=>({photos:ids.map(photo_id=>({photo_id}))});
@@ -121,10 +121,10 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   const photos=Array.from({length:205},()=>{const id=randomUUID();return {id,job_id:j.id,uploader_id:f.employeeA.id,kind:'image',captured_at:new Date().toISOString(),original_path:`originals/${f.employeeA.id}/${id}/fixture.jpg`}});
   expect((await f.admin.from('photos').insert(photos)).error).toBeNull();
   const d=await draft('move',{job_number:j.number,scope:'active'},to.id);
-  const first=await json(await call(materialize,d.batch.id,{}));expect(first.total).toBe(100);expect(first.materialization_complete).toBe(false);expect(first.items).toHaveLength(100);
+  const first=await json(await call(materialize,d.batch.id,{}));expect(first.total).toBe(100);expect(first.batch.materialization_complete).toBe(false);expect(first.items).toHaveLength(100);
   await json(await call(approve,d.batch.id,{}),409);
   expect((await json(await call(materialize,d.batch.id,{}))).total).toBe(200);
-  const final=await json(await call(materialize,d.batch.id,{}));expect(final.total).toBe(205);expect(final.materialization_complete).toBe(true);
+  const final=await json(await call(materialize,d.batch.id,{}));expect(final.total).toBe(205);expect(final.batch.materialization_complete).toBe(true);
   expect((await json(await call(read,d.batch.id,undefined,f.employeeA,'GET','?offset=200&limit=100'))).items).toHaveLength(5);
   await json(await call(approve,d.batch.id,{}));
  });

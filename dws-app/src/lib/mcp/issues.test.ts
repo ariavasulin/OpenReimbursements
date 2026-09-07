@@ -126,8 +126,6 @@ describe('minimal fixed GitHub publisher (AC-13)', () => {
     setup(); const fetcher = vi.fn().mockResolvedValue(response()); vi.stubGlobal('fetch', fetcher);
     const outcome = await publishGithubIssue(validateIssueInput(report).payload, randomUUID());
     expect(outcome).toEqual({ status: 'unknown', code: 'publication_unknown' });
-    expect(outcome).not.toHaveProperty('url');
-    expect(JSON.stringify(outcome)).not.toContain('private upstream diagnostic');
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher.mock.calls[0][1].method).toBe('POST');
   });

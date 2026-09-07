@@ -218,8 +218,7 @@ begin
   perform public.photo_require_gate('writes'); perform public.photo_require_actor(p_actor);
   if not exists(select 1 from public.migration_batches where id=p_batch) then raise exception 'not_found'; end if;
   select coalesce(jsonb_object_agg(status,n),'{}') into counts from (select i.status,count(*) n from public.migration_items i join public.migration_sources s on s.id=i.source_id where s.batch_id=p_batch and i.is_current group by i.status) q;
-  select count(*),coalesce(sum(i.original_bytes),0) into total,bytes from public.migration_items i join public.migration_sources s on s.id=i.source_id where s.batch_id=p_batch and i.is_current;
-  select count(*) filter(where i.sidecar is not null and i.sidecar<>'null'::jsonb),coalesce(sum(jsonb_array_length(i.warnings)),0),coalesce(sum((i.sidecar->>'original_bytes')::bigint),0) into xmp,warning_count,sidecar_bytes from public.migration_items i join public.migration_sources s on s.id=i.source_id where s.batch_id=p_batch and i.is_current;
+  select count(*),coalesce(sum(i.original_bytes),0),count(*) filter(where i.sidecar is not null and i.sidecar<>'null'::jsonb),coalesce(sum(jsonb_array_length(i.warnings)),0),coalesce(sum((i.sidecar->>'original_bytes')::bigint),0) into total,bytes,xmp,warning_count,sidecar_bytes from public.migration_items i join public.migration_sources s on s.id=i.source_id where s.batch_id=p_batch and i.is_current;
   select coalesce(jsonb_object_agg(reason,n),'{}') into exclusions from (select coalesce(i.warnings->>0,'unsupported') reason,count(*) n from public.migration_items i join public.migration_sources s on s.id=i.source_id where s.batch_id=p_batch and i.is_current and i.status='skipped_unsupported' group by 1) q;
   return jsonb_build_object('total',total,'total_bytes',bytes,'media_bytes',bytes,'sidecar_bytes',sidecar_bytes,'upload_bytes',bytes+sidecar_bytes,'by_status',counts,'xmp',xmp,'warnings',warning_count,'exclusions_by_reason',exclusions);
 end $$;
@@ -262,15 +261,9 @@ create or replace function public.photo_reserve_upload_uuid()
 returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
 begin
   perform pg_advisory_xact_lock(hashtextextended('photo-upload-identity-reservation',0));
-  if tg_table_name='photo_upload_attempts' then
-    if exists(select 1 from public.migration_items where photo_id=new.photo_id) then raise exception 'conflict'; end if;
-    if not exists(select 1 from public.photo_upload_attempts where id=new.id and photo_id=new.photo_id)
-      and exists(select 1 from public.photos where id=new.photo_id) then raise exception 'conflict'; end if;
-  else
-    if exists(select 1 from public.photo_upload_attempts where photo_id=new.photo_id) then raise exception 'conflict'; end if;
-    if not exists(select 1 from public.migration_items where id=new.id and photo_id=new.photo_id)
-      and exists(select 1 from public.photos where id=new.photo_id) then raise exception 'conflict'; end if;
-  end if;
+  if exists(select 1 from public.migration_items where photo_id=new.photo_id) then raise exception 'conflict'; end if;
+  if not exists(select 1 from public.photo_upload_attempts where id=new.id and photo_id=new.photo_id)
+    and exists(select 1 from public.photos where id=new.photo_id) then raise exception 'conflict'; end if;
   return new;
 end $$;
 -- A transition table validates the whole migration insert in two indexed joins;

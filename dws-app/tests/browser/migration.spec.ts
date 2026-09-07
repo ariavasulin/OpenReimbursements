@@ -42,9 +42,30 @@ async function batchPhotos(batch: string) {
   return (await fixtures.sql.query('select p.id,p.job_id,p.original_name,p.original_path,p.original_bytes,p.content_sha256 from public.photos p join public.migration_items i on i.photo_id=p.id where i.source_id in(select id from public.migration_sources where batch_id=$1) order by p.original_name', [batch])).rows;
 }
 
+/** Sample Chromium's page V8 heap; this is observational evidence, not process RSS. */
+async function sampleHeap(page: Page) {
+  const session = await page.context().newCDPSession(page);
+  const samples: Array<{ usedSize: number; totalSize: number; embedderHeapUsedSize?: number; backingStorageSize?: number }> = [];
+  let pending = Promise.resolve();
+  let samplingError: unknown;
+  const sample = () => { pending = pending.then(async () => { samples.push(await session.send('Runtime.getHeapUsage')); }).catch(error => { samplingError = error; clearInterval(interval); }); };
+  sample();
+  const interval = setInterval(sample, 250);
+  // Test teardown also closes failed pages, so never leave a sampler alive.
+  page.once('close', () => { clearInterval(interval); void pending.catch(() => {}); });
+  return async () => {
+    clearInterval(interval); sample(); await pending; await session.detach();
+    if (samplingError) throw samplingError;
+    return { measurement: 'Chromium page V8 Runtime.getHeapUsage sampled every 250ms; excludes worker heaps and full browser RSS', samples: samples.length,
+      first: samples[0], last: samples.at(-1), peakUsedSize: Math.max(...samples.map(sample => sample.usedSize)),
+      peakBackingStorageSize: Math.max(...samples.map(sample => sample.backingStorageSize ?? 0)) };
+  };
+}
+
 test('100,000 lazy entries exceed 100 GB with bounded requests, rows, and previews', async ({ page, context }, info) => {
   test.setTimeout(600_000);
   await authenticate(context, [{ label: 'Corpus 3612', count: 100_000, metadataOnly: true }]);
+  const finishHeap = await sampleHeap(page);
   const chunks: Array<{ bytes: number; entries: number }> = [];
   const requests: Array<{ path: string; milliseconds: number; status: number }> = [];
   const starts = new Map<string, number>();
@@ -84,7 +105,7 @@ test('100,000 lazy entries exceed 100 GB with bounded requests, rows, and previe
   await screenshot(page, info, 'desktop-corpus-review');
   const observed = await page.evaluate(() => (window as unknown as { __directoryFixture: unknown }).__directoryFixture);
   expect((observed as { materializedBytes: number }).materializedBytes).toBe(0);
-  await writeFile(info.outputPath('bounded-corpus.json'), JSON.stringify({ totals, chunks, requests, workflowThroughReviewMilliseconds: Date.now() - workflowStarted, fixture: observed }, null, 2));
+  await writeFile(info.outputPath('bounded-corpus.json'), JSON.stringify({ totals, chunks, requests, workflowThroughReviewMilliseconds: Date.now() - workflowStarted, fixture: observed, memory: await finishHeap(), visibleRows: await page.getByTestId('migration-item').count() }, null, 2));
   await page.getByRole('button', { name: 'Cancel batch', exact: true }).click();
   await expect(page.getByTestId('batch-status')).toContainText(/cancelled/i);
 });
@@ -95,6 +116,7 @@ test('real worker and multi-chunk Storage recover B after A commits and a page c
     { label: 'South 4170', files: [{ name: 'B.png', bytes: largeBytes, seed: 11 }] },
   ];
   await authenticate(context, directories);
+  const finishInitialHeap = await sampleHeap(page);
   const tus: Array<{ method: string; bytes: number; url: string }> = [];
   const nextBodies: Array<{ path: string; bytes: number; contentType: string }> = [];
   let interrupted = false;
@@ -137,11 +159,13 @@ test('real worker and multi-chunk Storage recover B after A commits and a page c
   expect(contenderTransfers).toEqual([]);
   await contender.close();
   const beforeClose = await page.evaluate(() => (window as unknown as { __directoryFixture: unknown }).__directoryFixture);
+  const initialMemory = await finishInitialHeap();
   await page.close();
   // Deterministic elapsed lease time after process death; no production clock hook.
   await fixtures.sql.query("update public.migration_items set lease_expires_at=now()-interval '1 second' where source_id in(select id from public.migration_sources where batch_id=$1) and status<>'completed'", [batch]);
   await fixtures.sql.query("update public.photo_content_claims set lease_expires_at=now()-interval '1 second' where migration_item_id in(select id from public.migration_items where source_id in(select id from public.migration_sources where batch_id=$1))", [batch]);
   const reopened = await context.newPage();
+  const finishRecoveryHeap = await sampleHeap(reopened);
   const resumedPaths: string[] = [];
   reopened.on('request', request => { if (request.url().includes('/storage/v1/') && ['POST','PATCH'].includes(request.method())) resumedPaths.push(request.url()); });
   await reopened.goto(`/migrate?batch=${batch}`);
@@ -172,7 +196,7 @@ test('real worker and multi-chunk Storage recover B after A commits and a page c
   expect(nextBodies.every(request => request.bytes <= 1024 * 1024 && request.contentType.includes('application/json'))).toBe(true);
   const afterRecovery = await reopened.evaluate(() => (window as unknown as { __directoryFixture: { workerUrls: string[] } }).__directoryFixture);
   expect(afterRecovery.workerUrls).toHaveLength(1);
-  await writeFile(info.outputPath('recovery-storage.json'), JSON.stringify({ leaseExpirySimulation: 'After the real page closes, fixture SQL advances unfinished item and claim leases past their two-minute expiration; no two-minute wall-clock wait or production clock hook.', batch, beforeClose, reopenedBeforeSelection, afterRecovery, tus, nextBodies, steal, resumedRequests: resumedPaths.length, bytes: bytes.length, sha256: b.content_sha256, photos }, null, 2));
+  await writeFile(info.outputPath('recovery-storage.json'), JSON.stringify({ leaseExpirySimulation: 'After the real page closes, fixture SQL advances unfinished item and claim leases past their two-minute expiration; no two-minute wall-clock wait or production clock hook.', batch, beforeClose, reopenedBeforeSelection, afterRecovery, memory: { initial: initialMemory, recovery: await finishRecoveryHeap() }, tus, nextBodies, steal, resumedRequests: resumedPaths.length, bytes: bytes.length, sha256: b.content_sha256, photos }, null, 2));
   await screenshot(reopened, info, 'desktop-completed');
 });
 
@@ -217,7 +241,10 @@ test('pause stops new scheduling and cancellation preserves only the finalize co
   await expect(page.getByTestId('inventory-table')).not.toContainText('uploading');
   for (const item of released) {
     const row = page.getByTestId('migration-item').filter({ hasText: item.original_name });
-    await expect(row.getByText('Paused', { exact: true })).toHaveCSS('color', 'rgb(187, 187, 187)');
+    const pausedStatus = row.getByText('Paused', { exact: true });
+    await expect(pausedStatus).toBeVisible();
+    await expect(pausedStatus).toHaveClass(/(?:^|\s)text-\[#bbb\](?:\s|$)/);
+    await expect(pausedStatus).not.toHaveClass(/text-red-/);
     await expect(row.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
     await expect(row.getByRole('button', { name: 'Skip', exact: true })).toHaveCount(0);
     await expect(row).not.toContainText('Upload failed');
@@ -253,7 +280,7 @@ test('pause stops new scheduling and cancellation preserves only the finalize co
   await expect.poll(async () => (await batchPhotos(batch)).map(photo => photo.original_name)).toEqual([firstCommitName]);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeHidden();
   await screenshot(page, info, 'desktop-cancelled');
-  await writeFile(info.outputPath('pause-cancel.json'), JSON.stringify({ batch, pauseOrder: 'upload-release-before-batch-pause', releasedBeforePause, paused, blockedFinalizes, lateFinalizeStatuses, committed: await batchPhotos(batch) }, null, 2));
+  await writeFile(info.outputPath('pause-cancel.json'), JSON.stringify({ batch, queue: { heldOriginalTransfers: pendingOriginals.length, pendingAfterPause: paused.filter(item => item.status === 'pending').length, configuredConcurrency: 2 }, pauseOrder: 'upload-release-before-batch-pause', releasedBeforePause, paused, blockedFinalizes, lateFinalizeStatuses, committed: await batchPhotos(batch) }, null, 2));
 });
 
 test('typed Storage permission failure remains visible and unresolved', async ({ page, context }, info) => {

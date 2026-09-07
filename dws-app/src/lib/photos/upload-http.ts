@@ -56,7 +56,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function object(value: unknown): Record<string, unknown> | undefined {
+export function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" ? value as Record<string, unknown> : undefined;
 }
 

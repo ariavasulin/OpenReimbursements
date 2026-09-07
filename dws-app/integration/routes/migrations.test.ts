@@ -18,6 +18,7 @@ import { POST as seal } from '@/app/api/photo-migrations/sources/[id]/seal/route
 import { GET as items } from '@/app/api/photo-migrations/batches/[id]/items/route';
 import { POST as itemAction } from '@/app/api/photo-migrations/items/[id]/route';
 import { POST as consume } from '@/app/api/photo-migrations/handoffs/consume/route';
+import { GET as jobs } from '@/app/api/photo-migrations/jobs/route';
 import { POST as prepare } from '@/app/api/photo-migrations/uploads/prepare/route';
 
 describe('migration route ingestion and review (AC-3, AC-4)', () => {
@@ -47,6 +48,15 @@ describe('migration route ingestion and review (AC-3, AC-4)', () => {
   return ok(seal,v.s.id,{scan_id:v.scanId,chunk_count:records.length,total_entries:records.reduce((n,c)=>n+c.entry_count,0),
    total_bytes:records.reduce((n,c)=>n+c.total_bytes,0),job_id:jobId,fingerprint:createHash('sha256').update(records.map(c=>c.payload_digest).join('')).digest('hex')});
  }
+ it('job search preserves literal percent, underscore and backslash characters',async()=>{
+  const prefix=randomUUID();
+  const numbers=[`${prefix}%`,`${prefix}_`,`${prefix}\\`,`${prefix}plain`];
+  expect((await f.admin.from('jobs').insert(numbers.map(job_number=>({job_number,name:'Literal search'})))).error).toBeNull();
+  for(const number of numbers.slice(0,3)) {
+   const result=await ok(jobs,'',undefined,'GET',`?q=${encodeURIComponent(number)}`);
+   expect(result.jobs.map((job:{job_number:string})=>job.job_number)).toEqual([number]);
+  }
+ });
  it('accepts exactly 500 entries; same chunk replays and changed payload conflicts',async()=>{
   const v=await start();const body={scan_id:v.scanId,chunk_number:0,entries:Array.from({length:500},(_,i)=>entry(i))};
   const first=await ok(chunk,v.s.id,body);expect(first).toMatchObject({replayed:false,entry_count:500,total_bytes:500*1048577});

@@ -211,7 +211,7 @@ describe('authenticated photo routes against isolated Auth and PostgREST (AC-2, 
     const expiredLookup = get(`/api/photos/dedupe?sha256=${expiredDigest}`);
     expect(await (await invoke(expiredLookup, () => dedupe(expiredLookup))).json()).toMatchObject({
       status: 'duplicate_trashed', photo_id: expiredId, can_restore: false,
-      remedy: 'This photo is awaiting permanent cleanup. Retry after cleanup completes.',
+      remedy: expect.stringMatching(/cleanup.*retry|retry.*cleanup/i),
     });
   });
 

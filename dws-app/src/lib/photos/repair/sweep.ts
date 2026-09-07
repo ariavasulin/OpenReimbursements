@@ -119,9 +119,8 @@ export function planSweep(
   return out;
 }
 
-/** The derived/ keys the repair pass writes for a row's renditions — the same
- * keys the client's storagePaths() builds, spelled out server-side so the
- * server bundle doesn't drag in the tus-js-client upload module. */
+/** Deterministic rendition keys, matching SQL-bound thumbnail/preview upload
+ * destinations and adding the repair-generated playback destination. */
 export function derivedKeys(uploaderId: string, photoId: string) {
   const base = `derived/${uploaderId}/${photoId}`;
   return {

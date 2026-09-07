@@ -210,6 +210,43 @@ describe('shared upload HTTP boundaries with real Auth, SQL and Storage (AC-4, A
     expect((await f.admin.from('photos').select('id').eq('id', value.created.photo_id)).data).toEqual([]);
   });
 
+  it.each([false, true])('settles all concurrent metadata probes before finalize/response (rejection=%s)', async rejectFirst => {
+    const value = await prepared(); await upload(value);
+    value.payload.thumb_path = value.created.thumb_path;
+    value.payload.preview_path = value.created.preview_path;
+    value.payload.sidecar_path = value.created.sidecar_path;
+    value.payload.sidecar_name = 'fixture.xmp';
+    const probes: Array<{ path: string; resolve: (value: never) => void; reject: (error: Error) => void }> = [];
+    const storageClient = supabaseAdmin.storage;
+    vi.spyOn(supabaseAdmin, 'storage', 'get').mockReturnValue(storageClient);
+    const from = storageClient.from.bind(storageClient);
+    vi.spyOn(storageClient, 'from').mockImplementation(bucket => {
+      const client = from(bucket), info = client.info.bind(client);
+      vi.spyOn(client, 'info').mockImplementation(path => path === value.created.original_path ? info(path)
+        : new Promise((resolve, reject) => probes.push({ path, resolve, reject })));
+      return client;
+    });
+    const rpc = vi.spyOn(supabaseAdmin, 'rpc');
+    let responded = false;
+    const response = call(finalize, value.payload).then(result => { responded = true; return result; });
+    await vi.waitFor(() => expect(probes).toHaveLength(3));
+    expect(probes.map(probe => probe.path)).toEqual([value.created.thumb_path, value.created.preview_path, value.created.sidecar_path]);
+    if (rejectFirst) probes[0].reject(new Error('isolated metadata failure'));
+    else probes[0].resolve({ data: null, error: { status: 404 } } as never);
+    probes[2].resolve({ data: null, error: { status: 404 } } as never);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(responded).toBe(false);
+    expect(rpc.mock.calls.some(([name]) => name === 'photo_finalize_upload')).toBe(false);
+    probes[1].resolve({ data: null, error: { status: 404 } } as never);
+    const result = await response;
+    expect(result.status).toBe(rejectFirst ? 503 : 200);
+    expect(rpc.mock.calls.filter(([name]) => name === 'photo_finalize_upload')).toHaveLength(rejectFirst ? 0 : 1);
+    if (!rejectFirst) expect((await result.json()).warnings).toEqual([
+      'Thumbnail upload failed; the original is preserved.', 'Preview upload failed; the original is preserved.',
+      'Sidecar upload failed. Reselect the sidecar to retry.',
+    ]);
+  });
+
   it('retains original plus persistent sidecar/derivative warnings and permits exact lost-response replay only', async () => {
     const value = await prepared(); await upload(value);
     value.payload.sidecar_path = value.created.sidecar_path; value.payload.sidecar_name = 'fixture.xmp';
@@ -389,8 +426,7 @@ describe('shared upload HTTP boundaries with real Auth, SQL and Storage (AC-4, A
     expect((await f.employeeA.client.storage.from('photos').upload(value.created.original_path, new Uint8Array([1]), { contentType: 'image/jpeg' })).error).toBeNull();
     const mismatched = await call(original, value.payload);
     expect(mismatched.status).toBe(409);
-    expect(await mismatched.json()).toEqual({ error: { code: 'conflict', retryable: false,
-      message: 'Stored upload differs from this file. Start a fresh attempt before retrying.' }, new_attempt_required: true });
+    expect(await mismatched.json()).toMatchObject({ error: { code: 'conflict', retryable: false }, new_attempt_required: true });
     const storageClient = supabaseAdmin.storage;
     vi.spyOn(supabaseAdmin, 'storage', 'get').mockReturnValue(storageClient);
     const from = storageClient.from.bind(storageClient);

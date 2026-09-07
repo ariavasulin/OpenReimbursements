@@ -156,6 +156,14 @@ describe("hash worker scheduling", () => {
     expect(factory).not.toHaveBeenCalled();
   });
 
+  it.each(["A".repeat(64), "a".repeat(63), "g".repeat(64)])("rejects noncanonical worker digest %s", async digest => {
+    const { hash, workers } = scheduler();
+    const pending = hash(new Blob());
+    workers[0].reply({ digest });
+    await expect(pending).rejects.toThrow("Invalid hash worker response");
+    expect(workers[0].terminate).toHaveBeenCalledOnce();
+  });
+
   it.each(["reply", "error", "messageerror"])("rejects %s failures and releases the worker slot", async (kind) => {
     const { hash, workers } = scheduler();
     const result = hash(new Blob());

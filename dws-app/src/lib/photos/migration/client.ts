@@ -36,6 +36,8 @@ export type MigrationRequest = <T>(path: string, body?: unknown, options?: { met
 export function createMigrationRequest(refreshAuth: () => Promise<boolean>, fetchRequest: typeof fetch = fetch): MigrationRequest {
   return async <T>(path: string, body?: unknown, options: { method?: string; signal?: AbortSignal } = {}): Promise<T> => {
     const retry = createUploadRetryPolicy({ refreshAuth });
+    options.signal?.throwIfAborted();
+    const encodedBody = body === undefined ? undefined : JSON.stringify(body);
     for (let attempt = 1; ; attempt++) {
       options.signal?.throwIfAborted();
       let response: Response;
@@ -43,7 +45,7 @@ export function createMigrationRequest(refreshAuth: () => Promise<boolean>, fetc
         response = await fetchRequest(`/api/photo-migrations/${path}`, {
           method: options.method ?? (body === undefined ? 'GET' : 'POST'), credentials: 'same-origin',
           headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-          body: body === undefined ? undefined : JSON.stringify(body), signal: options.signal, cache: 'no-store',
+          body: encodedBody, signal: options.signal, cache: 'no-store',
         });
       } catch (error) {
         if (options.signal?.aborted) throw error;
@@ -58,6 +60,25 @@ export function createMigrationRequest(refreshAuth: () => Promise<boolean>, fetc
       await retry(attempt, failure, response.headers.get('Retry-After'), options.signal);
     }
   };
+}
+
+/** Per-file progress needs counts/items; source mappings change at batch boundaries. */
+export async function loadMigrationBatch(request: MigrationRequest, id: string, options: {
+  after?: string | null; includeSources?: boolean;
+} = {}) {
+  const [view, items, sources] = await Promise.all([
+    request<BatchView>(`batches/${id}`),
+    request<ItemPage>(`batches/${id}/items?limit=50${options.after ? `&after=${encodeURIComponent(options.after)}` : ''}`),
+    options.includeSources === false ? undefined : (async () => {
+      const all: MigrationSource[] = []; let cursor: string | null = null;
+      do {
+        const page: { sources: MigrationSource[]; next_cursor: string | null } = await request(`batches/${id}/sources?limit=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`);
+        all.push(...page.sources); cursor = page.next_cursor;
+      } while (cursor);
+      return all;
+    })(),
+  ]);
+  return { view, items, sources };
 }
 
 export function retryDue(item: MigrationItem, now = Date.now()): boolean {

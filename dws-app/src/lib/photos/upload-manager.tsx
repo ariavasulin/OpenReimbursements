@@ -34,7 +34,7 @@ const MANIFEST_KEY = "photos.upload-manifest";
 
 type Action =
   | { type: "enqueue"; files: Q.PairedFile[]; meta: BatchMeta; now: number }
-  | { type: "start" | "complete" | "retry" | "remove" | "duplicate"; photoId: string }
+  | { type: "start" | "retry" | "remove"; photoId: string }
   | { type: "progress"; photoId: string; sentBytes: number }
   | { type: "fail"; photoId: string; error: string }
   | { type: "beginRemoval"; photoId: string }
@@ -55,8 +55,6 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
       return Q.start(q, a.photoId);
     case "progress":
       return Q.progress(q, a.photoId, a.sentBytes);
-    case "complete":
-      return Q.complete(q, a.photoId);
     case "fail":
       return Q.fail(q, a.photoId, a.error);
     case "identity":
@@ -68,8 +66,6 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
         ...a.result,
         status: a.result.status === "cancelled" ? "interrupted" : a.result.status,
       });
-    case "duplicate":
-      return Q.markDuplicate(q, a.photoId);
     case "retry":
       return Q.retry(q, a.photoId);
     case "remove":

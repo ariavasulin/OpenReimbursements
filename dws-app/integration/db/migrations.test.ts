@@ -1,9 +1,9 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
+import type { SourceMetadata } from '../../src/lib/photos/migration/inventory';
 
-type Entry = { relative_path: string; original_name: string; original_bytes: number; source_mtime: number;
-  source_signature: string; mime_type: string; status: string; warnings: string[]; sidecar: null };
+type Entry = SourceMetadata & { status: string; warnings: string[]; sidecar: null };
 type Item = Entry & { id: string; source_id: string; revision: number; photo_id: string; upload_attempt_id: string;
   original_path: string | null; content_sha256: string | null; is_current: boolean; result: unknown; lease_generation: number };
 

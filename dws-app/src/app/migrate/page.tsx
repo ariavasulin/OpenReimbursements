@@ -10,14 +10,14 @@ import { buildBrowserUploadDeps } from '@/lib/photos/upload-browser';
 import { createUploadRequest } from '@/lib/photos/upload-http';
 import type { UploadAttempt } from '@/lib/photos/upload-contract';
 import { MigrationEngine } from '@/lib/photos/migration/engine';
-import { directorySource, filesSource, inventoryChunks, type DirectoryHandle, type LocalSource } from '@/lib/photos/migration/inventory';
-import { createMigrationRequest, isPausedMigrationItem, migrationItemStatusLabel, retryDue, type BatchView, type ItemPage, type MigrationBatch, type MigrationItem, type MigrationSource } from '@/lib/photos/migration/client';
+import { directorySource, filesSource, type DirectoryHandle, type LocalSource } from '@/lib/photos/migration/inventory';
+import { createMigrationRequest, loadMigrationBatch, isPausedMigrationItem, migrationItemStatusLabel, retryDue, type BatchView, type ItemPage, type MigrationBatch, type MigrationItem, type MigrationSource } from '@/lib/photos/migration/client';
 
-const button = 'rounded-lg border border-[#555] px-4 py-2 text-sm font-medium hover:bg-[#444] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2680FC] disabled:opacity-40';
-const primary = `${button} border-transparent bg-[#2680FC] text-white hover:bg-[#1a6fd8]`;
-const field = 'w-full rounded-lg border border-[#555] bg-[#222222] px-3 py-2 text-sm text-white focus:outline-2 focus:outline-[#2680FC]';
+import { actionButton as button, actionPrimary as primary, actionField as field } from '@/lib/photos/action-client';
+import { scanMigrationSource } from '@/lib/photos/migration/scan';
+
 const bytes = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${n.toLocaleString()} bytes`;
-type Job = { id: string; job_number?: string; number?: string; name?: string; job_name?: string };
+type Job = { id: string; job_number: string; name: string };
 const refreshAuth = async () => { const { data, error } = await supabase.auth.refreshSession(); return !error && !!data.session; };
 
 export default function MigratePage() {
@@ -41,7 +41,7 @@ export default function MigratePage() {
   const [sheet, setSheet] = useState('');
   const [tags, setTags] = useState('');
   const [progress, setProgress] = useState<Record<string, [number, number]>>({});
-  const [selectedVersion, setSelectedVersion] = useState(0);
+  const [, setSelectedVersion] = useState(0);
   const localSources = useRef(new Map<string, LocalSource>());
   const reviewedSources = useRef(new Set<string>());
   const engine = useRef<MigrationEngine | null>(null);
@@ -53,23 +53,14 @@ export default function MigratePage() {
   const scanning = useRef<AbortController | null>(null);
   const fileReselect = useRef<string | null>(null);
 
-  const refresh = useCallback(async (id = batchId.current, after: string | null = null) => {
+  const refresh = useCallback(async (id = batchId.current, after: string | null = null, includeSources = true) => {
     if (!id) return;
-    const [nextView, nextSources, nextItems] = await Promise.all([
-      request<BatchView>(`batches/${id}`), (async () => {
-        const all: MigrationSource[] = []; let sourceCursor: string | null = null;
-        do {
-          const page: { sources: MigrationSource[]; next_cursor: string | null } = await request(`batches/${id}/sources?limit=100${sourceCursor ? `&after=${encodeURIComponent(sourceCursor)}` : ''}`);
-          all.push(...page.sources); sourceCursor = page.next_cursor;
-        } while (sourceCursor);
-        return { sources: all };
-      })(),
-      request<ItemPage>(`batches/${id}/items?limit=50${after ? `&after=${encodeURIComponent(after)}` : ''}`),
-    ]);
-    setView(nextView); setSources(nextSources.sources); setItems(nextItems);
+    const { view: nextView, sources: nextSources, items: nextItems } = await loadMigrationBatch(request, id, { after, includeSources });
+    setView(nextView); setItems(nextItems);
+    if (nextSources) setSources(nextSources);
     setMode(nextView.batch.script_name);
-    if (nextView.batch.script_name === 'add_photos') {
-      const rules = nextSources.sources[0]?.selection_rules;
+    if (nextSources && nextView.batch.script_name === 'add_photos') {
+      const rules = nextSources[0]?.selection_rules;
       setSheet(typeof rules?.sheet_number === 'string' ? rules.sheet_number : nextView.batch.requested_input?.sheet_number ?? '');
       setTags(Array.isArray(rules?.tags) ? (rules.tags as string[]).join(', ') : nextView.batch.requested_input?.tags?.join(', ') ?? '');
     }
@@ -146,7 +137,7 @@ export default function MigratePage() {
     if (!existing) {
       const hint = view?.batch.requested_input;
       const jobNumber = mode === 'add_photos' ? hint?.job_number : hint?.sources?.find(source => source.label === local.label)?.job_number;
-      const jobId = jobs.find(job => String(job.job_number ?? job.number) === jobNumber)?.id ?? '';
+      const jobId = jobs.find(job => job.job_number === jobNumber)?.id ?? '';
       setSources(current => [...current, { id, label: local.label, kind: local.kind, job_id: jobId, batch_id: batchId.current ?? '' }]);
     }
     setMessage('Source selected. Review files to save its inventory and check for changes.');
@@ -167,23 +158,11 @@ export default function MigratePage() {
         const local = localSources.current.get(source.id);
         if (!local) throw new Error(`Reselect ${source.label} before reviewing its inventory.`);
         if (!source.job_id) throw new Error(`Choose a destination job for ${source.label}.`);
-        if (!view || view.batch.status === 'draft') {
-          await request(`batches/${id}/sources`, { id: source.id, job_id: source.job_id, kind: source.kind, label: source.label,
-            selection_rules: { sheet_number: sheet, tags: tags.split(',').map(tag => tag.trim()).filter(Boolean) } }, { signal: controller.signal });
-        }
-        const scanId = crypto.randomUUID();
-        await request(`sources/${source.id}/scan`, { scan_id: scanId }, { signal: controller.signal });
-        let chunkNumber = 0, totalEntries = 0, totalBytes = 0;
-        const digests: string[] = [];
-        for await (const entries of inventoryChunks(local.entries(controller.signal), (entries, chunk_number) => ({ scan_id: scanId, chunk_number, entries }))) {
-          const chunk = await request<{ payload_digest: string; entry_count: number; total_bytes: number }>(`sources/${source.id}/chunks`, { scan_id: scanId, chunk_number: chunkNumber++, entries }, { signal: controller.signal });
-          digests.push(chunk.payload_digest); totalEntries += chunk.entry_count; totalBytes += chunk.total_bytes;
-          setMessage(`Scanning ${source.label}: ${chunkNumber.toLocaleString()} inventory chunks saved.`);
-        }
-        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(digests.join('')));
-        const fingerprint = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
-        await request(`sources/${source.id}/seal`, { scan_id: scanId, chunk_count: chunkNumber,
-          total_entries: totalEntries, total_bytes: totalBytes, job_id: source.job_id, fingerprint }, { signal: controller.signal });
+        await scanMigrationSource(request, { batchId: id, source, local, register: !view || view.batch.status === 'draft',
+          selectionRules: { sheet_number: sheet, tags: tags.split(',').map(tag => tag.trim()).filter(Boolean) },
+          signal: controller.signal,
+          onChunk: count => setMessage(`Scanning ${source.label}: ${count.toLocaleString()} inventory chunks saved.`),
+        });
         reviewedSources.current.add(source.id);
       }
       await refresh(id); setCursor(null);
@@ -204,7 +183,7 @@ export default function MigratePage() {
           if (!completedItemId) return {};
           const next = { ...current }; delete next[completedItemId]; return next;
         });
-        await refresh(id);
+        await refresh(id, null, !completedItemId);
       },
       onProgress: (itemId, sent, total) => setProgress(current => ({ ...current, [itemId]: [sent, total] })),
     });
@@ -249,7 +228,7 @@ export default function MigratePage() {
   const sealed = sources.length > 0 && sources.every(source => source.sealed_scan_id && source.sealed_scan_id === source.scan_id);
   const totals = view?.counts ?? {};
   const byStatus = (totals.by_status ?? {}) as Record<string, number>;
-  const selected = selectedVersion >= 0 && sources.every(source => localSources.current.has(source.id));
+  const selected = sources.every(source => localSources.current.has(source.id));
   const reviewed = sources.every(source => reviewedSources.current.has(source.id));
   const status = view?.batch.status ?? 'draft';
   const terminal = status === 'completed' || status === 'cancelled';
@@ -279,7 +258,7 @@ export default function MigratePage() {
           onChange={event => setSources(current => current.map(row => row.id === source.id ? { ...row, job_id: event.target.value, sealed_scan_id: null } : row))}>
           <option value="">Choose a job</option>
           {source.job_id && !jobs.some(job => job.id === source.job_id) && <option value={source.job_id}>{source.jobs ? `${source.jobs.job_number} · ${source.jobs.name}` : 'Selected destination'}</option>}
-          {jobs.map(job => <option value={job.id} key={job.id}>{job.job_number ?? job.number} · {job.name ?? job.job_name}</option>)}
+          {jobs.map(job => <option value={job.id} key={job.id}>{job.job_number} · {job.name}</option>)}
         </select>
       </label>
       {owner && !running && status !== 'cancelled' && <button className={`${button} mt-3`} onClick={() => source.kind === 'directory'

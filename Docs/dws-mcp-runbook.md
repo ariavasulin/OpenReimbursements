@@ -1,6 +1,6 @@
 # Hosted DWS MCP
 
-The existing `dws-receipts` Vercel application serves the connector at
+The hosted release adds the connector to the existing `dws-receipts` Vercel application at
 `https://mcp.dws-receipts.com/mcp/<shared-key>` and authenticated photo handoffs
 at `https://photos.dws-receipts.com`. Attach both domains to that same project;
 there is no second runtime or deployment. The root-only photos-host middleware
@@ -39,11 +39,49 @@ operator-owned smoke data; do not automatically publish a production issue.
 If either account cannot connect, close MCP and record the activation failure.
 Distribute the shared URL only after both account checks pass.
 
-**Activation remains outstanding:** this implementation does not provision the
-production shared key, Issues-only credential, labels, domain assignment, or
-vendor-account access. Local SDK evidence proves protocol behavior, not those
-account/configuration obligations. An installed infrastructure MCP connector
-used by an implementation agent is unrelated evidence.
+**Activation remains outstanding:** the reversible production preparation below
+does not deploy the release or prove vendor-account access. The dedicated
+Issues-only credential, DNS completion, schema cutover and client checks remain
+operator obligations. Local SDK evidence proves protocol behavior. An installed
+infrastructure MCP connector used by an implementation agent is unrelated evidence.
+
+As of 2026-09-07, project `prj_88wyiltek8eTbBPLGzg4EsiFKOAR` uses root
+`dws-app` and Node 22.x; both domains are assigned and `photos.dws-receipts.com`
+is verified. MCP ownership is verified, but **DNS remains unconfigured**.
+An authorized DNS operator must add only
+`CNAME mcp → 519bb06eece934dd.vercel-dns-017.com.` at the existing DNS provider
+and run `vercel domains verify mcp.dws-receipts.com`. Keep the existing Google
+nameservers; do not create a second project or change the registrar.
+The available user login requires reauthentication and the application service
+account lacks Cloud DNS permission; neither path changed DNS.
+
+The same preparation created and verified `source:dws-mcp`; `bug`,
+`enhancement`, and `question` already existed. It added a fresh 256-bit
+`MCP_SHARED_KEY` as a sensitive **Production-only** Vercel variable, retaining
+the operator's only local copy in a private 0600 file outside git. It also added
+Production-only `DWS_BROWSER_ORIGIN=https://photos.dws-receipts.com`.
+No secret URL was distributed, and no deployment occurred; these variables
+take effect only in a subsequent deployment. `DWS_GITHUB_ISSUES_TOKEN` remains
+absent. Provision and inspect that dedicated credential separately; access
+through the operator's broader `gh` CLI token is not evidence of least privilege.
+
+Use the [photo cutover procedure](photos-runbook.md#hosted-photo-release-operator-cutover)
+for the schema/write pause, administrator mapping, index and repair sequence.
+Record the following in the release PR without including the connector secret:
+
+| Activation observation | Required evidence |
+| --- | --- |
+| Existing project and domains | Project ID, deployed commit, both domain assignments and HTTPS status |
+| Configuration | Environment-variable names configured, dedicated token repository/permissions, required label names; no credential values |
+| ChatGPT account | Account eligibility, exactly two discovered tools, both skill loads, one SMS-authenticated handoff consumed then cancelled |
+| Claude account | Account eligibility, exactly two discovered tools, both skill loads, one SMS-authenticated handoff consumed then cancelled |
+| Distribution | Both account checks passed before the URL was shared with employees |
+| Photo and repair activation | Operator-owned ordinary upload/move/remove/restore, saved manual new-handler repair, cron re-enabled, first scheduled success |
+
+Keep failed or unavailable rows explicitly outstanding. A localhost SDK
+client cannot establish vendor-account eligibility, production SMS behavior,
+DNS configuration, or the first scheduled production repair. Do not publish an
+automatic production issue to satisfy these checks.
 
 ## Registry and handoffs
 
@@ -126,9 +164,10 @@ issue edit/close operation or arbitrary script execution.
 ## Key rotation and diagnostic handling
 
 Close `mcp_enabled` first, deploy a replacement independently generated key,
-verify the old URL is denied and the new endpoint is gated, then perform the
-operator connector checks before reopening/distributing the new URL. Closing
-MCP also blocks outstanding photo handoff consumption and MCP-origin actions;
+verify the old URL is denied and the new endpoint is gated, then open MCP and
+compatible photo writes for the operator's connector checks. Distribute the new
+URL only after both accounts pass; close MCP if either fails. Closing MCP also
+blocks outstanding photo handoff consumption and MCP-origin actions;
 ordinary photo authority remains controlled by the separate write gate.
 
 Application errors are generic and responses use `Cache-Control: no-store`.

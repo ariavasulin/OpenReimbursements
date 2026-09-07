@@ -3,19 +3,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFixtures } from '../fixtures';
 import { GET, POST } from '@/app/api/photos/repair/route';
-
-type Report = {
-  counts: Record<string, number>; errors: string[]; planned: number;
-  purged: number; purge_failed: number; purge_backlog: number | null;
-  work_deferred: number; oldest_due_at: string | null;
-};
+import type { RepairReport } from '@/lib/photos/repair/run';
 
 describe('real repair retention and convergence through isolated Storage (AC-9, AC-10)', () => {
   let f: Awaited<ReturnType<typeof createFixtures>>;
   const jobId = randomUUID();
   const secret = 'isolated-repair-cron';
   const previousSecret = process.env.CRON_SECRET;
-  const reports: Array<{ scenario: string; status: number; report: Report }> = [];
+  const reports: Array<{ scenario: string; status: number; report: RepairReport }> = [];
   const paths = new Set<string>();
   const photoIds = new Set<string>();
   const bytes = new Uint8Array([1, 2, 3, 4]);
@@ -78,7 +73,7 @@ describe('real repair retention and convergence through isolated Storage (AC-9, 
       `http://localhost:3000/api/photos/repair${age === undefined ? '' : `?olderThan=${age}`}`,
       { method, headers: { authorization: `Bearer ${secret}` } },
     ));
-    const report = await response.json() as Report;
+    const report = await response.json() as RepairReport;
     reports.push({ scenario, status: response.status, report });
     expect(report).toMatchObject({ counts: expect.any(Object), errors: expect.any(Array), planned: expect.any(Number),
       purged: expect.any(Number), purge_failed: expect.any(Number), work_deferred: expect.any(Number) });

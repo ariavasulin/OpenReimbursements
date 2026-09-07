@@ -1,3 +1,5 @@
+import { isSha256 } from "./apiShared";
+
 export type HashOptions = { signal?: AbortSignal };
 export type HashWorkerReply = { digest: string } | { error: string };
 export type HashWorker = Pick<Worker,
@@ -45,7 +47,7 @@ export function createSha256(createWorker: () => HashWorker) {
           worker = createWorker();
           worker.onmessage = (event: MessageEvent<HashWorkerReply>) => {
             const reply = event.data;
-            if (reply && "digest" in reply && /^[a-f0-9]{64}$/.test(reply.digest)) {
+            if (reply && "digest" in reply && isSha256(reply.digest)) {
               finish(undefined, reply.digest);
             } else {
               finish(new Error(reply && "error" in reply ? reply.error : "Invalid hash worker response"));

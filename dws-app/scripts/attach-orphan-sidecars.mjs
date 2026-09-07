@@ -23,7 +23,7 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 })
 
-// Mirrors sanitizeFilename in src/lib/photos/upload.ts (base part only), so
+// Mirrors SQL photo_storage_filename (base part only), so
 // the destination key matches what a fresh upload of this pair would use.
 function sanitizeBase(name) {
   const dot = name.lastIndexOf('.')

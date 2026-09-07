@@ -76,10 +76,10 @@ export async function fillImageDerivatives(
   if ("status" in preview)
     return { ok: false, reason: `render ${preview.status}` };
 
-  for (const [path, rendered] of [
+  const uploads = await Promise.allSettled(([
     [paths.thumb, thumb],
     [paths.preview, preview],
-  ] as const) {
+  ] as const).map(async ([path, rendered]) => {
     const { error } = await budget.run(() => admin.storage
       .from("photos")
       .upload(path, rendered.body, {
@@ -87,6 +87,9 @@ export async function fillImageDerivatives(
         upsert: true,
       }));
     if (error) throw new Error(`upload ${path}: ${error.message}`);
+  }));
+  for (const result of uploads) {
+    if (result.status === "rejected") throw result.reason;
   }
 
   const { data: changed, error } = await budget.run((signal) => admin

@@ -1,8 +1,8 @@
 import { cleanSheet, cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
-import { PhotoApiError, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError } from '@/lib/photos/server/http';
+import { PhotoApiError, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, photoRpc } from '@/lib/photos/server/http';
 import { canManageOwnPhoto, photoId, readPhotoOwnership } from '@/lib/photos/server/reads';
-import { actionRpc, createAction, materializeAction, onlyKeys } from '@/lib/photos/server/actions';
+import { createAction, materializeAction, onlyKeys } from '@/lib/photos/server/actions';
 interface RouteContext { params:Promise<{id:string}> }
 
 /** Metadata edits apply only to active rows. Ownership changes require confirmation. */
@@ -27,8 +27,8 @@ export async function DELETE(request:Request,context:RouteContext){return photoR
  const origin=new URL(request.url).origin;
  const created=await createAction(actor,{action:'trash',selector:{photos:[{photo_id:id}]}},origin);
  await materializeAction(actor,created.batch.id,origin,{});
- await actionRpc(actor,'photo_approve_action',{p_actor:actor.actorId,p_batch_id:created.batch.id});
- const outcomes=await actionRpc(actor,'photo_execute_action',{p_actor:actor.actorId,p_batch_id:created.batch.id,p_photo_ids:[id]});
+ await photoRpc(actor,'photo_approve_action',{p_actor:actor.actorId,p_batch_id:created.batch.id});
+ const outcomes=await photoRpc(actor,'photo_execute_action',{p_actor:actor.actorId,p_batch_id:created.batch.id,p_photo_ids:[id]});
  if(outcomes[0]?.status!=='applied') throw new PhotoApiError('conflict');
  const retained=await readPhotoOwnership(actor,id);
  return photoJson({success:true,photo_id:id,deleted_at:retained.deleted_at,purge_after:retained.purge_after});

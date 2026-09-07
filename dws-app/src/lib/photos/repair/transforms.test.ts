@@ -75,11 +75,63 @@ describe("repair image transforms", () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it("uploads both completed renders before updating the active row", async () => {
+  it.each([false, true])("waits for both concurrent uploads before settling (first upload fails: %s)", async (fails) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("webp", { headers: { "content-type": "image/webp" } })));
     const { admin, upload, update } = fixture();
-    await expect(fillImageDerivatives(admin, row)).resolves.toEqual({ ok: true });
-    expect(upload).toHaveBeenCalledTimes(2);
-    expect(update).toHaveBeenCalledOnce();
+    let first!: (value: { error: { message: string } | null }) => void;
+    let second!: (value: { error: null }) => void;
+    upload.mockImplementationOnce(() => new Promise(resolve => { first = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { second = resolve; }));
+    let settled = false;
+    const outcome = fillImageDerivatives(admin, row).then(
+      value => { settled = true; return value; },
+      error => { settled = true; return error as Error; },
+    );
+    await vi.waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    expect(upload.mock.calls.map(([path]) => path).sort()).toEqual([
+      "derived/employee/photo_preview.webp", "derived/employee/photo_thumb.webp",
+    ]);
+    first({ error: fails ? { message: "first upload failed" } : null });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(update).not.toHaveBeenCalled();
+    second({ error: null });
+    const result = await outcome;
+    if (fails) {
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain("first upload failed");
+      expect(update).not.toHaveBeenCalled();
+    } else {
+      expect(result).toEqual({ ok: true });
+      expect(update).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("settles both cancelled uploads at the shared deadline without updating the row", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("webp")));
+    const budget = new WorkBudget(0, 25);
+    const { admin, upload, update } = fixture();
+    let active = 0;
+    const aborted: AbortSignal[] = [];
+    // The real repair client supplies this bounded fetch boundary because the
+    // Storage SDK does not expose an AbortSignal on upload itself.
+    upload.mockImplementation(() => budget.run(signal => new Promise((_resolve, reject) => {
+      active++;
+      signal.addEventListener("abort", () => {
+        active--; aborted.push(signal); reject(signal.reason);
+      }, { once: true });
+    })));
+    const result = fillImageDerivatives(admin, row, budget);
+    const assertion = expect(result).rejects.toBeInstanceOf(DeadlineExceeded);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(active).toBe(2);
+    await vi.advanceTimersByTimeAsync(25);
+    await assertion;
+    expect(active).toBe(0);
+    expect(aborted).toHaveLength(2);
+    expect(aborted.every(signal => signal.aborted)).toBe(true);
+    expect(update).not.toHaveBeenCalled();
   });
 });

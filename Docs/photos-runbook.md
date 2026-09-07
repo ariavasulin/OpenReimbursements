@@ -30,11 +30,186 @@ then retry the original queue item to resolve the canonical result.
 
 `node dws-app/scripts/attach-orphan-sidecars.mjs` is read-only and considers
 active rows only. Its `--execute` / `-x` mode is retired and fails before any
-network request. The historical one-time mutation needed to precede cutover;
-it bypassed the confirmed-action gate and hard-deleted standalone rows. Normal
-intake now pairs XMP sidecars, so the new application has no need for this legacy
-writer. Keep the audit for identifying historical candidates without modifying
-rows or Storage objects.
+network request. Keep the audit for identifying historical candidates without
+modifying rows or Storage objects.
+
+## Hosted photo release: operator cutover
+
+The release uses the existing Vercel project `dws-receipts`
+(`prj_88wyiltek8eTbBPLGzg4EsiFKOAR`, root directory `dws-app`) and Supabase
+project `qebbmojnqzwwdpkhuyyd`. Merge does not activate this release. Keep the
+office-drive drill and production activation evidence attached to the release
+PR until each has an observed outcome.
+
+Read-only checks on 2026-09-07 found **41 photos, zero indexed hashes, 41 legacy
+null hashes, and zero repeated digest groups**. Duplicate cleanup is a no-op
+for that snapshot; the null-hash rows are outside historical byte dedupe
+coverage. The public `photos` bucket permits 53,687,091,200 bytes per object
+(50 GiB). Production still had no `photo_release_state` or `deleted_at`
+column. Repeat preflight immediately before activation because ordinary
+production writes remain possible before the operator closes them.
+The actual CLI default dry run took **1.552 seconds** and agreed with a separate
+read-only SQL snapshot (2.449 seconds). No production rows or objects changed.
+This measures metadata inspection; it is not a promised activation outage.
+
+### Read-only preflight and administrator review
+
+Run the CLI from the repository root with explicit environment values supplied
+through the operator's credential manager. It never loads `.env.local` itself.
+`SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`) must identify the named project;
+`SUPABASE_SERVICE_ROLE_KEY` remains private. Store reports and mappings in an
+operator-owned directory outside the checkout, with directory mode 0700.
+Do not paste report rows, paths, credentials, or before-images into the PR.
+
+```sh
+node dws-app/scripts/photo-identity-cutover.mjs --help
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/preflight.json"
+```
+
+The default is read-only, including against the legacy production schema.
+Review total rows, duplicate groups, redundant rows, legacy null hashes, and
+elapsed time. `duplicate_rows` includes every member of the repeated groups;
+subtract `duplicate_groups` to count noncanonical rows awaiting cleanup.
+Once additive helpers exist, take another dry run to obtain
+the authoritative before-image digests for administrator review. The
+administrator chooses the canonical photo and owning job for every repeated
+digest; the tool never selects these production identities automatically.
+Keep their approval actor/time and the exact reviewed mapping with the report.
+An empty collision set still requires an administrator-approved activation.
+
+The mapping has `version: 1`, `project_ref`, `approved_by`, `approved_at`, and
+`groups`. Each group has `digest`, `expected_before_image_digest`,
+`canonical_photo_id`, `canonical_job_id`, `approved_by`, and `approved_at`.
+Choose an existing photo and its current owning job, including an inactive
+legacy job. The tool rejects a mismatched photo/job pair and does not move the
+canonical row. A later confirmed move handles a new active destination.
+Use the database snapshot's digest without alteration, and the administrator's
+real user UUID and UTC approval time. A no-collision mapping has `groups: []`;
+it does not require inventing a canonical photo. Administrator status is
+validated in the database before execution.
+
+Reproduce the isolated rehearsal with
+`npm --prefix dws-app run test:cutover`. Its deterministic generator contains
+cross-job collisions, shared paths, legacy null hashes and an interrupted
+upload. The harness provisions and removes a disposable local stack and never
+loads the production `.env.local`.
+The final 102-group rehearsal measured 279 ms for dry-run inspection and
+1,389 ms for a bounded 100-group resume page, with a 28 ms remaining-work
+projection. It preserved 207 rows, including three null hashes, while moving
+102 noncanonical rows into retained history. Use these as reproducible local
+measurements; network latency and index work must be measured on the chosen
+operator target before promising an outage window.
+
+### Activation sequence
+
+1. Finish isolated verification and the office Chrome/Edge drill first. Select
+   two representative `J:` folders against the isolated environment, verify
+   mappings/exclusions, interrupt/reselect/resume, then move/trash/restore.
+   Record selected/finalized/skipped totals and hashes. In browser network
+   tools, confirm original request bodies go to Supabase Storage. The scripted
+   directory fixture does not replace this native picker/drive observation.
+2. Apply the reviewed additive migrations in timestamp order using the existing
+   Supabase deployment process. They add nullable provenance, ledgers, active
+   SELECT policy and closed gates; they do not pick identities or install the
+   final index. Do not put operator activation into a build hook.
+3. In **dws-receipts → Settings → Cron Jobs**, disable cron jobs. Stop manual
+   repair calls, record the last old invocation and wait for its completion or
+   the full 300-second runtime. Record the pause start. Old service-role repair
+   must be drained before any row enters trash.
+4. With all three release gates false, invoke
+   `select public.photo_install_write_boundary('<administrator-user-uuid>');`
+   through the operator database session. It installs revoked direct grants
+   and the write guard. Drain in-flight control requests. Deploy the complete
+   compatible app with all gates closed and verify the production alias points
+   to that exact build. With the real cron credential, both GET and POST to
+   `/api/photos/repair` must return 503. Record both responses before cleanup.
+5. Take the final dry run, review/approve its exact mapping, and execute it with
+   the [execute/resume commands](#execute-and-resume). Record before-image and
+   checkpoint locations, committed groups, elapsed time and remaining-time projection.
+   A drift error blocks that group and cutover; do not edit a digest to suppress
+   the conflict. Reinspect the live rows and obtain a new administrator ruling.
+6. Require zero repeated non-null hashes and a valid global partial unique
+   `photos_content_sha256` index before retiring the per-job `photos_job_sha`
+   index (confirmed present in the production preflight). Keep writes closed until the CLI
+   reports successful index validation and the production read/schema checks
+   pass. Recheck that old unfiltered session reads/RPCs hide trash and direct
+   hard DELETE remains denied. Keep the new schema and grants on code rollback.
+7. Configure the existing project and complete the production connector checks
+   in the [MCP runbook](dws-mcp-runbook.md). Open compatible photo writes and MCP
+   only for the operator's checks. Record one ordinary upload/move/remove/restore
+   on operator-owned smoke data. Hold employee URL distribution until both
+   actual ChatGPT and Claude accounts pass. If either fails, close MCP.
+8. While cron remains disabled, open the repair gate and save one manual
+   new-handler repair report. On failure close repair and fix it. On success
+   re-enable the schedule, then save the first successful scheduled report.
+   The release remains outstanding until this scheduled result is observed.
+
+Gate changes require an operator database session and an administrator identity:
+
+```sql
+-- Emergency closure; this does not disable an already deployed old handler.
+update public.photo_release_state
+set photo_writes_enabled=false, mcp_enabled=false, repair_enabled=false,
+    updated_by='<administrator-user-uuid>', updated_at=clock_timestamp()
+where singleton;
+```
+
+Use the same explicit actor/time fields when opening each gate at its step.
+Never reopen repair before the new deployed handler has been verified. Closing
+database gates does not disable Vercel cron or drain an old invocation.
+
+### Execute and resume
+
+Run these commands at step 5 of the [activation sequence](#activation-sequence),
+after its write-pause, deployment and approval prerequisites are satisfied.
+
+```sh
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/execute.json" \
+  --mapping "$CUTOVER_DIR/approved-mapping.json" --execute
+
+# Use the checkpoint and before-image paths emitted by the previous run.
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/resume.json" \
+  --resume "$CUTOVER_CHECKPOINT" --execute
+```
+
+Each mutation invocation processes at most 100 digest groups and observes a
+30-second budget. Continue using its saved checkpoint until index validation
+finishes. A committed database group is durable even if the process dies before
+the local checkpoint is saved; retrying identical choices does not repeat its
+mutation or extend retention. Preserve all emitted artifacts together.
+Execute writes `<output>.checkpoint.json` and `<output>.before-image.json`;
+the report names both paths. Resume writes a fresh checkpoint beside its new
+output while preserving the original before-image. `indexed` with
+`global_index_valid: true` is completion; `checkpointed` requires another
+resume. The report's `projected_remaining_ms` extrapolates measured group work;
+index/deployment/client checks still need separate time.
+
+### Recovery posture
+
+Before any new-format photo writes or purge, the recorded metadata before-image
+can restore the reviewed cleanup under closed gates. Rollback must verify that
+every affected row still matches its recorded after-image. Paths and original
+bytes are never changed by metadata cleanup. Preserve the permanent
+`photo_repair_deleted_paths` and `photo_repair_retired_ids` records.
+
+```sh
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/rollback.json" \
+  --rollback "$CUTOVER_BEFORE_IMAGE" --execute
+```
+
+`rolling_back` requires the same rollback command again, then `rolled_back`.
+`forward_fix_required` exits with code 2 and requires the posture below.
+
+After a new-format write or purge, keep writes/MCP/repair closed, keep Vercel
+cron disabled, retain the new RLS/grants/schema and forward-fix. Do not restore
+old row snapshots after bytes may have been purged. Do not run old service-role
+repair against retained trash. A successful metadata rollback alone does not
+authorize restoring old app write grants: first prove that no retained trash
+would become visible or hard-deletable.
 
 ## Repair sweep (`/api/photos/repair`)
 
@@ -102,12 +277,13 @@ the request itself was bad (an unparseable `?olderThan=`); nothing was swept.
 
 ### `?olderThan=<ms>` (drills only)
 
-For a drill (verify a killed upload's object gets swept), override the 24 h
-orphan age on a manual run:
+For a drill (verify a killed upload's object gets swept), point
+`ISOLATED_PHOTOS_ORIGIN` at the isolated fixture application and use its cron
+credential to override the 24 h orphan age:
 
 ```sh
 curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-  "https://photos.dws-receipts.com/api/photos/repair?olderThan=0"
+  "$ISOLATED_PHOTOS_ORIGIN/api/photos/repair?olderThan=0"
 ```
 
 This override changes only orphan age, never the 30-day retention deadline
@@ -151,13 +327,8 @@ stores permanent path fences in `photo_repair_deleted_paths`; never erase those
 records to retry an upload. A retired path requires a new attempt/photo UUID.
 Upload ledgers and `photo_repair_retired_ids` prevent reuse across owners.
 
-During production cutover, disable Vercel cron, stop manual repair, drain the
-last old invocation for its completion or 300 seconds, then deploy the complete
-new handler with the repair gate closed. Verify both methods return 503 before
-cleanup. Re-enable the gate only after the new schema/app cutover succeeds;
-record one manual repair, re-enable cron, and record the first scheduled result.
+For production cutover, follow the [activation sequence](#activation-sequence).
 Code rollback alone cannot safely run the old service-role repair over trash.
-Keep these activation obligations in the release checklist until observed.
 
 ### Video transcoding (`PHOTOS_TRANSCODE`)
 
@@ -266,16 +437,6 @@ approximate time, the job, and ideally the filename.
    converges every partial state that can be converged (`counts` tells you
    what it found).
 
-## Rollback: the upload manager
-
-There is no runtime switch for the browser-side upload manager — rollback is
-a revert. Commit `e07574e` deleted the `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER`
-flag and the legacy in-sheet upload loop it guarded (the manager itself came
-in `0f5749f`). Reverting `e07574e` restores both: the manager stays the
-default, so you then have to set `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER=0` in
-Vercel and redeploy — a `NEXT_PUBLIC_` var is baked in at build time —
-before the in-sheet loop actually runs.
-
 ## Launch drills (run on production after the first deploy)
 
 Run them on an iPhone over LTE (not office Wi-Fi). Record results inline.
@@ -284,8 +445,8 @@ Run them on an iPhone over LTE (not office Wi-Fi). Record results inline.
   Navigate between pages while the tray counts. Expect: all 30 land, the
   grid refreshes, the tray stays responsive throughout.
   Elapsed time (start → "Upload complete"): ______
-- [ ] **Big-video resume.** Requires the bucket `fileSizeLimit` raised above
-  the current 50 MB first (Supabase dashboard). Upload a ~500 MB video, kill
+- [ ] **Big-video resume.** Recheck the bucket `fileSizeLimit` first; the
+  2026-09-07 read-only inspection found 50 GiB. Upload a ~500 MB video, kill
   Safari at ~50%, reopen the app → tray shows "1 upload interrupted" →
   re-pick the file → progress resumes above 0%. Expect: exactly one `photos`
   row, and no `deleteOrphanObject` for it in the next sweep.

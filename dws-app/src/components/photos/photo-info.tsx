@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { toast } from "sonner";
 import { buildPhotoLink } from "@/lib/photos/photo-link";
+import { trashDisclosure } from "@/lib/photos/action-client";
 import {
   formatCapturedAt,
   formatFileInfo,
@@ -155,7 +156,7 @@ export default function PhotoInfo({
               </Link>
             )}
         </div>
-        {canDelete && <p className="mt-2 text-xs text-[#bbb]">Photos in trash can be restored for 30 days through Trash. Known public photo URLs keep working during that time.</p>}
+        {canDelete && <p className="mt-2 text-xs text-[#bbb]">{trashDisclosure} Restore through Trash.</p>}
       </div>
     </div>
   );

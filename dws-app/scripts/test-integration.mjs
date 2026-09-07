@@ -11,7 +11,7 @@ import { assertLocalTestTarget } from './test-local-target.mjs';
 import { startGitHubMock, nextHttpServer } from './test-http-services.mjs';
 
 const suite = process.argv[2];
-if (!['db', 'routes', 'browser'].includes(suite)) throw new Error('Usage: node scripts/test-integration.mjs db|routes|browser [runner arguments]');
+if (!['db', 'routes', 'browser', 'cutover'].includes(suite)) throw new Error('Usage: node scripts/test-integration.mjs db|routes|browser|cutover [runner arguments]');
 const app = resolve(import.meta.dirname, '..');
 const project = `dws-test-${randomBytes(6).toString('hex')}`;
 const workdir = await mkdtemp(resolve(tmpdir(), `${project}-`));
@@ -112,9 +112,9 @@ try {
       nextServer = nextHttpServer({ app, snapshot: browserApp, env, port, output: resolve(app, 'test-results/phase6-next-http.log') });
       await nextServer.start();
       if (interrupted) throw new Error('Integration run interrupted');
-      await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.integration.config.ts', ...process.argv.slice(3)], { childEnv: { ...env, DWS_TEST_SUITE: suite } });
     }
-  } else {
+  }
+  if (suite !== 'browser') {
     await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.integration.config.ts', ...process.argv.slice(3)], { childEnv: { ...env, DWS_TEST_SUITE: suite } });
   }
 } catch (error) {

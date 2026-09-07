@@ -52,7 +52,7 @@ export function validateIssueInput(input: unknown): { payload: IssuePayload; dig
   const fields = ['title', 'body', 'kind', 'reporter_name', 'anonymous', 'confirmed', 'idempotency_key'];
   if (Object.keys(data).some(key => !fields.includes(key)) || data.confirmed !== true || typeof data.anonymous !== 'boolean' ||
       !text(data.title, 200) || /[\r\n]/.test(data.title) || !text(data.body, 16_000) ||
-      !['bug', 'feature', 'question'].includes(data.kind as string)) throw new IssueInputError();
+      typeof data.kind !== 'string' || !Object.hasOwn(ISSUE_LABELS, data.kind)) throw new IssueInputError();
   if ((!data.anonymous && !text(data.reporter_name, 200)) ||
       (data.reporter_name !== undefined && (!text(data.reporter_name, 200) || /[\r\n]/.test(data.reporter_name)))) throw new IssueInputError();
   if (data.idempotency_key !== undefined && (typeof data.idempotency_key !== 'string' || !/^[A-Za-z0-9._:-]{1,200}$/.test(data.idempotency_key))) throw new IssueInputError();

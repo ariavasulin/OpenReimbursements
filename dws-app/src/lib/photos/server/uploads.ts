@@ -5,7 +5,7 @@ import { CAPTURED_AT_SOURCES, PHOTO_KINDS } from '../types';
 import type { CanonicalUploadOutcome, UploadOwner, UploadAttempt, OriginalUploadState } from '../upload-contract';
 import type { PhotoActor } from './authority';
 import { canManageOwnPhoto, photoId } from './reads';
-import { PhotoApiError, throwPhotoDatabaseError } from './http';
+import { PhotoApiError, throwPhotoDatabaseError, photoRpc } from './http';
 
 type Body = Record<string, unknown>;
 export function uploadOwner(body: Body): UploadOwner {
@@ -30,11 +30,6 @@ export function uploadRpcArgs(actor: PhotoActor, body: Body, generation = false,
     ...(generation ? { p_generation: integer(body.lease_generation, 1) } : {}),
     ...(claim ? { p_claim_generation: integer(body.claim_generation, 1) } : {}) };
 }
-export async function uploadRpc(actor: PhotoActor, name: string, args: Body) {
-  const { data, error } = await actor.db.rpc(name, args);
-  if (error) throwPhotoDatabaseError(error);
-  return data;
-}
 
 export async function describeUploadOutcome(actor: PhotoActor, outcome: CanonicalUploadOutcome): Promise<CanonicalUploadOutcome> {
   if (outcome.status !== 'duplicate_trashed') return outcome;
@@ -50,7 +45,7 @@ export async function describeUploadOutcome(actor: PhotoActor, outcome: Canonica
 export async function createUploadAttempt(actor: PhotoActor, body: Body): Promise<UploadAttempt> {
   const name = string(body.original_name);
   if (/[/\\]/.test(name)) throw new PhotoApiError('invalid_input');
-  const value = await uploadRpc(actor, 'photo_create_upload_attempt', {
+  const value = await photoRpc(actor, 'photo_create_upload_attempt', {
     p_actor: actor.actorId, p_job_id: photoId(body.job_id), p_attempt_id: photoId(body.attempt_id),
     p_photo_id: photoId(body.photo_id), p_source_signature: string(body.source_signature, 2048),
     p_digest: digest(body.content_sha256), p_original_name: name,
@@ -92,7 +87,7 @@ async function objectSize(actor: PhotoActor, path: string): Promise<number | nul
 async function cleanupDuplicate(actor: PhotoActor, owner: UploadOwner): Promise<boolean> {
   try {
     // Fresh reference checks are authoritative; never accept client-supplied deletion paths.
-    const paths = await uploadRpc(actor, 'photo_upload_cleanup_paths', {
+    const paths = await photoRpc(actor, 'photo_upload_cleanup_paths', {
       p_actor: actor.actorId, p_owner_kind: owner.owner_kind, p_owner_id: owner.owner_id,
     });
     if (!Array.isArray(paths) || paths.length === 0) return false;
@@ -107,7 +102,7 @@ async function cleanupDuplicate(actor: PhotoActor, owner: UploadOwner): Promise<
 export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<CanonicalUploadOutcome> {
   const args = uploadRpcArgs(actor, body, true, true);
   const owner = uploadOwner(body);
-  const bound = await uploadRpc(actor, 'photo_lock_upload', uploadRpcArgs(actor, body));
+  const bound = await photoRpc(actor, 'photo_lock_upload', uploadRpcArgs(actor, body));
   if (photoId(body.id) !== bound.photo_id || photoId(body.job_id) !== bound.job_id ||
       digest(body.content_sha256) !== bound.content_sha256 || body.original_path !== bound.original_path ||
       integer(body.original_bytes) !== Number(bound.original_bytes) || body.original_name !== bound.original_name || body.mime_type !== bound.mime_type) {
@@ -132,13 +127,17 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
   if (bound.result) {
     if (!isDeepStrictEqual(bound.finalize_payload?.request, requested)) throw new PhotoApiError('conflict');
     // SQL independently checks exact committed-payload replay and owner authority.
-    outcome = await uploadRpc(actor, 'photo_finalize_upload', { ...args, p_photo: bound.finalize_payload });
+    outcome = await photoRpc(actor, 'photo_finalize_upload', { ...args, p_photo: bound.finalize_payload });
     warnings = bound.warnings;
   } else {
     if (await objectSize(actor, bound.original_path) !== Number(bound.original_bytes)) throw new PhotoApiError('conflict');
     const photo = { ...requested, request: requested, warnings: [...requested.warnings] as string[] };
-    for (const field of ['thumb_path', 'preview_path', 'sidecar_path'] as const) {
-      if (photo[field] !== null && await objectSize(actor, photo[field] as string) === null) {
+    const fields = ['thumb_path', 'preview_path', 'sidecar_path'] as const;
+    const sizes = await Promise.allSettled(fields.map(field => photo[field] === null ? null : objectSize(actor, photo[field] as string)));
+    for (const [index, field] of fields.entries()) {
+      const size = sizes[index];
+      if (size.status === 'rejected') throw size.reason;
+      if (photo[field] !== null && size.value === null) {
         photo[field] = null;
         photo.warnings.push(field === 'sidecar_path' ? 'Sidecar upload failed. Reselect the sidecar to retry.' :
           field === 'thumb_path' ? 'Thumbnail upload failed; the original is preserved.' : 'Preview upload failed; the original is preserved.');
@@ -146,7 +145,7 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
       }
     }
     photo.warnings = [...new Set(photo.warnings)];
-    outcome = await uploadRpc(actor, 'photo_finalize_upload', { ...args, p_photo: photo });
+    outcome = await photoRpc(actor, 'photo_finalize_upload', { ...args, p_photo: photo });
     warnings = photo.warnings;
   }
   const cleanupPending = outcome.status !== 'created' ? await cleanupDuplicate(actor, owner) : false;
@@ -156,13 +155,13 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
 /** Reselection may repair an XMP without retransferring or rewriting the original. */
 export async function attachUploadSidecar(actor: PhotoActor, body: Body): Promise<CanonicalUploadOutcome> {
   const args = uploadRpcArgs(actor, body);
-  const bound = await uploadRpc(actor, 'photo_lock_upload', args);
+  const bound = await photoRpc(actor, 'photo_lock_upload', args);
   if (bound.result?.status !== 'created' || !bound.sidecar_path || bound.sidecar_path === bound.original_path) throw new PhotoApiError('conflict');
   const sidecarName = string(body.sidecar_name);
   if (/[/\\]/.test(sidecarName) || !/\.xmp$/i.test(sidecarName)) throw new PhotoApiError('invalid_input');
   const bytes = integer(body.sidecar_bytes);
   if (await objectSize(actor, bound.sidecar_path) !== bytes) throw new PhotoApiError('conflict');
-  return uploadRpc(actor, 'photo_attach_upload_sidecar', { ...args, p_sidecar_name: sidecarName, p_sidecar_bytes: bytes });
+  return photoRpc(actor, 'photo_attach_upload_sidecar', { ...args, p_sidecar_name: sidecarName, p_sidecar_bytes: bytes });
 }
 
 export class OriginalUploadMismatch extends PhotoApiError {
@@ -174,8 +173,8 @@ export async function probeUploadOriginal(actor: PhotoActor, body: Body): Promis
   const args = uploadRpcArgs(actor, body, true, true);
   // Renew checks current owner, batch, both generations and both live leases.
   // A completed/cancelled attempt cannot use this path to resume old transfers.
-  await uploadRpc(actor, 'photo_renew_upload', args);
-  const bound = await uploadRpc(actor, 'photo_lock_upload', uploadRpcArgs(actor, body));
+  await photoRpc(actor, 'photo_renew_upload', args);
+  const bound = await photoRpc(actor, 'photo_lock_upload', uploadRpcArgs(actor, body));
   if (bound.result || bound.lease_generation !== args.p_generation || !bound.original_path) throw new PhotoApiError('conflict');
   const { data, error } = await actor.db.storage.from('photos').info(bound.original_path);
   if (error) {

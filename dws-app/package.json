@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:db": "node scripts/test-integration.mjs db",
     "test:routes": "node scripts/test-integration.mjs routes",
-    "test:browser": "node scripts/test-integration.mjs browser"
+    "test:browser": "node scripts/test-integration.mjs browser",
+    "test:cutover": "node scripts/test-integration.mjs cutover"
   },
   "dependencies": {
     "@boundaryml/baml": "^0.214.0",
@@ -35,7 +36,7 @@
     "ffmpeg-static": "^5.3.0",
     "hash-wasm": "4.12.0",
     "lucide-react": "^0.511.0",
-    "next": "15.3.6",
+    "next": "15.5.24",
     "next-themes": "^0.4.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -62,7 +63,7 @@
     "csv-parse": "^7.0.2",
     "date-fns": "^3.6.0",
     "eslint": "^9",
-    "eslint-config-next": "15.3.6",
+    "eslint-config-next": "15.5.24",
     "jsdom": "^30.0.1",
     "pg": "8.16.3",
     "tailwindcss": "^4",

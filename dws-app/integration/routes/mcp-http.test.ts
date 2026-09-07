@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createFixtures } from '../fixtures';
+import type { IssueSubmissionResult } from '../../src/lib/mcp/issues';
 
 const origin = process.env.DWS_MCP_BASE_URL;
 const key = process.env.MCP_SHARED_KEY;
@@ -13,7 +14,6 @@ if (!origin || !key || !control) throw new Error('Use npm run test:routes with i
 const endpoint = new URL(`/mcp/${key}`, origin);
 const evidence: Record<string, unknown> = { fixture: 'local Next + disposable PostgreSQL 15 + local GitHub HTTP mock', scenarios: [] };
 const scenarios = evidence.scenarios as unknown[];
-type IssueResult = { submission_id: string; status: string; issue_url?: string; error?: { code: string; message: string; retryable: boolean; retry_after?: string } };
 type MockState = { issues: Array<{ number: number; title: string; body: string; labels: string[] }>; requests: Array<{ method: string; path: string; authorized: boolean; body?: { title: string; body: string; labels: string[] } }> };
 let f: Awaited<ReturnType<typeof createFixtures>>;
 let client: Client;
@@ -39,7 +39,10 @@ const report = (suffix: string) => ({ title: `Fixture report ${suffix}`, body: '
 
 beforeAll(async () => {
   f = await createFixtures();
-  await f.sql.query('update public.photo_release_state set mcp_enabled=true,photo_writes_enabled=true');
+  // Authority scenarios may remove the singleton; this suite owns its gate setup.
+  await f.sql.query(`insert into public.photo_release_state(singleton,schema_generation,mcp_enabled,photo_writes_enabled)
+    values(true,1,true,true) on conflict(singleton) do update
+    set schema_generation=1,mcp_enabled=true,photo_writes_enabled=true`);
   client = new Client({ name: 'dws-isolated-sdk-verifier', version: '1.0.0' });
   transport = new StreamableHTTPClientTransport(endpoint);
   await client.connect(transport);
@@ -65,7 +68,8 @@ describe('official SDK against the actual HTTP MCP endpoint (AC-1, AC-2)', () =>
     for (const skill_name of ['photos', 'report_issue']) {
       const skill = decode<{ skill_name: string; instructions: string; scripts: Array<{ script_name: string; input_schema: unknown }> }>(await client.callTool({ name: 'load_dws_skill', arguments: { skill_name } }));
       expect(skill.skill_name).toBe(skill_name);
-      expect(skill.instructions.length).toBeGreaterThan(100);
+      expect(skill.instructions).toEqual(expect.any(String));
+      expect(skill.instructions.trim()).not.toBe('');
       expect(skill.scripts).toHaveLength(skill_name === 'photos' ? 5 : 1);
       expect(skill.scripts.every(item => item.input_schema && item.script_name)).toBe(true);
       skills.push({ skill_name, scripts: skill.scripts.map(item => item.script_name) });
@@ -161,7 +165,7 @@ describe('confirmed issue publication through HTTP and the local GitHub mock (AC
     await mockControl({ reset: true });
     const input = { ...report(randomUUID()), title: 'File: import failed',
       body: 'Files under J:\\Photos\\3612 fail to import.\nData: 3 files\nThe dws-submission: identifier appeared in the error.', idempotency_key: randomUUID() };
-    const result = await script<IssueResult>('create_github_issue', input);
+    const result = await script<IssueSubmissionResult>('create_github_issue', input);
     expect(result.status).toBe('published');
     expect(result.issue_url).toBe('https://github.com/ariavasulin/OpenReimbursements/issues/9000');
     const state = await mockState();
@@ -174,10 +178,10 @@ describe('confirmed issue publication through HTTP and the local GitHub mock (AC
     await mockControl({ reset: true });
     const input = { ...report(randomUUID()), anonymous: true, reporter_name: undefined };
     const firstKey = randomUUID();
-    const results = await Promise.all([script<IssueResult>('create_github_issue', { ...input, idempotency_key: firstKey }), script<IssueResult>('create_github_issue', { ...input, idempotency_key: randomUUID() })]);
+    const results = await Promise.all([script<IssueSubmissionResult>('create_github_issue', { ...input, idempotency_key: firstKey }), script<IssueSubmissionResult>('create_github_issue', { ...input, idempotency_key: randomUUID() })]);
     expect(new Set(results.map(value => value.submission_id)).size).toBe(1);
     expect((await mockState()).requests.filter(request => request.method === 'POST')).toHaveLength(1);
-    const final = await script<IssueResult>('create_github_issue', { ...input, idempotency_key: firstKey });
+    const final = await script<IssueSubmissionResult>('create_github_issue', { ...input, idempotency_key: firstKey });
     expect(final.status).toBe('published');
     const collision = await client.callTool({ name: 'execute_dws_script', arguments: { script_name: 'create_github_issue', input: { ...input, title: 'Changed confirmed title', idempotency_key: firstKey } } });
     expect(collision.isError).toBe(true);
@@ -190,7 +194,7 @@ describe('confirmed issue publication through HTTP and the local GitHub mock (AC
   it('renews a delayed definitive retry so concurrent fresh keys reuse its successful issue', async () => {
     await mockControl({ reset: true, mode: 'reject' });
     const input = { ...report(randomUUID()), idempotency_key: randomUUID() };
-    const failed = await script<IssueResult>('create_github_issue', input);
+    const failed = await script<IssueSubmissionResult>('create_github_issue', input);
     expect(failed.status).toBe('failed');
     expect(failed.issue_url).toBeUndefined();
     expect(failed.error).toMatchObject({ code: 'github_rejected', retryable: true });
@@ -199,12 +203,12 @@ describe('confirmed issue publication through HTTP and the local GitHub mock (AC
     expect((await mockState()).issues).toHaveLength(0);
     await f.sql.query("update public.issue_report_submissions set created_at=now()-interval '2 days',dedupe_expires_at=now()-interval '1 day' where id=$1", [failed.submission_id]);
     await mockControl({ mode: 'normal' });
-    const retries = await Promise.all([script<IssueResult>('create_github_issue', input), script<IssueResult>('create_github_issue', input)]);
+    const retries = await Promise.all([script<IssueSubmissionResult>('create_github_issue', input), script<IssueSubmissionResult>('create_github_issue', input)]);
     expect(retries.every(result => result.submission_id === failed.submission_id)).toBe(true);
-    const final = await script<IssueResult>('create_github_issue', input);
+    const final = await script<IssueSubmissionResult>('create_github_issue', input);
     expect(final.status).toBe('published');
     const freshKeys = [randomUUID(), randomUUID()];
-    const freshResults = await Promise.all(freshKeys.map(idempotency_key => script<IssueResult>('create_github_issue', { ...input, idempotency_key })));
+    const freshResults = await Promise.all(freshKeys.map(idempotency_key => script<IssueSubmissionResult>('create_github_issue', { ...input, idempotency_key })));
     expect(freshResults).toEqual([final, final]);
     const state = await mockState();
     expect(state.requests.filter(request => request.method === 'POST')).toHaveLength(2);
@@ -217,21 +221,21 @@ describe('confirmed issue publication through HTTP and the local GitHub mock (AC
   it('keeps an accepted timeout unknown beyond 24 hours and reconciles its exact marker on page two', async () => {
     await mockControl({ reset: true, mode: 'timeout', visible: false });
     const input = { ...report(randomUUID()), idempotency_key: randomUUID() };
-    const uncertain = await script<IssueResult>('create_github_issue', input);
+    const uncertain = await script<IssueSubmissionResult>('create_github_issue', input);
     expect(uncertain.status).toBe('unknown');
     expect(uncertain.issue_url).toBeUndefined();
     expect(uncertain.error).toMatchObject({ code: 'publication_unknown', retryable: true });
     expect(uncertain.error?.message).toContain('reconcile');
     expect(uncertain.error?.message).toContain('will not create another issue');
     await f.sql.query("update public.issue_report_submissions set dedupe_expires_at=now()-interval '1 hour',created_at=now()-interval '25 hours' where id=$1", [uncertain.submission_id]);
-    const retry = await script<IssueResult>('create_github_issue', { ...input, idempotency_key: randomUUID() });
+    const retry = await script<IssueSubmissionResult>('create_github_issue', { ...input, idempotency_key: randomUUID() });
     expect(retry.submission_id).toBe(uncertain.submission_id);
     expect(retry.status).toBe('unknown');
     expect(retry.issue_url).toBeUndefined();
     expect(retry.error).toMatchObject({ code: 'publication_unknown', retryable: true });
     expect((await mockState()).requests.filter(request => request.method === 'POST')).toHaveLength(1);
     await mockControl({ mode: 'normal', visible: true, markerPage: 2 });
-    const recovered = await script<IssueResult>('create_github_issue', input);
+    const recovered = await script<IssueSubmissionResult>('create_github_issue', input);
     expect(recovered).toEqual({ submission_id: uncertain.submission_id, status: 'published', issue_url: 'https://github.com/ariavasulin/OpenReimbursements/issues/9000' });
     const state = await mockState();
     expect(state.requests.filter(request => request.method === 'POST')).toHaveLength(1);

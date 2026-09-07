@@ -61,16 +61,20 @@ describe('serialized issue publication ledger (AC-12, AC-13)', () => {
     const hash = digest(); const clientKey = key(); const original = (await claim(hash, clientKey)).data;
     expect((await finish(original, 'failed', { code: 'github_rejected' })).error).toBeNull();
     // Even after24h, the original failed marker remains the sole digest publication candidate.
-    await f.sql.query("update public.issue_report_submissions set created_at=now()-interval '2 days',dedupe_expires_at=now()-interval '1 day' where id=$1", [original.id]);
-    const retryStarted = Date.now();
+    // PostgreSQL owns both the renewal clock and this exact comparison; the
+    // host and disposable database clocks need not agree to the millisecond.
+    const retryStarted = (await f.sql.query("update public.issue_report_submissions set created_at=now()-interval '2 days',dedupe_expires_at=now()-interval '1 day' where id=$1 returning clock_timestamp()::text as started", [original.id])).rows[0].started;
     const retries = await Promise.all([claim(hash, clientKey), claim(hash, key())]);
     expect(retries.every(result => !result.error && result.data.id === original.id)).toBe(true);
     expect(retries.filter(result => result.data.action === 'publish')).toHaveLength(1);
     const owner = retries.find(result => result.data.action === 'publish')!.data;
     expect(owner.lease_generation).toBe(original.lease_generation + 1);
     expect((await finish(owner, 'published')).error).toBeNull();
-    const renewed = (await f.sql.query('select dedupe_expires_at from public.issue_report_submissions where id=$1', [original.id])).rows[0].dedupe_expires_at;
-    expect(new Date(renewed).getTime()).toBeGreaterThanOrEqual(retryStarted + 24 * 60 * 60 * 1000);
+    const renewal = (await f.sql.query(`select
+      dedupe_expires_at >= $2::timestamptz + interval '24 hours' as renewed_for_24h,
+      dedupe_expires_at <= clock_timestamp() + interval '24 hours' as bounded_horizon
+      from public.issue_report_submissions where id=$1`, [original.id, retryStarted])).rows[0];
+    expect(renewal).toEqual({ renewed_for_24h: true, bounded_horizon: true });
     const freshKeys = [key(), key()];
     for (const result of await Promise.all(freshKeys.map(value => claim(hash, value)))) {
       expect(result.error).toBeNull();

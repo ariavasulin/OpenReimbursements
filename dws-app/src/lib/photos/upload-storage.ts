@@ -2,16 +2,12 @@ import { createClient } from "@supabase/supabase-js";
 import type { PhotoStorage } from "./upload";
 import { classifyMediaFailure } from "./media-retry";
 import {
-  abortUploadWork, createUploadRetryPolicy, MAX_UPLOAD_ATTEMPTS,
+  abortUploadWork, createUploadRetryPolicy, MAX_UPLOAD_ATTEMPTS, object,
   UploadRequestError, type UploadRetryDeps,
 } from "./upload-http";
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" ? value as Record<string, unknown> : undefined;
-}
-
 function storageFailure(error: unknown, thrown: boolean): UploadRequestError {
-  const details = record(error);
+  const details = object(error);
   // Supabase's upload path returns raw API JSON with string statusCode; other
   // SDK boundaries return StorageApiError with numeric status.
   const rawStatus = details?.status ?? details?.statusCode;
@@ -29,12 +25,12 @@ function storageFailure(error: unknown, thrown: boolean): UploadRequestError {
 }
 
 function retryAfter(error: unknown): string | undefined {
-  const details = record(error);
+  const details = object(error);
   const value = details?.retryAfter;
   if (typeof value === "string" || typeof value === "number") return String(value);
   const headers = details?.headers;
   if (headers instanceof Headers) return headers.get("Retry-After") ?? undefined;
-  const plain = record(headers);
+  const plain = object(headers);
   const header = plain?.["Retry-After"] ?? plain?.["retry-after"];
   return typeof header === "string" ? header : undefined;
 }

@@ -110,11 +110,8 @@ export const start = (q: Queue, id: string) =>
   patch(q, id, { status: "uploading", sentBytes: 0, error: undefined, retryAt: undefined });
 export const progress = (q: Queue, id: string, sentBytes: number) =>
   patch(q, id, { sentBytes });
-export const complete = (q: Queue, id: string) => patch(q, id, { status: "done" });
 export const fail = (q: Queue, id: string, error: string) =>
   patch(q, id, { status: "failed", error });
-export const markDuplicate = (q: Queue, id: string) =>
-  patch(q, id, { status: "duplicate" });
 export const recordOutcome = (
   q: Queue, id: string,
   outcome: Pick<QueueItem, "status"> & Partial<Pick<QueueItem,
@@ -243,8 +240,11 @@ export function adoptRepick(
         i.size === file.size &&
         i.lastModified === file.lastModified
     );
-    const named = items.filter((i) => i.status === "interrupted" && i.name === file.name);
-    const hit = exact ?? (named.length === 1 ? named[0] : undefined);
+    let hit = exact;
+    if (!hit) {
+      const named = items.filter((i) => i.status === "interrupted" && i.name === file.name);
+      if (named.length === 1) hit = named[0];
+    }
     if (!hit) {
       unmatched.push(file);
       continue;

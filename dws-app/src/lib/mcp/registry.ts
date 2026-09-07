@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { PhotoApiError } from '@/lib/photos/server/http';
+import { PhotoApiError, photoLinkIds } from '@/lib/photos/server/http';
 import { assertNoConfiguredSecrets, ConfiguredSecretError } from './secrets';
 import { executeCreateGithubIssue, IssueSubmissionError } from './issues';
 import { IssueInputError } from './issues-validation';
@@ -57,13 +57,10 @@ export function validateScriptInput(scriptName: ScriptName, input: unknown): Rec
   if ('selector' in parsed.data && 'photos' in parsed.data.selector) {
     for (const ref of parsed.data.selector.photos) {
       if (!('photo_url' in ref)) continue;
-      let url: URL;
-      try { url = new URL(ref.photo_url, browserOrigin()); } catch { throw new PhotoApiError('invalid_input'); }
-      const origins = [browserOrigin(), 'https://dws-receipts.com', 'https://www.dws-receipts.com', 'https://photos.dws-receipts.com'];
-      if (!origins.includes(url.origin) || url.username || url.password ||
-          !/^\/photos\/[0-9a-f-]+\/?$/i.test(url.pathname) ||
-          !z.string().uuid().safeParse(url.pathname.split('/')[2]).success ||
-          !z.string().uuid().safeParse(url.searchParams.get('photo')).success) throw new PhotoApiError('invalid_input');
+      let ids: ReturnType<typeof photoLinkIds>;
+      try { ids = photoLinkIds(ref.photo_url, browserOrigin()); } catch { throw new PhotoApiError('invalid_input'); }
+      if (!z.string().uuid().safeParse(ids.jobId).success ||
+          !z.string().uuid().safeParse(ids.photoId).success) throw new PhotoApiError('invalid_input');
     }
   }
   return parsed.data;
@@ -85,8 +82,9 @@ async function createPhotoHandoff(scriptName: Exclude<ScriptName, 'create_github
 
 const instructions = {
   photos: `Use migrate_photos for one or more local folders, or add_photos for up to 500 selected files. The hosted assistant cannot read local drives. Gather optional labels/job numbers, then give the employee the returned handoff URL to open in Chrome or Edge. The link expires in 30 minutes and can be consumed once after existing DWS SMS login. The employee selects local files, reviews source-to-job mappings, exclusions, counts and bytes, then confirms before direct browser-to-Supabase uploads. Keep the tab open; reopening and reselecting resumes unfinished work. Jobs and photo references resolve only after login; do not claim a photo exists from a handoff response. move_photos, remove_photos and restore_photos open exact-target browser review and confirmation. Filename ambiguity requires human selection. Removal is recoverable for 30 days, while a known public image URL stays accessible. A valid handoff grants its logged-in consumer broad authority only for its bound action. Never put credentials, the connector URL, attachments, binary data, or code into inputs. Never describe handoff creation as completion of a photo action.`,
-  report_issue: `Prepare a concise report about the app, MCP, receipts, photos or workflow. Include what the employee knows: summary, reproduction steps if relevant, expected/actual behavior, impact and supplied context/HTTPS links. Do not demand unknown facts or claim to inspect inaccessible attachments. Ask for the reporter name unless already supplied; anonymity requires an explicit employee request. Show the exact title and body before invoking create_github_issue, including the final "Reported by: <name>" line for non-anonymous reports, and obtain explicit confirmation. Send the body without that server-appended attribution line. Only then set confirmed:true. No SMS/browser session is needed. The server uses fixed repository/labels and adds a hidden submission marker. Text and already-hosted HTTPS links only: no attachments, base64, local attachment paths, credentials or connector URL. Title maximum 200 characters, body maximum 16,000 characters, whole request maximum 64 KiB. Preserve the confirmed text and reuse the same idempotency_key on retry. Return issue_url only when status is published; unknown means publication is uncertain and retries reconcile without creating another issue; do not change the body or key to bypass reconciliation. For failed submissions, an administrator can check the configured Issues credential, repository permissions and labels; wait out rate limits and retry the unchanged confirmed input and key. A corrected payload needs fresh confirmation. This tool cannot diagnose the repository, edit/close issues, inspect code, or launch an agent.`,
+  report_issue: `Prepare a concise report about the app, MCP, receipts, photos or workflow. Include what the employee knows: summary, reproduction steps if relevant, expected/actual behavior, impact and supplied context/HTTPS links. Do not demand unknown facts or claim to inspect inaccessible attachments. Ask for the reporter name unless already supplied; anonymity requires an explicit employee request. Show the exact title and body before invoking create_github_issue, including the final "Reported by: <name>" line for non-anonymous reports, and obtain explicit confirmation. Send the body without that server-appended attribution line. Only then set confirmed:true. No SMS/browser session is needed. The server uses fixed repository/labels. Text and already-hosted HTTPS links only: no attachments, base64, local attachment paths, credentials or connector URL. Title maximum 200 characters, body maximum 16,000 characters, whole request maximum 64 KiB. Preserve the confirmed text and reuse the same idempotency_key on retry. Return issue_url only when status is published; unknown means publication is uncertain and retries reconcile without creating another issue; do not change the body or key to bypass reconciliation. For failed submissions, an administrator can check the configured Issues credential, repository permissions and labels; wait out rate limits and retry the unchanged confirmed input and key. A corrected payload needs fresh confirmation. This tool cannot diagnose the repository, edit/close issues, inspect code, or launch an agent.`,
 };
+const jsonScriptSchemas = Object.fromEntries(scriptNames.map(name => [name, zodToJsonSchema(scriptSchemas[name])]));
 const result = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] });
 function businessError(error: unknown) {
   const code = error instanceof PhotoApiError || error instanceof IssueSubmissionError ? error.code
@@ -105,7 +103,7 @@ export function createDwsMcpServer(): McpServer {
     annotations: { readOnlyHint: true },
   }, async ({ skill_name }) => result({ skill_name, instructions: instructions[skill_name], scripts: scriptNames
     .filter(name => skill_name === 'photos' ? name !== 'create_github_issue' : name === 'create_github_issue')
-    .map(name => ({ script_name: name, description: descriptions[name], input_schema: zodToJsonSchema(scriptSchemas[name]) })) }));
+    .map(name => ({ script_name: name, description: descriptions[name], input_schema: jsonScriptSchemas[name] })) }));
   server.registerTool('execute_dws_script', {
     description: scriptNames.map(name => `${name}: ${descriptions[name]}`).join('\n') + '\nLoad the relevant skill for exact per-script input schemas before calling.',
     inputSchema: { script_name: z.enum(scriptNames), input: z.record(z.unknown()) },

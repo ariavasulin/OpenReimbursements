@@ -1,4 +1,5 @@
 import 'server-only';
+import type { PhotoActor } from './authority';
 
 const errors = {
   invalid_input: [400, 'Invalid request.'],
@@ -99,4 +100,19 @@ export function throwPhotoDatabaseError(error: { code?: string; message?: string
     throw new PhotoApiError('conflict');
   }
   throw new PhotoApiError('temporarily_unavailable');
+}
+
+export async function photoRpc(actor: PhotoActor, name: string, args: Record<string, unknown>) {
+  const { data, error } = await actor.db.rpc(name, args);
+  if (error) throwPhotoDatabaseError(error);
+  return data;
+}
+
+/** Parse application links without fetching them; callers validate their UUIDs. */
+export function photoLinkIds(reference: string, origin: string) {
+  let url: URL;
+  try { url = new URL(reference, origin); } catch { throw new PhotoApiError('invalid_input'); }
+  if (![origin, 'https://dws-receipts.com', 'https://www.dws-receipts.com', 'https://photos.dws-receipts.com'].includes(url.origin) ||
+      url.username || url.password || !/^\/photos\/[0-9a-f-]+\/?$/i.test(url.pathname)) throw new PhotoApiError('invalid_input');
+  return { jobId: url.pathname.split('/')[2], photoId: url.searchParams.get('photo') };
 }

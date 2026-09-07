@@ -22,3 +22,11 @@ Review provenance: independent, read-only Claude delegation; high tier; attested
 The frozen ticket, research, and System Design remain historical inputs. Where the review strengthens their mechanisms, the native [plan](plan.md) is authoritative. The copied planning-contract files preserve the requested authoring context; demo-only paths and tools are not added as execution prerequisites.
 
 Production data counts, canonical choices, account eligibility, office-drive behavior, and activation evidence remain explicitly pending implementation/operator work. This revision supplies their executors and sequencing; it does not claim those checks have run.
+
+## 2026-09-07 — Local implementation retrospective
+
+The seven-phase dependency chain held through implementation and isolated verification. The recurring correctness concern was current ownership at transaction boundaries: canonical finalization, confirmed actions, restoration and repair needed database checks after locking, plus permanent path/UUID fences once deletion was authorized. The local PostgreSQL/Auth/Storage harness and actual HTTP/browser scenarios supplied evidence that mocks alone could not establish.
+
+Full-change local correctness reviews found no actionable defects. The content and structural audit consolidated existing helpers, removed unused state, separated scanning and TUS transport from their callers, reduced repeated reads, and clarified operator sequencing. GitHub's Retry-After parser remains separate because its fallback and timestamp rules differ from upload retries. A final database test exposed a host-versus-Docker clock comparison; using exact database-time bounds preserved the renewal guarantee without a timing tolerance.
+
+The imported demo planning references remained useful discipline, while this repository's executable harness supplied the actual gates. No product decision changed. The native office drill and production activation observations remain required; complete the activation retrospective and plan lifecycle transition after those outcomes are recorded.
