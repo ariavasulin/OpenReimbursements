@@ -22,8 +22,10 @@ numbers; no production auth bypass exists. Test scenarios own their rows and
 must not assume earlier files ran. SQL transactions that must share a connection
 use `sql.connect()` and release that client afterward.
 
-Route tests import real handlers and may adapt Next's request cookie/header
-context. Authentication, PostgREST, SQL permissions, and Storage remain real.
+Most route tests import real handlers and adapt Next's request cookie/header
+context. The MCP suite additionally uses the official SDK over actual HTTP against
+a separate Next process. Authentication, PostgREST, SQL permissions, and Storage
+remain real.
 The `server-only` alias replaces only Next's import marker in this Node test
 runner. `envDir: false` prevents Vite environment-file loading.
 
@@ -33,3 +35,19 @@ per query, outside transactions, with index validity checked between statements.
 New additive migrations are separately replayed twice over retained synthetic
 rows in bootstrap assertions before the suite starts. The assertions then remove
 only their own fixture rows so scenarios can exercise global-index activation. No fixtures or test credentials are committed as JSON.
+
+For route and browser suites, the runner copies only application source/configuration
+into its temporary directory, excluding `.env` files and `.next`. It supplies a
+random local `MCP_SHARED_KEY`, `DWS_BROWSER_ORIGIN`, a dummy Issues credential,
+and a loopback GitHub HTTP mock. The mock has runner-owned control endpoints;
+these are not application routes or production authentication bypasses. Browser
+suites use Playwright's existing Next lifecycle. Route suites start their own
+Next process and the SDK test restarts it while retaining the same client transport
+to verify that requests need no in-memory server session.
+
+`npm run test:routes -- integration/routes/mcp-http.test.ts` runs the HTTP proof
+through the same mandatory database bootstrap. It records sanitized negotiated
+protocol/tool results, mock publication payloads, and retry outcomes in
+`test-results/phase6-mcp-http.json`, plus a redacted Next process log. Mock issue
+URLs are synthetic fixed-repository responses; no real GitHub issue is created.
+The full `test:routes` entry point also includes these scenarios.

@@ -2,6 +2,9 @@
 
 Operational notes for the DWS Photos hub (uploads, confirmed changes, repair sweep).
 
+For hosted assistant configuration, shared-key rotation, photo handoffs, and
+confirmed issue submission recovery, see the [DWS MCP runbook](dws-mcp-runbook.md).
+
 ## Confirmed photo changes and trash
 
 Move a photo through its review/confirmation screen. Direct `PATCH job_id`

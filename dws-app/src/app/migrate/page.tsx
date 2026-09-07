@@ -96,6 +96,9 @@ export default function MigratePage() {
       let id = params.get('batch');
       const token = params.get('token');
       if (token) {
+        if (!['migrate_photos', 'add_photos'].includes(params.get('script_name') ?? '')) {
+          throw new Error('This photo handoff is missing its action. Reopen the original handoff link.');
+        }
         const consumed = await request<{ migration_batch_id: string }>('handoffs/consume', { token, script_name: chosenMode });
         id = consumed.migration_batch_id;
         window.history.replaceState(null, '', `/migrate?batch=${encodeURIComponent(id)}`);
@@ -111,13 +114,14 @@ export default function MigratePage() {
   }, [refresh, request]);
 
   useEffect(() => {
+    if (!userId) return;
     const controller = new AbortController();
     const timer = setTimeout(() => {
       void request<{ jobs: Job[] }>(`jobs?q=${encodeURIComponent(jobQuery)}`, undefined, { signal: controller.signal })
         .then(result => setJobs(result.jobs)).catch(reason => { if (!controller.signal.aborted) report(reason); });
     }, 200);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [request, jobQuery]);
+  }, [request, jobQuery, userId]);
 
   useEffect(() => () => { engine.current?.stop(); scanning.current?.abort(); }, []);
   useEffect(() => {

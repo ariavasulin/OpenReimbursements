@@ -283,7 +283,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     expect(inserted.error).toBeNull();
     let consumeRequests = 0;
     page.on('request', request => { if (request.url().endsWith('/handoffs/consume')) consumeRequests++; });
-    await page.goto(`/migrate?mode=add_photos&token=${token}`);
+    await page.goto(`/migrate?script_name=add_photos&token=${token}`);
     await expect(page).toHaveURL(/\/migrate\?batch=[a-f0-9-]+$/);
     expect(page.url()).not.toContain(token);
     expect(consumeRequests).toBe(1);

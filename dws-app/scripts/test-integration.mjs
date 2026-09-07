@@ -8,6 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import { verifyExpansion } from './test-schema-expansion.mjs';
 import { assertLocalTestTarget } from './test-local-target.mjs';
+import { startGitHubMock, nextHttpServer } from './test-http-services.mjs';
 
 const suite = process.argv[2];
 if (!['db', 'routes', 'browser'].includes(suite)) throw new Error('Usage: node scripts/test-integration.mjs db|routes|browser [runner arguments]');
@@ -50,6 +51,8 @@ async function freePort() {
 }
 let started = false;
 let sql;
+let githubMock;
+let nextServer;
 try {
   const [apiPort, dbPort, shadowPort] = await Promise.all([freePort(), freePort(), freePort()]);
   await mkdir(resolve(workdir, 'supabase/migrations'), { recursive: true });
@@ -80,7 +83,7 @@ try {
   await sql.query('insert into dws_test_harness.identity values ($1)', [project]);
   await verifyExpansion(sql, env);
   await sql.end(); sql = undefined;
-  if (suite === 'browser') {
+  if (suite === 'browser' || suite === 'routes') {
     // Next automatically loads .env.local. Run an explicit source-only snapshot
     // so neither live secrets nor a stale compiled public URL can enter this app.
     const browserApp = resolve(workdir, 'app');
@@ -91,11 +94,26 @@ try {
     }
     await symlink(resolve(app, 'node_modules'), resolve(browserApp, 'node_modules'), 'dir');
     const port = await freePort();
-    await run(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', ...process.argv.slice(3)], {
-      childEnv: { ...env, NODE_ENV: 'development', NEXT_PUBLIC_PHOTOS_HOSTNAME: '',
-        NEXT_TELEMETRY_DISABLED: '1', DWS_BROWSER_APP_DIR: browserApp,
-        DWS_BROWSER_BASE_URL: `http://localhost:${port}`, DWS_BROWSER_PORT: String(port) },
-    });
+    env.MCP_SHARED_KEY = randomBytes(32).toString('hex');
+    env.DWS_INTEGRATION_TEST = '1';
+    env.DWS_GITHUB_ISSUES_TOKEN = `fixture-issues-${randomBytes(16).toString('hex')}`;
+    env.DWS_BROWSER_ORIGIN = `http://localhost:${port}`;
+    env.DWS_BROWSER_BASE_URL = env.DWS_BROWSER_ORIGIN;
+    env.DWS_MCP_BASE_URL = env.DWS_BROWSER_ORIGIN;
+    githubMock = await startGitHubMock({ token: env.DWS_GITHUB_ISSUES_TOKEN, restartNext: () => nextServer.restart() });
+    env.DWS_TEST_GITHUB_API_URL = githubMock.url;
+    env.DWS_TEST_HTTP_CONTROL_URL = githubMock.url;
+    if (suite === 'browser') {
+      await run(process.execPath, ['node_modules/@playwright/test/cli.js', 'test', ...process.argv.slice(3)], {
+        childEnv: { ...env, NODE_ENV: 'development', NEXT_PUBLIC_PHOTOS_HOSTNAME: '',
+          NEXT_TELEMETRY_DISABLED: '1', DWS_BROWSER_APP_DIR: browserApp, DWS_BROWSER_PORT: String(port) },
+      });
+    } else {
+      nextServer = nextHttpServer({ app, snapshot: browserApp, env, port, output: resolve(app, 'test-results/phase6-next-http.log') });
+      await nextServer.start();
+      if (interrupted) throw new Error('Integration run interrupted');
+      await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.integration.config.ts', ...process.argv.slice(3)], { childEnv: { ...env, DWS_TEST_SUITE: suite } });
+    }
   } else {
     await run(process.execPath, ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.integration.config.ts', ...process.argv.slice(3)], { childEnv: { ...env, DWS_TEST_SUITE: suite } });
   }
@@ -103,7 +121,9 @@ try {
   console.error(error);
   process.exitCode = 1;
 } finally {
-  await sql?.end();
+  for (const result of await Promise.allSettled([nextServer?.close(), githubMock?.close(), sql?.end()])) {
+    if (result.status === 'rejected') { console.error(result.reason); process.exitCode = 1; }
+  }
   let removed = !started;
   if (started) {
     try {
