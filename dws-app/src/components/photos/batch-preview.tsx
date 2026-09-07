@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
 import FullScreenSheet from "@/components/photos/full-screen-sheet";
 import { formatBytes } from "@/lib/photos/format";
+import { canDecodePreview } from "@/lib/photos/decode-limits";
 
 // Full-screen look at one pending file before it uploads.
 
@@ -36,7 +37,7 @@ export default function BatchPreview({
   const count = files.length;
   const touchStartX = useRef<number | null>(null);
 
-  const isVideo = !!file && file.type.startsWith("video/");
+  const isVideo = !!file && file.type.startsWith("video/") && canDecodePreview(file);
   // Videos have no strip preview (the strip shows a name tile), so mint a
   // URL here just for playback. Minted in an effect, not a memo, so a
   // discarded render can't leak one.
@@ -121,6 +122,9 @@ export default function BatchPreview({
         {file && !imageUrl && !isVideo && (
           <div className="mx-8 break-all rounded-xl bg-[#2e2e2e] px-6 py-8 text-center text-sm text-[#d0d0d0]">
             {file.name}
+            {!canDecodePreview(file) && (
+              <p className="mt-2 text-xs text-[#b4b4b4]">Preview unavailable for this file. The original can still upload.</p>
+            )}
           </div>
         )}
         {count > 1 && (

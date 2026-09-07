@@ -21,6 +21,7 @@ import { usePhotoTags } from "@/lib/photos/api";
 import { readSidecarMeta } from "@/lib/photos/sidecar";
 import { plural } from "@/lib/photos/format";
 import { nextPreviewIndex } from "@/lib/photos/batch";
+import { canDecodePreview } from "@/lib/photos/decode-limits";
 
 // One job, sheet, and tag set per batch, inside SheetShell (Drawer on mobile,
 // Dialog on desktop). The batch is copied into local state so files can be
@@ -29,7 +30,7 @@ import { nextPreviewIndex } from "@/lib/photos/batch";
 
 function makePreviews(files: File[]): (string | null)[] {
   return files.map((file) =>
-    file.type.startsWith("image/") ? URL.createObjectURL(file) : null
+    file.type.startsWith("image/") && canDecodePreview(file) ? URL.createObjectURL(file) : null
   );
 }
 
@@ -117,15 +118,16 @@ export default function UploadSheet({
       return;
     }
     let cancelled = false;
-    void Promise.all(
-      pairs.map(async ([primary, xmp]) => {
+    void (async () => {
+      const entries: [File, string[]][] = [];
+      for (const [primary, xmp] of pairs) {
+        if (cancelled) return;
         const sidecarMeta = await readSidecarMeta(xmp);
-        return [primary, sidecarMeta.keywords] as const;
-      })
-    ).then((entries) => {
+        entries.push([primary, sidecarMeta.keywords]);
+      }
       if (cancelled) return;
       setKeywordsByFile(new Map(entries));
-    });
+    })();
     return () => {
       cancelled = true;
     };

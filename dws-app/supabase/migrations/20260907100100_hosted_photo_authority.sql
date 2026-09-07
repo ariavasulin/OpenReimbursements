@@ -345,7 +345,7 @@ begin
 end $$;
 create or replace function public.photo_apply_action(p_actor uuid,p_batch_id uuid,p_photo_id uuid)
 returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
-declare b public.photo_action_batches; i public.photo_action_items; p public.photos; v_result jsonb; instant timestamptz:=clock_timestamp();
+declare b public.photo_action_batches; i public.photo_action_items; p public.photos; v_result jsonb; instant timestamptz;
 begin
   select * into b from public.photo_action_batches where id=p_batch_id for update;
   perform public.photo_assert_batch_actor(p_actor,p_batch_id,'action',b.action);
@@ -356,6 +356,8 @@ begin
   if b.status='completed' or i.status in ('skipped','cancelled') then raise exception 'conflict'; end if;
   select * into p from public.photos where id=p_photo_id for update;
   if not found then raise exception 'not_found'; end if;
+  -- Retention is evaluated after any lock wait, at the time we can mutate.
+  instant:=clock_timestamp();
   if b.origin='ui' and b.action<>'move' and p.uploader_id<>p_actor and not exists(select 1 from public.user_profiles where user_id=p_actor and role='admin') then raise exception 'forbidden'; end if;
   if (p.job_id,p.deleted_at) is distinct from (i.expected_job_id,i.expected_deleted_at) then
     -- A matching outcome applied through another confirmed request is idempotent.

@@ -9,6 +9,9 @@
 
 import { classifyFile, extensionOf, type Classified } from "./classify";
 
+/** Applies to both upload-sheet suggestions and upload-time metadata parsing. */
+export const SIDECAR_METADATA_MAX_BYTES = 1024 * 1024;
+
 /** One queue-item-to-be: an uploadable file, optionally with its .xmp. */
 export interface Pair {
   primary: Classified;
@@ -79,6 +82,7 @@ function xmpValue(text: string, tag: string): string | null {
  * packet just yields nothing.
  */
 export async function readSidecarMeta(xmp: File): Promise<SidecarMeta> {
+  if (xmp.size > SIDECAR_METADATA_MAX_BYTES) return { capturedAt: null, keywords: [] };
   try {
     const text = await xmp.text();
     const raw =

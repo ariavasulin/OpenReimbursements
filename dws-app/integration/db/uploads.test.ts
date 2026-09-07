@@ -41,7 +41,9 @@ describe('upload lease, claim and finalize transactions (AC-4, AC-5)', () => {
     const path = `originals/${actor}/${photoId}/fixture.jpg`;
     expect((await f.admin.from('migration_items').insert({ id, source_id: sourceId, relative_path: 'fixture.jpg', revision: 1,
       scan_id: scanId, source_signature: `fixture:${id}:4`, original_name: 'fixture.jpg', original_bytes: bytes.length,
-      mime_type: 'image/jpeg', content_sha256: digest, photo_id: photoId, original_path: path })).error).toBeNull();
+      mime_type: 'image/jpeg', content_sha256: digest, photo_id: photoId, original_path: path,
+      thumb_path: `derived/${actor}/${photoId}_thumb.webp`, preview_path: `derived/${actor}/${photoId}_preview.webp`,
+      sidecar_path: `originals/${actor}/${photoId}/fixture.xmp` })).error).toBeNull();
     expect((await f.admin.from('migration_batches').update({ status: 'approved', approved_by: actor, approved_at: new Date().toISOString(), approved_rules: {} }).eq('id', batchId)).error).toBeNull();
     return { kind, id, actor, photoId, jobId, digest, bytes, path, batchId };
   }
@@ -159,19 +161,212 @@ describe('upload lease, claim and finalize transactions (AC-4, AC-5)', () => {
     }
   });
 
-  it('a late canonical insert returns the reserved active/trash outcome without another photo', async () => {
-    for (const trashed of [false, true]) {
-      const a = await owner('ordinary', f.employeeA.id); const finalizeArgs = await leased(a); await upload(a);
-      const canonicalId = randomUUID(); const now = Date.now();
-      expect((await f.admin.from('photos').insert({ id: canonicalId, job_id: a.jobId, uploader_id: f.employeeB.id,
-        kind: 'image', captured_at: new Date(now).toISOString(), original_path: `originals/${f.employeeB.id}/${canonicalId}/canonical.jpg`, content_sha256: a.digest,
-        ...(trashed ? { deleted_at: new Date(now).toISOString(), deleted_by: f.employeeB.id,
-          purge_after: new Date(now + 30 * 86_400_000).toISOString() } : {}) })).error).toBeNull();
+  async function insertCanonical(value: Owner, trashed = false, otherJob = false) {
+    const id = randomUUID(); const now = Date.now();
+    const jobId = otherJob ? randomUUID() : value.jobId;
+    if (otherJob) expect((await f.admin.from('jobs').insert({ id: jobId, job_number: `canonical-${jobId}`, name: 'Other destination' })).error).toBeNull();
+    expect((await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeB.id,
+      kind: 'image', captured_at: new Date(now).toISOString(), original_path: `originals/${f.employeeB.id}/${id}/canonical.jpg`, content_sha256: value.digest,
+      ...(trashed ? { deleted_at: new Date(now).toISOString(), deleted_by: f.employeeB.id,
+        purge_after: new Date(now + 30 * 86_400_000).toISOString() } : {}) })).error).toBeNull();
+    return { id, jobId };
+  }
+  const table = (value: Owner) => value.kind === 'ordinary' ? 'photo_upload_attempts' : 'migration_items';
+
+  it('late canonical inserts persist same-job, cross-job and trash outcomes for both owners and release leases', async () => {
+    for (const kind of ['ordinary', 'migration'] as const) for (const state of ['same', 'other', 'trash']) {
+      const a = await owner(kind, f.employeeA.id); const finalizeArgs = await leased(a); await upload(a);
+      const canonical = await insertCanonical(a, state === 'trash', state === 'other');
       const result = await rpc('photo_finalize_upload', finalizeArgs);
-      expect(result.status).toBe(trashed ? 'duplicate_trashed' : 'duplicate_active');
-      expect(result.photo_id).toBe(canonicalId);
+      expect(result.status).toBe(state === 'trash' ? 'duplicate_trashed' : 'duplicate_active');
+      expect(result.photo_id).toBe(canonical.id);
       expect(await rpc('photo_finalize_upload', finalizeArgs)).toEqual(result);
-      expect((await f.admin.from('photos').select('id').eq('content_sha256', a.digest)).data).toEqual([{ id: canonicalId }]);
+      const ledger = await f.admin.from(table(a)).select('status,result,lease_expires_at').eq('id', a.id).single();
+      expect(ledger.data).toEqual({ status: state === 'trash' ? 'restore_required' : state === 'other' ? 'job_conflict' : 'skipped_duplicate', result, lease_expires_at: null });
+      expect((await f.admin.from('photo_content_claims').select('*').eq('content_sha256', a.digest)).data).toEqual([]);
+      expect((await f.admin.from('photos').select('id').eq('content_sha256', a.digest)).data).toEqual([{ id: canonical.id }]);
     }
+  });
+
+  it('preflight canonical results are durable and replay without a live lease or bytes', async () => {
+    for (const kind of ['ordinary', 'migration'] as const) for (const state of ['same', 'other', 'trash']) {
+      const a = await owner(kind, f.employeeA.id);
+      const lease = await rpc('photo_acquire_upload', args(a));
+      const canonical = await insertCanonical(a, state === 'trash', state === 'other');
+      const claimArgs = { ...args(a), p_generation: lease.lease_generation };
+      const result = await rpc('photo_claim_content', claimArgs);
+      expect(result.photo_id).toBe(canonical.id);
+      expect(result.status).toBe(state === 'trash' ? 'duplicate_trashed' : 'duplicate_active');
+      expect(await rpc('photo_claim_content', { ...claimArgs, p_generation: null })).toEqual(result);
+      expect(await rpc('photo_acquire_upload', args(a))).toEqual(result);
+      const ledger = await f.admin.from(table(a)).select('status,result,lease_expires_at').eq('id', a.id).single();
+      expect(ledger.data).toEqual({ status: state === 'trash' ? 'restore_required' : state === 'other' ? 'job_conflict' : 'skipped_duplicate', result, lease_expires_at: null });
+      expect((await f.admin.from(table(a)).update({ status: 'uploading' }).eq('id', a.id)).error?.message).toBe('conflict');
+      expect((await f.admin.rpc('photo_claim_content', { ...claimArgs, p_actor: f.employeeB.id })).error?.message).toBe('wrong_consumer');
+      expect((await f.sql.query("select name from storage.objects where bucket_id='photos' and name=$1", [a.path])).rows).toEqual([]);
+    }
+  });
+
+  it('waiting status persists and preflight/release cannot release another owner claim', async () => {
+    const bytes = randomBytes(4);
+    const a = await owner('ordinary', f.employeeA.id, bytes); const active = await leased(a);
+    const b = await owner('migration', f.employeeB.id, bytes); const lease = await rpc('photo_acquire_upload', args(b));
+    const claimArgs = { ...args(b), p_generation: lease.lease_generation };
+    expect((await rpc('photo_claim_content', claimArgs)).status).toBe('waiting_claim');
+    expect((await f.admin.from('migration_items').select('status').eq('id', b.id).single()).data?.status).toBe('waiting_claim');
+    expect(await rpc('photo_release_upload', { ...claimArgs, p_status: 'retryable_failed', p_error_code: 'claim_wait' })).toEqual({ status: 'waiting_claim' });
+    expect((await f.admin.from('migration_items').select('status,lease_expires_at').eq('id', b.id).single()).data).toEqual({ status: 'waiting_claim', lease_expires_at: null });
+    expect((await f.admin.from('photo_content_claims').select('upload_attempt_id').eq('content_sha256', a.digest)).data).toEqual([{ upload_attempt_id: a.id }]);
+    const next = await rpc('photo_acquire_upload', args(b)); await insertCanonical(b);
+    await rpc('photo_claim_content', { ...args(b), p_generation: next.lease_generation });
+    expect((await f.admin.from('photo_content_claims').select('upload_attempt_id').eq('content_sha256', a.digest)).data).toEqual([{ upload_attempt_id: a.id }]);
+    await rpc('photo_release_upload', { ...args(a), p_generation: active.p_generation, p_status: 'cancelled' });
+    expect((await f.admin.from('photo_content_claims').select('*').eq('content_sha256', a.digest)).data).toEqual([]);
+  });
+
+  it('preflight closes its own previous claim without uploading a second original', async () => {
+    for (const kind of ['ordinary', 'migration'] as const) {
+      const a = await owner(kind, f.employeeA.id); const lease = await leased(a);
+      await insertCanonical(a);
+      expect((await rpc('photo_claim_content', { ...args(a), p_generation: lease.p_generation })).status).toBe('duplicate_active');
+      expect((await f.admin.from('photo_content_claims').select('*').eq('content_sha256', a.digest)).data).toEqual([]);
+    }
+  });
+
+  it('ambiguous legacy hashes fail closed without selecting a canonical photo', async () => {
+    const a = await owner('ordinary', f.employeeA.id);
+    const b = await owner('ordinary', f.employeeA.id);
+    const connection = await f.sql.connect();
+    try {
+      await connection.query('begin');
+      await connection.query('drop index public.photos_content_sha256');
+      await connection.query(`insert into public.photos(id,job_id,uploader_id,kind,captured_at,original_path,content_sha256)
+        values(gen_random_uuid(),$1,$2,'image',now(),'legacy/a.jpg',$3),
+              (gen_random_uuid(),$4,$2,'image',now(),'legacy/b.jpg',$3)`, [a.jobId, a.actor, a.digest, b.jobId]);
+      await expect(connection.query('select public.photo_canonical_outcome($1)', [a.digest])).rejects.toThrow('conflict');
+    } finally {
+      await connection.query('rollback');
+      connection.release();
+    }
+  });
+
+  it('release fences stale workers, supports unchanged retry, and preserves a committed result', async () => {
+    for (const kind of ['ordinary', 'migration'] as const) {
+      const a = await owner(kind, f.employeeA.id); const first = await leased(a);
+      await rpc('photo_release_upload', { ...args(a), p_generation: first.p_generation, p_status: 'retryable_failed', p_error_code: 'transfer_failed' });
+      const second = await leased(a);
+      expect(second.p_generation).toBeGreaterThan(first.p_generation);
+      expect((await f.admin.rpc('photo_release_upload', { ...args(a), p_generation: first.p_generation, p_status: 'cancelled' })).error?.message).toBe('stale_lease');
+      await upload(a); const result = await rpc('photo_finalize_upload', second);
+      expect(await rpc('photo_release_upload', { ...args(a), p_generation: first.p_generation, p_status: 'cancelled' })).toEqual(result);
+      expect((await f.admin.from(table(a)).select('status').eq('id', a.id).single()).data?.status).toBe('completed');
+      expect(await rpc('photo_upload_cleanup_paths', args(a))).toEqual([]);
+    }
+  });
+
+  it('unresolved duplicates refresh after a confirmed move or restore without transferring bytes', async () => {
+    for (const kind of ['ordinary', 'migration'] as const) for (const trashed of [false, true]) {
+      const a = await owner(kind, f.employeeA.id); const lease = await rpc('photo_acquire_upload', args(a));
+      const canonical = await insertCanonical(a, trashed, true);
+      const first = await rpc('photo_claim_content', { ...args(a), p_generation: lease.lease_generation });
+      expect(first.job_id).toBe(canonical.jobId);
+      expect((await f.admin.from('photos').update({ job_id: a.jobId, deleted_at: null, deleted_by: null, purge_after: null }).eq('id', canonical.id)).error).toBeNull();
+      const refreshed = kind === 'ordinary'
+        ? (await rpc('photo_create_upload_attempt', { p_actor: a.actor, p_job_id: a.jobId,
+          p_source_signature: `fixture:${a.id}:4`, p_digest: a.digest, p_original_name: 'fixture.jpg', p_original_bytes: 4,
+          p_mime_type: 'image/jpeg', p_attempt_id: a.id, p_photo_id: a.photoId })).result
+        : await rpc('photo_claim_content', { ...args(a), p_generation: null });
+      expect(refreshed).toMatchObject({ status: 'duplicate_active', photo_id: canonical.id, job_id: a.jobId });
+      expect((await f.admin.from(table(a)).select('status,lease_expires_at').eq('id', a.id).single()).data).toEqual({ status: 'skipped_duplicate', lease_expires_at: null });
+    }
+  });
+
+  it('a removed canonical requires a new attempt without reopening cleaned paths', async () => {
+    const a = await owner('ordinary', f.employeeA.id); const lease = await rpc('photo_acquire_upload', args(a));
+    const canonical = await insertCanonical(a, true);
+    const result = await rpc('photo_claim_content', { ...args(a), p_generation: lease.lease_generation });
+    expect((await f.admin.from('photos').delete().eq('id', canonical.id)).error).toBeNull();
+    expect(await rpc('photo_acquire_upload', args(a))).toEqual({ ...result, new_attempt_required: true });
+    const retry = await rpc('photo_create_upload_attempt', { p_actor: a.actor, p_job_id: a.jobId,
+      p_source_signature: `fixture:${a.id}:4`, p_digest: a.digest, p_original_name: 'fixture.jpg', p_original_bytes: 4,
+      p_mime_type: 'image/jpeg', p_attempt_id: a.id, p_photo_id: a.photoId });
+    expect(retry.result).toEqual({ ...result, new_attempt_required: true });
+    expect((await f.admin.from('photo_upload_attempts').select('result,status,lease_expires_at').eq('id', a.id).single()).data)
+      .toEqual({ result, status: 'restore_required', lease_expires_at: null });
+  });
+
+  it('sidecar retry attaches only to its unchanged created original and preserves finalization replay', async () => {
+    for (const kind of ['ordinary', 'migration'] as const) {
+      const a = await owner(kind, f.employeeA.id); const finalArgs = await leased(a); await upload(a);
+      finalArgs.p_photo = { kind: 'image', warnings: ['sidecar_missing', 'sidecar_metadata_failed', 'preview_missing'] } as typeof finalArgs.p_photo;
+      const result = await rpc('photo_finalize_upload', finalArgs);
+      const attachArgs = { ...args(a), p_sidecar_name: 'fixture.xmp', p_sidecar_bytes: 3 };
+      expect((await f.admin.rpc('photo_attach_upload_sidecar', attachArgs)).error?.message).toBe('sidecar_unverified');
+      const path = `originals/${a.actor}/${a.photoId}/fixture.xmp`;
+      expect((await f.employeeA.client.storage.from('photos').upload(path, new Uint8Array([1, 2, 3]), { contentType: 'application/rdf+xml' })).error).toBeNull();
+      expect((await f.admin.rpc('photo_attach_upload_sidecar', { ...attachArgs, p_sidecar_bytes: 4 })).error?.message).toBe('sidecar_unverified');
+      expect(await rpc('photo_attach_upload_sidecar', attachArgs)).toEqual({ ...result, warnings: ['sidecar_metadata_failed', 'preview_missing'] });
+      expect(await rpc('photo_attach_upload_sidecar', attachArgs)).toEqual({ ...result, warnings: ['sidecar_metadata_failed', 'preview_missing'] });
+      expect((await f.admin.from('photos').select('sidecar_path,sidecar_name,upload_warnings').eq('id', a.photoId).single()).data)
+        .toEqual({ sidecar_path: path, sidecar_name: 'fixture.xmp', upload_warnings: ['sidecar_metadata_failed', 'preview_missing'] });
+      expect((await f.admin.from(table(a)).select('warnings,finalize_payload').eq('id', a.id).single()).data)
+        .toEqual({ warnings: ['sidecar_metadata_failed', 'preview_missing'], finalize_payload: finalArgs.p_photo });
+      expect(await rpc('photo_finalize_upload', finalArgs)).toEqual(result);
+      expect((await f.admin.rpc('photo_attach_upload_sidecar', { ...attachArgs, p_actor: f.employeeB.id })).error?.message).toBe('wrong_consumer');
+      const other = await owner(kind, f.employeeA.id);
+      expect((await f.admin.from('photos').update({ job_id: other.jobId }).eq('id', a.photoId)).error).toBeNull();
+      expect((await f.admin.rpc('photo_attach_upload_sidecar', attachArgs)).error?.message).toBe('conflict');
+    }
+    const duplicate = await owner('ordinary', f.employeeA.id); const lease = await rpc('photo_acquire_upload', args(duplicate));
+    await insertCanonical(duplicate); await rpc('photo_claim_content', { ...args(duplicate), p_generation: lease.lease_generation });
+    expect((await f.admin.rpc('photo_attach_upload_sidecar', { ...args(duplicate), p_sidecar_name: 'fixture.xmp', p_sidecar_bytes: 3 })).error?.message).toBe('conflict');
+  });
+
+  it('sidecar repair cannot alias and overwrite the committed original path', async () => {
+    const seed = await owner('ordinary', f.employeeA.id); const id = randomUUID(); const photoId = randomUUID();
+    const created = await rpc('photo_create_upload_attempt', { p_actor: seed.actor, p_job_id: seed.jobId,
+      p_source_signature: `fixture:${id}:4`, p_digest: seed.digest, p_original_name: 'fixture.xmp', p_original_bytes: 4,
+      p_mime_type: 'application/rdf+xml', p_attempt_id: id, p_photo_id: photoId });
+    const value = { ...seed, id, photoId, path: created.original_path };
+    const finalArgs = await leased(value); await upload(value); await rpc('photo_finalize_upload', finalArgs);
+    expect(created.original_path).toBe(created.sidecar_path);
+    expect((await f.admin.rpc('photo_attach_upload_sidecar', { ...args(value), p_sidecar_name: 'fixture.xmp', p_sidecar_bytes: 4 })).error?.message).toBe('conflict');
+  });
+
+  it('cleanup exposes only committed duplicate deterministic paths and protects every photo reference', async () => {
+    for (const kind of ['ordinary', 'migration'] as const) {
+      const a = await owner(kind, f.employeeA.id); const finalArgs = await leased(a); await upload(a);
+      expect(await rpc('photo_upload_cleanup_paths', args(a))).toEqual([]);
+      const canonical = await insertCanonical(a); const result = await rpc('photo_finalize_upload', finalArgs);
+      const paths = await rpc('photo_upload_cleanup_paths', args(a)) as string[];
+      expect(paths.sort()).toEqual([a.path, `derived/${a.actor}/${a.photoId}_thumb.webp`,
+        `derived/${a.actor}/${a.photoId}_preview.webp`, `originals/${a.actor}/${a.photoId}/fixture.xmp`].sort());
+      for (const column of ['original_path', 'thumb_path', 'preview_path', 'sidecar_path', 'playback_path']) {
+        expect((await f.admin.from('photos').update({ [column]: a.path }).eq('id', canonical.id)).error).toBeNull();
+        expect(await rpc('photo_upload_cleanup_paths', args(a))).not.toContain(a.path);
+        expect((await f.admin.from('photos').update({ [column]: column === 'original_path' ? `originals/${f.employeeB.id}/${canonical.id}/canonical.jpg` : null }).eq('id', canonical.id)).error).toBeNull();
+      }
+      expect((await f.admin.rpc('photo_upload_cleanup_paths', { ...args(a), p_actor: f.employeeB.id })).error?.message).toBe('wrong_consumer');
+      expect((await f.employeeA.client.rpc('photo_upload_cleanup_paths', args(a))).error).not.toBeNull();
+      expect((await f.admin.from(table(a)).update({ lease_expires_at: new Date(Date.now() + 120_000).toISOString() }).eq('id', a.id)).error?.message).toBe('conflict');
+      expect(await rpc('photo_finalize_upload', finalArgs)).toEqual(result);
+    }
+  });
+
+  it('cleanup preserves unfinished ordinary and migration references and UUIDs cannot cross ledgers', async () => {
+    const a = await owner('ordinary', f.employeeA.id); const finalArgs = await leased(a); await upload(a);
+    await insertCanonical(a); await rpc('photo_finalize_upload', finalArgs);
+    const b = await owner('migration', f.employeeA.id);
+    expect((await f.admin.from('migration_items').update({ thumb_path: a.path }).eq('id', b.id)).error).toBeNull();
+    expect(await rpc('photo_upload_cleanup_paths', args(a))).not.toContain(a.path);
+    expect((await f.admin.from('migration_items').update({ thumb_path: null }).eq('id', b.id)).error).toBeNull();
+    const ordinary = await f.admin.from('photo_upload_attempts').select('*').eq('id', a.id).single();
+    expect(ordinary.error).toBeNull();
+    expect((await f.admin.from('photo_upload_attempts').insert({ ...ordinary.data, id: randomUUID(), photo_id: randomUUID(),
+      result: null, finalize_payload: null, status: 'pending' })).error).toBeNull();
+    expect(await rpc('photo_upload_cleanup_paths', args(a))).toEqual([]);
+    expect((await f.admin.rpc('photo_create_upload_attempt', { p_actor: b.actor, p_job_id: b.jobId,
+      p_source_signature: 'uuid-collision', p_digest: b.digest, p_original_name: 'fixture.jpg', p_original_bytes: 4,
+      p_mime_type: 'image/jpeg', p_attempt_id: randomUUID(), p_photo_id: b.photoId })).error?.message).toBe('conflict');
   });
 });

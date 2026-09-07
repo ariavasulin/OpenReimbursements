@@ -14,7 +14,8 @@ export async function fetchJson<T>(
   const response = await fetch(url, init);
   if (!response.ok) {
     const data = await response.json().catch(() => null);
-    throw new Error(data?.error || `${fallbackMessage} (${response.status})`);
+    const message = typeof data?.error === "string" ? data.error : data?.error?.message;
+    throw new Error(typeof message === "string" ? message : `${fallbackMessage} (${response.status})`);
   }
   return (await response.json()) as T;
 }

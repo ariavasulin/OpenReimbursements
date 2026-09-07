@@ -125,15 +125,16 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
   it('completed action and migration history do not block eventual row purge', async () => {
     const id = randomUUID(); const batchId = randomUUID(); const sourceId = randomUUID(); const itemId = randomUUID(); const actionId = randomUUID();
     const now = Date.now();
-    expect((await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeA.id, kind: 'image',
-      captured_at: new Date(now).toISOString(), original_path: `originals/${f.employeeA.id}/${id}/history.jpg`,
-      deleted_at: new Date(now - 31 * 86_400_000).toISOString(), deleted_by: f.employeeA.id,
-      purge_after: new Date(now - 86_400_000).toISOString() })).error).toBeNull();
     expect((await f.admin.from('migration_batches').insert({ id: batchId, created_by: f.employeeA.id, origin: 'ui', script_name: 'add_photos' })).error).toBeNull();
     expect((await f.admin.from('migration_sources').insert({ id: sourceId, batch_id: batchId, job_id: jobId, kind: 'files', label: 'History fixture' })).error).toBeNull();
     expect((await f.admin.from('migration_items').insert({ id: itemId, source_id: sourceId, relative_path: 'history.jpg', revision: 1,
       scan_id: randomUUID(), source_signature: 'history', original_name: 'history.jpg', original_bytes: 1, mime_type: 'image/jpeg',
-      photo_id: id, status: 'completed', canonical_photo_id: id, canonical_job_id: jobId, result: { status: 'created', photo_id: id, job_id: jobId } })).error).toBeNull();
+      photo_id: id, status: 'pending' })).error).toBeNull();
+    expect((await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeA.id, kind: 'image',
+      captured_at: new Date(now).toISOString(), original_path: `originals/${f.employeeA.id}/${id}/history.jpg`,
+      deleted_at: new Date(now - 31 * 86_400_000).toISOString(), deleted_by: f.employeeA.id,
+      purge_after: new Date(now - 86_400_000).toISOString() })).error).toBeNull();
+    expect((await f.admin.from('migration_items').update({ status: 'completed', canonical_photo_id: id, canonical_job_id: jobId, result: { status: 'created', photo_id: id, job_id: jobId } }).eq('id', itemId)).error).toBeNull();
     expect((await f.admin.from('photo_action_batches').insert({ id: actionId, created_by: f.employeeA.id, origin: 'ui', action: 'trash' })).error).toBeNull();
     expect((await f.admin.from('photo_action_items').insert({ batch_id: actionId, photo_id: id, expected_job_id: jobId,
       status: 'applied', actor_id: f.employeeA.id, result: { status: 'applied', photo_id: id, action: 'trash' } })).error).toBeNull();

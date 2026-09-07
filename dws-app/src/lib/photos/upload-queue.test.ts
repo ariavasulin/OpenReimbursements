@@ -84,6 +84,67 @@ describe("upload-queue", () => {
     expect(unmatched.map((u) => u.name)).toEqual(["a.xmp"]);
   });
 
+  it("retains attempt identity across reload and lets the engine fence changed reselected bytes", () => {
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg", 10, 7) }]);
+    const key = q.items[0].photoId;
+    const identity = { attemptId: "attempt", photoId: "server-photo", contentSha256: "a".repeat(64), sourceSignature: "old-source" };
+    q = Q.rememberIdentity(q, key, identity);
+    const restored = Q.restoreManifest(Q.toManifest(q, 0), 0);
+    const unchanged = Q.adoptRepick(restored, [f("a.jpg", 10, 7)]).queue;
+    expect(unchanged.items[0].uploadIdentity).toEqual(identity);
+    const changed = Q.adoptRepick(restored, [f("a.jpg", 20, 8)]);
+    expect(changed.unmatched).toEqual([]);
+    expect(changed.queue.items[0]).toMatchObject({ photoId: key, size: 20, lastModified: 8, uploadIdentity: identity, status: "queued" });
+  });
+
+  it.each(["job_conflict", "restore_required", "waiting_claim"] as const)("keeps %s unresolved and recoverable", (status) => {
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }]);
+    const key = q.items[0].photoId;
+    q = Q.recordOutcome(q, key, { status, canonicalPhotoId: "canonical", canonicalJobId: "other", error: "Remedy required" });
+    expect(Q.isActive(q)).toBe(false);
+    expect(Q.clearSettled(q).items).toHaveLength(1);
+    const saved = Q.toManifest(q, 0);
+    expect(saved[0]).toMatchObject({ canonicalPhotoId: "canonical", canonicalJobId: "other" });
+    const restored = Q.restoreManifest(saved, 0);
+    expect(Q.retry(restored, key).items[0].status).toBe("interrupted");
+  });
+
+  it("keeps original completion warnings visible without retrying the upload", () => {
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }]);
+    q = Q.recordOutcome(q, q.items[0].photoId, { status: "done", warnings: ["Reselect the XMP sidecar to retry it."] });
+    expect(Q.toManifest(q, 0)).toEqual([]);
+    expect(q.items[0].warnings).toEqual(["Reselect the XMP sidecar to retry it."]);
+  });
+
+  it("recovers sidecar-only retries without asking for the completed original again", () => {
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg"), sidecar: f("a.xmp") }]);
+    const key = q.items[0].photoId;
+    q = Q.recordOutcome(q, key, { status: "done", sidecarRetry: true, warnings: ["Sidecar upload failed."] });
+    expect(Q.clearSettled(q).items).toHaveLength(1);
+    const restored = Q.restoreManifest(Q.toManifest(q, 0), 0);
+    expect(restored.items[0]).toMatchObject({ status: "done", sidecarRetry: true });
+    expect(restored.files.size).toBe(0);
+    q = Q.recordOutcome(q, key, { status: "retrying_sidecar", sidecarRetry: true });
+    expect(Q.isActive(q)).toBe(true);
+    expect(Q.restoreManifest(Q.toManifest(q, 0), 0).items[0].status).toBe("done");
+    q = Q.recordOutcome(q, key, { status: "done", sidecarRetry: false, warnings: [] });
+    expect(Q.clearSettled(q).items).toEqual([]);
+    expect(Q.toManifest(q, 0)).toEqual([]);
+  });
+
+  it("preserves Retry-After across retry clicks and reload/reselection", () => {
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }]);
+    const key = q.items[0].photoId;
+    q = Q.recordOutcome(q, key, { status: "failed", retryAt: 30_000, error: "Retry later" });
+    expect(Q.retry(q, key, 29_999)).toBe(q);
+    expect(Q.retry(q, key, 30_000).items[0].status).toBe("queued");
+    const restored = Q.restoreManifest(Q.toManifest(q, 0), 0);
+    const repicked = Q.adoptRepick(restored, [f("a.jpg")], 29_999).queue;
+    expect(repicked.items[0]).toMatchObject({ status: "failed", retryAt: 30_000 });
+    expect(Q.nextQueued(repicked)).toBeNull();
+    expect(Q.retry(repicked, key, 30_000).items[0]).toMatchObject({ status: "queued", retryAt: undefined });
+  });
+
   it("remove drops the item and its file; clearSettled keeps live work", () => {
     let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }, { file: f("b.jpg") }]);
     const [a, b] = q.items.map((i) => i.photoId);
