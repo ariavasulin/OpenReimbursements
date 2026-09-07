@@ -72,7 +72,7 @@ export function usePhotoTags(enabled: boolean) {
 
 /** After an upload, edit, or delete: every photo-derived query refetches. */
 export function invalidatePhotoCaches(queryClient: QueryClient) {
-  for (const key of ["photos", "photo-jobs", "photo-tags", "photo-search"]) {
+  for (const key of ["photos", "photo-jobs", "photo-tags", "photo-search", "photo-trash"]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }

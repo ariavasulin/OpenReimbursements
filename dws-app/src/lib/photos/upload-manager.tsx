@@ -274,7 +274,8 @@ export function UploadManagerProvider({
         running.current = false;
       }
       if (unmounted.current) return;
-      if (any) invalidatePhotoCaches(queryClient);
+      // A duplicate may have been restored or moved by a separate action page.
+      if (any || duplicates) invalidatePhotoCaches(queryClient);
       if (failed) {
         toast.error(
           `${plural(failed, "upload")} needs attention — open the tray`

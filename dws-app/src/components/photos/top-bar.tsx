@@ -63,6 +63,7 @@ export default function TopBar() {
         </div>
 
         <div className="ml-auto flex shrink-0 items-center space-x-4">
+          <Link href="/photos/trash" className="text-sm text-[#8bbaff] hover:underline">Trash</Link>
           {hasCamera && (
             <Button
               variant="ghost"

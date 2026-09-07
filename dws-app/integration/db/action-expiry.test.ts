@@ -24,7 +24,7 @@ it('rejects a restore that waits for the photo lock until after retention expire
       select $1,$2,$3,'image',clock_timestamp(),$4,expires-interval '30 days',$3,expires from deadline
       returning deleted_at::text,purge_after::text`, [photoId, jobId, f.employeeA.id, `originals/${f.employeeA.id}/${photoId}/retained.jpg`]);
     const { deleted_at: deletedAt, purge_after: purgeAfter } = seeded.rows[0];
-    await f.sql.query("insert into public.photo_action_batches(id,created_by,origin,action) values($1,$2,'ui','restore')", [batchId, f.employeeA.id]);
+    await f.sql.query("insert into public.photo_action_batches(id,created_by,origin,action,materialization_complete) values($1,$2,'ordinary','restore',true)", [batchId, f.employeeA.id]);
     await f.sql.query('insert into public.photo_action_items(batch_id,photo_id,expected_job_id,expected_deleted_at) values($1,$2,$3,$4)', [batchId, photoId, jobId, deletedAt]);
     expect((await f.admin.rpc('photo_approve_action', { p_actor: f.employeeA.id, p_batch_id: batchId })).error).toBeNull();
     expect((await f.sql.query(`select i.expected_deleted_at=p.deleted_at as matches

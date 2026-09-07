@@ -17,6 +17,7 @@ export interface MigrationItem {
   id: string; source_id: string; relative_path: string; original_name: string; original_bytes: number;
   source_mtime: number; mime_type: string; source_signature: string; revision: number;
   photo_id: string; upload_attempt_id: string; content_sha256: string | null; status: string;
+  canonical_photo_id?: string | null; canonical_job_id?: string | null;
   sidecar?: { relative_path: string; original_name?: string; name?: string } | null;
   result?: Record<string, unknown> | null; warnings?: string[]; error_code?: string | null;
   error?: { code?: string; message?: string } | null;

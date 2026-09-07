@@ -64,6 +64,7 @@ export default function PhotosHomePage() {
       </header>
 
       <div className="desktop:hidden">
+        <Link href="/photos/trash" className="mb-3 block text-right text-sm text-[#8bbaff] hover:underline">Trash</Link>
         <SearchInput
           value={query}
           onChange={setQuery}

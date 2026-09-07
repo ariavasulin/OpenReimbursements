@@ -135,7 +135,7 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
       deleted_at: new Date(now - 31 * 86_400_000).toISOString(), deleted_by: f.employeeA.id,
       purge_after: new Date(now - 86_400_000).toISOString() })).error).toBeNull();
     expect((await f.admin.from('migration_items').update({ status: 'completed', canonical_photo_id: id, canonical_job_id: jobId, result: { status: 'created', photo_id: id, job_id: jobId } }).eq('id', itemId)).error).toBeNull();
-    expect((await f.admin.from('photo_action_batches').insert({ id: actionId, created_by: f.employeeA.id, origin: 'ui', action: 'trash' })).error).toBeNull();
+    expect((await f.admin.from('photo_action_batches').insert({ id: actionId, created_by: f.employeeA.id, origin: 'ordinary', action: 'trash' })).error).toBeNull();
     expect((await f.admin.from('photo_action_items').insert({ batch_id: actionId, photo_id: id, expected_job_id: jobId,
       status: 'applied', actor_id: f.employeeA.id, result: { status: 'applied', photo_id: id, action: 'trash' } })).error).toBeNull();
     // This is fixture metadata deletion only; production Storage cleanup and

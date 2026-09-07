@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
+import { invalidatePhotoCaches } from '@/lib/photos/api';
 import SheetShell from '@/components/photos/sheet-shell';
 import { supabase } from '@/lib/supabaseClient';
 import { buildBrowserUploadDeps } from '@/lib/photos/upload-browser';
@@ -19,6 +21,7 @@ type Job = { id: string; job_number?: string; number?: string; name?: string; jo
 const refreshAuth = async () => { const { data, error } = await supabase.auth.refreshSession(); return !error && !!data.session; };
 
 export default function MigratePage() {
+  const queryClient = useQueryClient();
   const [request] = useState(() => createMigrationRequest(refreshAuth));
   const [view, setView] = useState<BatchView | null>(null);
   const [sources, setSources] = useState<MigrationSource[]>([]);
@@ -192,6 +195,7 @@ export default function MigratePage() {
       prepare: (input, options) => uploadRequest<UploadAttempt>('prepare', input, options),
       meta: { sheetNumber: sheet, tags: tags.split(',').map(tag => tag.trim()).filter(Boolean) },
       onChange: async completedItemId => {
+        invalidatePhotoCaches(queryClient);
         setProgress(current => {
           if (!completedItemId) return {};
           const next = { ...current }; delete next[completedItemId]; return next;
@@ -322,10 +326,17 @@ export default function MigratePage() {
             <td className="whitespace-nowrap p-3">{bytes(item.original_bytes)}</td><td className="p-3"><span className={isPausedMigrationItem(item, status) ? 'text-[#bbb]' : item.status.includes('failed') || item.status.includes('conflict') ? 'text-red-300' : item.status === 'completed' ? 'text-green-400' : 'text-[#bbb]'}>{isPausedMigrationItem(item, status) ? 'Paused' : migrationItemStatusLabel(item.status)}</span>
               {progress[item.id] && <div className="mt-1 text-xs">{bytes(progress[item.id][0])} / {bytes(progress[item.id][1])}</div>}
               {(item.error?.message ?? item.error?.code ?? item.error_code) && <div className="mt-1 text-xs text-red-300">{item.error?.message ?? item.error?.code ?? item.error_code}</div>}
+              {['job_conflict', 'restore_required'].includes(item.status) && <p className="mt-2 text-xs text-[#bbb]">Review the existing photo in a new tab, then Check again and Resume here. No second copy is uploaded.</p>}
               {!running && item.lease_expires_at && Date.parse(item.lease_expires_at) > Date.now() && <div className="mt-1 text-xs text-amber-300">Another page may be uploading. Pause the batch or retry after {new Date(item.lease_expires_at).toLocaleTimeString()}.</div>}
               {(item.warnings ?? (item.result?.warnings as string[] | undefined) ?? []).map((warning, index) => <div key={index} className="mt-1 text-xs text-amber-300">{warning}</div>)}
               {!retryDue(item) && <div className="text-xs text-amber-300">Retry after {new Date(item.retry_after ?? Number(item.result?.retryAt)).toLocaleString()}</div>}
-            </td><td className="p-3">{owner && !running && !isPausedMigrationItem(item, status) && ['retryable_failed', 'waiting_claim', 'job_conflict', 'restore_required'].includes(item.status) && <div className="flex flex-wrap gap-2"><button className={button} disabled={!retryDue(item) || busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'retry', ...(item.new_attempt_required ? { new_attempt_required: true } : {}) }); await refresh(); })}>Retry</button><button className={button} disabled={busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'skip' }); await refresh(); })}>Skip</button></div>}
+            </td><td className="p-3">{owner && !running && !isPausedMigrationItem(item, status) && ['retryable_failed', 'waiting_claim', 'job_conflict', 'restore_required'].includes(item.status) && <div className="flex flex-wrap gap-2"><button className={button} disabled={!retryDue(item) || busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'retry', ...(item.new_attempt_required ? { new_attempt_required: true } : {}) }); await refresh(); })}>{['job_conflict', 'restore_required'].includes(item.status) ? 'Check again' : 'Retry'}</button><button className={button} disabled={busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'skip' }); await refresh(); })}>Skip</button></div>}
+              {item.canonical_photo_id && ['job_conflict', 'restore_required'].includes(item.status) && <Link
+                href={`/photo-actions?${new URLSearchParams({ action: item.status === 'job_conflict' ? 'move' : 'restore', photo: item.canonical_photo_id,
+                  ...(sources.find(source => source.id === item.source_id)?.job_id ? { destination: sources.find(source => source.id === item.source_id)!.job_id } : {}) })}`}
+                target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-[#8bbaff] underline">
+                {item.status === 'job_conflict' ? 'Review move' : 'Review restore'} (new tab)
+              </Link>}
               {owner && !running && item.status === 'completed' && item.sidecar && item.warnings?.some(warning => /sidecar/i.test(warning)) && <button className={button} disabled={busy || !localSources.current.has(item.source_id)} onClick={() => void act(() => retryXmp(item))}>Retry XMP</button>}
             </td>
           </tr>)}</tbody></table></div>

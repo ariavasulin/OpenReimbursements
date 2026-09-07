@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
+import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronUp, RotateCw, X } from "lucide-react";
 import { useUploadManager } from "@/lib/photos/upload-manager";
 import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
@@ -44,6 +46,8 @@ export default function UploadTray({
 }) {
   const manager = useUploadManager();
   const [expanded, setExpanded] = useState(false);
+  const pathname = usePathname();
+  useEffect(() => setExpanded(false), [pathname]);
   const repickInputRef = useRef<HTMLInputElement>(null);
   const sidecarInputRef = useRef<HTMLInputElement>(null);
   const sidecarTarget = useRef<string | null>(null);
@@ -98,14 +102,23 @@ export default function UploadTray({
       actions: primary ? (
         <>
           {primary}
-          {item.canonicalPhotoId && item.canonicalJobId && (
-            <a
+          {item.canonicalPhotoId && item.canonicalJobId && item.status !== "restore_required" && (
+            <Link
               href={`/photos/${encodeURIComponent(item.canonicalJobId)}?photo=${encodeURIComponent(item.canonicalPhotoId)}`}
               className="rounded-md px-2 py-1.5 text-[11px] text-[#8bbaff] underline"
             >
               View photo
-            </a>
+            </Link>
           )}
+          {item.canonicalPhotoId && ["job_conflict", "restore_required"].includes(item.status) && (
+            <Link
+              href={`/photos/actions?${new URLSearchParams({ action: item.status === "job_conflict" ? "move" : "restore", photo: item.canonicalPhotoId, destination: item.jobId })}`}
+              className="rounded-md px-2 py-1.5 text-[11px] text-[#8bbaff] underline"
+            >
+              {item.status === "job_conflict" ? "Review move" : "Review restore"}
+            </Link>
+          )}
+          {["job_conflict", "restore_required"].includes(item.status) && <span className="basis-full text-xs text-[#bbb]">After the action, choose Check again. No second copy is uploaded.</span>}
           <RemoveButton
             onClick={() => manager.remove(item.photoId)}
             name={item.name}

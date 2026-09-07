@@ -4,7 +4,8 @@ begin;
 
 alter table public.photos
   add column if not exists deleted_at timestamptz,
-  add column if not exists deleted_by uuid references public.user_profiles(user_id),
+  -- Audit identity uses Auth so the legacy unqualified uploader embed remains unambiguous.
+  add column if not exists deleted_by uuid references auth.users(id),
   add column if not exists purge_after timestamptz,
   add column if not exists legacy_content_sha256 text,
   add column if not exists duplicate_of uuid references public.photos(id),

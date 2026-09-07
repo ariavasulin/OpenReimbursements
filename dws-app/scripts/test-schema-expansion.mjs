@@ -9,7 +9,8 @@ export async function verifyExpansion(sql, env) {
   await replayMigrations(sql, { through: legacyLast });
   await assertDatabaseIdentity(sql, env);
   const admin = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  const created = await admin.auth.admin.createUser({ phone: '15555550999', phone_confirm: true });
+  const password = randomUUID();
+  const created = await admin.auth.admin.createUser({ phone: '15555550999', phone_confirm: true, password });
   if (created.error || !created.data.user) throw new Error(`Cannot seed isolated expansion actor: ${created.error?.message}`);
   const actor = created.data.user.id;
   const jobA = randomUUID(), jobB = randomUUID();
@@ -23,6 +24,17 @@ export async function verifyExpansion(sql, env) {
   const first = await replayMigrations(sql, { after: legacyLast });
   assert.ok(first.length, 'At least one additive hosted-photo migration must exist');
   await replayMigrations(sql, { after: legacyLast });
+  // Expansion must also preserve the old application's unqualified relation
+  // embed. A second photos -> user_profiles FK makes PostgREST return PGRST201.
+  const legacyClient = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    { auth: { persistSession: false, autoRefreshToken: false } });
+  const signedIn = await legacyClient.auth.signInWithPassword({ phone: '15555550999', password });
+  if (signedIn.error) throw signedIn.error;
+  const legacyRead = await legacyClient.from('photos')
+    .select('id,uploader:user_profiles(full_name),job:jobs(id,job_number,name)')
+    .in('id', ids);
+  assert.equal(legacyRead.error, null, 'Old unqualified uploader embed must survive additive expansion');
+  assert.equal(legacyRead.data?.length, 3, 'Old application must still read all retained active fixture rows');
   const originalColumns = Object.keys(before[0]);
   const after = (await snapshot()).rows.map(row => Object.fromEntries(originalColumns.map(key => [key, row[key]])));
   assert.deepEqual(after, before, 'Expansion must preserve every legacy source field');
@@ -37,5 +49,5 @@ export async function verifyExpansion(sql, env) {
   await sql.query('delete from public.jobs where id=any($1::uuid[])', [[jobA, jobB]]);
   const removed = await admin.auth.admin.deleteUser(actor);
   if (removed.error) throw removed.error;
-  console.log('Verified additive replay twice: three legacy photos unchanged, cross-job hashes retained, gates closed, old grants retained, all indexes valid');
+  console.log('Verified additive replay twice: three legacy photos unchanged, cross-job hashes retained, gates closed, old grants and unqualified uploader read retained, all indexes valid');
 }

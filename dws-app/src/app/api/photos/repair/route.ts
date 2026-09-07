@@ -157,7 +157,8 @@ function quoteFilter(value: string): string {
   return `"${value.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
 }
 
-/** Does any photos row still point at this exact object? The bulk listing is
+/** Does any photos row still point at this exact object?
+ * Includes retained trash, whose paths must remain owned. The bulk listing is
  * a snapshot: a finalize that landed mid-sweep makes a live object look
  * row-less, and deleting a storage object is not reversible. */
 async function isReferenced(objectPath: string): Promise<boolean> {
@@ -184,7 +185,7 @@ async function markFileTile(photoId: string, reason: string) {
   const { error } = await supabaseAdmin
     .from('photos')
     .update({ kind: 'file' })
-    .eq('id', photoId);
+    .eq('id', photoId).is('deleted_at', null);
   if (error) throw new Error(`markFileTile ${photoId}: ${error.message}`);
   console.info(`photos.repair markFileTile photoId=${photoId} reason=${reason}`);
 }
@@ -259,7 +260,7 @@ async function writePoster(
       preview_path: keys.preview,
       duration_secs: durationSecs !== null && durationSecs > 0 ? durationSecs : null,
     })
-    .eq('id', row.id);
+    .eq('id', row.id).is('deleted_at', null);
   if (error) throw new Error(`update ${row.id}: ${error.message}`);
 }
 
@@ -278,7 +279,7 @@ async function writeRendition(
     const { error } = await supabaseAdmin
       .from('photos')
       .update({ playback_skipped_reason: reason })
-      .eq('id', row.id);
+      .eq('id', row.id).is('deleted_at', null);
     if (error) throw new Error(`update ${row.id}: ${error.message}`);
     console.info(`photos.repair playbackSkipped photoId=${row.id} reason=${reason}`);
     return 'playbackSkipped';
@@ -298,7 +299,7 @@ async function writeRendition(
   const { error } = await supabaseAdmin
     .from('photos')
     .update({ playback_path: key })
-    .eq('id', row.id);
+    .eq('id', row.id).is('deleted_at', null);
   if (error) throw new Error(`update ${row.id}: ${error.message}`);
   return 'transcodeVideo';
 }
@@ -382,7 +383,7 @@ async function execute(
       const { error } = await supabaseAdmin
         .from('photos')
         .delete()
-        .eq('id', a.photoId);
+        .eq('id', a.photoId).is('deleted_at', null);
       if (error) throw new Error(`delete row ${a.photoId}: ${error.message}`);
       count(a.action);
       return;
@@ -419,8 +420,8 @@ async function run(request: Request) {
   //  - rows with a hole: a missing thumb, or a video missing its playback
   //    rendition. (Rows with playback_skipped_reason set still match — the
   //    planner drops them, so they never replan.)
-  //  - every path some row points at, across all five path columns; anything
-  //    stored and unlisted here is what the sweep deletes as an orphan.
+  //  - every path some row points at, including retained trash, across all five
+  //    path columns; stored and unlisted objects are candidates for orphan cleanup.
   //  - everything actually stored under originals/ and derived/.
   // Any of the three failing takes the whole run down: a plan built on half
   // an inventory deletes objects and rows that were never orphaned.
@@ -435,6 +436,7 @@ async function run(request: Request) {
           .select(
             'id, uploader_id, kind, mime_type, original_path, original_bytes, thumb_path, playback_path, playback_skipped_reason, created_at'
           )
+          .is('deleted_at', null)
           .or('thumb_path.is.null,and(kind.eq.video,playback_path.is.null)')
           .order('id')
           .range(from, to)

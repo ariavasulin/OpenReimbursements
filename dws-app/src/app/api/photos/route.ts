@@ -135,6 +135,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from('photos')
     .select(PHOTO_COLUMNS)
+    .is('deleted_at', null)
     .order('captured_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(limit + 1);

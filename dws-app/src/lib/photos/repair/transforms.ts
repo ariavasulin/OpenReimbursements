@@ -61,7 +61,7 @@ export async function fillImageDerivatives(
   const { error } = await admin
     .from("photos")
     .update({ thumb_path: paths.thumb, preview_path: paths.preview })
-    .eq("id", row.id);
+    .eq("id", row.id).is("deleted_at", null);
   if (error) throw new Error(`update ${row.id}: ${error.message}`);
   return { ok: true };
 }

@@ -27,6 +27,7 @@ interface PhotoMetaFieldsProps {
   disabled?: boolean;
   /** Label for the selected job when it isn't in the jobs list (edit sheet). */
   jobFallback?: JobLabelSource | null;
+  showJob?: boolean;
 }
 
 const labelClass = "mb-1.5 block text-xs text-[#a0a0a0]";
@@ -37,13 +38,14 @@ export default function PhotoMetaFields({
   enabled = true,
   disabled,
   jobFallback,
+  showJob = true,
 }: PhotoMetaFieldsProps) {
   const {
     data: jobs,
     isLoading: jobsLoading,
     error: jobsError,
     refetch: refetchJobs,
-  } = usePhotoJobs(enabled);
+  } = usePhotoJobs(enabled && showJob);
   const { data: knownTags } = usePhotoTags(enabled);
   const id = useId();
   const jobInputId = `${id}-job`;
@@ -55,7 +57,7 @@ export default function PhotoMetaFields({
 
   return (
     <>
-      <label htmlFor={jobInputId} className={labelClass}>
+      {showJob && <><label htmlFor={jobInputId} className={labelClass}>
         Job
       </label>
       <JobField
@@ -81,6 +83,7 @@ export default function PhotoMetaFields({
           </button>
         </p>
       )}
+      </>}
 
       <label htmlFor={sheetInputId} className={labelClass}>
         Sheet # (optional)

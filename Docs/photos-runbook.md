@@ -1,6 +1,37 @@
 # Photos Runbook
 
-Operational notes for the DWS Photos hub (uploads, repair sweep).
+Operational notes for the DWS Photos hub (uploads, confirmed changes, repair sweep).
+
+## Confirmed photo changes and trash
+
+Move a photo through its review/confirmation screen. Direct `PATCH job_id`
+writes are rejected; sheet and tag edits apply only to active photos. Any
+signed-in employee can move a photo. Ordinary removal and restoration require
+the uploader or an administrator; a consumed MCP handoff authorizes only its
+bound consumer, action, and confirmed targets.
+
+Removal sends a photo to `/photos/trash` for 30 days. Repeating removal does
+not extend its original `purge_after`; restoration is unavailable at or after
+that timestamp, even if permanent cleanup has not run. The public bucket is
+unchanged: someone with a known object URL can still fetch it during retention.
+Library listings, search, counts, tags, and deep links exclude all trash.
+
+A legacy duplicate in trash points to its canonical photo. Review the canonical
+target before restoring or moving it; restoration never creates another active
+copy. Uploading matching bytes keeps the item unresolved until that action
+succeeds or the employee explicitly skips it. An employee who cannot restore
+the matching photo should ask an administrator or use an MCP restore handoff,
+then retry the original queue item to resolve the canonical result.
+
+## Legacy standalone-sidecar audit
+
+`node dws-app/scripts/attach-orphan-sidecars.mjs` is read-only and considers
+active rows only. Its `--execute` / `-x` mode is retired and fails before any
+network request. The historical one-time mutation needed to precede cutover;
+it bypassed the confirmed-action gate and hard-deleted standalone rows. Normal
+intake now pairs XMP sidecars, so the new application has no need for this legacy
+writer. Keep the audit for identifying historical candidates without modifying
+rows or Storage objects.
 
 ## Repair sweep (`/api/photos/repair`)
 
@@ -32,8 +63,8 @@ response looks like:
 | `transcodeVideo` | A video within the caps gained an H.264/AAC `playback_path` rendition (`derived/{uid}/{photoId}_playback.mp4`). Only planned when `PHOTOS_TRANSCODE=1`. |
 | `playbackSkipped` | A planned transcode found the clip over a cap and set `playback_skipped_reason` instead. The sweep never replans it; the lightbox shows the download card. |
 | `transcodeDeferred` | The run's 240 s transcode budget ran out before this clip started. Nothing was written; the next run (or a manual one) picks it up. |
-| `deleteOrphanObject` | An object under `originals/` had no `photos` row pointing at it (original **or** sidecar) and was older than 24 h — a dead upload whose finalize never ran. Deleted. `DELETE /api/photos/:id` already removes a row's objects (original, thumb, preview, sidecar) in the same request, so this collects only what that misses. |
-| `deleteDeadRow` | A `photos` row's original object is missing from storage — finalize raced a dead upload. Row deleted. |
+| `deleteOrphanObject` | An object under `originals/` had no `photos` row pointing at it (original **or** sidecar) and was older than 24 h — a dead upload whose finalize never ran. Deleted only after its live ownership check. Retained trash still owns its paths; ordinary Delete does not remove Storage objects. |
+| `deleteDeadRow` | An active `photos` row's original object is missing from storage — finalize raced a dead upload. Row deleted. |
 
 `errors` lists actions that failed (`"<action>: <message>"`); each action is
 isolated, so one failure never aborts the rest of the sweep. Rows younger
@@ -76,7 +107,8 @@ time (`transcodeDeferred`), so a big backlog drains across daily runs.
 Re-queue one video (e.g. after raising the caps or a bad rendition):
 
 ```sql
-update photos set playback_path = null, playback_skipped_reason = null where id = '<uuid>';
+update photos set playback_path = null, playback_skipped_reason = null
+where id = '<uuid>' and deleted_at is null;
 ```
 
 then run the sweep by hand. The old `_playback.mp4` object is upserted over.
@@ -120,16 +152,20 @@ approximate time, the job, and ideally the filename.
 2. **Is there a row?**
 
    ```sql
-   select id, original_name, kind, thumb_path, created_at, captured_at_source
+   -- Intentional diagnostic read includes retained trash.
+   select id, original_name, kind, thumb_path, created_at, captured_at_source,
+          deleted_at, purge_after, duplicate_of
    from photos
    where job_id = '<job>' and created_at > now() - interval '2 days'
    order by created_at desc;
    ```
 
-   - Row present with `thumb_path` → it landed. "Vanished" is a viewing
+   - Row present with `deleted_at` → it is in trash. Open the trash view and
+     check the recovery deadline and canonical reference before restoring.
+   - Active row with `thumb_path` → it landed. "Vanished" is a viewing
      problem: check which grid/filter they're looking at (wrong job, a tag
      filter, or grouping by a sheet number they didn't expect).
-   - Row present, `thumb_path` null → derivative hole (e.g. HEIC picked in
+   - Active row, `thumb_path` null → derivative hole (e.g. HEIC picked in
      desktop Chrome). It shows after the next sweep; run the sweep by hand
      (above) to fix it now.
 
