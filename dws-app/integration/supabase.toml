@@ -1,0 +1,60 @@
+# Generated into a fresh temporary workdir; repository SQL is replayed separately.
+project_id = "__PROJECT__"
+[api]
+enabled = true
+port = __API_PORT__
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+[db]
+port = __DB_PORT__
+shadow_port = __SHADOW_PORT__
+major_version = 15
+[db.migrations]
+enabled = true
+schema_paths = []
+[db.seed]
+enabled = false
+sql_paths = []
+[db.pooler]
+enabled = false
+[realtime]
+enabled = false
+[studio]
+enabled = false
+[local_smtp]
+enabled = false
+[storage]
+enabled = true
+file_size_limit = "50GiB"
+[storage.s3_protocol]
+enabled = false
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+enable_signup = true
+[auth.rate_limit]
+sign_in_sign_ups = 1000
+token_verifications = 1000
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+[auth.sms]
+max_frequency = "1ms"
+enable_signup = true
+enable_confirmations = true
+[auth.sms.test_otp]
+15555550101 = "123456"
+15555550102 = "123456"
+15555550103 = "123456"
+[edge_runtime]
+enabled = false
+[analytics]
+enabled = false
+
+# GoTrue validates provider presence before consulting the local test-OTP map.
+# These placeholders are deliberately unusable; test numbers never send SMS.
+[auth.sms.twilio]
+enabled = true
+account_sid = "local-test-only"
+message_service_sid = "local-test-only"
+auth_token = "local-test-only"
