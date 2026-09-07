@@ -137,8 +137,9 @@ describe('active library boundaries with retained photo identities (AC-9)', () =
     })).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('Execution is retired') });
   });
 
-  it('the real repair candidate/ownership scans preserve retained rows and objects', async () => {
-    const before = (await f.sql.query('select * from public.photos where id=any($1::uuid[]) order by id', [ids.slice(1)])).rows;
+  it('the real repair purges expired trash while preserving the recovery window and legacy history', async () => {
+    const retainedIds = [ids[1], ids[3]];
+    const before = (await f.sql.query('select * from public.photos where id=any($1::uuid[]) order by id', [retainedIds])).rows;
     const oldSecret = process.env.CRON_SECRET;
     process.env.CRON_SECRET = 'isolated-read-boundary-cron';
     try {
@@ -148,9 +149,10 @@ describe('active library boundaries with retained photo identities (AC-9)', () =
       const result = await repair(request);
       const report = await result.json();
       expect(report).toMatchObject({ counts: expect.any(Object), errors: expect.any(Array), planned: expect.any(Number) });
-      // Expired and legacy rows deliberately have no thumb/original object. A
-      // missing active predicate would plan and delete them as dead rows.
-      expect((await f.sql.query('select * from public.photos where id=any($1::uuid[]) order by id', [ids.slice(1)])).rows).toEqual(before);
+      expect(result.status, JSON.stringify(report)).toBe(200);
+      expect(report.purged).toBeGreaterThanOrEqual(1);
+      expect((await f.sql.query('select * from public.photos where id=any($1::uuid[]) order by id', [retainedIds])).rows).toEqual(before);
+      expect((await f.sql.query('select id from public.photos where id=$1', [ids[2]])).rows).toEqual([]);
       expect((await f.admin.storage.from('photos').exists(retainedPath)).data).toBe(true);
     } finally {
       if (oldSecret === undefined) delete process.env.CRON_SECRET;

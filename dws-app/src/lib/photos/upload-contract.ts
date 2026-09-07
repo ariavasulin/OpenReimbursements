@@ -19,6 +19,9 @@ export interface CreateUploadAttemptInput {
   source_signature: string; content_sha256: string;
   original_name: string; original_bytes: number; mime_type: string;
 }
+/** Full identity lets cancellation settle a lost attempt-creation response. */
+export interface CancelUploadInput extends CreateUploadAttemptInput { owner_kind: 'ordinary' }
+export type CancelUploadOutcome = { status: 'cancelled' } | CanonicalUploadOutcome;
 export interface UploadAttempt extends UploadOwner {
   photo_id: string; job_id: string; content_sha256: string;
   original_path: string; thumb_path: string; preview_path: string; sidecar_path: string;

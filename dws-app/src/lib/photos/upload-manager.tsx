@@ -8,6 +8,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useReducer,
@@ -26,7 +27,8 @@ import {
   type UploadResult,
 } from "./upload";
 import { plural } from "./format";
-import { buildBrowserUploadDeps } from "./upload-browser";
+import { buildBrowserUploadDeps, cancelBrowserUpload } from "./upload-browser";
+import type { CancelUploadOutcome } from "./upload-contract";
 
 const MANIFEST_KEY = "photos.upload-manifest";
 
@@ -35,6 +37,9 @@ type Action =
   | { type: "start" | "complete" | "retry" | "remove" | "duplicate"; photoId: string }
   | { type: "progress"; photoId: string; sentBytes: number }
   | { type: "fail"; photoId: string; error: string }
+  | { type: "beginRemoval"; photoId: string }
+  | { type: "removalFailed"; photoId: string; error: string }
+  | { type: "finishRemoval"; photoId: string; result: CancelUploadOutcome }
   | { type: "identity"; photoId: string; identity: UploadIdentity }
   | { type: "outcome"; photoId: string; result: UploadResult }
   | { type: "startSidecar"; photoId: string }
@@ -69,6 +74,12 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
       return Q.retry(q, a.photoId);
     case "remove":
       return Q.remove(q, a.photoId);
+    case "beginRemoval":
+      return Q.beginRemoval(q, a.photoId);
+    case "removalFailed":
+      return Q.removalFailed(q, a.photoId, a.error);
+    case "finishRemoval":
+      return Q.finishRemoval(q, a.photoId, a.result);
     case "restore":
       return Q.restoreManifest(a.saved, a.now);
     case "repick":
@@ -115,13 +126,20 @@ export function UploadManagerProvider({
   // every queue change — its cleanup would fire on ordinary dispatches, not
   // just unmount.
   const unmounted = useRef(false);
-  const inFlight = useRef<AbortController | null>(null);
+  const inFlight = useRef<{ photoId: string; controller: AbortController } | null>(null);
   const sidecarUploads = useRef(new Map<string, AbortController>());
+  const removals = useRef(new Set<string>());
+  const removedTransfers = useRef(new Set<string>());
+  // Async callbacks must see a Remove/identity transition before React renders.
+  const dispatchCurrent = useCallback((action: Action) => {
+    queueRef.current = reducer(queueRef.current, action);
+    dispatch(action);
+  }, []);
   useEffect(() => {
     unmounted.current = false;
     return () => {
       unmounted.current = true;
-      inFlight.current?.abort();
+      inFlight.current?.controller.abort();
       sidecarUploads.current.forEach((controller) => controller.abort());
     };
   }, []);
@@ -194,6 +212,11 @@ export function UploadManagerProvider({
             data: { session },
           } = await supabase.auth.getSession();
           if (unmounted.current) break;
+          const live = queueRef.current.items.find((candidate) => candidate.photoId === current.photoId);
+          if (!live || live.status !== "queued") {
+            item = queueRef.current.items.find((candidate) => candidate.status === "queued" && !processed.has(candidate.photoId)) ?? null;
+            continue;
+          }
           if (!entry || !session) {
             failed += 1;
             dispatch({
@@ -207,7 +230,7 @@ export function UploadManagerProvider({
             dispatch({ type: "start", photoId: current.photoId });
             const id = current.photoId;
             const controller = new AbortController();
-            inFlight.current = controller;
+            inFlight.current = { photoId: id, controller };
             const result = await uploadOne(
               entry.file,
               id,
@@ -230,11 +253,17 @@ export function UploadManagerProvider({
                 expectedSidecarName: current.sidecarName,
                 signal: controller.signal,
                 identity: current.uploadIdentity,
-                onIdentity: (identity) => dispatch({ type: "identity", photoId: id, identity }),
+                onIdentity: (identity) => dispatchCurrent({ type: "identity", photoId: id, identity }),
               }
             );
             inFlight.current = null;
             if (unmounted.current) break;
+            const after = queueRef.current.items.find((candidate) => candidate.photoId === id);
+            if (!after || Q.isRemoving(after) || removals.current.has(id) || removedTransfers.current.has(id)) {
+              removedTransfers.current.delete(id);
+              item = queueRef.current.items.find((candidate) => candidate.status === "queued" && !processed.has(candidate.photoId)) ?? null;
+              continue;
+            }
             console.info(
               `photos.upload photoId=${id} status=${result.status}${result.error ? ` err=${result.error}` : ""}`
             );
@@ -257,11 +286,13 @@ export function UploadManagerProvider({
         // so it lands in the tray with a retry instead of sitting queued
         // behind a lock that never clears.
         console.error("photos.upload runner aborted", e);
-        if (item && !unmounted.current) {
+        const failedId = item?.photoId;
+        const failedItem = queueRef.current.items.find((candidate) => candidate.photoId === failedId);
+        if (failedItem && !unmounted.current && !Q.isRemoving(failedItem) && !removedTransfers.current.has(failedItem.photoId)) {
           failed += 1;
           dispatch({
             type: "fail",
-            photoId: item.photoId,
+            photoId: failedItem.photoId,
             error:
               e instanceof Error && e.message
                 ? `Upload interrupted — ${e.message}`
@@ -286,7 +317,7 @@ export function UploadManagerProvider({
         toast.success(`${plural(duplicates, "photo")} already in this job`);
       }
     })();
-  }, [queue, queryClient]);
+  }, [queue, queryClient, dispatchCurrent]);
 
   const value: Manager = {
     items: queue.items,
@@ -333,7 +364,41 @@ export function UploadManagerProvider({
         }
       })();
     },
-    remove: (photoId) => dispatch({ type: "remove", photoId }),
+    remove: (photoId) => {
+      const item = queueRef.current.items.find((candidate) => candidate.photoId === photoId);
+      if (!item || removals.current.has(photoId)) return;
+      if (inFlight.current?.photoId === photoId) {
+        removedTransfers.current.add(photoId);
+        inFlight.current.controller.abort();
+      }
+      sidecarUploads.current.get(photoId)?.abort();
+      // Dismissing a settled row also dismisses its sidecar warning. It never
+      // invokes photo deletion. Unfinished attempts require durable cancellation.
+      if (item.status === "done" || item.status === "duplicate" || !item.uploadIdentity) {
+        dispatchCurrent({ type: "remove", photoId });
+        return;
+      }
+      removals.current.add(photoId);
+      dispatchCurrent({ type: "beginRemoval", photoId });
+      void (async () => {
+        try {
+          const result = await cancelBrowserUpload(Q.cancellationInput(item)!);
+          dispatchCurrent({ type: "finishRemoval", photoId, result });
+          if (result.status !== "cancelled") invalidatePhotoCaches(queryClient);
+        } catch (error) {
+          dispatchCurrent({ type: "removalFailed", photoId,
+            error: error instanceof Error ? error.message : "Unable to confirm cancellation." });
+          if (!unmounted.current) toast.error("Upload removal is pending — retry removal in the tray");
+        } finally {
+          removals.current.delete(photoId);
+          // A tab may leave while the cancellation request is settling. Keep
+          // its durable retry handle even when React can no longer persist it.
+          if (unmounted.current) {
+            try { localStorage.setItem(MANIFEST_KEY, JSON.stringify(Q.toManifest(queueRef.current, Date.now()))); } catch { /* no storage */ }
+          }
+        }
+      })();
+    },
     repick: (files) => {
       dispatch({ type: "repick", files });
       // The reducer is the source of truth for the queue; this second

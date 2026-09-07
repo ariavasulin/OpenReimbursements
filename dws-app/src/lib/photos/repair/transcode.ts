@@ -8,14 +8,15 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import ffmpegPath from "ffmpeg-static";
+import { WorkBudget } from "./deadline";
 
 const run = promisify(execFile);
 
 /** Transcode caps: anything over is skipped with playback_skipped_reason so
  * the sweep never retries it (clear the columns to re-queue). The duration cap
  * sits well under the route's 300 s maxDuration, because that same window also
- * has to cover the download, the probe, the poster extraction and the upload —
- * only the transcode itself is bounded here. */
+ * has to cover the download, probe, poster extraction and upload. Every media
+ * operation receives the route's shared work deadline. */
 export const CAP = { bytes: 200 * 1024 * 1024, secs: 120 };
 
 /** Kill switch: transcodes are planned only when PHOTOS_TRANSCODE=1. */
@@ -54,12 +55,16 @@ export function parseDuration(stderr: string): number | null {
  * never decodes a frame, which is what makes it fast on a large clip.
  */
 export async function probe(
-  input: string
+  input: string,
+  budget = new WorkBudget(),
 ): Promise<{ durationSecs: number | null }> {
   try {
-    const { stderr } = await run(ffmpegPath!, ["-hide_banner", "-i", input]);
+    const { stderr } = await runFfmpeg(["-hide_banner", "-i", input], budget);
     return { durationSecs: parseDuration(stderr) };
   } catch (e) {
+    budget.check();
+    const failure = e as { killed?: boolean; code?: string; name?: string };
+    if (failure.killed || failure.code === "ABORT_ERR" || failure.name === "AbortError") throw e;
     const stderr = (e as { stderr?: string }).stderr ?? "";
     return { durationSecs: parseDuration(stderr) };
   }
@@ -73,25 +78,27 @@ export async function probe(
 export async function poster(
   input: string,
   seekSecs: number,
-  outputs: { path: string; maxDim: number }[]
+  outputs: { path: string; maxDim: number }[],
+  budget = new WorkBudget(),
+  maxOutputBytes?: number,
 ) {
-  await run(ffmpegPath!, [
+  await runFfmpeg([
     "-y",
     "-ss", String(seekSecs),
     "-i", input,
     ...outputs.flatMap((out) => [
       "-frames:v", "1",
       "-vf", `scale='min(${out.maxDim},iw)':-2`,
+      ...(maxOutputBytes === undefined ? [] : ["-fs", String(maxOutputBytes)]),
       out.path,
     ]),
-  ]);
+  ], budget);
 }
 
 /** H.264/AAC MP4 capped at 1920 px wide, +faststart so the moov atom leads
  * and playback starts before the download finishes. */
-export async function transcode(input: string, output: string) {
-  await run(
-    ffmpegPath!,
+export async function transcode(input: string, output: string, budget = new WorkBudget(), maxOutputBytes?: number) {
+  await runFfmpeg(
     [
       "-y",
       "-i", input,
@@ -103,8 +110,28 @@ export async function transcode(input: string, output: string) {
       "-c:a", "aac",
       "-b:a", "128k",
       "-movflags", "+faststart",
+      ...(maxOutputBytes === undefined ? [] : ["-fs", String(maxOutputBytes)]),
       output,
     ],
-    { maxBuffer: 1 << 24 }
+    budget,
   );
+}
+
+function runFfmpeg(args: string[], budget: WorkBudget) {
+  return budget.run(async (signal) => {
+    const running = run(ffmpegPath!, args, {
+      timeout: Math.max(1, Math.floor(budget.remaining())),
+      killSignal: "SIGKILL",
+      maxBuffer: 1 << 24,
+    });
+    // Node's AbortSignal path can send SIGTERM despite execFile.killSignal.
+    // Kill explicitly so a child ignoring SIGTERM cannot outlive the lease.
+    const abort = () => { running.child.kill("SIGKILL"); };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      return await running;
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  });
 }

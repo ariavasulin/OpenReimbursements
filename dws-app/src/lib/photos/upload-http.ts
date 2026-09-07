@@ -1,4 +1,4 @@
-const OPERATIONS = new Set(["prepare", "attempt", "acquire", "claim", "renew", "release", "sidecar", "original", "finalize"]);
+const OPERATIONS = new Set(["prepare", "attempt", "acquire", "claim", "renew", "release", "cancel", "sidecar", "original", "finalize"]);
 export const MAX_UPLOAD_ATTEMPTS = 5;
 export const MAX_UPLOAD_RETRY_DELAY_MS = 20_000;
 

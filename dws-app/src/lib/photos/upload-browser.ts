@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabaseClient";
 import { createResumableUpload, type UploadDeps } from "./upload";
-import type { UploadAttempt, AcquireUploadOutcome, ClaimUploadOutcome, CanonicalUploadOutcome, OriginalUploadState } from "./upload-contract";
+import type { UploadAttempt, AcquireUploadOutcome, ClaimUploadOutcome, CanonicalUploadOutcome, OriginalUploadState, CancelUploadInput, CancelUploadOutcome } from "./upload-contract";
 import { extractCapturedAt } from "./exif";
 import { sha256 } from "./hash";
 import { createUploadRequest } from "./upload-http";
@@ -43,3 +43,6 @@ async function getUploadAccessToken() {
 }
 const uploadRequest = createUploadRequest({ refreshAuth: refreshUploadAuth });
 
+/** Deliberate removal has its own request, independent of the transfer signal. */
+export const cancelBrowserUpload = (input: CancelUploadInput) =>
+  uploadRequest<CancelUploadOutcome>("cancel", input);

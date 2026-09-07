@@ -158,3 +158,30 @@ describe("upload-queue", () => {
     expect(q.files.size).toBe(0);
   });
 });
+
+describe("durable ordinary upload removal", () => {
+  const identity = { attemptId: "attempt", photoId: "server-photo", contentSha256: "a".repeat(64), sourceSignature: JSON.stringify(["a.jpg", 10, 7, "image/jpeg"]) };
+  const pending = () => {
+    const q = enq(Q.emptyQueue(), [{ file: f("a.jpg", 10, 7) }]);
+    return Q.beginRemoval(Q.rememberIdentity(q, q.items[0].photoId, identity), q.items[0].photoId);
+  };
+  it("persists unconfirmed removal beyond the normal manifest TTL and cannot resume it", () => {
+    const q = pending(); const key = q.items[0].photoId;
+    expect(Q.cancellationInput(q.items[0])).toMatchObject({ owner_kind: "ordinary", attempt_id: "attempt", original_name: "a.jpg", original_bytes: 10, mime_type: "image/jpeg" });
+    const restored = Q.restoreManifest(Q.toManifest(q, Q.MANIFEST_TTL_MS + 1), Q.MANIFEST_TTL_MS * 2);
+    expect(restored.items[0]).toMatchObject({ status: "cancel_pending", uploadIdentity: identity });
+    expect(Q.retry(restored, key)).toEqual(restored);
+    expect(Q.adoptRepick(restored, [f("a.jpg", 10, 7)]).unmatched).toHaveLength(1);
+    expect(Q.recordOutcome(restored, key, { status: "interrupted" })).toEqual(restored);
+    expect(Q.clearSettled(restored)).toEqual(restored);
+    expect(Q.removalFailed(restored, key, "Offline").items[0].error).toContain("Retry removal");
+    expect(Q.finishRemoval(restored, key, { status: "cancelled" }).items).toEqual([]);
+  });
+  it("keeps a finalize winner and its XMP reselection warning", () => {
+    const q = pending(); const key = q.items[0].photoId;
+    const settled = Q.finishRemoval(q, key, { status: "created", photo_id: "committed", job_id: meta.jobId,
+      warnings: ["Reselect XMP"], sidecar_retry: true });
+    expect(settled.items[0]).toMatchObject({ status: "done", canonicalPhotoId: "committed", sidecarRetry: true, warnings: ["Reselect XMP"] });
+    expect(Q.clearSettled(settled).items).toHaveLength(1);
+  });
+});

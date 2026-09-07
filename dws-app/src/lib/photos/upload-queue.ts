@@ -4,6 +4,7 @@
 
 import { classifyFile } from "./classify";
 import type { BatchMeta, UploadIdentity } from "./upload";
+import type { CancelUploadInput, CancelUploadOutcome } from "./upload-contract";
 
 export type QueueStatus =
   | "queued"
@@ -15,6 +16,8 @@ export type QueueStatus =
   | "restore_required"
   | "waiting_claim"
   | "retrying_sidecar"
+  | "cancelling"
+  | "cancel_pending"
   | "interrupted";
 
 export interface QueueItem {
@@ -56,7 +59,7 @@ export interface Queue {
 }
 
 export type Persisted = Omit<QueueItem, "status" | "sentBytes"> & {
-  status: "interrupted" | "done";
+  status: "interrupted" | "done" | "cancel_pending";
 };
 
 export const MANIFEST_TTL_MS = 24 * 60 * 60 * 1000;
@@ -116,13 +119,44 @@ export const recordOutcome = (
   q: Queue, id: string,
   outcome: Pick<QueueItem, "status"> & Partial<Pick<QueueItem,
     "error" | "canonicalPhotoId" | "canonicalJobId" | "warnings" | "sidecarRetry" | "retryAt">>,
-) => patch(q, id, { retryAt: undefined, ...outcome });
+) => isRemoving(q.items.find((item) => item.photoId === id)) ? q : patch(q, id, { retryAt: undefined, ...outcome });
 export const rememberIdentity = (q: Queue, id: string, uploadIdentity: UploadIdentity) =>
   patch(q, id, { uploadIdentity });
 /** Retry keeps the photoId so TUS resumes and finalize stays idempotent. */
 export const retry = (q: Queue, id: string, now = Date.now()) =>
-  (q.items.find((item) => item.photoId === id)?.retryAt ?? 0) > now ? q :
+  isRemoving(q.items.find((item) => item.photoId === id)) || (q.items.find((item) => item.photoId === id)?.retryAt ?? 0) > now ? q :
     patch(q, id, { status: q.files.has(id) ? "queued" : "interrupted", error: undefined, retryAt: undefined });
+
+export const isRemoving = (item?: Pick<QueueItem, "status">) => item?.status === "cancelling" || item?.status === "cancel_pending";
+export const beginRemoval = (q: Queue, id: string) => patch(q, id, {
+  status: "cancelling", error: undefined, retryAt: undefined,
+});
+export const removalFailed = (q: Queue, id: string, error: string) => patch(q, id, {
+  status: "cancel_pending", error: `Removal pending — ${error} Retry removal to finish.`,
+});
+export function finishRemoval(q: Queue, id: string, result: CancelUploadOutcome): Queue {
+  // A finalize that committed first wins. Keep its sidecar warning/reselection
+  // state visible; cancelling an attempt never removes the committed photo.
+  if (result.status === "created") return patch(q, id, {
+    status: "done", canonicalPhotoId: result.photo_id, canonicalJobId: result.job_id,
+    warnings: result.warnings ?? [], sidecarRetry: result.sidecar_retry ?? false,
+    error: undefined, retryAt: undefined,
+  });
+  return remove(q, id);
+}
+
+export function cancellationInput(item: QueueItem): CancelUploadInput | null {
+  const identity = item.uploadIdentity;
+  if (!identity) return null;
+  const source: unknown = JSON.parse(identity.sourceSignature);
+  if (!Array.isArray(source) || source.length !== 4 || typeof source[0] !== "string" ||
+      typeof source[1] !== "number" || typeof source[3] !== "string") {
+    throw new Error("Upload identity is unavailable.");
+  }
+  return { owner_kind: "ordinary", attempt_id: identity.attemptId, photo_id: identity.photoId,
+    job_id: item.jobId, source_signature: identity.sourceSignature, content_sha256: identity.contentSha256,
+    original_name: source[0], original_bytes: source[1], mime_type: source[3] };
+}
 
 export function remove(q: Queue, photoId: string): Queue {
   const files = new Map(q.files);
@@ -143,7 +177,7 @@ export function clearSettled(q: Queue): Queue {
 export const nextQueued = (q: Queue) =>
   q.items.find((i) => i.status === "queued") ?? null;
 export const isActive = (q: Queue) =>
-  q.items.some((i) => i.status === "queued" || i.status === "uploading" || i.status === "retrying_sidecar");
+  q.items.some((i) => i.status === "queued" || i.status === "uploading" || i.status === "retrying_sidecar" || i.status === "cancelling");
 
 /**
  * Persist everything still recoverable — including `failed`, so a failure
@@ -154,7 +188,7 @@ export function toManifest(q: Queue, now: number): Persisted[] {
   return q.items
     .filter(
       (i) =>
-        (i.status === "queued" ||
+        isRemoving(i) || ((i.status === "queued" ||
           i.status === "uploading" ||
           i.status === "failed" ||
           i.status === "job_conflict" ||
@@ -163,19 +197,19 @@ export function toManifest(q: Queue, now: number): Persisted[] {
           i.status === "retrying_sidecar" ||
           (i.status === "done" && i.sidecarRetry) ||
           i.status === "interrupted") &&
-        now - i.enqueuedAt < MANIFEST_TTL_MS
+        now - i.enqueuedAt < MANIFEST_TTL_MS)
     )
     .map(({ sentBytes, ...i }) => ({ ...i,
-      status: i.sidecarRetry && (i.status === "done" || i.status === "retrying_sidecar") ? "done" as const : "interrupted" as const,
+      status: isRemoving(i) ? "cancel_pending" as const : i.sidecarRetry && (i.status === "done" || i.status === "retrying_sidecar") ? "done" as const : "interrupted" as const,
     }));
 }
 
 export function restoreManifest(saved: Persisted[], now: number): Queue {
   return {
     items: saved
-      .filter((i) => now - i.enqueuedAt < MANIFEST_TTL_MS)
+      .filter((i) => i.status === "cancel_pending" || now - i.enqueuedAt < MANIFEST_TTL_MS)
       .map((i) => ({ ...i,
-        status: i.status === "done" && i.sidecarRetry ? "done" as const : "interrupted" as const,
+        status: i.status === "cancel_pending" ? "cancel_pending" as const : i.status === "done" && i.sidecarRetry ? "done" as const : "interrupted" as const,
         sentBytes: 0,
       })),
     files: new Map(),

@@ -35,9 +35,17 @@ rows or Storage objects.
 
 ## Repair sweep (`/api/photos/repair`)
 
-A daily Vercel cron (09:00 UTC, `vercel.json`) that converges every partial
-upload state. It is idempotent — the second run should report `planned: 0`
-when nothing new broke.
+A daily Vercel cron (09:00 UTC, `vercel.json`) first permanently purges up to
+500 expired photos, then repairs active photos and cleans orphan objects.
+Both GET and POST require `CRON_SECRET` and the server-only
+`photo_release_state.repair_enabled` gate with schema generation 1. An absent
+or closed gate returns 503 before any lease or Storage mutation.
+
+One 240-second deadline starts at handler entry and covers purge, discovery,
+network body reads, image transforms, and ffmpeg. Each control request also
+has a 15-second timeout; ffmpeg is killed when the shared deadline or lease
+cancellation fires. The final ten seconds are reserved only for backlog
+reporting and lease release, inside the 300-second function limit.
 
 ### Run it by hand
 
@@ -50,7 +58,11 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
 response looks like:
 
 ```json
-{ "counts": { "fillImageDerivatives": 2 }, "errors": [], "planned": 2 }
+{
+  "counts": { "fillImageDerivatives": 2 }, "errors": [], "error_count": 0, "planned": 2,
+  "purged": 3, "purge_failed": 0, "purge_backlog": 0,
+  "work_deferred": 0, "oldest_due_at": null
+}
 ```
 
 ### What each `counts` key means
@@ -61,20 +73,28 @@ response looks like:
 | `markFileTile` | An image couldn't be transformed (RAW format, or original over 25 MB, or the transform endpoint refused it). The row was set to `kind='file'` — a deliberate file tile, not a hole. Check the log line for the reason. |
 | `makeVideoPoster` | A video row had no poster. The sweep downloaded the original, extracted a frame with ffmpeg (~1 s in), uploaded it as thumb + preview WebPs, and recorded `duration_secs`. |
 | `transcodeVideo` | A video within the caps gained an H.264/AAC `playback_path` rendition (`derived/{uid}/{photoId}_playback.mp4`). Only planned when `PHOTOS_TRANSCODE=1`. |
+| `posterSkipped` | A video exceeds the server poster processing cap. The persistent `poster_skipped_reason` explains the skip; its original and video kind are retained. |
 | `playbackSkipped` | A planned transcode found the clip over a cap and set `playback_skipped_reason` instead. The sweep never replans it; the lightbox shows the download card. |
-| `transcodeDeferred` | The run's 240 s transcode budget ran out before this clip started. Nothing was written; the next run (or a manual one) picks it up. |
-| `deleteOrphanObject` | An object under `originals/` had no `photos` row pointing at it (original **or** sidecar) and was older than 24 h — a dead upload whose finalize never ran. Deleted only after its live ownership check. Retained trash still owns its paths; ordinary Delete does not remove Storage objects. |
+| `transcodeDeferred` | A video reached the shared work deadline. Completed poster work remains counted; unfinished work resumes on a later invocation. |
+| `deleteOrphanObject` | An old object under `originals/` or `derived/` had no current retained-photo or upload-attempt owner. SQL authorizes its deletion and fences later path reuse; Storage confirms its absence. |
 | `deleteDeadRow` | An active `photos` row's original object is missing from storage — finalize raced a dead upload. Row deleted. |
 
-`errors` lists actions that failed (`"<action>: <message>"`); each action is
-isolated, so one failure never aborts the rest of the sweep. Rows younger
+`errors` samples at most 50 failures, with at most 1,000 characters each.
+`error_count` is the exact failure count even when details are truncated.
+Action failures are isolated; a lost lease stops the run immediately. Rows younger
 than 10 minutes are always skipped — the client may still be uploading its
 derivatives.
 
-**A run with any error responds `500`.** The body is unchanged — same
-`counts`, `errors`, and `planned` — so a manual run still shows exactly what
-landed and what failed; only the status code differs. That is what makes a
-failed cron show red under **Settings → Cron Jobs**. A `400` instead means
+**A run with any error responds `500`.** The original `counts`, `errors`,
+and `planned` fields remain. `purged` counts rows actually removed;
+`purge_failed` counts attempted photos with cleanup failures. `purge_backlog`
+and `oldest_due_at` describe the remaining expired rows, including canonicals
+held by duplicate references. A null backlog means it could not be measured
+(for example, another invocation owns the lease); it does not mean zero.
+`work_deferred` counts known interrupted items, with at least one when a scan
+remains unfinished. It is a lower bound, not a full unscanned-corpus count.
+Ordinary budget exhaustion and a busy lease return 200 with visible deferral.
+A failed cron shows red under **Settings → Cron Jobs**. A `400` instead means
 the request itself was bad (an unparseable `?olderThan=`); nothing was swept.
 
 ### `?olderThan=<ms>` (drills only)
@@ -87,8 +107,54 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
   "https://photos.dws-receipts.com/api/photos/repair?olderThan=0"
 ```
 
-Do not use `olderThan=0` while anyone might be mid-upload: a TUS upload's
-object can look row-less until its finalize lands.
+This override changes only orphan age, never the 30-day retention deadline
+or upload ownership checks. Use an isolated fixture target for destructive
+drills; do not run them against the production corpus.
+
+### Recovery after failure, overlap, or process death
+
+Save the response when invoking repair, inspect `errors`, and rerun the same
+POST after fixing the reported dependency. Vercel cron does not automatically
+retry a failed run. Storage deletion is idempotent: a missing object is already
+clean, while a failed or partial delete retains the photo row and original
+`purge_after`. The next run retries the remaining recorded paths. Shared paths
+remain while another retained photo or protected attempt owns them. Expired
+duplicate rows drain before their canonical row; a surviving duplicate
+reference holds that canonical for a later run. Completed migration and action
+histories do not block deletion; their audit identifiers survive.
+
+The singleton `photo_repair_progress` lease lasts two minutes and renews every
+30 seconds. An overlapping invocation performs no repair work. If the process
+dies, wait for lease expiry and rerun; never manually clear a live lease.
+Generation checks fence stale workers. Photo and Storage scans alternate
+100-entry keyset pages and checkpoint completed items; a failed item may replay
+on the next scan cycle. No whole-library list is loaded or persisted as an
+ownership snapshot. A partial scan never proves that an object is unowned.
+
+Read progress using an operator database session:
+
+```sql
+select lease_holder, lease_generation, lease_expires_at,
+       photo_cursor, storage_cursor, updated_at
+from public.photo_repair_progress where singleton;
+```
+
+Unfinished ordinary and migration attempts remain owners after lease expiry
+so closing a tab does not lose resumable bytes. Explicit ordinary queue Remove
+must durably cancel its unfinished attempt before dropping the queue item;
+cancelled migration items and explicit skips likewise become eligible after
+the orphan age. Completed photos remain retained owners. Deletion authorization
+stores permanent path fences in `photo_repair_deleted_paths`; never erase those
+records to retry an upload. A retired path requires a new attempt/photo UUID.
+Upload ledgers and `photo_repair_retired_ids` prevent reuse across owners.
+
+During production cutover, disable Vercel cron, stop manual repair, drain the
+last old invocation for its completion or 300 seconds, then deploy the complete
+new handler with the repair gate closed. Verify both methods return 503 before
+cleanup. Re-enable the gate only after the new schema/app cutover succeeds;
+record one manual repair, re-enable cron, and record the first scheduled result.
+Code rollback alone cannot safely run the old service-role repair over trash.
+Keep these activation obligations in the release checklist until observed.
 
 ### Video transcoding (`PHOTOS_TRANSCODE`)
 
@@ -99,10 +165,17 @@ once a manual sweep run and posters look healthy in production. Posters are
 **not** behind the switch: a video missing its thumb always gets
 `makeVideoPoster`.
 
-Caps (`src/lib/photos/repair/transcode.ts`): originals over **200 MB** or
-**120 s** are skipped permanently via `playback_skipped_reason`. Transcodes
-always run after every other action and stop starting after 240 s of wall
-time (`transcodeDeferred`), so a big backlog drains across daily runs.
+Caps (`src/lib/photos/repair/transcode.ts`): originals over **200 MiB** or
+**120 s** are skipped permanently via `playback_skipped_reason`. Repair also
+caps a streamed input and generated rendition at 200 MiB each, and each poster
+at 8 MiB, so its temporary workspace stays below the function disk limit.
+A larger original with no poster gets an observable `posterSkipped` and
+persistent `poster_skipped_reason`; its original and video kind remain intact.
+A truncated output is never published as playback. After changing the server
+processing cap or supplying a valid derivative through an authorized repair,
+clear the relevant skip reason to re-queue it. A video's poster and rendition share one download. Each bounded page gets
+only the time left after purge and earlier work; no transcode receives a fresh
+240-second allowance. A backlog drains over repeated invocations.
 
 Re-queue one video (e.g. after raising the caps or a bad rendition):
 
@@ -115,7 +188,7 @@ then run the sweep by hand. The old `_playback.mp4` object is upserted over.
 
 **"Why does Chrome show a download card for this video?"** triage, in order:
 
-1. `select playback_path, playback_skipped_reason, mime_type from photos where id = …`
+1. `select playback_path, playback_skipped_reason, poster_skipped_reason, mime_type from photos where id = …`
 2. `playback_skipped_reason` set → expected: the clip is over a cap. Re-queue
    only if you've raised the caps.
 3. Both null → the sweep hasn't reached it yet (transcodes can defer). Check
@@ -126,14 +199,12 @@ then run the sweep by hand. The old `_playback.mp4` object is upserted over.
 
 ### Reading the logs
 
-Vercel dashboard → the project → **Logs**, filter on `photos.repair`. One
-line per action:
-
-```
-photos.repair action=fillImageDerivatives photoId=<uuid> ok
-photos.repair action=markFileTile photoId=<uuid> reason=render 400
-photos.repair action=deleteOrphanObject path=originals/<uid>/<photoId>/x.jpg err=<message>
-```
+Vercel dashboard → the project → **Logs**, filter on `photos.repair`. The
+handler logs its aggregate JSON report: committed action `counts`, `purged`,
+`purge_failed`, backlog, deferred work, exact `error_count`, and bounded
+`errors` samples. Inspect that report alongside the HTTP response; there is
+no guaranteed log line for each action. Some media decisions also emit
+photo-specific reason logs.
 
 The cron's own runs appear under **Settings → Cron Jobs** with their status;
 the daily schedule is `0 9 * * *`.
@@ -178,11 +249,13 @@ approximate time, the job, and ideally the filename.
    order by created_at desc;
    ```
 
-   - Object without a row → the bytes arrived but finalize (`POST
-     /api/photos`) never did. Check the Vercel logs for `/api/photos` 4xx/5xx
-     around that time for the why. There is no server-side recovery (the row
-     needs client-known metadata); have the user retry from their tray, or
-     re-upload. The orphan object is swept after 24 h.
+   - Object without a row → the bytes arrived but finalization may still be
+     unfinished. Check the upload attempt or migration item and its route
+     errors; have the user resume from the tray or migration page. Unfinished
+     resumable attempts protect their paths until resolved or explicitly
+     cancelled, even after lease expiry. The 24-hour orphan age applies only
+     to genuinely unowned or explicitly cancelled paths, and cleanup still
+     requires a live check that no retained photo or other attempt owns them.
    - Nothing anywhere → the upload never reached storage: the connection died
      before the first byte, or the batch was dismissed. Re-upload.
 

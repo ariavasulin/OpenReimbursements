@@ -17,6 +17,8 @@ import type { QueueItem } from "@/lib/photos/upload-queue";
 function summary(items: QueueItem[], active: boolean): string {
   const count = (statuses: QueueItem["status"][]) =>
     items.filter((i) => statuses.includes(i.status)).length;
+  if (count(["cancelling"])) return "Removing upload...";
+  if (count(["cancel_pending"])) return `${plural(count(["cancel_pending"]), "removal")} pending`;
   if (active) {
     const settled = count(["done", "duplicate", "failed", "job_conflict", "restore_required", "waiting_claim"]);
     return `Uploading ${Math.min(settled + 1, items.length)} of ${items.length}`;
@@ -80,7 +82,9 @@ export default function UploadTray({
   const rows: UploadRow[] = items.map((item) => {
     const retryDeferred = (item.retryAt ?? 0) > Date.now();
     const primary =
-      item.status === "done" && item.sidecarRetry ? (
+      item.status === "cancel_pending" ? (
+        <RowButton onClick={() => manager.remove(item.photoId)}>Retry removal</RowButton>
+      ) : item.status === "done" && item.sidecarRetry ? (
         <RowButton disabled={retryDeferred} onClick={() => {
           sidecarTarget.current = item.photoId;
           sidecarInputRef.current?.click();
@@ -119,11 +123,13 @@ export default function UploadTray({
             </Link>
           )}
           {["job_conflict", "restore_required"].includes(item.status) && <span className="basis-full text-xs text-[#bbb]">After the action, choose Check again. No second copy is uploaded.</span>}
-          <RemoveButton
+          {item.status !== "cancel_pending" && <RemoveButton
             onClick={() => manager.remove(item.photoId)}
             name={item.name}
-          />
+          />}
         </>
+      ) : item.status === "queued" || item.status === "uploading" ? (
+        <RemoveButton onClick={() => manager.remove(item.photoId)} name={item.name} />
       ) : undefined,
     };
   });

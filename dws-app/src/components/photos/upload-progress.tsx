@@ -26,6 +26,8 @@ const STATUS_COLORS: Record<UploadItem["status"], { text: string; bar: string }>
     waiting_claim: { text: "text-amber-400", bar: "bg-amber-400" },
     retrying_sidecar: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
     interrupted: { text: "text-amber-400", bar: "bg-amber-400" },
+    cancelling: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
+    cancel_pending: { text: "text-amber-400", bar: "bg-amber-400" },
     queued: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
     uploading: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
   };
@@ -48,6 +50,10 @@ function statusLabel(item: UploadItem): string {
       return "Retrying XMP...";
     case "interrupted":
       return "Interrupted";
+    case "cancelling":
+      return "Removing...";
+    case "cancel_pending":
+      return "Removal pending";
     case "queued":
       return "Waiting";
     case "uploading":

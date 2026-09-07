@@ -19,6 +19,7 @@ import { POST as acquire } from '@/app/api/photo-migrations/uploads/acquire/rout
 import { POST as claim } from '@/app/api/photo-migrations/uploads/claim/route';
 import { POST as renew } from '@/app/api/photo-migrations/uploads/renew/route';
 import { POST as release } from '@/app/api/photo-migrations/uploads/release/route';
+import { POST as cancel } from '@/app/api/photo-migrations/uploads/cancel/route';
 import { POST as original } from '@/app/api/photo-migrations/uploads/original/route';
 import { POST as attach } from '@/app/api/photo-migrations/uploads/sidecar/route';
 import { POST as finalize } from '@/app/api/photos/route';
@@ -88,6 +89,103 @@ describe('shared upload HTTP boundaries with real Auth, SQL and Storage (AC-4, A
     expect((await call(finalize, value.payload, f.employeeB)).status).toBe(403);
     expect((await call(acquire, value.owner, f.employeeB)).status).toBe(403);
     expect((await call(release, { ...value.owner, lease_generation: value.lease.lease_generation, status: 'cancelled' }, f.employeeB)).status).toBe(403);
+  });
+
+  it('cancels only owned ordinary attempts behind verified origin, actor, and write gates', async () => {
+    const value = await prepared(); const input = { ...value.input, owner_kind: 'ordinary' };
+    expect((await call(cancel, input, f.employeeA, 'https://attacker.example')).status).toBe(403);
+    const anonymous = new Request('http://localhost:3000/api/photo-migrations/uploads/cancel', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:3000' }, body: JSON.stringify(input) });
+    expect((await withRequest(anonymous, [], () => cancel(anonymous))).status).toBe(401);
+    expect((await call(cancel, input, f.employeeB)).status).toBe(403);
+    expect((await call(cancel, input, f.administrator)).status).toBe(403);
+    expect((await call(cancel, { ...input, owner_kind: 'migration' })).status).toBe(400);
+    expect((await f.admin.from('photo_release_state').update({ photo_writes_enabled: false }).eq('singleton', true)).error).toBeNull();
+    expect((await call(cancel, input)).status).toBe(503);
+    expect((await f.admin.from('photo_release_state').update({ photo_writes_enabled: true }).eq('singleton', true)).error).toBeNull();
+    expect(await ok(cancel, input)).toEqual({ status: 'cancelled' });
+    expect(await ok(cancel, input)).toEqual({ status: 'cancelled' });
+    expect((await call(acquire, value.owner)).status).toBe(409);
+    expect((await call(release, { ...value.owner, lease_generation: value.lease.lease_generation, status: 'retryable_failed' })).status).toBe(409);
+    expect((await f.admin.from('photo_upload_attempts').select('status,lease_expires_at').eq('id', value.owner.owner_id).single()).data)
+      .toEqual({ status: 'cancelled', lease_expires_at: null });
+    expect((await f.admin.from('photo_content_claims').select('content_sha256').eq('upload_attempt_id', value.owner.owner_id)).data).toEqual([]);
+  });
+
+  it('settles cancellation before attempt creation and fences a delayed create response', async () => {
+    const id = randomUUID(); const photoId = randomUUID();
+    const input = { owner_kind: 'ordinary', attempt_id: id, photo_id: photoId, job_id: jobId,
+      source_signature: `pre-create:${id}`, content_sha256: randomBytes(32).toString('hex'),
+      original_name: 'fixture.jpg', original_bytes: 8, mime_type: 'image/jpeg' };
+    expect(await ok(cancel, input)).toEqual({ status: 'cancelled' });
+    // A previously dispatched creation may reach SQL only after cancellation.
+    expect(await ok(attempt, input)).toMatchObject({ owner_id: id, photo_id: photoId });
+    expect((await call(acquire, { owner_kind: 'ordinary', owner_id: id })).status).toBe(409);
+    expect((await f.admin.from('photo_upload_attempts').select('status').eq('id', id).single()).data).toEqual({ status: 'cancelled' });
+    expect((await f.admin.from('photos').select('id').eq('id', photoId)).data).toEqual([]);
+  });
+
+  it('waits for an uncommitted create before acknowledging durable cancellation', async () => {
+    const id = randomUUID(); const photoId = randomUUID();
+    const input = { owner_kind: 'ordinary', attempt_id: id, photo_id: photoId, job_id: jobId,
+      source_signature: `inflight-create:${id}`, content_sha256: randomBytes(32).toString('hex'),
+      original_name: 'fixture.jpg', original_bytes: 8, mime_type: 'image/jpeg' };
+    const connection = await f.sql.connect();
+    let pending: Promise<Response> | undefined;
+    try {
+      await connection.query('begin');
+      const pid = (await connection.query('select pg_backend_pid() as pid')).rows[0].pid;
+      await connection.query('select public.photo_create_upload_attempt($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [f.employeeA.id, jobId, input.source_signature, input.content_sha256, input.original_name,
+          input.original_bytes, input.mime_type, id, photoId]);
+      let settled = false;
+      pending = call(cancel, input).then(response => { settled = true; return response; });
+      await vi.waitFor(async () => {
+        const waiting = await f.sql.query('select 1 from pg_stat_activity where $1=any(pg_blocking_pids(pid))', [pid]);
+        expect(waiting.rows.length).toBeGreaterThan(0);
+      }, { timeout: 5000 });
+      expect(settled).toBe(false);
+      await connection.query('commit');
+      const response = await pending;
+      expect(response.status).toBe(200); expect(await response.json()).toEqual({ status: 'cancelled' });
+      expect((await call(acquire, { owner_kind: 'ordinary', owner_id: id })).status).toBe(409);
+    } finally {
+      await connection.query('rollback'); connection.release();
+      await pending;
+    }
+  });
+
+  it('preserves commit-first photo and XMP warnings, while cancel-first fences finalization', async () => {
+    const committed = await prepared(); await upload(committed);
+    committed.payload.sidecar_path = committed.created.sidecar_path; committed.payload.sidecar_name = 'fixture.xmp';
+    const result = await ok(finalize, committed.payload);
+    expect(result.sidecar_retry).toBe(true);
+    expect(await ok(cancel, { ...committed.input, owner_kind: 'ordinary' })).toEqual(result);
+    expect((await f.admin.from('photos').select('deleted_at').eq('id', committed.created.photo_id).single()).data).toEqual({ deleted_at: null });
+    expect((await f.admin.storage.from('photos').info(committed.created.original_path)).error).toBeNull();
+
+    const cancelled = await prepared(); await upload(cancelled);
+    expect(await ok(cancel, { ...cancelled.input, owner_kind: 'ordinary' })).toEqual({ status: 'cancelled' });
+    expect((await call(finalize, cancelled.payload)).status).toBe(409);
+    expect((await f.admin.from('photos').select('id').eq('id', cancelled.created.photo_id)).data).toEqual([]);
+  });
+
+  it('serializes concurrent cancellation/finalize into cancellation or an intact canonical photo', async () => {
+    const value = await prepared(); await upload(value);
+    const [cancelResponse, finalizeResponse] = await Promise.all([
+      call(cancel, { ...value.input, owner_kind: 'ordinary' }), call(finalize, value.payload),
+    ]);
+    expect(cancelResponse.status).toBe(200);
+    const outcome = await cancelResponse.json();
+    if (outcome.status === 'cancelled') {
+      expect(finalizeResponse.status).toBe(409);
+      expect((await f.admin.from('photos').select('id').eq('id', value.created.photo_id)).data).toEqual([]);
+    } else {
+      expect(outcome).toMatchObject({ status: 'created', photo_id: value.created.photo_id });
+      expect(finalizeResponse.status).toBe(200);
+      expect((await f.admin.from('photos').select('deleted_at').eq('id', value.created.photo_id).single()).data).toEqual({ deleted_at: null });
+      expect((await f.admin.storage.from('photos').info(value.created.original_path)).error).toBeNull();
+    }
   });
 
   it('requires original metadata independently, and SQL also rejects a forged successful metadata response', async () => {
