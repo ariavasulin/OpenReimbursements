@@ -8,6 +8,7 @@ vi.mock('@/lib/supabaseAdminClient', () => ({ supabaseAdmin: { from: mocks.from,
 vi.mock('./issues', async importOriginal => ({ ...await importOriginal<typeof import('./issues')>(), executeCreateGithubIssue: mocks.issue }));
 import { browserOrigin, createDwsMcpServer, scriptNames, validateScriptInput } from './registry';
 import { IssueSubmissionError } from './issues';
+import { harnessInstructions, skills } from './harness';
 
 beforeEach(() => {
   vi.stubEnv('DWS_BROWSER_ORIGIN', 'https://photos.dws-receipts.com');
@@ -29,6 +30,9 @@ describe('MCP registry', () => {
       ['create_github_issue', { title: 'Report', body: 'Details', anonymous: true, kind: 'bug', confirmed: false }],
     ];
     for (const [name, input] of invalid) expect(() => validateScriptInput(name, input)).toThrow();
+    for (const name of ['eval', '__proto__', 'constructor', 'toString', '../photos', 'add_photos/../../eval']) {
+      expect(() => validateScriptInput(name, {})).toThrow();
+    }
     expect(mocks.from).not.toHaveBeenCalled();
   });
   it('permits unknown job hints and valid app references without looking them up', () => {
@@ -53,11 +57,25 @@ describe('MCP registry', () => {
     try {
       const tools = await client.listTools();
       expect(tools.tools.map(tool => tool.name)).toEqual(['load_dws_skill', 'execute_dws_script']);
+      expect(client.getInstructions()).toBe(harnessInstructions);
+      const [loader, executor] = tools.tools;
+      for (const skill of Object.values(skills)) expect(loader.description).toContain(skill.description);
+      for (const name of scriptNames) expect(JSON.stringify(tools)).not.toContain(name);
+      expect(executor.inputSchema.properties?.script_name).toMatchObject({ type: 'string', minLength: 1, maxLength: 64 });
+      expect(executor.inputSchema.properties?.script_name).not.toHaveProperty('enum');
       for (const skill_name of ['photos', 'report_issue']) {
         const response = await client.callTool({ name: 'load_dws_skill', arguments: { skill_name } });
         const skill = JSON.parse((response.content as Array<{text:string}>)[0].text);
-        expect(skill.scripts).toHaveLength(skill_name === 'photos' ? 5 : 1);
-        expect(skill.scripts.every((script: {input_schema:unknown}) => script.input_schema)).toBe(true);
+        expect(skill.instructions).toBe(skills[skill_name as keyof typeof skills].instructions);
+        expect(skill.harness_instructions).toBe(harnessInstructions);
+        expect(skill.scripts.map((script: {script_name:string}) => script.script_name)).toEqual(
+          skill_name === 'photos' ? scriptNames.slice(0, 5) : ['create_github_issue']);
+        for (const script of skill.scripts) {
+          expect(script.description.trim()).not.toBe('');
+          expect(script.input_schema).toMatchObject({ type: 'object', additionalProperties: false });
+        }
+        if (skill_name === 'photos') expect(skill.scripts.find((script: {script_name:string}) => script.script_name === 'move_photos').input_schema.required).toEqual(['selector', 'destination_job_number']);
+        else expect(skill.scripts[0].input_schema.properties.confirmed).toMatchObject({ const: true });
       }
       const tokens = new Set<string>();
       const scripts = ['migrate_photos', 'add_photos', 'move_photos', 'remove_photos', 'restore_photos'] as const;
@@ -82,9 +100,12 @@ describe('MCP registry', () => {
       }
       expect(tokens.size).toBe(5);
       expect(mocks.from).not.toHaveBeenCalled();
-      const invalid = await client.callTool({ name: 'execute_dws_script', arguments: { script_name: 'eval', input: { code: 'globalThis.pwned=true' } } });
-      expect(invalid.isError).toBe(true);
+      for (const script_name of ['eval', '__proto__', 'constructor', 'toString', '../photos', 'x'.repeat(65)]) {
+        const invalid = await client.callTool({ name: 'execute_dws_script', arguments: { script_name, input: { code: 'globalThis.pwned=true' } } });
+        expect(invalid.isError).toBe(true);
+      }
       expect(mocks.rpc).toHaveBeenCalledTimes(5);
+      expect(mocks.issue).not.toHaveBeenCalled();
       for (const call of [
         { name: 'unknown_tool', arguments: {} },
         { name: 'load_dws_skill', arguments: { skill_name: 'unknown_skill' } },

@@ -6,6 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createFixtures } from '../fixtures';
 import type { IssueSubmissionResult } from '../../src/lib/mcp/issues';
+import { harnessInstructions, skills as packagedSkills } from '../../src/lib/mcp/harness';
 
 const origin = process.env.DWS_MCP_BASE_URL;
 const key = process.env.MCP_SHARED_KEY;
@@ -56,25 +57,56 @@ afterAll(async () => {
   }
   await mkdir(resolve('test-results'), { recursive: true });
   await writeFile(resolve(evidence.protocol_version ? 'test-results/phase6-mcp-http.json' : 'test-results/phase6-mcp-http-focused.json'), artifact + '\n');
+  if (evidence.harness_context) await writeFile(resolve('test-results/phase6-harness-context.json'), JSON.stringify(evidence.harness_context, null, 2) + '\n');
 });
 
 describe('official SDK against the actual HTTP MCP endpoint (AC-1, AC-2)', () => {
   it('negotiates protocol, discovers exactly two tools, and loads both complete skills', async () => {
+    const initialized = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: transport.protocolVersion,
+        capabilities: {}, clientInfo: { name: 'dws-harness-context-capture', version: '1.0.0' } } }) });
+    expect(initialized.status).toBe(200);
+    const initialization = await initialized.json();
+    expect(initialization.result.instructions).toBe(harnessInstructions);
     const tools = await client.listTools();
     expect(tools.tools.map(tool => tool.name).sort()).toEqual(['execute_dws_script', 'load_dws_skill']);
     expect(transport.protocolVersion).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(transport.sessionId).toBeUndefined();
+    expect(client.getInstructions()).toBe(harnessInstructions);
+    const loader = tools.tools.find(tool => tool.name === 'load_dws_skill')!;
+    const executor = tools.tools.find(tool => tool.name === 'execute_dws_script')!;
+    for (const skill of Object.values(packagedSkills)) expect(loader.description).toContain(skill.description);
+    for (const name of ['migrate_photos', 'add_photos', 'move_photos', 'remove_photos', 'restore_photos', 'create_github_issue']) {
+      expect(JSON.stringify(tools)).not.toContain(name);
+    }
+    expect(executor.inputSchema.properties?.script_name).toMatchObject({ type: 'string', minLength: 1, maxLength: 64 });
+    expect(executor.inputSchema.properties?.script_name).not.toHaveProperty('enum');
     const skills = [];
+    const loadedSkills = [];
     for (const skill_name of ['photos', 'report_issue']) {
-      const skill = decode<{ skill_name: string; instructions: string; scripts: Array<{ script_name: string; input_schema: unknown }> }>(await client.callTool({ name: 'load_dws_skill', arguments: { skill_name } }));
+      const skill = decode<{ skill_name: string; instructions: string; harness_instructions: string; scripts: Array<{ script_name: string; description: string; input_schema: Record<string, unknown> }> }>(await client.callTool({ name: 'load_dws_skill', arguments: { skill_name } }));
       expect(skill.skill_name).toBe(skill_name);
-      expect(skill.instructions).toEqual(expect.any(String));
-      expect(skill.instructions.trim()).not.toBe('');
+      expect(skill.instructions).toBe(packagedSkills[skill_name as keyof typeof packagedSkills].instructions);
+      expect(skill.harness_instructions).toBe(client.getInstructions());
       expect(skill.scripts).toHaveLength(skill_name === 'photos' ? 5 : 1);
-      expect(skill.scripts.every(item => item.input_schema && item.script_name)).toBe(true);
+      for (const script of skill.scripts) {
+        expect(script.description.trim()).not.toBe('');
+        expect(script.input_schema).toMatchObject({ type: 'object', additionalProperties: false });
+        expect(script.input_schema.properties).toBeDefined();
+      }
+      if (skill_name === 'photos') {
+        expect(skill.scripts.map(script => script.script_name)).toEqual(['migrate_photos', 'add_photos', 'move_photos', 'remove_photos', 'restore_photos']);
+        expect(skill.scripts.find(script => script.script_name === 'move_photos')!.input_schema.required).toEqual(['selector', 'destination_job_number']);
+      } else {
+        expect(skill.scripts.map(script => script.script_name)).toEqual(['create_github_issue']);
+        expect(skill.scripts[0].input_schema.properties).toMatchObject({ confirmed: { const: true } });
+      }
       skills.push({ skill_name, scripts: skill.scripts.map(item => item.script_name) });
+      loadedSkills.push(skill);
     }
     Object.assign(evidence, { protocol_version: transport.protocolVersion, tools: tools.tools.map(tool => tool.name), session_id: null, skills });
+    evidence.harness_context = { initialization_response: initialization,
+      discovery: tools, loaded_skills: loadedSkills };
     scenarios.push({ name: 'sdk-discovery-and-both-skill-loads', passed: true });
   });
 
@@ -83,8 +115,12 @@ describe('official SDK against the actual HTTP MCP endpoint (AC-1, AC-2)', () =>
     expect(restarted.status).toBe(200);
     const tools = await client.listTools();
     expect(tools.tools).toHaveLength(2);
-    const skill = decode<{ skill_name: string }>(await client.callTool({ name: 'load_dws_skill', arguments: { skill_name: 'photos' } }));
+    // Loading guides the assistant; a process never grants or stores a loaded-skill capability.
+    const handoff = await script<{ handoff_url: string }>('add_photos', {});
+    expect(new URL(handoff.handoff_url).pathname).toBe('/migrate');
+    const skill = decode<{ skill_name: string; harness_instructions: string }>(await client.callTool({ name: 'load_dws_skill', arguments: { skill_name: 'photos' } }));
     expect(skill.skill_name).toBe('photos');
+    expect(skill.harness_instructions).toBe(harnessInstructions);
     expect(transport.sessionId).toBeUndefined();
     scenarios.push({ name: 'same-client-survives-server-process-restart', passed: true });
   }, 120_000);
@@ -119,7 +155,9 @@ describe('official SDK against the actual HTTP MCP endpoint (AC-1, AC-2)', () =>
       for (const body of [initialize, dispatch]) {
         const result = await post(new URL(path, origin).href, body);
         expect(result.status).toBe(404);
-        expect(await result.text()).not.toContain('Use migrate_photos');
+        const responseText = await result.text();
+        expect(responseText).not.toContain(harnessInstructions);
+        expect(responseText).not.toContain('harness_instructions');
       }
     }
     const savedGate = (await f.sql.query('select * from public.photo_release_state')).rows[0];
@@ -138,11 +176,16 @@ describe('official SDK against the actual HTTP MCP endpoint (AC-1, AC-2)', () =>
         await f.sql.query('insert into public.photo_release_state select * from json_populate_record(null::public.photo_release_state,$1::json)', [JSON.stringify(savedGate)]);
       }
     }
-    for (const script_name of ['eval', 'constructor', 'run_shell']) {
+    const before = Number((await f.sql.query('select count(*) from public.dws_action_handoffs')).rows[0].count);
+    const beforeIssues = Number((await f.sql.query('select count(*) from public.issue_report_submissions')).rows[0].count);
+    for (const script_name of ['eval', '__proto__', 'constructor', 'toString', 'run_shell', '../photos', 'x'.repeat(65)]) {
       const result = await client.callTool({ name: 'execute_dws_script', arguments: { script_name, input: {} } });
       expect(result.isError).toBe(true);
     }
-    const before = Number((await f.sql.query('select count(*) from public.dws_action_handoffs')).rows[0].count);
+    for (const skill_name of ['__proto__', 'constructor', '../photos']) {
+      expect((await client.callTool({ name: 'load_dws_skill', arguments: { skill_name } })).isError).toBe(true);
+    }
+    expect(Number((await f.sql.query('select count(*) from public.issue_report_submissions')).rows[0].count)).toBe(beforeIssues);
     const secretVariants = [
       { script_name: 'add_photos', input: { job_number: key } },
       { script_name: 'migrate_photos', input: { sources: [{ label: key }] } },

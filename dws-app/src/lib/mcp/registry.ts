@@ -8,6 +8,7 @@ import { assertNoConfiguredSecrets, ConfiguredSecretError } from './secrets';
 import { executeCreateGithubIssue, IssueSubmissionError } from './issues';
 import { IssueInputError } from './issues-validation';
 import { MAX_TAG_LENGTH, MAX_TAGS } from '@/lib/photos/apiShared';
+import { harnessInstructions, skillDiscovery, skillNames, skills, type SkillName } from './harness';
 
 const text = (maximum: number) => z.string().min(1).max(maximum).refine(value => value.trim().length > 0);
 const job = text(128);
@@ -50,7 +51,12 @@ export function browserOrigin(): string {
 }
 
 /** Pure syntax validation only. Photo/job lookup belongs to the logged-in browser. */
-export function validateScriptInput(scriptName: ScriptName, input: unknown): Record<string, unknown> {
+function assertScriptName(name: string): asserts name is ScriptName {
+  if (!Object.prototype.hasOwnProperty.call(scriptSchemas, name)) throw new PhotoApiError('invalid_input');
+}
+
+export function validateScriptInput(scriptName: string, input: unknown): Record<string, unknown> {
+  assertScriptName(scriptName);
   assertNoConfiguredSecrets(input);
   const parsed = scriptSchemas[scriptName].safeParse(input);
   if (!parsed.success) throw new PhotoApiError('invalid_input');
@@ -80,10 +86,10 @@ async function createPhotoHandoff(scriptName: Exclude<ScriptName, 'create_github
   return { handoff_url: url.href, expires_at };
 }
 
-const instructions = {
-  photos: `Use migrate_photos for one or more local folders, or add_photos for up to 500 selected files. The hosted assistant cannot read local drives. Gather optional labels/job numbers, then give the employee the returned handoff URL to open in Chrome or Edge. The link expires in 30 minutes and can be consumed once after existing DWS SMS login. The employee selects local files, reviews source-to-job mappings, exclusions, counts and bytes, then confirms before direct browser-to-Supabase uploads. Keep the tab open; reopening and reselecting resumes unfinished work. Jobs and photo references resolve only after login; do not claim a photo exists from a handoff response. move_photos, remove_photos and restore_photos open exact-target browser review and confirmation. Filename ambiguity requires human selection. Removal is recoverable for 30 days, while a known public image URL stays accessible. A valid handoff grants its logged-in consumer broad authority only for its bound action. Never put credentials, the connector URL, attachments, binary data, or code into inputs. Never describe handoff creation as completion of a photo action.`,
-  report_issue: `Prepare a concise report about the app, MCP, receipts, photos or workflow. Include what the employee knows: summary, reproduction steps if relevant, expected/actual behavior, impact and supplied context/HTTPS links. Do not demand unknown facts or claim to inspect inaccessible attachments. Ask for the reporter name unless already supplied; anonymity requires an explicit employee request. Show the exact title and body before invoking create_github_issue, including the final "Reported by: <name>" line for non-anonymous reports, and obtain explicit confirmation. Send the body without that server-appended attribution line. Only then set confirmed:true. No SMS/browser session is needed. The server uses fixed repository/labels. Text and already-hosted HTTPS links only: no attachments, base64, local attachment paths, credentials or connector URL. Title maximum 200 characters, body maximum 16,000 characters, whole request maximum 64 KiB. Preserve the confirmed text and reuse the same idempotency_key on retry. Return issue_url only when status is published; unknown means publication is uncertain and retries reconcile without creating another issue; do not change the body or key to bypass reconciliation. For failed submissions, an administrator can check the configured Issues credential, repository permissions and labels; wait out rate limits and retry the unchanged confirmed input and key. A corrected payload needs fresh confirmation. This tool cannot diagnose the repository, edit/close issues, inspect code, or launch an agent.`,
-};
+const skillScripts = {
+  photos: ['migrate_photos', 'add_photos', 'move_photos', 'remove_photos', 'restore_photos'],
+  report_issue: ['create_github_issue'],
+} as const satisfies Record<SkillName, readonly ScriptName[]>;
 const jsonScriptSchemas = Object.fromEntries(scriptNames.map(name => [name, zodToJsonSchema(scriptSchemas[name])]));
 const result = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] });
 function businessError(error: unknown) {
@@ -96,20 +102,20 @@ function businessError(error: unknown) {
 
 /** Each HTTP request gets a new server and transport; durable workflow state lives in Postgres. */
 export function createDwsMcpServer(): McpServer {
-  const server = new McpServer({ name: 'dws', version: '1.0.0' });
+  const server = new McpServer({ name: 'dws', version: '1.0.0' }, { instructions: harnessInstructions });
   server.registerTool('load_dws_skill', {
-    description: 'Load DWS photos (migrate, add, move, remove, restore) or report_issue (confirmed issue publication) instructions and script schemas.',
-    inputSchema: { skill_name: z.enum(['photos', 'report_issue']) },
+    description: skillDiscovery,
+    inputSchema: { skill_name: z.enum(skillNames) },
     annotations: { readOnlyHint: true },
-  }, async ({ skill_name }) => result({ skill_name, instructions: instructions[skill_name], scripts: scriptNames
-    .filter(name => skill_name === 'photos' ? name !== 'create_github_issue' : name === 'create_github_issue')
+  }, async ({ skill_name }) => result({ skill_name, instructions: skills[skill_name].instructions, harness_instructions: harnessInstructions, scripts: skillScripts[skill_name]
     .map(name => ({ script_name: name, description: descriptions[name], input_schema: jsonScriptSchemas[name] })) }));
   server.registerTool('execute_dws_script', {
-    description: scriptNames.map(name => `${name}: ${descriptions[name]}`).join('\n') + '\nLoad the relevant skill for exact per-script input schemas before calling.',
-    inputSchema: { script_name: z.enum(scriptNames), input: z.record(z.unknown()) },
+    description: 'Execute a DWS script described by a loaded skill. Load the relevant skill first, follow its workflow and confirmation requirements, and pass the script name and input matching its argument schema.',
+    inputSchema: { script_name: z.string().min(1).max(64), input: z.record(z.unknown()) },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
   }, async ({ script_name, input }) => {
     try {
+      assertScriptName(script_name);
       const validated = validateScriptInput(script_name, input);
       return result(script_name === 'create_github_issue'
         ? await executeCreateGithubIssue(validated)

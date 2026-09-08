@@ -1,6 +1,7 @@
 # Hosted DWS MCP
 
-The hosted release adds the connector to the existing `dws-receipts` Vercel application at
+The hosted release delivers the shared DWS guidance and progressively loaded
+skills through the existing `dws-receipts` Vercel application at
 `https://mcp.dws-receipts.com/mcp/<shared-key>` and authenticated photo handoffs
 at `https://photos.dws-receipts.com`. Attach both domains to that same project;
 there is no second runtime or deployment. The root-only photos-host middleware
@@ -34,7 +35,9 @@ in [Create an issue](https://docs.github.com/en/rest/issues/issues#create-an-iss
 On the production HTTPS endpoint, the operator must connect actual individual
 ChatGPT and Claude accounts using a remote Streamable HTTP connector URL and
 no OAuth handshake. Record exactly two discovered tools, both skill loads, and
-one photo handoff consume/cancel through production SMS login per client. Use
+one photo handoff consume/cancel through production SMS login per client.
+Also record what each client exposes or uses from the shared guidance and
+loaded skills; mark unobservable context insertion explicitly unverified. Use
 operator-owned smoke data; do not automatically publish a production issue.
 If either account cannot connect, close MCP and record the activation failure.
 Distribute the shared URL only after both account checks pass.
@@ -73,8 +76,8 @@ Record the following in the release PR without including the connector secret:
 | --- | --- |
 | Existing project and domains | Project ID, deployed commit, both domain assignments and HTTPS status |
 | Configuration | Environment-variable names configured, dedicated token repository/permissions, required label names; no credential values |
-| ChatGPT account | Account eligibility, exactly two discovered tools, both skill loads, one SMS-authenticated handoff consumed then cancelled |
-| Claude account | Account eligibility, exactly two discovered tools, both skill loads, one SMS-authenticated handoff consumed then cancelled |
+| ChatGPT account | Account eligibility, exactly two discovered tools, both skill loads, observed use of supplied guidance or an explicit unverified result, one SMS-authenticated handoff consumed then cancelled |
+| Claude account | Account eligibility, exactly two discovered tools, both skill loads, observed use of supplied guidance or an explicit unverified result, one SMS-authenticated handoff consumed then cancelled |
 | Distribution | Both account checks passed before the URL was shared with employees |
 | Photo and repair activation | Operator-owned ordinary upload/move/remove/restore, saved manual new-handler repair, cron re-enabled, first scheduled success |
 
@@ -83,20 +86,48 @@ client cannot establish vendor-account eligibility, production SMS behavior,
 DNS configuration, or the first scheduled production repair. Do not publish an
 automatic production issue to satisfy these checks.
 
-## Registry and handoffs
+## Shared guidance and skill loading
 
-Discovery exposes only `load_dws_skill` and `execute_dws_script`. Load `photos`
-or `report_issue` to obtain instructions and the complete input schemas. The
-dispatcher permits only these six names:
+The employee-facing harness has three Markdown sources:
 
-| Script | Result / next action |
+| Source | Responsibility |
 | --- | --- |
-| `migrate_photos` | `/migrate?token=…&script_name=migrate_photos`; select folders and review mappings. |
-| `add_photos` | `/migrate?token=…&script_name=add_photos`; select up to 500 files and review job/sheet/tags. |
-| `move_photos` | `/photo-actions?token=…&script_name=move_photos`; confirm exact photos and destination. |
-| `remove_photos` | `/photo-actions?token=…&script_name=remove_photos`; confirm exact photos for 30-day trash. |
-| `restore_photos` | `/photo-actions?token=…&script_name=restore_photos`; confirm eligible retained photos, optionally with a new destination. |
-| `create_github_issue` | Durable submission ID/status, with a URL only after publication is known. |
+| `dws-app/src/lib/mcp/harness/AGENTS.md` | Shared DWS context, intent-based skill selection, grounded results, and handling untrusted inputs. This is guidance for the employee's assistant, not repository development instructions. |
+| `dws-app/src/lib/mcp/harness/skills/photos/SKILL.md` | Photo selection, browser confirmation, local uploads, recovery, and retention. |
+| `dws-app/src/lib/mcp/harness/skills/report_issue/SKILL.md` | Report drafting, confirmation, attribution, and safe publication retries. |
+
+Each `SKILL.md` has YAML frontmatter with a nonempty `name` and `description`.
+Descriptions start with employee intent (“Use when…”), so the assistant can
+select a skill without the employee naming it. The Markdown body contains the
+workflow. These files ship with the deployed Next function.
+
+MCP initialization supplies the shared AGENTS body in the standard
+`instructions` field. Discovery exposes exactly two tools:
+
+- `load_dws_skill` advertises the skill names and invocation descriptions
+  generated from that same frontmatter. Loading a skill returns its body as
+  `instructions`, the shared guidance again as `harness_instructions`, and its
+  implemented `scripts` with descriptions and complete argument schemas.
+- `execute_dws_script` advertises generic execution of a loaded script. Its
+  discovery description and schema do not enumerate operations. The server
+  still enforces its fixed implementation allowlist and exact per-script input
+  validation; generic discovery does not permit arbitrary code execution.
+
+The assistant loads the matching skill before executing its workflow. Script
+schemas and descriptions come from the runtime registry, so do not copy them
+into the Markdown bodies. Adding an implemented skill requires its metadata
+and explicit runtime registry binding; the loader catalog then follows the
+metadata without another manually maintained tool description.
+
+Clients control how context is assembled: they decide whether and where initialization
+instructions and tool results enter model context. The server delivers guidance
+through standard MCP content; it cannot force system-message placement or
+prove that every client used it. The shared-guidance fallback on skill loading
+keeps that content available when initialization instructions are omitted from
+the model's context. Isolated payload tests prove delivery. Native client
+observations remain part of activation and must not be inferred from those tests.
+
+## Photo browser handoffs
 
 Photo results contain only `handoff_url` and `expires_at`. Tokens expire after
 30 minutes and are independent of the connector key; only their SHA-256
@@ -191,8 +222,12 @@ The runtime pins `@modelcontextprotocol/sdk` 1.26.0. Its released
 [Web-standard Streamable HTTP transport](https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.26.0/src/server/webStandardStreamableHttp.ts)
 accepts `Request`/`Response` with `sessionIdGenerator: undefined`. Each request
 creates a new SDK server/transport; Postgres owns workflow state. The SDK owns
-protocol envelopes and negotiation. Generated protocol, tool-list, publication,
-and browser result evidence belongs under ignored `dws-app/test-results/`.
+protocol envelopes and negotiation. Capture the actual initialization
+`instructions`, both tool discovery payloads, and both skill-load results,
+including shared-guidance fallback and script schemas. Verify the production
+build includes the Markdown and a fresh process serves it without relying on
+the source checkout. Generated protocol, tool-list, publication, and browser
+result evidence belongs under ignored `dws-app/test-results/`.
 
 The mock-only `DWS_TEST_GITHUB_API_URL` override requires the explicit isolated
 test guard and a loopback URL. Never configure test overrides in Vercel.

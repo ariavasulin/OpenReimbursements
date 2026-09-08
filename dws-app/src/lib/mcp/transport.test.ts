@@ -3,6 +3,7 @@ vi.mock('server-only', () => ({}));
 const mocks = vi.hoisted(() => ({ from: vi.fn(), maybeSingle: vi.fn() }));
 vi.mock('@/lib/supabaseAdminClient', () => ({ supabaseAdmin: { from: mocks.from } }));
 import { POST, GET, DELETE, OPTIONS } from '@/app/mcp/[shared-key]/route';
+import { harnessInstructions } from './harness';
 
 const key = 'a'.repeat(64);
 const context = (supplied = key) => ({ params: Promise.resolve({ 'shared-key': supplied }) });
@@ -44,7 +45,9 @@ describe('MCP Web Request transport boundary', () => {
     } }), context());
     expect(initialize.status).toBe(200);
     expect(initialize.headers.get('mcp-session-id')).toBeNull();
-    expect((await initialize.json()).result.protocolVersion).toBe('2025-11-25');
+    const initialized = (await initialize.json()).result;
+    expect(initialized.protocolVersion).toBe('2025-11-25');
+    expect(initialized.instructions).toBe(harnessInstructions);
     const discovery = await POST(post({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, { 'mcp-protocol-version': '2025-11-25' }), context());
     expect(discovery.status).toBe(200);
     expect((await discovery.json()).result.tools.map((tool: {name:string}) => tool.name)).toEqual(['load_dws_skill', 'execute_dws_script']);
