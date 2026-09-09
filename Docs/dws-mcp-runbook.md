@@ -94,7 +94,7 @@ The employee-facing harness has three Markdown sources:
 | --- | --- |
 | `dws-app/src/lib/mcp/harness/AGENTS.md` | Shared DWS context, intent-based skill selection, grounded results, and handling untrusted inputs. This is guidance for the employee's assistant, not repository development instructions. |
 | `dws-app/src/lib/mcp/harness/skills/photos/SKILL.md` | Photo selection, browser confirmation, local uploads, recovery, and retention. |
-| `dws-app/src/lib/mcp/harness/skills/report_issue/SKILL.md` | Report drafting, confirmation, attribution, and safe publication retries. |
+| `dws-app/src/lib/mcp/harness/skills/report_issue/SKILL.md` | Guided feature and bug interviews, living issue drafts, explicit publication permission, attribution, and safe retries. |
 
 Each `SKILL.md` has YAML frontmatter with a nonempty `name` and `description`.
 Descriptions start with employee intent (“Use when…”), so the assistant can
@@ -145,8 +145,32 @@ boundary. Review all mappings/targets before confirmation. See the
 
 ## Confirmed issue publication and recovery
 
+The `report_issue` skill helps employees design improvements, explore bugs,
+and raise general questions before deciding whether to publish. It asks one
+focused question per interviewing turn, using only unanswered, decision-relevant
+gaps. It settles the problem, current workflow, and desired outcome before
+recommending behavior, then explores useful options and tradeoffs in plain
+language. Each answer revises one coherent draft in the conversation. Detailed
+input can skip already-settled questions; a simple bug stays short, and general
+questions do not require a feature specification.
+
+Feature drafts cover affected people, current workarounds, observable success,
+proposed behavior and examples, relevant edge cases, alternatives, boundaries,
+and open questions at appropriate depth. Bug drafts cover the employee's task,
+expected and actual results, reproduction and frequency, context, impact,
+workarounds, and a satisfactory fix. Empty or inapplicable sections are omitted.
+The assistant does not invent a root cause, numerical success metrics, or
+engineering commitments, or ask employees to design schemas or architecture.
+Text sketches and examples suffice; host-supported visuals are optional, with
+no assumption of HTML, filesystem, image-tool, or attachment access.
+
+Interviewing and draft review make no script calls. If the employee is not ready
+to post, retain the draft in the conversation. Agreement with an idea or approval
+of draft wording is separate from explicit permission to publish the final report.
 Show the exact title and body to the employee, including `Reported by: <name>`
-for an attributed report, and obtain explicit confirmation. Send the report
+for an attributed report, identify the issue kind, and ask explicit permission
+to post that exact report. Wait for that permission before calling
+`create_github_issue` with `confirmed: true`. Send the report
 body and reporter name as separate fields so the server appends that one
 attribution line. Omit attribution only on an explicit anonymity request.
 No SMS/browser session is involved. Title and body limits are 200 and 16,000

@@ -37,7 +37,7 @@ const descriptions: Record<ScriptName, string> = {
   move_photos: 'Open browser review of exact photo targets and a destination job; move only after employee confirmation.',
   remove_photos: 'Open browser review of exact photo targets to move to recoverable 30-day trash. Known public image URLs remain accessible.',
   restore_photos: 'Open browser review of recoverable trash, optionally moving restored photos to a destination job. Expired retention cannot be restored.',
-  create_github_issue: 'Publish an explicitly confirmed text report to the fixed OpenReimbursements repository with default reporter attribution or explicit anonymity; retries return the durable submission status.',
+  create_github_issue: 'Publish a feature, bug, or question after the report_issue interview and explicit permission to post the displayed final title, body, and attribution. Never call during brainstorming or draft review. Uses the fixed OpenReimbursements repository with default reporter attribution or explicit anonymity; unchanged confirmed retries return the durable submission status.',
 };
 
 export function browserOrigin(): string {
