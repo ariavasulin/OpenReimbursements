@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
-import { fetchJson } from "@/lib/photos/api";
 import { buildPhotoLink } from "@/lib/photos/photo-link";
+import { trashDisclosure } from "@/lib/photos/action-client";
 import {
   formatCapturedAt,
   formatFileInfo,
@@ -20,7 +20,6 @@ interface PhotoInfoProps {
   canDelete: boolean;
   /** Opens the edit sheet (owned by the lightbox, so it stacks above it). */
   onEdit(): void;
-  onDeleted(): void;
 }
 
 export default function PhotoInfo({
@@ -28,32 +27,7 @@ export default function PhotoInfo({
   layout,
   canDelete,
   onEdit,
-  onDeleted,
 }: PhotoInfoProps) {
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  // Leaving a slide abandons any half-done confirm on it.
-  useEffect(() => {
-    setConfirmingDelete(false);
-  }, [photo.id]);
-
-  const deletePhoto = async () => {
-    setBusy(true);
-    try {
-      await fetchJson(`/api/photos/${photo.id}`, "Delete failed", {
-        method: "DELETE",
-      });
-      toast.success("Photo deleted");
-      onDeleted();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Delete failed");
-      setConfirmingDelete(false);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const copyLink = async () => {
     if (!photo.job) return;
     try {
@@ -66,14 +40,6 @@ export default function PhotoInfo({
       // rejection.
       toast.error("Couldn't copy the link");
     }
-  };
-
-  // The armed confirm is its own layer: Escape backs out of it, and must not
-  // reach the desktop panel's handler, which would close the whole viewer.
-  const handleDeleteKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key !== "Escape" || !confirmingDelete) return;
-    event.stopPropagation();
-    setConfirmingDelete(false);
   };
 
   const bar = layout === "bar";
@@ -182,29 +148,15 @@ export default function PhotoInfo({
               Copy link
             </button>
             {canDelete && (
-              <button
-                type="button"
-                onClick={() =>
-                  confirmingDelete ? deletePhoto() : setConfirmingDelete(true)
-                }
-                onKeyDown={handleDeleteKeyDown}
-                disabled={busy}
-                className={cn(
-                  actionClass,
-                  "rounded-lg border py-2 text-center text-xs font-medium",
-                  confirmingDelete
-                    ? "border-red-500 bg-red-500/20 text-red-300"
-                    : // red-400 is 3.87:1 on the panel's #3e3e3e; red-300 is 5.64:1.
-                      cn(
-                        "border-[#4e4e4e] text-red-300 hover:border-red-500",
-                        secondaryBg
-                      )
-                )}
+              <Link
+                href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
+                className={cn(actionClass, "rounded-lg border border-[#4e4e4e] py-2 text-center text-xs font-medium text-red-300 hover:border-red-500", secondaryBg)}
               >
-                {confirmingDelete ? "Confirm delete?" : "Delete"}
-              </button>
+                Move to trash
+              </Link>
             )}
         </div>
+        {canDelete && <p className="mt-2 text-xs text-[#bbb]">{trashDisclosure} Restore through Trash.</p>}
       </div>
     </div>
   );

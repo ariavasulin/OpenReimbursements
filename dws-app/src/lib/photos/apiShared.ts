@@ -7,7 +7,7 @@ export const PHOTO_COLUMNS =
   'original_path, original_bytes, mime_type, original_name, thumb_path, ' +
   'preview_path, playback_path, duration_secs, sidecar_path, sidecar_name, ' +
   'created_at, ' +
-  'uploader:user_profiles(full_name), job:jobs(id, job_number, name)';
+  'uploader:user_profiles!photos_uploader_id_fkey(full_name), job:jobs(id, job_number, name)';
 
 /** Rows one GET /api/photos page returns when the caller names no `limit`. */
 export const PHOTOS_PAGE_SIZE = 100;
@@ -58,7 +58,7 @@ export function isSha256(v: unknown): v is string {
   return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 }
 
-/** Storage objects DELETE removes alongside a photos row (order is
+/** Storage objects permanent cleanup removes after retention (order is
  * irrelevant; nulls and absent columns drop out). Driven by PATH_COLUMNS so a
  * column added there is deleted here without a second edit. */
 export function deletionPaths(

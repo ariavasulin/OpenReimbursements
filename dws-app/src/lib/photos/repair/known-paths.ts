@@ -7,8 +7,8 @@
 import type { StoredObject } from "./sweep";
 
 /** Every column a photos row can point a stored object at — the one list the
- * sweep's known set, the route's confirm-before-delete guard, and
- * deletionPaths all read. A column missing here turns the objects it owns
+ * pure planner's known set and deletionPaths read. The server-only SQL
+ * ownership boundary also covers these columns plus stable attempt paths. A column missing here turns the objects it owns
  * into apparent orphans, and orphans get deleted. */
 export const PATH_COLUMNS = [
   "original_path",

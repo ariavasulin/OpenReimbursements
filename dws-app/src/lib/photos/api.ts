@@ -14,7 +14,8 @@ export async function fetchJson<T>(
   const response = await fetch(url, init);
   if (!response.ok) {
     const data = await response.json().catch(() => null);
-    throw new Error(data?.error || `${fallbackMessage} (${response.status})`);
+    const message = typeof data?.error === "string" ? data.error : data?.error?.message;
+    throw new Error(typeof message === "string" ? message : `${fallbackMessage} (${response.status})`);
   }
   return (await response.json()) as T;
 }
@@ -71,7 +72,7 @@ export function usePhotoTags(enabled: boolean) {
 
 /** After an upload, edit, or delete: every photo-derived query refetches. */
 export function invalidatePhotoCaches(queryClient: QueryClient) {
-  for (const key of ["photos", "photo-jobs", "photo-tags", "photo-search"]) {
+  for (const key of ["photos", "photo-jobs", "photo-tags", "photo-search", "photo-trash"]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }

@@ -16,3 +16,4 @@
   - [Database](Database.md)
   - [Components](Components.md)
   - [Photos Runbook](photos-runbook.md)
+  - [DWS MCP Runbook](dws-mcp-runbook.md)

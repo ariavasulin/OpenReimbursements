@@ -1,12 +1,229 @@
 # Photos Runbook
 
-Operational notes for the DWS Photos hub (uploads, repair sweep).
+Operational notes for the DWS Photos hub (uploads, confirmed changes, repair sweep).
+
+For hosted assistant configuration, shared-key rotation, photo handoffs, and
+confirmed issue submission recovery, see the [DWS MCP runbook](dws-mcp-runbook.md).
+
+## Confirmed photo changes and trash
+
+Move a photo through its review/confirmation screen. Direct `PATCH job_id`
+writes are rejected; sheet and tag edits apply only to active photos. Any
+signed-in employee can move a photo. Ordinary removal and restoration require
+the uploader or an administrator; a consumed MCP handoff authorizes only its
+bound consumer, action, and confirmed targets.
+
+Removal sends a photo to `/photos/trash` for 30 days. Repeating removal does
+not extend its original `purge_after`; restoration is unavailable at or after
+that timestamp, even if permanent cleanup has not run. The public bucket is
+unchanged: someone with a known object URL can still fetch it during retention.
+Library listings, search, counts, tags, and deep links exclude all trash.
+
+A legacy duplicate in trash points to its canonical photo. Review the canonical
+target before restoring or moving it; restoration never creates another active
+copy. Uploading matching bytes keeps the item unresolved until that action
+succeeds or the employee explicitly skips it. An employee who cannot restore
+the matching photo should ask an administrator or use an MCP restore handoff,
+then retry the original queue item to resolve the canonical result.
+
+## Legacy standalone-sidecar audit
+
+`node dws-app/scripts/attach-orphan-sidecars.mjs` is read-only and considers
+active rows only. Its `--execute` / `-x` mode is retired and fails before any
+network request. Keep the audit for identifying historical candidates without
+modifying rows or Storage objects.
+
+## Hosted photo release: operator cutover
+
+The release uses the existing Vercel project `dws-receipts`
+(`prj_88wyiltek8eTbBPLGzg4EsiFKOAR`, root directory `dws-app`) and Supabase
+project `qebbmojnqzwwdpkhuyyd`. Merge does not activate this release. Keep the
+office-drive drill and production activation evidence attached to the release
+PR until each has an observed outcome.
+
+Read-only checks on 2026-09-07 found **41 photos, zero indexed hashes, 41 legacy
+null hashes, and zero repeated digest groups**. Duplicate cleanup is a no-op
+for that snapshot; the null-hash rows are outside historical byte dedupe
+coverage. The public `photos` bucket permits 53,687,091,200 bytes per object
+(50 GiB). Production still had no `photo_release_state` or `deleted_at`
+column. Repeat preflight immediately before activation because ordinary
+production writes remain possible before the operator closes them.
+The actual CLI default dry run took **1.552 seconds** and agreed with a separate
+read-only SQL snapshot (2.449 seconds). No production rows or objects changed.
+This measures metadata inspection; it is not a promised activation outage.
+
+### Read-only preflight and administrator review
+
+Run the CLI from the repository root with explicit environment values supplied
+through the operator's credential manager. It never loads `.env.local` itself.
+`SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`) must identify the named project;
+`SUPABASE_SERVICE_ROLE_KEY` remains private. Store reports and mappings in an
+operator-owned directory outside the checkout, with directory mode 0700.
+Do not paste report rows, paths, credentials, or before-images into the PR.
+
+```sh
+node dws-app/scripts/photo-identity-cutover.mjs --help
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/preflight.json"
+```
+
+The default is read-only, including against the legacy production schema.
+Review total rows, duplicate groups, redundant rows, legacy null hashes, and
+elapsed time. `duplicate_rows` includes every member of the repeated groups;
+subtract `duplicate_groups` to count noncanonical rows awaiting cleanup.
+Once additive helpers exist, take another dry run to obtain
+the authoritative before-image digests for administrator review. The
+administrator chooses the canonical photo and owning job for every repeated
+digest; the tool never selects these production identities automatically.
+Keep their approval actor/time and the exact reviewed mapping with the report.
+An empty collision set still requires an administrator-approved activation.
+
+The mapping has `version: 1`, `project_ref`, `approved_by`, `approved_at`, and
+`groups`. Each group has `digest`, `expected_before_image_digest`,
+`canonical_photo_id`, `canonical_job_id`, `approved_by`, and `approved_at`.
+Choose an existing photo and its current owning job, including an inactive
+legacy job. The tool rejects a mismatched photo/job pair and does not move the
+canonical row. A later confirmed move handles a new active destination.
+Use the database snapshot's digest without alteration, and the administrator's
+real user UUID and UTC approval time. A no-collision mapping has `groups: []`;
+it does not require inventing a canonical photo. Administrator status is
+validated in the database before execution.
+
+Reproduce the isolated rehearsal with
+`npm --prefix dws-app run test:cutover`. Its deterministic generator contains
+cross-job collisions, shared paths, legacy null hashes and an interrupted
+upload. The harness provisions and removes a disposable local stack and never
+loads the production `.env.local`.
+The final 102-group rehearsal measured 279 ms for dry-run inspection and
+1,389 ms for a bounded 100-group resume page, with a 28 ms remaining-work
+projection. It preserved 207 rows, including three null hashes, while moving
+102 noncanonical rows into retained history. Use these as reproducible local
+measurements; network latency and index work must be measured on the chosen
+operator target before promising an outage window.
+
+### Activation sequence
+
+1. Finish isolated verification and the office Chrome/Edge drill first. Select
+   two representative `J:` folders against the isolated environment, verify
+   mappings/exclusions, interrupt/reselect/resume, then move/trash/restore.
+   Record selected/finalized/skipped totals and hashes. In browser network
+   tools, confirm original request bodies go to Supabase Storage. The scripted
+   directory fixture does not replace this native picker/drive observation.
+2. Apply the reviewed additive migrations in timestamp order using the existing
+   Supabase deployment process. They add nullable provenance, ledgers, active
+   SELECT policy and closed gates; they do not pick identities or install the
+   final index. Do not put operator activation into a build hook.
+3. In **dws-receipts → Settings → Cron Jobs**, disable cron jobs. Stop manual
+   repair calls, record the last old invocation and wait for its completion or
+   the full 300-second runtime. Record the pause start. Old service-role repair
+   must be drained before any row enters trash.
+4. With all three release gates false, invoke
+   `select public.photo_install_write_boundary('<administrator-user-uuid>');`
+   through the operator database session. It installs revoked direct grants
+   and the write guard. Drain in-flight control requests. Deploy the complete
+   compatible app with all gates closed and verify the production alias points
+   to that exact build. With the real cron credential, both GET and POST to
+   `/api/photos/repair` must return 503. Record both responses before cleanup.
+5. Take the final dry run, review/approve its exact mapping, and execute it with
+   the [execute/resume commands](#execute-and-resume). Record before-image and
+   checkpoint locations, committed groups, elapsed time and remaining-time projection.
+   A drift error blocks that group and cutover; do not edit a digest to suppress
+   the conflict. Reinspect the live rows and obtain a new administrator ruling.
+6. Require zero repeated non-null hashes and a valid global partial unique
+   `photos_content_sha256` index before retiring the per-job `photos_job_sha`
+   index (confirmed present in the production preflight). Keep writes closed until the CLI
+   reports successful index validation and the production read/schema checks
+   pass. Recheck that old unfiltered session reads/RPCs hide trash and direct
+   hard DELETE remains denied. Keep the new schema and grants on code rollback.
+7. Configure the existing project and complete the production connector checks
+   in the [MCP runbook](dws-mcp-runbook.md). Open compatible photo writes and MCP
+   only for the operator's checks. Record one ordinary upload/move/remove/restore
+   on operator-owned smoke data. Hold employee URL distribution until both
+   actual ChatGPT and Claude accounts pass. If either fails, close MCP.
+8. While cron remains disabled, open the repair gate and save one manual
+   new-handler repair report. On failure close repair and fix it. On success
+   re-enable the schedule, then save the first successful scheduled report.
+   The release remains outstanding until this scheduled result is observed.
+
+Gate changes require an operator database session and an administrator identity:
+
+```sql
+-- Emergency closure; this does not disable an already deployed old handler.
+update public.photo_release_state
+set photo_writes_enabled=false, mcp_enabled=false, repair_enabled=false,
+    updated_by='<administrator-user-uuid>', updated_at=clock_timestamp()
+where singleton;
+```
+
+Use the same explicit actor/time fields when opening each gate at its step.
+Never reopen repair before the new deployed handler has been verified. Closing
+database gates does not disable Vercel cron or drain an old invocation.
+
+### Execute and resume
+
+Run these commands at step 5 of the [activation sequence](#activation-sequence),
+after its write-pause, deployment and approval prerequisites are satisfied.
+
+```sh
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/execute.json" \
+  --mapping "$CUTOVER_DIR/approved-mapping.json" --execute
+
+# Use the checkpoint and before-image paths emitted by the previous run.
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/resume.json" \
+  --resume "$CUTOVER_CHECKPOINT" --execute
+```
+
+Each mutation invocation processes at most 100 digest groups and observes a
+30-second budget. Continue using its saved checkpoint until index validation
+finishes. A committed database group is durable even if the process dies before
+the local checkpoint is saved; retrying identical choices does not repeat its
+mutation or extend retention. Preserve all emitted artifacts together.
+Execute writes `<output>.checkpoint.json` and `<output>.before-image.json`;
+the report names both paths. Resume writes a fresh checkpoint beside its new
+output while preserving the original before-image. `indexed` with
+`global_index_valid: true` is completion; `checkpointed` requires another
+resume. The report's `projected_remaining_ms` extrapolates measured group work;
+index/deployment/client checks still need separate time.
+
+### Recovery posture
+
+Before any new-format photo writes or purge, the recorded metadata before-image
+can restore the reviewed cleanup under closed gates. Rollback must verify that
+every affected row still matches its recorded after-image. Paths and original
+bytes are never changed by metadata cleanup. Preserve the permanent
+`photo_repair_deleted_paths` and `photo_repair_retired_ids` records.
+
+```sh
+node dws-app/scripts/photo-identity-cutover.mjs \
+  --project-ref qebbmojnqzwwdpkhuyyd --output "$CUTOVER_DIR/rollback.json" \
+  --rollback "$CUTOVER_BEFORE_IMAGE" --execute
+```
+
+`rolling_back` requires the same rollback command again, then `rolled_back`.
+`forward_fix_required` exits with code 2 and requires the posture below.
+
+After a new-format write or purge, keep writes/MCP/repair closed, keep Vercel
+cron disabled, retain the new RLS/grants/schema and forward-fix. Do not restore
+old row snapshots after bytes may have been purged. Do not run old service-role
+repair against retained trash. A successful metadata rollback alone does not
+authorize restoring old app write grants: first prove that no retained trash
+would become visible or hard-deletable.
 
 ## Repair sweep (`/api/photos/repair`)
 
-A daily Vercel cron (09:00 UTC, `vercel.json`) that converges every partial
-upload state. It is idempotent — the second run should report `planned: 0`
-when nothing new broke.
+A daily Vercel cron (09:00 UTC, `vercel.json`) first permanently purges up to
+500 expired photos, then repairs active photos and cleans orphan objects.
+Both GET and POST require `CRON_SECRET` and the server-only
+`photo_release_state.repair_enabled` gate with schema generation 1. An absent
+or closed gate returns 503 before any lease or Storage mutation.
+
+One 240-second deadline starts at handler entry and covers purge, discovery,
+network body reads, image transforms, and ffmpeg. Each control request also
+has a 15-second timeout; ffmpeg is killed when the shared deadline or lease
+cancellation fires. The final ten seconds are reserved only for backlog
+reporting and lease release, inside the 300-second function limit.
 
 ### Run it by hand
 
@@ -19,7 +236,11 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
 response looks like:
 
 ```json
-{ "counts": { "fillImageDerivatives": 2 }, "errors": [], "planned": 2 }
+{
+  "counts": { "fillImageDerivatives": 2 }, "errors": [], "error_count": 0, "planned": 2,
+  "purged": 3, "purge_failed": 0, "purge_backlog": 0,
+  "work_deferred": 0, "oldest_due_at": null
+}
 ```
 
 ### What each `counts` key means
@@ -30,34 +251,84 @@ response looks like:
 | `markFileTile` | An image couldn't be transformed (RAW format, or original over 25 MB, or the transform endpoint refused it). The row was set to `kind='file'` — a deliberate file tile, not a hole. Check the log line for the reason. |
 | `makeVideoPoster` | A video row had no poster. The sweep downloaded the original, extracted a frame with ffmpeg (~1 s in), uploaded it as thumb + preview WebPs, and recorded `duration_secs`. |
 | `transcodeVideo` | A video within the caps gained an H.264/AAC `playback_path` rendition (`derived/{uid}/{photoId}_playback.mp4`). Only planned when `PHOTOS_TRANSCODE=1`. |
+| `posterSkipped` | A video exceeds the server poster processing cap. The persistent `poster_skipped_reason` explains the skip; its original and video kind are retained. |
 | `playbackSkipped` | A planned transcode found the clip over a cap and set `playback_skipped_reason` instead. The sweep never replans it; the lightbox shows the download card. |
-| `transcodeDeferred` | The run's 240 s transcode budget ran out before this clip started. Nothing was written; the next run (or a manual one) picks it up. |
-| `deleteOrphanObject` | An object under `originals/` had no `photos` row pointing at it (original **or** sidecar) and was older than 24 h — a dead upload whose finalize never ran. Deleted. `DELETE /api/photos/:id` already removes a row's objects (original, thumb, preview, sidecar) in the same request, so this collects only what that misses. |
-| `deleteDeadRow` | A `photos` row's original object is missing from storage — finalize raced a dead upload. Row deleted. |
+| `transcodeDeferred` | A video reached the shared work deadline. Completed poster work remains counted; unfinished work resumes on a later invocation. |
+| `deleteOrphanObject` | An old object under `originals/` or `derived/` had no current retained-photo or upload-attempt owner. SQL authorizes its deletion and fences later path reuse; Storage confirms its absence. |
+| `deleteDeadRow` | An active `photos` row's original object is missing from storage — finalize raced a dead upload. Row deleted. |
 
-`errors` lists actions that failed (`"<action>: <message>"`); each action is
-isolated, so one failure never aborts the rest of the sweep. Rows younger
+`errors` samples at most 50 failures, with at most 1,000 characters each.
+`error_count` is the exact failure count even when details are truncated.
+Action failures are isolated; a lost lease stops the run immediately. Rows younger
 than 10 minutes are always skipped — the client may still be uploading its
 derivatives.
 
-**A run with any error responds `500`.** The body is unchanged — same
-`counts`, `errors`, and `planned` — so a manual run still shows exactly what
-landed and what failed; only the status code differs. That is what makes a
-failed cron show red under **Settings → Cron Jobs**. A `400` instead means
+**A run with any error responds `500`.** The original `counts`, `errors`,
+and `planned` fields remain. `purged` counts rows actually removed;
+`purge_failed` counts attempted photos with cleanup failures. `purge_backlog`
+and `oldest_due_at` describe the remaining expired rows, including canonicals
+held by duplicate references. A null backlog means it could not be measured
+(for example, another invocation owns the lease); it does not mean zero.
+`work_deferred` counts known interrupted items, with at least one when a scan
+remains unfinished. It is a lower bound, not a full unscanned-corpus count.
+Ordinary budget exhaustion and a busy lease return 200 with visible deferral.
+A failed cron shows red under **Settings → Cron Jobs**. A `400` instead means
 the request itself was bad (an unparseable `?olderThan=`); nothing was swept.
 
 ### `?olderThan=<ms>` (drills only)
 
-For a drill (verify a killed upload's object gets swept), override the 24 h
-orphan age on a manual run:
+For a drill (verify a killed upload's object gets swept), point
+`ISOLATED_PHOTOS_ORIGIN` at the isolated fixture application and use its cron
+credential to override the 24 h orphan age:
 
 ```sh
 curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-  "https://photos.dws-receipts.com/api/photos/repair?olderThan=0"
+  "$ISOLATED_PHOTOS_ORIGIN/api/photos/repair?olderThan=0"
 ```
 
-Do not use `olderThan=0` while anyone might be mid-upload: a TUS upload's
-object can look row-less until its finalize lands.
+This override changes only orphan age, never the 30-day retention deadline
+or upload ownership checks. Use an isolated fixture target for destructive
+drills; do not run them against the production corpus.
+
+### Recovery after failure, overlap, or process death
+
+Save the response when invoking repair, inspect `errors`, and rerun the same
+POST after fixing the reported dependency. Vercel cron does not automatically
+retry a failed run. Storage deletion is idempotent: a missing object is already
+clean, while a failed or partial delete retains the photo row and original
+`purge_after`. The next run retries the remaining recorded paths. Shared paths
+remain while another retained photo or protected attempt owns them. Expired
+duplicate rows drain before their canonical row; a surviving duplicate
+reference holds that canonical for a later run. Completed migration and action
+histories do not block deletion; their audit identifiers survive.
+
+The singleton `photo_repair_progress` lease lasts two minutes and renews every
+30 seconds. An overlapping invocation performs no repair work. If the process
+dies, wait for lease expiry and rerun; never manually clear a live lease.
+Generation checks fence stale workers. Photo and Storage scans alternate
+100-entry keyset pages and checkpoint completed items; a failed item may replay
+on the next scan cycle. No whole-library list is loaded or persisted as an
+ownership snapshot. A partial scan never proves that an object is unowned.
+
+Read progress using an operator database session:
+
+```sql
+select lease_holder, lease_generation, lease_expires_at,
+       photo_cursor, storage_cursor, updated_at
+from public.photo_repair_progress where singleton;
+```
+
+Unfinished ordinary and migration attempts remain owners after lease expiry
+so closing a tab does not lose resumable bytes. Explicit ordinary queue Remove
+must durably cancel its unfinished attempt before dropping the queue item;
+cancelled migration items and explicit skips likewise become eligible after
+the orphan age. Completed photos remain retained owners. Deletion authorization
+stores permanent path fences in `photo_repair_deleted_paths`; never erase those
+records to retry an upload. A retired path requires a new attempt/photo UUID.
+Upload ledgers and `photo_repair_retired_ids` prevent reuse across owners.
+
+For production cutover, follow the [activation sequence](#activation-sequence).
+Code rollback alone cannot safely run the old service-role repair over trash.
 
 ### Video transcoding (`PHOTOS_TRANSCODE`)
 
@@ -68,22 +339,30 @@ once a manual sweep run and posters look healthy in production. Posters are
 **not** behind the switch: a video missing its thumb always gets
 `makeVideoPoster`.
 
-Caps (`src/lib/photos/repair/transcode.ts`): originals over **200 MB** or
-**120 s** are skipped permanently via `playback_skipped_reason`. Transcodes
-always run after every other action and stop starting after 240 s of wall
-time (`transcodeDeferred`), so a big backlog drains across daily runs.
+Caps (`src/lib/photos/repair/transcode.ts`): originals over **200 MiB** or
+**120 s** are skipped permanently via `playback_skipped_reason`. Repair also
+caps a streamed input and generated rendition at 200 MiB each, and each poster
+at 8 MiB, so its temporary workspace stays below the function disk limit.
+A larger original with no poster gets an observable `posterSkipped` and
+persistent `poster_skipped_reason`; its original and video kind remain intact.
+A truncated output is never published as playback. After changing the server
+processing cap or supplying a valid derivative through an authorized repair,
+clear the relevant skip reason to re-queue it. A video's poster and rendition share one download. Each bounded page gets
+only the time left after purge and earlier work; no transcode receives a fresh
+240-second allowance. A backlog drains over repeated invocations.
 
 Re-queue one video (e.g. after raising the caps or a bad rendition):
 
 ```sql
-update photos set playback_path = null, playback_skipped_reason = null where id = '<uuid>';
+update photos set playback_path = null, playback_skipped_reason = null
+where id = '<uuid>' and deleted_at is null;
 ```
 
 then run the sweep by hand. The old `_playback.mp4` object is upserted over.
 
 **"Why does Chrome show a download card for this video?"** triage, in order:
 
-1. `select playback_path, playback_skipped_reason, mime_type from photos where id = …`
+1. `select playback_path, playback_skipped_reason, poster_skipped_reason, mime_type from photos where id = …`
 2. `playback_skipped_reason` set → expected: the clip is over a cap. Re-queue
    only if you've raised the caps.
 3. Both null → the sweep hasn't reached it yet (transcodes can defer). Check
@@ -94,14 +373,12 @@ then run the sweep by hand. The old `_playback.mp4` object is upserted over.
 
 ### Reading the logs
 
-Vercel dashboard → the project → **Logs**, filter on `photos.repair`. One
-line per action:
-
-```
-photos.repair action=fillImageDerivatives photoId=<uuid> ok
-photos.repair action=markFileTile photoId=<uuid> reason=render 400
-photos.repair action=deleteOrphanObject path=originals/<uid>/<photoId>/x.jpg err=<message>
-```
+Vercel dashboard → the project → **Logs**, filter on `photos.repair`. The
+handler logs its aggregate JSON report: committed action `counts`, `purged`,
+`purge_failed`, backlog, deferred work, exact `error_count`, and bounded
+`errors` samples. Inspect that report alongside the HTTP response; there is
+no guaranteed log line for each action. Some media decisions also emit
+photo-specific reason logs.
 
 The cron's own runs appear under **Settings → Cron Jobs** with their status;
 the daily schedule is `0 9 * * *`.
@@ -120,16 +397,20 @@ approximate time, the job, and ideally the filename.
 2. **Is there a row?**
 
    ```sql
-   select id, original_name, kind, thumb_path, created_at, captured_at_source
+   -- Intentional diagnostic read includes retained trash.
+   select id, original_name, kind, thumb_path, created_at, captured_at_source,
+          deleted_at, purge_after, duplicate_of
    from photos
    where job_id = '<job>' and created_at > now() - interval '2 days'
    order by created_at desc;
    ```
 
-   - Row present with `thumb_path` → it landed. "Vanished" is a viewing
+   - Row present with `deleted_at` → it is in trash. Open the trash view and
+     check the recovery deadline and canonical reference before restoring.
+   - Active row with `thumb_path` → it landed. "Vanished" is a viewing
      problem: check which grid/filter they're looking at (wrong job, a tag
      filter, or grouping by a sheet number they didn't expect).
-   - Row present, `thumb_path` null → derivative hole (e.g. HEIC picked in
+   - Active row, `thumb_path` null → derivative hole (e.g. HEIC picked in
      desktop Chrome). It shows after the next sweep; run the sweep by hand
      (above) to fix it now.
 
@@ -142,27 +423,19 @@ approximate time, the job, and ideally the filename.
    order by created_at desc;
    ```
 
-   - Object without a row → the bytes arrived but finalize (`POST
-     /api/photos`) never did. Check the Vercel logs for `/api/photos` 4xx/5xx
-     around that time for the why. There is no server-side recovery (the row
-     needs client-known metadata); have the user retry from their tray, or
-     re-upload. The orphan object is swept after 24 h.
+   - Object without a row → the bytes arrived but finalization may still be
+     unfinished. Check the upload attempt or migration item and its route
+     errors; have the user resume from the tray or migration page. Unfinished
+     resumable attempts protect their paths until resolved or explicitly
+     cancelled, even after lease expiry. The 24-hour orphan age applies only
+     to genuinely unowned or explicitly cancelled paths, and cleanup still
+     requires a live check that no retained photo or other attempt owns them.
    - Nothing anywhere → the upload never reached storage: the connection died
      before the first byte, or the batch was dismissed. Re-upload.
 
 4. **Still lost?** Run the repair sweep by hand and reread step 2 — the sweep
    converges every partial state that can be converged (`counts` tells you
    what it found).
-
-## Rollback: the upload manager
-
-There is no runtime switch for the browser-side upload manager — rollback is
-a revert. Commit `e07574e` deleted the `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER`
-flag and the legacy in-sheet upload loop it guarded (the manager itself came
-in `0f5749f`). Reverting `e07574e` restores both: the manager stays the
-default, so you then have to set `NEXT_PUBLIC_PHOTOS_UPLOAD_MANAGER=0` in
-Vercel and redeploy — a `NEXT_PUBLIC_` var is baked in at build time —
-before the in-sheet loop actually runs.
 
 ## Launch drills (run on production after the first deploy)
 
@@ -172,8 +445,8 @@ Run them on an iPhone over LTE (not office Wi-Fi). Record results inline.
   Navigate between pages while the tray counts. Expect: all 30 land, the
   grid refreshes, the tray stays responsive throughout.
   Elapsed time (start → "Upload complete"): ______
-- [ ] **Big-video resume.** Requires the bucket `fileSizeLimit` raised above
-  the current 50 MB first (Supabase dashboard). Upload a ~500 MB video, kill
+- [ ] **Big-video resume.** Recheck the bucket `fileSizeLimit` first; the
+  2026-09-07 read-only inspection found 50 GiB. Upload a ~500 MB video, kill
   Safari at ~50%, reopen the app → tray shows "1 upload interrupted" →
   re-pick the file → progress resumes above 0%. Expect: exactly one `photos`
   row, and no `deleteOrphanObject` for it in the next sweep.

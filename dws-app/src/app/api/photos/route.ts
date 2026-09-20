@@ -1,18 +1,16 @@
+import { requirePhotoActor } from '@/lib/photos/server/authority';
+import { photoJson, photoRoute, readPhotoJson } from '@/lib/photos/server/http';
+import { finalizeUpload } from '@/lib/photos/server/uploads';
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { validate as isUuid } from 'uuid';
 import {
-  cleanSheet,
-  cleanTags,
   escapeForIlike,
   escapeIlikeWildcards,
-  isSha256,
   PHOTO_COLUMNS,
   PHOTOS_PAGE_SIZE,
 } from '@/lib/photos/apiShared';
 import {
-  CAPTURED_AT_SOURCES,
-  PHOTO_KINDS,
   type PhotoRow,
   type PhotoTagRow,
 } from '@/lib/photos/types';
@@ -137,6 +135,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from('photos')
     .select(PHOTO_COLUMNS)
+    .is('deleted_at', null)
     .order('captured_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(limit + 1);
@@ -191,157 +190,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  const userId = session.user.id;
-
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
-
-  const {
-    id,
-    job_id,
-    kind,
-    sheet_number,
-    tags,
-    captured_at,
-    captured_at_source,
-    original_path,
-    original_bytes,
-    mime_type,
-    original_name,
-    thumb_path,
-    preview_path,
-    duration_secs,
-    sidecar_path,
-    sidecar_name,
-    content_sha256,
-  } = body;
-
-  if (typeof id !== 'string' || !isUuid(id)) {
-    return NextResponse.json({ error: 'Invalid photo id' }, { status: 400 });
-  }
-  if (typeof job_id !== 'string' || !isUuid(job_id)) {
-    return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
-  }
-  if (typeof kind !== 'string' || !(PHOTO_KINDS as readonly string[]).includes(kind)) {
-    return NextResponse.json({ error: 'Invalid kind' }, { status: 400 });
-  }
-
-  // Storage RLS already limits writes to the caller's own prefix; the row
-  // must point inside that same prefix so nobody claims another user's file.
-  const ownPrefix = `originals/${userId}/`;
-  if (typeof original_path !== 'string' || !original_path.startsWith(ownPrefix)) {
-    return NextResponse.json(
-      { error: 'original_path must be under your own prefix' },
-      { status: 400 }
-    );
-  }
-  const ownDerivedPrefix = `derived/${userId}/`;
-  for (const derivedPath of [thumb_path, preview_path]) {
-    if (
-      derivedPath != null &&
-      (typeof derivedPath !== 'string' || !derivedPath.startsWith(ownDerivedPrefix))
-    ) {
-      return NextResponse.json(
-        { error: 'Derivative paths must be under your own prefix' },
-        { status: 400 }
-      );
+  return photoRoute(async () => {
+    const actor = await requirePhotoActor(request, { mutation: true });
+    const body = await readPhotoJson(request);
+    if (!body.owner_kind || !body.owner_id || !body.content_sha256) {
+      return photoJson({ error: { code: 'conflict', message: 'Reload the application before retrying this upload.', retryable: false } }, 409);
     }
-  }
-
-  // The sidecar lives beside the original, under THIS photo's own prefix.
-  if (
-    sidecar_path != null &&
-    (typeof sidecar_path !== 'string' ||
-      !sidecar_path.startsWith(`originals/${userId}/${id}/`))
-  ) {
-    return NextResponse.json(
-      { error: "sidecar_path must be under this photo's own prefix" },
-      { status: 400 }
-    );
-  }
-
-  const capturedAtDate =
-    typeof captured_at === 'string' && !Number.isNaN(Date.parse(captured_at))
-      ? new Date(captured_at)
-      : null;
-
-  const { data: photo, error } = await supabase
-    .from('photos')
-    .insert({
-      id,
-      job_id,
-      uploader_id: userId, // never trusted from the client
-      kind,
-      sheet_number: cleanSheet(sheet_number),
-      tags: cleanTags(tags),
-      // EXIF capture time when the client found one; upload time as fallback.
-      captured_at: (capturedAtDate ?? new Date()).toISOString(),
-      // Provenance is only trusted alongside a real date; old clients that
-      // omit it (and the now() fallback) land as 'upload'.
-      captured_at_source:
-        typeof captured_at_source === 'string' &&
-        (CAPTURED_AT_SOURCES as readonly string[]).includes(captured_at_source) &&
-        capturedAtDate
-          ? captured_at_source
-          : 'upload',
-      original_path,
-      original_bytes:
-        typeof original_bytes === 'number' && Number.isFinite(original_bytes)
-          ? Math.max(0, Math.round(original_bytes))
-          : null,
-      mime_type: typeof mime_type === 'string' && mime_type ? mime_type : null,
-      original_name:
-        typeof original_name === 'string' && original_name ? original_name : null,
-      thumb_path: thumb_path ?? null,
-      preview_path: preview_path ?? null,
-      duration_secs:
-        typeof duration_secs === 'number' && Number.isFinite(duration_secs)
-          ? duration_secs
-          : null,
-      sidecar_path: typeof sidecar_path === 'string' ? sidecar_path : null,
-      // A name only makes sense alongside a stored sidecar object.
-      sidecar_name:
-        typeof sidecar_path === 'string' &&
-        typeof sidecar_name === 'string' &&
-        sidecar_name
-          ? sidecar_name
-          : null,
-      // Lowercase hex SHA-256 or nothing — the per-job unique index
-      // (photos_job_sha) only bites on real hashes.
-      content_sha256: isSha256(content_sha256) ? content_sha256 : null,
-    })
-    .select(PHOTO_COLUMNS)
-    .single();
-
-  if (error) {
-    // 23505 on photos_job_sha = the JOB already has these exact bytes under
-    // another photo id — a duplicate, so the client discards its upload.
-    // 23505 on photos_pkey = a retry of a finalize that actually landed;
-    // treat as success so retries converge. Both constraints are named
-    // explicitly: a unique constraint we don't recognize is a real failure,
-    // and reporting it as success would hide the row that never got written.
-    if (error.code === '23505') {
-      if (error.message.includes('photos_job_sha')) {
-        return NextResponse.json({ success: true, duplicate: true });
-      }
-      if (error.message.includes('photos_pkey')) {
-        return NextResponse.json({ success: true, alreadyExists: true });
-      }
-    }
-    const status = error.code === '23503' ? 400 : 500; // bad FK vs. real failure
-    return NextResponse.json({ error: error.message }, { status });
-  }
-
-  return NextResponse.json({ success: true, photo }, { status: 201 });
+    return photoJson(await finalizeUpload(actor, body));
+  });
 }

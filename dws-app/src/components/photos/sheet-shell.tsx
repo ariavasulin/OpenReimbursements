@@ -136,7 +136,7 @@ export default function SheetShell({
             // scrolled content once the drawer has a fixed height (vaul #575).
             // `!` because vaul's stylesheet is unlayered and beats a layered
             // utility.
-            "border-[#4e4e4e] bg-[#2e2e2e] [&::after]:h-[unset]!",
+            "border-[#4e4e4e] bg-[#2e2e2e] text-white [&::after]:h-[unset]!",
             SIZES[size].mobile
           )}
           style={{
@@ -158,7 +158,7 @@ export default function SheetShell({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "flex flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 sm:max-w-md",
+          "flex flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 text-white sm:max-w-md",
           SIZES[size].desktop
         )}
       >

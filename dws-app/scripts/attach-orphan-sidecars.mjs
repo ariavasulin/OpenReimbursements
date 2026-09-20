@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-// One-time repair for .xmp files that uploaded as their own kind='file' rows
-// before sidecar pairing existed.
+// Read-only audit for .xmp files uploaded as standalone rows before sidecar
+// pairing existed. The historical mutation mode is retired.
 //
 // Env:   NEXT_PUBLIC_SUPABASE_URL (or SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY
-// Usage: node scripts/attach-orphan-sidecars.mjs            (dry run, default)
-//        node scripts/attach-orphan-sidecars.mjs --execute  (apply)
+// Usage: node scripts/attach-orphan-sidecars.mjs (dry-run audit only)
 
 import { createClient } from '@supabase/supabase-js'
 
-const execute = process.argv.includes('--execute') || process.argv.includes('-x')
+if (process.argv.includes('--execute') || process.argv.includes('-x')) {
+  console.error('Execution is retired: this legacy writer bypasses confirmed actions and trash retention. Any historical sidecar repair must precede cutover; use this script only for a dry-run audit.')
+  process.exit(1)
+}
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -21,7 +23,7 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 })
 
-// Mirrors sanitizeFilename in src/lib/photos/upload.ts (base part only), so
+// Mirrors SQL photo_storage_filename (base part only), so
 // the destination key matches what a fresh upload of this pair would use.
 function sanitizeBase(name) {
   const dot = name.lastIndexOf('.')
@@ -63,10 +65,10 @@ async function main() {
   // the old case-insensitive suffix match) so only the two kinds that can
   // pair are ever fetched.
   const orphans = await selectAllPages(() =>
-    supabase.from('photos').select(COLUMNS).eq('kind', 'file').ilike('original_name', '%.xmp')
+    supabase.from('photos').select(COLUMNS).is('deleted_at', null).eq('kind', 'file').ilike('original_name', '%.xmp')
   )
   const images = await selectAllPages(() =>
-    supabase.from('photos').select(COLUMNS).eq('kind', 'image')
+    supabase.from('photos').select(COLUMNS).is('deleted_at', null).eq('kind', 'image')
   )
 
   const plans = []
@@ -103,48 +105,15 @@ async function main() {
   )
   for (const p of plans) {
     console.log(
-      `  ATTACH ${p.orphan.original_name}: move ${p.orphan.original_path} -> ${p.dest}; ` +
-        `set sidecar on image ${p.image.id}; delete row ${p.orphan.id}`
+      `  ATTACH ${p.orphan.original_name}: copy ${p.orphan.original_path} -> ${p.dest}; ` +
+        `legacy candidate image ${p.image.id}; standalone row ${p.orphan.id}`
     )
   }
   for (const u of unmatched) {
     console.log(`  UNMATCHED ${u.orphan.original_name} (row ${u.orphan.id}): ${u.why}`)
   }
 
-  if (!execute) {
-    console.log('Dry run — pass --execute to apply.')
-    return
-  }
-
-  let attached = 0
-  const errors = []
-  for (const p of plans) {
-    try {
-      const { error: moveError } = await supabase.storage
-        .from('photos')
-        .move(p.orphan.original_path, p.dest)
-      if (moveError) throw new Error(`move: ${moveError.message}`)
-
-      const { error: updateError } = await supabase
-        .from('photos')
-        .update({ sidecar_path: p.dest, sidecar_name: p.orphan.original_name })
-        .eq('id', p.image.id)
-      if (updateError) throw new Error(`update image: ${updateError.message}`)
-
-      const { error: deleteError } = await supabase
-        .from('photos')
-        .delete()
-        .eq('id', p.orphan.id)
-      if (deleteError) throw new Error(`delete orphan row: ${deleteError.message}`)
-
-      attached += 1
-    } catch (e) {
-      errors.push(`${p.orphan.original_name}: ${e.message}`)
-    }
-  }
-
-  console.log(JSON.stringify({ attached, unmatched: unmatched.length, errors }, null, 2))
-  if (errors.length > 0) process.exitCode = 1
+  console.log('Dry run only — legacy execution is retired. No rows or objects were changed.')
 }
 
 main().catch((err) => {

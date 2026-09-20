@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
   // fail every video action at runtime. Name it explicitly.
   outputFileTracingIncludes: {
     '/api/photos/repair': ['./node_modules/ffmpeg-static/ffmpeg'],
+    '/mcp/*': ['./src/lib/mcp/harness/**/*.md'],
   },
   images: {
     remotePatterns: [

@@ -25,6 +25,8 @@ dws-app/node_modules/
 dws-app/.next/
 dws-app/out/
 dws-app/build/
+dws-app/test-results/
+dws-app/playwright-report/
 
 # Logs
 *.log
@@ -45,7 +47,6 @@ yarn-error.log*
 
 # AI tools
 .claude/
-CLAUDE.md
 thoughts/
 
 # Config
@@ -72,3 +73,4 @@ hack.bak/
 
 # Supabase CLI scratch (created by `supabase db query --linked`)
 **/supabase/.temp/
+.vercel

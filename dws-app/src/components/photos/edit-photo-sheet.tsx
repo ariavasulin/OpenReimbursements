@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import SheetShell from "@/components/photos/sheet-shell";
@@ -12,9 +13,7 @@ import { appendTag } from "@/lib/photos/tags";
 import { fetchJson } from "@/lib/photos/api";
 import type { PhotoRow } from "@/lib/photos/types";
 
-// Edit one photo's job / sheet / tags. Opened from the lightbox; lives in its
-// own SheetShell (above the lightbox) so the keyboard and job picker get the
-// same fixed-frame treatment as the upload sheet.
+// Sheet and tags save here; changing ownership opens exact-target review.
 
 interface EditPhotoSheetProps {
   photo: PhotoRow | null;
@@ -53,17 +52,12 @@ export default function EditPhotoSheet({
       onOpenChange(false);
       return;
     }
-    if (!meta.jobId) {
-      toast.error("Pick a job first");
-      return;
-    }
     setBusy(true);
     try {
       await fetchJson(`/api/photos/${photo.id}`, "Saving failed", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          job_id: meta.jobId,
           sheet_number: meta.sheetNumber.trim() || null,
           tags: appendTag(meta.tags, meta.tagInput),
         }),
@@ -105,8 +99,16 @@ export default function EditPhotoSheet({
         onChange={setMeta}
         enabled={open}
         disabled={busy}
-        jobFallback={photo?.job}
+        showJob={false}
       />
+      {photo && <div className="mt-4 border-t border-[#4e4e4e] pt-4 text-sm text-[#bbb]">
+        <p>Save any sheet or tag changes before moving this photo.</p>
+        <Link href={`/photos/actions?action=move&photo=${encodeURIComponent(photo.id)}`}
+          onClick={(event) => { if (busy) event.preventDefault(); else onOpenChange(false); }}
+          aria-disabled={busy} className="mt-2 inline-block text-[#8bbaff] underline">
+          Review move to another job
+        </Link>
+      </div>}
     </SheetShell>
   );
 }

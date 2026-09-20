@@ -383,11 +383,6 @@ export default function PhotoLightbox({
     }
   };
 
-  const handleDeleted = () => {
-    onChanged();
-    onClose();
-  };
-
   // Tab containment. Sentinels rather than a keydown trap: they don't need to
   // know where the focusable elements sit inside YARL's own DOM.
   const wrapFocus = (edge: "first" | "last") => () => {
@@ -502,7 +497,6 @@ export default function PhotoLightbox({
                   layout="panel"
                   canDelete={canDelete}
                   onEdit={() => setEditing(true)}
-                  onDeleted={handleDeleted}
                 />
               </aside>
             )}
@@ -534,7 +528,6 @@ export default function PhotoLightbox({
                   layout="bar"
                   canDelete={canDelete}
                   onEdit={() => setEditing(true)}
-                  onDeleted={handleDeleted}
                 />
               )}
             </div>

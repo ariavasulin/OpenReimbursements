@@ -6,7 +6,7 @@ import type { QueueItem } from "@/lib/photos/upload-queue";
 
 export type UploadItem = Pick<
   QueueItem,
-  "name" | "status" | "sentBytes" | "size" | "error"
+  "name" | "status" | "sentBytes" | "size" | "error" | "warnings"
 >;
 
 export interface UploadRow {
@@ -21,7 +21,13 @@ const STATUS_COLORS: Record<UploadItem["status"], { text: string; bar: string }>
     done: { text: "text-[#4ade80]", bar: "bg-[#4ade80]" },
     duplicate: { text: "text-[#b4b4b4]", bar: "bg-[#4ade80]" },
     failed: { text: "text-red-400", bar: "bg-red-500" },
+    job_conflict: { text: "text-amber-400", bar: "bg-amber-400" },
+    restore_required: { text: "text-amber-400", bar: "bg-amber-400" },
+    waiting_claim: { text: "text-amber-400", bar: "bg-amber-400" },
+    retrying_sidecar: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
     interrupted: { text: "text-amber-400", bar: "bg-amber-400" },
+    cancelling: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
+    cancel_pending: { text: "text-amber-400", bar: "bg-amber-400" },
     queued: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
     uploading: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
   };
@@ -34,8 +40,20 @@ function statusLabel(item: UploadItem): string {
       return "Already in this job";
     case "failed":
       return "Failed";
+    case "job_conflict":
+      return "Move required";
+    case "restore_required":
+      return "Restore required";
+    case "waiting_claim":
+      return "Another upload is running";
+    case "retrying_sidecar":
+      return "Retrying XMP...";
     case "interrupted":
       return "Interrupted";
+    case "cancelling":
+      return "Removing...";
+    case "cancel_pending":
+      return "Removal pending";
     case "queued":
       return "Waiting";
     case "uploading":
@@ -66,7 +84,7 @@ export default function UploadProgress({ rows }: { rows: UploadRow[] }) {
                 : "border-[#3e3e3e] bg-[#3e3e3e]"
             }`}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="truncate text-xs text-white">
@@ -82,14 +100,19 @@ export default function UploadProgress({ rows }: { rows: UploadRow[] }) {
                     style={{ width: `${value}%` }}
                   />
                 </div>
-                {item.status === "failed" && item.error && (
-                  <div className="mt-1 truncate text-[10px] text-red-400">
+                {item.error && (
+                  <div className={`mt-1 text-[11px] ${colors.text}`}>
                     {item.error}
                   </div>
                 )}
+                {item.warnings?.map((warning) => (
+                  <div key={warning} className="mt-1 text-[11px] text-amber-400">
+                    {warning}
+                  </div>
+                ))}
               </div>
               {actions && (
-                <div className="flex shrink-0 items-center gap-1.5">{actions}</div>
+                <div className="flex flex-wrap items-center gap-1.5">{actions}</div>
               )}
             </div>
           </div>

@@ -20,6 +20,7 @@ export interface RepairRow {
   thumb_path: string | null;
   playback_path?: string | null;
   playback_skipped_reason?: string | null;
+  poster_skipped_reason?: string | null;
   created_at: string;
 }
 
@@ -96,7 +97,7 @@ export function planSweep(
             ? { action: "fillImageDerivatives", photoId: r.id }
             : { action: "markFileTile", photoId: r.id, reason: "not transformable" }
         );
-      } else if (r.kind === "video") {
+      } else if (r.kind === "video" && !r.poster_skipped_reason) {
         out.push({ action: "makeVideoPoster", photoId: r.id });
       }
       // kind 'file': a deliberate file tile — no derivatives, no action.
@@ -118,9 +119,8 @@ export function planSweep(
   return out;
 }
 
-/** The derived/ keys the repair pass writes for a row's renditions — the same
- * keys the client's storagePaths() builds, spelled out server-side so the
- * server bundle doesn't drag in the tus-js-client upload module. */
+/** Deterministic rendition keys, matching SQL-bound thumbnail/preview upload
+ * destinations and adding the repair-generated playback destination. */
 export function derivedKeys(uploaderId: string, photoId: string) {
   const base = `derived/${uploaderId}/${photoId}`;
   return {

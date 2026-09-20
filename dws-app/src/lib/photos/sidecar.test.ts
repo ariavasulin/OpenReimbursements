@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pairByBasename, readSidecarMeta } from "./sidecar";
+import { pairByBasename, readSidecarMeta, SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
 
 const f = (name: string, type = "") =>
   new File([new Uint8Array(4)], name, { type });
@@ -81,5 +81,12 @@ describe("readSidecarMeta", () => {
   it("yields nothing (never throws) for a file that isn't XMP", async () => {
     const meta = await readSidecarMeta(f("junk.xmp"));
     expect(meta).toEqual({ capturedAt: null, keywords: [] });
+  });
+
+  it("never reads oversized XMP for upload-sheet keyword suggestions", async () => {
+    const text = vi.fn(() => { throw new Error("whole oversized sidecar read"); });
+    const large = { size: SIDECAR_METADATA_MAX_BYTES + 1, text } as unknown as File;
+    expect(await readSidecarMeta(large)).toEqual({ capturedAt: null, keywords: [] });
+    expect(text).not.toHaveBeenCalled();
   });
 });

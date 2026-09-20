@@ -1,154 +1,35 @@
-import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
-import { supabaseAdmin } from '@/lib/supabaseAdminClient';
-import { validate as isUuid } from 'uuid';
-import {
-  cleanSheet,
-  cleanTags,
-  deletionPaths,
-  PHOTO_COLUMNS,
-} from '@/lib/photos/apiShared';
+import { cleanSheet, cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
+import { requirePhotoActor } from '@/lib/photos/server/authority';
+import { PhotoApiError, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, photoRpc } from '@/lib/photos/server/http';
+import { canManageOwnPhoto, photoId, readPhotoOwnership } from '@/lib/photos/server/reads';
+import { createAction, materializeAction, onlyKeys } from '@/lib/photos/server/actions';
+interface RouteContext { params:Promise<{id:string}> }
 
-// PATCH  /api/photos/:id — fix organizational metadata (job / sheet / tags).
-//        Any signed-in user. The editable columns are whitelisted here; RLS
-//        allows the update itself.
-// DELETE /api/photos/:id — uploader or admin only (photos are evidence).
-//        Enforced by RLS (photos_delete: uploader_id = auth.uid() or
-//        is_admin()); the route reports 403 when RLS deleted nothing.
+/** Metadata edits apply only to active rows. Ownership changes require confirmation. */
+export async function PATCH(request:Request,context:RouteContext){return photoRoute(async()=>{
+ const actor=await requirePhotoActor(request,{mutation:true}),id=photoId((await context.params).id),body=await readPhotoJson(request);
+ onlyKeys(body,['sheet_number','tags']);
+ const updates:Record<string,unknown>={};
+ if('sheet_number' in body){if(body.sheet_number!==null&&typeof body.sheet_number!=='string') throw new PhotoApiError('invalid_input');updates.sheet_number=cleanSheet(body.sheet_number);}
+ if('tags' in body){if(!Array.isArray(body.tags)||body.tags.some(tag=>typeof tag!=='string')) throw new PhotoApiError('invalid_input');updates.tags=cleanTags(body.tags);}
+ if(!Object.keys(updates).length) throw new PhotoApiError('invalid_input');
+ const {data,error}=await actor.session.from('photos').update(updates).eq('id',id).is('deleted_at',null).select(PHOTO_COLUMNS).maybeSingle();
+ if(error) throwPhotoDatabaseError(error);if(!data) throw new PhotoApiError('not_found');
+ return photoJson({success:true,photo:data});
+});}
 
-interface RouteContext {
-  params: Promise<{ id: string }>;
-}
-
-export async function PATCH(request: Request, context: RouteContext) {
-  const { id } = await context.params;
-  if (!isUuid(id)) {
-    return NextResponse.json({ error: 'Invalid photo id' }, { status: 400 });
-  }
-
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let body: Record<string, unknown>;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
-
-  const updates: Record<string, unknown> = {};
-
-  if ('job_id' in body) {
-    if (typeof body.job_id !== 'string' || !isUuid(body.job_id)) {
-      return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
-    }
-    updates.job_id = body.job_id;
-  }
-
-  if ('sheet_number' in body) {
-    const sheet = body.sheet_number;
-    if (sheet !== null && typeof sheet !== 'string') {
-      return NextResponse.json(
-        { error: 'sheet_number must be a string or null' },
-        { status: 400 }
-      );
-    }
-    updates.sheet_number = cleanSheet(sheet);
-  }
-
-  if ('tags' in body) {
-    if (!Array.isArray(body.tags)) {
-      return NextResponse.json(
-        { error: 'tags must be an array of strings' },
-        { status: 400 }
-      );
-    }
-    updates.tags = cleanTags(body.tags);
-  }
-
-  if (Object.keys(updates).length === 0) {
-    return NextResponse.json(
-      { error: 'Nothing to update — provide job_id, sheet_number, or tags' },
-      { status: 400 }
-    );
-  }
-
-  const { data: photo, error } = await supabase
-    .from('photos')
-    .update(updates)
-    .eq('id', id)
-    .select(PHOTO_COLUMNS)
-    .single();
-
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return NextResponse.json({ error: 'Photo not found' }, { status: 404 });
-    }
-    const status = error.code === '23503' ? 400 : 500; // bad job FK vs. real failure
-    return NextResponse.json({ error: error.message }, { status });
-  }
-
-  return NextResponse.json({ success: true, photo });
-}
-
-export async function DELETE(request: Request, context: RouteContext) {
-  const { id } = await context.params;
-  if (!isUuid(id)) {
-    return NextResponse.json({ error: 'Invalid photo id' }, { status: 400 });
-  }
-
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Grab the storage paths before the row disappears (SELECT is open to all
-  // signed-in users, so this also distinguishes 404 from 403).
-  const { data: existing, error: fetchError } = await supabase
-    .from('photos')
-    .select(
-      'id, original_path, thumb_path, preview_path, sidecar_path, playback_path'
-    )
-    .eq('id', id)
-    .maybeSingle();
-  if (fetchError) {
-    return NextResponse.json({ error: fetchError.message }, { status: 500 });
-  }
-  if (!existing) {
-    return NextResponse.json({ error: 'Photo not found' }, { status: 404 });
-  }
-
-  // RLS decides: only the uploader or an admin actually deletes anything.
-  const { data: deleted, error: deleteError } = await supabase
-    .from('photos')
-    .delete()
-    .eq('id', id)
-    .select('id');
-  if (deleteError) {
-    return NextResponse.json({ error: deleteError.message }, { status: 500 });
-  }
-  if (!deleted || deleted.length === 0) {
-    return NextResponse.json(
-      { error: 'Only the uploader or an admin can delete a photo' },
-      { status: 403 }
-    );
-  }
-
-  // Best-effort storage cleanup (service role — users have no storage DELETE
-  // policy). Leftovers on failure are exactly the orphans the repair cron
-  // sweeps, so errors here never fail the request.
-  const paths = deletionPaths(existing);
-  if (paths.length > 0) {
-    await supabaseAdmin.storage.from('photos').remove(paths);
-  }
-
-  return NextResponse.json({ success: true });
-}
+/** Compatibility single-target confirmation; no Storage objects are removed here. */
+export async function DELETE(request:Request,context:RouteContext){return photoRoute(async()=>{
+ const actor=await requirePhotoActor(request,{mutation:true}),id=photoId((await context.params).id),photo=await readPhotoOwnership(actor,id);
+ if(!await canManageOwnPhoto(actor,photo.uploader_id)) throw new PhotoApiError('forbidden');
+ // Replay preserves the original deletion instant and its fixed retention deadline.
+ if(photo.deleted_at) return photoJson({success:true,photo_id:id,deleted_at:photo.deleted_at,purge_after:photo.purge_after});
+ const origin=new URL(request.url).origin;
+ const created=await createAction(actor,{action:'trash',selector:{photos:[{photo_id:id}]}},origin);
+ await materializeAction(actor,created.batch.id,origin,{});
+ await photoRpc(actor,'photo_approve_action',{p_actor:actor.actorId,p_batch_id:created.batch.id});
+ const outcomes=await photoRpc(actor,'photo_execute_action',{p_actor:actor.actorId,p_batch_id:created.batch.id,p_photo_ids:[id]});
+ if(outcomes[0]?.status!=='applied') throw new PhotoApiError('conflict');
+ const retained=await readPhotoOwnership(actor,id);
+ return photoJson({success:true,photo_id:id,deleted_at:retained.deleted_at,purge_after:retained.purge_after});
+});}
