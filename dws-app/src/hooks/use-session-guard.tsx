@@ -55,7 +55,7 @@ export function useSessionGuard(pathname: string): boolean {
 }
 
 /**
- * The auth cookie is apex-scoped (.dws-receipts.com), so this signs out of
+ * The auth cookie is apex-scoped (e.g. .dws-receipts.com), so this signs out of
  * Receipts too — intended: one account. The session guard handles the redirect.
  */
 export async function signOut(): Promise<void> {

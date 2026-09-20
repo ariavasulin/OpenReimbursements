@@ -60,6 +60,8 @@ function buildCookieHeader(session) {
   // match exactly what the real route handlers read back.
   const jar = {};
   const capture = createServerClient(URL, ANON, {
+    // Keep in step with AUTH_COOKIE_NAME in src/lib/cookieDomain.ts.
+    cookieOptions: { name: 'dws-auth' },
     cookies: {
       getAll: () => Object.entries(jar).map(([name, value]) => ({ name, value })),
       setAll: (list) => { for (const { name, value } of list) jar[name] = value; },

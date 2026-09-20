@@ -24,6 +24,7 @@ import { GET as ownership } from '@/app/api/photos/[id]/ownership/route';
 import { GET as migrationBatch } from '@/app/api/photo-migrations/batches/[id]/route';
 import { GET as actionBatch } from '@/app/api/photo-actions/batches/[id]/route';
 import { requirePhotoActor, assertPhotoBatchActor } from '@/lib/photos/server/authority';
+import { AUTH_COOKIE_NAME } from '@/lib/cookieDomain';
 
 describe('authenticated photo routes against isolated Auth and PostgREST (AC-2, AC-8, AC-9, AC-14)', () => {
   let f: Awaited<ReturnType<typeof createFixtures>>;
@@ -93,7 +94,7 @@ describe('authenticated photo routes against isolated Auth and PostgREST (AC-2, 
   });
 
   it('rejects a forged session cookie instead of trusting its locally decoded user', async () => {
-    const cookie = f.employeeA.cookies.find(c => c.name.includes('auth-token') && !c.name.endsWith('.1'))!;
+    const cookie = f.employeeA.cookies.find(c => c.name.startsWith(AUTH_COOKIE_NAME) &&!c.name.endsWith('.1'))!;
     const baseName = cookie.name.replace(/\.0$/, '');
     const combined = f.employeeA.cookies.filter(c => c.name === baseName || c.name.startsWith(`${baseName}.`))
       .sort((a, b) => a.name.localeCompare(b.name)).map(c => c.value).join('');

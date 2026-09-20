@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import pg from 'pg';
 import { assertDatabaseIdentity, assertLocalTestTarget } from '../scripts/test-local-target.mjs';
+import { AUTH_COOKIE_NAME } from '../src/lib/cookieDomain';
 
 export type FixtureActor = {
   id: string;
@@ -30,6 +31,7 @@ export async function createFixtures() {
     const cookies: Array<{ name: string; value: string }> = [];
     const client = createServerClient(url, anonKey, {
       auth: { autoRefreshToken: false },
+      cookieOptions: { name: AUTH_COOKIE_NAME },
       cookies: {
         getAll: () => cookies,
         setAll: values => {

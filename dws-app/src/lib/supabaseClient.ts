@@ -1,5 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr"
-import { cookieDomainForHost } from "@/lib/cookieDomain"
+import { AUTH_COOKIE_NAME, cookieDomainForHost } from "@/lib/cookieDomain"
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -16,6 +16,7 @@ if (!supabaseAnonKey) {
 const createClient = () =>
   createBrowserClient(supabaseUrl, supabaseAnonKey, {
     cookieOptions: {
+      name: AUTH_COOKIE_NAME,
       domain: cookieDomainForHost(window.location.hostname),
     },
   })

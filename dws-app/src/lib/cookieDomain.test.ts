@@ -10,6 +10,26 @@ describe("isPhotosHost", () => {
     expect(isPhotosHost("Photos.DWS-Receipts.com", PHOTOS_HOST)).toBe(true);
   });
 
+  it("matches the same subdomain on the other apex", () => {
+    expect(isPhotosHost("photos.design-workshops.app", PHOTOS_HOST)).toBe(true);
+    expect(isPhotosHost(PHOTOS_HOST, "photos.design-workshops.app")).toBe(true);
+    expect(isPhotosHost("design-workshops.app", PHOTOS_HOST)).toBe(false);
+    expect(isPhotosHost("mcp.design-workshops.app", PHOTOS_HOST)).toBe(false);
+    expect(isPhotosHost("photos.example.com", PHOTOS_HOST)).toBe(false);
+  });
+
+  it("does not spread a bare-apex photos hostname to the other apex", () => {
+    expect(isPhotosHost("dws-receipts.com", "dws-receipts.com")).toBe(true);
+    expect(isPhotosHost("design-workshops.app", "dws-receipts.com")).toBe(
+      false
+    );
+  });
+
+  it("only matches exactly when the photos hostname is off-apex", () => {
+    expect(isPhotosHost("photos.localhost:3000", "photos.localhost")).toBe(true);
+    expect(isPhotosHost(PHOTOS_HOST, "photos.localhost")).toBe(false);
+  });
+
   it("is false when the photos hostname is unset or empty", () => {
     expect(isPhotosHost(PHOTOS_HOST, undefined)).toBe(false);
     expect(isPhotosHost(PHOTOS_HOST, "")).toBe(false);
@@ -37,10 +57,20 @@ describe("cookieDomainForHost", () => {
     );
   });
 
+  it("scopes design-workshops.app hosts to .design-workshops.app", () => {
+    expect(cookieDomainForHost("design-workshops.app")).toBe(
+      ".design-workshops.app"
+    );
+    expect(cookieDomainForHost("photos.design-workshops.app")).toBe(
+      ".design-workshops.app"
+    );
+  });
+
   it("sets no domain on other hosts", () => {
     expect(cookieDomainForHost("localhost:3000")).toBeUndefined();
     expect(cookieDomainForHost("dws-receipts-2.vercel.app")).toBeUndefined();
     expect(cookieDomainForHost("evil-dws-receipts.com")).toBeUndefined();
+    expect(cookieDomainForHost("evil-design-workshops.app")).toBeUndefined();
     expect(cookieDomainForHost(null)).toBeUndefined();
     expect(cookieDomainForHost(undefined)).toBeUndefined();
   });

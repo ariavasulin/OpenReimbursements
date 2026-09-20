@@ -112,7 +112,7 @@ export async function photoRpc(actor: PhotoActor, name: string, args: Record<str
 export function photoLinkIds(reference: string, origin: string) {
   let url: URL;
   try { url = new URL(reference, origin); } catch { throw new PhotoApiError('invalid_input'); }
-  if (![origin, 'https://design-workshops.app', 'https://dws-receipts.com', 'https://www.dws-receipts.com', 'https://photos.dws-receipts.com'].includes(url.origin) ||
+  if (![origin, 'https://design-workshops.app', 'https://photos.design-workshops.app', 'https://dws-receipts.com', 'https://www.dws-receipts.com', 'https://photos.dws-receipts.com'].includes(url.origin) ||
       url.username || url.password || !/^\/photos\/[0-9a-f-]+\/?$/i.test(url.pathname)) throw new PhotoApiError('invalid_input');
   return { jobId: url.pathname.split('/')[2], photoId: url.searchParams.get('photo') };
 }

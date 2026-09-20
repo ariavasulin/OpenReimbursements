@@ -53,7 +53,13 @@ formatPhoneForDisplay("+15551234567")  // → "(555) 123-4567"
 ## Session Management
 
 - **Duration**: 6 months (configured in `supabaseServerClient.ts`)
-- **Storage**: HTTP-only cookies (server) + localStorage (browser)
+- **Storage**: one cookie named `dws-auth` (`AUTH_COOKIE_NAME` in
+  `lib/cookieDomain.ts`; a large session is split into `dws-auth.0`,
+  `dws-auth.1`, …), shared by the browser and server clients and scoped to
+  the apex (`.dws-receipts.com` or `.design-workshops.app`). It is not the
+  Supabase default name on purpose: browsers that logged in before the cookie
+  became apex-scoped still send a stale host-only cookie under the default name,
+  which made every server-side refresh fail with "Failed to get session".
 - **Refresh**: Automatic via `@supabase/ssr`
 
 ### Cookie Configuration
