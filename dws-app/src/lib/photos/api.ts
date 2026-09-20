@@ -76,3 +76,23 @@ export function invalidatePhotoCaches(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }
+
+/** A job as the create/rename routes return it. */
+export interface PhotoJobRef { id: string; job_number: string; name: string; is_active: boolean }
+
+const jsonInit = (method: string, body: unknown): RequestInit => ({
+  method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+
+/** Create a project by hand. `exists` means that job number was already taken by `job`. */
+export function createJob(input: { name: string; job_number?: string }) {
+  return fetchJson<{ status: "created" | "exists"; job: PhotoJobRef }>(
+    "/api/photo-jobs", "Failed to create the project", jsonInit("POST", input)
+  );
+}
+
+export function renameJob(id: string, name: string) {
+  return fetchJson<{ job: PhotoJobRef }>(
+    `/api/photo-jobs/${encodeURIComponent(id)}`, "Failed to rename the project", jsonInit("PATCH", { name })
+  );
+}

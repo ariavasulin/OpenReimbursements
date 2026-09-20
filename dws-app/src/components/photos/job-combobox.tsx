@@ -8,6 +8,7 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import JobPickerSheet from "@/components/photos/job-picker-sheet";
+import NewJobForm from "@/components/photos/new-job-form";
 import { useSheetLayout } from "@/components/photos/sheet-shell";
 import { filterJobs } from "@/lib/photos/job-filter";
 import type { PhotoJobSummary } from "@/lib/photos/types";
@@ -37,6 +38,8 @@ interface JobFieldProps {
   fallback?: JobLabelSource | null;
   /** id for the button (picker) or input (typeahead), for a host label. */
   inputId?: string;
+  /** Offer "New project" for the typed text; JobField supplies it. */
+  onCreate?(name: string): void;
 }
 
 function jobLabel(job: JobLabelSource) {
@@ -57,7 +60,31 @@ function useSelectedJob(
 
 export default function JobField(props: JobFieldProps) {
   const { isMobile } = useSheetLayout();
-  return isMobile ? <JobPickerField {...props} /> : <JobTypeahead {...props} />;
+  // null: choosing a job. A string: creating a project, seeded with that name.
+  const [creating, setCreating] = useState<string | null>(null);
+  // Labels the new job until the refetched `jobs` list carries it.
+  const [created, setCreated] = useState<(JobLabelSource & { id: string }) | null>(null);
+
+  if (creating !== null) {
+    return (
+      <NewJobForm
+        jobs={props.jobs}
+        initialName={creating}
+        onCancel={() => setCreating(null)}
+        onDone={(job) => {
+          setCreated(job);
+          props.onChange(job.id);
+          setCreating(null);
+        }}
+      />
+    );
+  }
+  const field = {
+    ...props,
+    fallback: props.fallback ?? (created?.id === props.value ? created : null),
+    onCreate: props.disabled ? undefined : setCreating,
+  };
+  return isMobile ? <JobPickerField {...field} /> : <JobTypeahead {...field} />;
 }
 
 export function JobPickerField({
@@ -68,6 +95,7 @@ export function JobPickerField({
   jobsLoading,
   fallback,
   inputId,
+  onCreate,
 }: JobFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const selected = useSelectedJob(jobs, value, fallback);
@@ -101,6 +129,13 @@ export function JobPickerField({
           onChange(job.id);
           setPickerOpen(false);
         }}
+        onCreate={
+          onCreate &&
+          ((name) => {
+            setPickerOpen(false);
+            onCreate(name);
+          })
+        }
       />
     </div>
   );
@@ -114,6 +149,7 @@ export function JobTypeahead({
   jobsLoading,
   fallback,
   inputId,
+  onCreate,
 }: JobFieldProps) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -127,6 +163,9 @@ export function JobTypeahead({
     [jobs, query, selected]
   );
   const noMatches = query.trim().length > 0 && suggestions.length === 0;
+  // "New project" is one more option after the matches, reachable by arrow keys.
+  const canCreate = Boolean(onCreate) && !selected && query.trim().length > 0;
+  const lastIndex = suggestions.length - 1 + (canCreate ? 1 : 0);
   const listOpen =
     open && !selected && !jobsLoading && (suggestions.length > 0 || noMatches);
 
@@ -166,7 +205,7 @@ export function JobTypeahead({
               aria-expanded={listOpen}
               aria-controls={listId}
               aria-activedescendant={
-                listOpen && suggestions.length > 0
+                listOpen && lastIndex >= 0
                   ? `${listId}-${activeIndex}`
                   : undefined
               }
@@ -195,9 +234,7 @@ export function JobTypeahead({
                   case "ArrowDown":
                     event.preventDefault();
                     setOpen(true);
-                    setActiveIndex((i) =>
-                      Math.min(i + 1, Math.max(suggestions.length - 1, 0))
-                    );
+                    setActiveIndex((i) => Math.min(i + 1, Math.max(lastIndex, 0)));
                     break;
                   case "ArrowUp":
                     event.preventDefault();
@@ -207,6 +244,9 @@ export function JobTypeahead({
                     if (listOpen && suggestions[activeIndex]) {
                       event.preventDefault();
                       select(suggestions[activeIndex]);
+                    } else if (listOpen && canCreate && activeIndex === suggestions.length) {
+                      event.preventDefault();
+                      onCreate?.(query.trim());
                     }
                     break;
                   case "Escape":
@@ -274,6 +314,22 @@ export function JobTypeahead({
                 <span className="truncate">{job.name}</span>
               </div>
             ))}
+            {canCreate && (
+              <div
+                id={`${listId}-${suggestions.length}`}
+                role="option"
+                aria-selected={activeIndex === suggestions.length}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveIndex(suggestions.length)}
+                onClick={() => onCreate?.(query.trim())}
+                className={cn(
+                  "cursor-pointer truncate border-t border-[#4e4e4e] px-3 py-2.5 text-sm text-[#8bbaff]",
+                  activeIndex === suggestions.length && "bg-[#353535]"
+                )}
+              >
+                + New project “{query.trim()}”
+              </div>
+            )}
           </div>
           {noMatches && (
             <div role="status" className="px-3 py-2.5 text-xs text-[#a0a0a0]">

@@ -10,6 +10,7 @@ import { actionRequest, actionButton as button, actionPrimary as primary, action
 import ActionThumbnail from '@/components/photos/action-thumbnail';
 
 import type { PhotoAction as Action, ActionPhoto as Photo, UnresolvedPhotoReference as Unresolved, PhotoActionBatchResponse as View } from '@/lib/photos/action-types';
+import NewJobForm from '@/components/photos/new-job-form';
 const PAGE_SIZE = 50;
 const title = (action: Action) => action === 'trash' ? 'Move photos to trash' : action === 'restore' ? 'Restore photos' : 'Move photos';
 const label = (photo: Photo | null) => photo?.original_name || 'Photo';
@@ -20,6 +21,7 @@ export default function PhotoActions() {
   const [action, setAction] = useState<Action>('move');
   const [photoId, setPhotoId] = useState('');
   const [destination, setDestination] = useState('');
+  const [creatingJob, setCreatingJob] = useState(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -136,6 +138,9 @@ export default function PhotoActions() {
         <option value="">{action === 'restore' ? 'Keep the current owning job' : 'Choose a job'}</option>
         {(jobs ?? []).map(job => <option key={job.id} value={job.id}>{job.job_number} · {job.name}</option>)}
       </select></label>}
+      {action !== 'trash' && !busy && (creatingJob
+        ? <NewJobForm jobs={jobs ?? []} onCancel={() => setCreatingJob(false)} onDone={job => { setDestination(job.id); setCreatingJob(false); }} />
+        : <button type="button" className="block text-xs text-[#8bbaff] underline" onClick={() => setCreatingJob(true)}>New project</button>)}
       <button className={primary} disabled={!ready || busy || !photoId || (action === 'move' && !destination)} onClick={() => void act(review)}>Review exact targets</button>
     </section>}
     {view && <>

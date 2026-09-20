@@ -21,6 +21,8 @@ interface JobPickerSheetProps {
   open: boolean;
   onClose(): void;
   onSelect(job: PhotoJobSummary): void;
+  /** Offer "New project" for the typed text. */
+  onCreate?(name: string): void;
 }
 
 export default function JobPickerSheet({
@@ -29,6 +31,7 @@ export default function JobPickerSheet({
   open,
   onClose,
   onSelect,
+  onCreate,
 }: JobPickerSheetProps) {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -121,6 +124,17 @@ export default function JobPickerSheet({
         {results.length === 0 && (
           <li className="px-4 py-6 text-center text-sm text-[#a0a0a0]">
             No matching jobs
+          </li>
+        )}
+        {onCreate && query.trim() && (
+          <li>
+            <button
+              type="button"
+              onClick={() => onCreate(query.trim())}
+              className="w-full truncate px-4 py-3.5 text-left text-base text-[#8bbaff] active:bg-[#2e2e2e]"
+            >
+              + New project “{query.trim()}”
+            </button>
           </li>
         )}
       </ul>

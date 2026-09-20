@@ -21,6 +21,14 @@ when the employee knows them; the browser lets the employee review and edit
 those suggestions. Folder names may suggest jobs, but do not establish the
 destination.
 
+Every photo belongs to one project, which the application calls a job. When the
+photos belong to a project that has no job yet, or to something that is not an
+office job at all, such as office or event photos, suggest a short
+`new_project_name` instead of a job number. This creates nothing: the employee
+reviews the name in the browser, sees any existing project that matches, and
+creates it there. A project made without an office job number receives a
+generated `P-` code; use that code as its job number afterwards.
+
 Give the employee the returned handoff URL. For folder selection, tell them to
 open it in Chrome or Edge on the computer that can access the files. The hosted
 service cannot read their local drive or mapped `J:` share. File bytes travel
@@ -38,7 +46,9 @@ will be imported. Each successful photo appears as it completes.
 Use `move_photos`, `remove_photos`, or `restore_photos` for the corresponding
 change. Obtain an employee-supplied photo reference or job scope and, for a
 move, the destination job. Jobs, filenames, and photo links are resolved only
-after login. If a filename matches several photos, the employee selects the
+after login. A move needs a destination job that already exists. If the project
+does not exist yet, the employee creates it first, in the photos application or
+through an `add_photos` handoff, and the move then uses its job number. If a filename matches several photos, the employee selects the
 intended ones in the browser; do not guess or claim that a handoff proves a
 photo exists. Single-photo and bulk changes both require review and
 confirmation of the exact affected photos.
