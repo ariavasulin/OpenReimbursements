@@ -41,7 +41,7 @@ const descriptions: Record<ScriptName, string> = {
 };
 
 export function browserOrigin(): string {
-  const url = new URL(process.env.DWS_BROWSER_ORIGIN ?? 'https://photos.dws-receipts.com');
+  const url = new URL(process.env.DWS_BROWSER_ORIGIN ?? 'https://photos.design-workshops.app');
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash ||
       (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)))) {
     throw new PhotoApiError('temporarily_unavailable');

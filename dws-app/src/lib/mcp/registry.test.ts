@@ -47,6 +47,10 @@ describe('MCP registry', () => {
     })).toHaveProperty('destination_job_number', 'unknown-yet');
     expect(mocks.from).not.toHaveBeenCalled();
   });
+  it('falls back to the design-workshops photo host when no origin is configured', () => {
+    vi.stubEnv('DWS_BROWSER_ORIGIN', undefined);
+    expect(browserOrigin()).toBe('https://photos.design-workshops.app');
+  });
   it('requires a plain configured origin and never puts configured secrets into browser URLs', () => {
     for (const origin of ['https://evil.example/path', 'https://user:password@example.test', `https://${'a'.repeat(64)}.example.test`]) {
       vi.stubEnv('DWS_BROWSER_ORIGIN', origin);

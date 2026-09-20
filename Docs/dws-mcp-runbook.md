@@ -3,7 +3,7 @@
 The hosted release delivers the shared DWS guidance and progressively loaded
 skills through the existing `dws-receipts` Vercel application at
 `https://mcp.design-workshops.app/mcp/<shared-key>` and authenticated photo handoffs
-at `https://photos.dws-receipts.com`. Attach both domains to that same project;
+at `https://photos.design-workshops.app`. Attach both domains to that same project;
 there is no second runtime or deployment. The root-only photos-host middleware
 does not rewrite `/mcp/*`, `/migrate`, or `/photo-actions`.
 
@@ -16,7 +16,7 @@ environment and applied to a new deployment:
 | Variable | Value / purpose |
 | --- | --- |
 | `MCP_SHARED_KEY` | A fresh, independently generated 32-byte value encoded as 64 lowercase hexadecimal characters. Never prefix it with `NEXT_PUBLIC_`. |
-| `DWS_BROWSER_ORIGIN` | `https://photos.dws-receipts.com`; an HTTPS origin without a path, query, or credentials. This chooses the browser destination independently of the incoming connector host. |
+| `DWS_BROWSER_ORIGIN` | `https://photos.design-workshops.app` (also the fallback when unset); an HTTPS origin without a path, query, or credentials. This chooses the browser destination independently of the incoming connector host. `photos.dws-receipts.com` still serves the application, but generated links use this origin. |
 | `DWS_GITHUB_ISSUES_TOKEN` | A dedicated fine-grained token restricted to `ariavasulin/OpenReimbursements`, with Issues read/write and implied Metadata read only. Do not reuse a broad CLI token or grant Contents access. |
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | The existing application's Supabase configuration. Only the last value is privileged; it stays server-side. |
 
@@ -68,7 +68,11 @@ The same preparation created and verified `source:dws-mcp`; `bug`,
 the operator's only local copy in a private 0600 file outside git. It also added
 Production-only `DWS_BROWSER_ORIGIN=https://photos.dws-receipts.com`.
 No secret URL was distributed, and no deployment occurred; these variables
-take effect only in a subsequent deployment. `DWS_GITHUB_ISSUES_TOKEN` remains
+take effect only in a subsequent deployment. Later on 2026-09-20 that value was
+updated with `vercel env update` to `https://photos.design-workshops.app`, so
+generated hand-off links use the new photo host once the next production
+deployment is live; `photos.dws-receipts.com` keeps serving the application.
+`DWS_GITHUB_ISSUES_TOKEN` remains
 absent. Provision and inspect that dedicated credential separately; access
 through the operator's broader `gh` CLI token is not evidence of least privilege.
 

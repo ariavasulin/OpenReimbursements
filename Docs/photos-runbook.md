@@ -248,7 +248,7 @@ reporting and lease release, inside the 300-second function limit.
 
 ```sh
 curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-  https://photos.dws-receipts.com/api/photos/repair
+  https://photos.design-workshops.app/api/photos/repair
 ```
 
 `CRON_SECRET` is the Vercel environment variable of the same name. The
