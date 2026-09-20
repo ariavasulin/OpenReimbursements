@@ -15,6 +15,7 @@ import { createMigrationRequest, loadMigrationBatch, isPausedMigrationItem, migr
 
 import { actionButton as button, actionPrimary as primary, actionField as field } from '@/lib/photos/action-client';
 import { scanMigrationSource } from '@/lib/photos/migration/scan';
+import NewJobForm from '@/components/photos/new-job-form';
 
 const bytes = (n: number) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${n.toLocaleString()} bytes`;
 type Job = { id: string; job_number: string; name: string };
@@ -27,6 +28,7 @@ export default function MigratePage() {
   const [sources, setSources] = useState<MigrationSource[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [jobQuery, setJobQuery] = useState('');
+  const [creatingFor, setCreatingFor] = useState<string | null>(null); // source id whose project is being created
   const [recent, setRecent] = useState<MigrationBatch[]>([]);
   const [items, setItems] = useState<ItemPage>({ items: [], next_cursor: null });
   const [cursor, setCursor] = useState<string | null>(null);
@@ -128,6 +130,12 @@ export default function MigratePage() {
     window.history.replaceState(null, '', `/migrate?batch=${batch.id}`);
     setView({ batch, can_mutate: true, counts: {} });
     return batch.id;
+  };
+
+  // The assistant may suggest a project that does not exist yet; the employee creates it here.
+  const suggestedProject = (label: string) => {
+    const hint = view?.batch.requested_input;
+    return (mode === 'add_photos' ? hint?.new_project_name : hint?.sources?.find(source => source.label === label)?.new_project_name) ?? '';
   };
 
   const addLocal = (local: LocalSource, existing?: MigrationSource) => {
@@ -261,6 +269,14 @@ export default function MigratePage() {
           {jobs.map(job => <option value={job.id} key={job.id}>{job.job_number} · {job.name}</option>)}
         </select>
       </label>
+      {editable && !busy && (creatingFor === source.id
+        ? <div className="mt-2"><NewJobForm jobs={jobs} initialName={suggestedProject(source.label)} onCancel={() => setCreatingFor(null)} onDone={job => {
+            setJobs(current => current.some(row => row.id === job.id) ? current : [job, ...current]);
+            setSources(current => current.map(row => row.id === source.id ? { ...row, job_id: job.id, sealed_scan_id: null } : row));
+            setCreatingFor(null);
+          }} /></div>
+        : <button type="button" className="mt-2 text-xs text-[#8bbaff] underline" onClick={() => setCreatingFor(source.id)}>
+            {!source.job_id && suggestedProject(source.label) ? `New project “${suggestedProject(source.label)}”` : 'New project'}</button>)}
       {owner && !running && status !== 'cancelled' && <button className={`${button} mt-3`} onClick={() => source.kind === 'directory'
         ? void act(() => selectDirectory(source)) : (fileReselect.current = source.id, setCompactOpen(true))}>Reselect {source.label}</button>}
     </div>)}

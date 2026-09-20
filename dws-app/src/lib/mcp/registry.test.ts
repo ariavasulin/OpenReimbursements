@@ -30,6 +30,11 @@ describe('MCP registry', () => {
       ['create_github_issue', { title: 'Report', body: 'Details', anonymous: true, kind: 'bug', confirmed: false }],
     ];
     for (const [name, input] of invalid) expect(() => validateScriptInput(name, input)).toThrow();
+    // A suggested project name is a browser-side suggestion only; it must pass validation unchanged.
+    expect(validateScriptInput('add_photos', { new_project_name: 'Office party' })).toEqual({ new_project_name: 'Office party' });
+    expect(validateScriptInput('migrate_photos', { sources: [{ label: 'Party', new_project_name: 'Office party' }] }))
+      .toEqual({ sources: [{ label: 'Party', new_project_name: 'Office party' }] });
+    expect(() => validateScriptInput('add_photos', { new_project_name: 'x'.repeat(121) })).toThrow();
     for (const name of ['eval', '__proto__', 'constructor', 'toString', '../photos', 'add_photos/../../eval']) {
       expect(() => validateScriptInput(name, {})).toThrow();
     }

@@ -35,6 +35,7 @@ import {
   usePhotoDeepLink,
   useResolvePhotoDeepLink,
 } from "@/hooks/use-photo-deep-link";
+import RenameJob from "@/components/photos/rename-job";
 
 const PINNED_TAG = "professional";
 
@@ -160,6 +161,7 @@ export default function JobPhotosPage() {
           <>
             <span className="text-[#2680FC]">#{job.job_number}</span> ·{" "}
             {job.name}
+            <RenameJob key={job.name} jobId={job.id} name={job.name} />
           </>
         ) : (
           "Job"

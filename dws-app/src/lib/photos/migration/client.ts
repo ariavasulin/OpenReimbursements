@@ -3,7 +3,7 @@ import type { UploadResult } from '../upload';
 
 export interface MigrationBatch {
   id: string; status: string; script_name: 'migrate_photos' | 'add_photos';
-  requested_input?: { job_number?: string; sheet_number?: string; tags?: string[]; sources?: { label: string; job_number?: string }[] };
+  requested_input?: { job_number?: string; new_project_name?: string; sheet_number?: string; tags?: string[]; sources?: { label: string; job_number?: string; new_project_name?: string }[] };
   created_at?: string;
 }
 export interface MigrationSource {

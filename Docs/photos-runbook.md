@@ -26,6 +26,25 @@ succeeds or the employee explicitly skips it. An employee who cannot restore
 the matching photo should ask an administrator or use an MCP restore handoff,
 then retry the original queue item to resolve the canonical result.
 
+## Hand-made projects
+
+Every photo belongs to one job, which employees call a project. Until the office
+project database is bridged, any photo actor can create a project wherever a job
+is chosen (upload, move, and the `/migrate` page) and rename one from its page.
+Both go through `photo_create_job` / `photo_rename_job` behind the
+`photo_writes_enabled` gate.
+
+- A project created without an office job number receives a generated `P-<n>`
+  code from `job_project_code_seq`. Office job numbers are digits, so the two
+  never collide, and a typed `P-` code is refused.
+- Creating with a job number that already exists returns that job; nothing is
+  duplicated. Rename changes the name only, never the job number.
+- Hand-made rows have `synced_at` null and `created_by` set.
+  `scripts/import-jobs.mjs` upserts on `job_number`, so an import row with the
+  same real office number takes over a hand-made row in place, and may overwrite
+  a renamed imported job's name. `P-` projects are never touched by the import.
+  How the future office sync should reconcile is undecided.
+
 ## Legacy standalone-sidecar audit
 
 `node dws-app/scripts/attach-orphan-sidecars.mjs` is read-only and considers
