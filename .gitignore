@@ -47,7 +47,6 @@ yarn-error.log*
 
 # AI tools
 .claude/
-CLAUDE.md
 thoughts/
 
 # Config

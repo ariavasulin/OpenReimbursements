@@ -2,7 +2,7 @@
 
 The hosted release delivers the shared DWS guidance and progressively loaded
 skills through the existing `dws-receipts` Vercel application at
-`https://mcp.dws-receipts.com/mcp/<shared-key>` and authenticated photo handoffs
+`https://mcp.design-workshops.app/mcp/<shared-key>` and authenticated photo handoffs
 at `https://photos.dws-receipts.com`. Attach both domains to that same project;
 there is no second runtime or deployment. The root-only photos-host middleware
 does not rewrite `/mcp/*`, `/migrate`, or `/photo-actions`.
@@ -48,15 +48,15 @@ Issues-only credential, DNS completion, schema cutover and client checks remain
 operator obligations. Local SDK evidence proves protocol behavior. An installed
 infrastructure MCP connector used by an implementation agent is unrelated evidence.
 
-As of 2026-09-07, project `prj_88wyiltek8eTbBPLGzg4EsiFKOAR` uses root
-`dws-app` and Node 22.x; both domains are assigned and `photos.dws-receipts.com`
-is verified. MCP ownership is verified, but **DNS remains unconfigured**.
-An authorized DNS operator must add only
-`CNAME mcp → 519bb06eece934dd.vercel-dns-017.com.` at the existing DNS provider
-and run `vercel domains verify mcp.dws-receipts.com`. Keep the existing Google
-nameservers; do not create a second project or change the registrar.
-The available user login requires reauthentication and the application service
-account lacks Cloud DNS permission; neither path changed DNS.
+As of 2026-09-20, project `prj_88wyiltek8eTbBPLGzg4EsiFKOAR` uses root
+`dws-app` and Node 22.x. The main application is served at
+`https://design-workshops.app` and the connector host is
+`mcp.design-workshops.app`; that domain is registered through Vercel with Vercel
+nameservers, so assigning it to the project configured DNS and HTTPS. Both
+resolve over HTTPS. `photos.dws-receipts.com` remains the photo host, and the
+earlier `dws-receipts.com` domains stay assigned. `mcp.dws-receipts.com` is
+assigned but has no DNS record and is not the connector host; do not create a
+second project.
 
 The same preparation created and verified `source:dws-mcp`; `bug`,
 `enhancement`, and `question` already existed. It added a fresh 256-bit
