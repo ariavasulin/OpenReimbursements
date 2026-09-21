@@ -1,6 +1,7 @@
 import 'server-only';
 import { createHash, randomUUID } from 'node:crypto';
-import { isSha256 } from '../apiShared';
+import { cleanTags, isSha256 } from '../apiShared';
+import { suggestFolderProjects, type SuggestionJob } from '../migration/folders';
 import type { PhotoActor } from './authority';
 import { photoId, readPhotoBatch } from './reads';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc } from './http';
@@ -53,7 +54,123 @@ export async function saveMigrationSource(actor: PhotoActor, batch: string, body
   const rules = body.selection_rules ?? {};
   if (!rules || typeof rules !== 'object' || Array.isArray(rules)) throw new PhotoApiError('invalid_input');
   return photoRpc(actor, 'migration_source', { p_actor: actor.actorId, p_batch: photoId(batch), p_source: body.id ? photoId(body.id) : randomUUID(),
-    p_job: photoId(body.job_id), p_kind: body.kind, p_label: string(body.label, 512), p_rules: rules });
+    // A source's project is only a default for its folder rows, and may be absent.
+    p_job: optionalId(body.job_id), p_kind: body.kind, p_label: string(body.label, 512), p_rules: rules });
+}
+/** Absent, null, or '' means "none"; anything else must be a UUID. */
+function optionalId(value: unknown): string | null {
+  return value === undefined || value === null || value === '' ? null : photoId(value);
+}
+
+/** Seal one scan, then pre-fill review for the folder rows that seal just made (AC-17, AC-19). */
+export async function sealMigrationSource(actor: PhotoActor, source: string, body: Body) {
+  const sealed = await photoRpc(actor, 'migration_seal', { p_actor: actor.actorId, p_source: photoId(source), p_scan: photoId(body.scan_id),
+    p_chunks: migrationInteger(body.chunk_count, 2147483647), p_entries: migrationInteger(body.total_entries),
+    p_bytes: migrationInteger(body.total_bytes), p_job: optionalId(body.job_id), p_fingerprint: body.fingerprint });
+  // The seal has committed and is repeat-safe. Pre-filling is a convenience on top of it: an
+  // import with no suggestions is still complete (pressing Start with no edits always works),
+  // so a failure here is logged for the operator and never fails the scan.
+  try { await prefillMigrationFolders(actor, sealed); }
+  catch (error) { console.error('[photo-migrations] folder pre-fill skipped:', error instanceof Error ? error.message : error); }
+  return sealed;
+}
+
+type SealedSource = { id: string; batch_id: string; job_id: string | null; kind: string; label: string; sealed_scan_id: string | null };
+const PREFILL_PAGE = 1000;
+/**
+ * Suggestions only, and only for rows THIS scan created, so a rescan never brings back
+ * something the employee cleared. Nothing is assigned that review does not show.
+ *  - Project: the MCP hint arrives as the source's default project and already sits on every
+ *    row. Without one, a folder whose name holds an existing project number as a whole word
+ *    is suggested that project (suggestFolderProjects walks up through its parents).
+ *  - Album name: an MCP `album_name` hint names the album for photos directly inside the
+ *    picked folder (or the loose-files selection). Sub-folders keep the names of their paths.
+ */
+async function prefillMigrationFolders(actor: PhotoActor, source: SealedSource) {
+  if (!source.sealed_scan_id) return;
+  const batch = await actor.db.from('migration_batches').select('status,origin').eq('id', source.batch_id).maybeSingle();
+  if (batch.error) throwPhotoDatabaseError(batch.error);
+  if (batch.data?.status !== 'draft') return;
+
+  if (batch.data.origin === 'mcp') {
+    const handoff = await actor.db.from('dws_action_handoffs').select('script_name,requested_input')
+      .eq('migration_batch_id', source.batch_id).eq('consumed_by', actor.actorId).maybeSingle();
+    if (handoff.error) throwPhotoDatabaseError(handoff.error);
+    const input = (handoff.data?.requested_input ?? {}) as { album_name?: unknown; sources?: Array<{ label?: unknown; album_name?: unknown }> };
+    const hinted = handoff.data?.script_name === 'add_photos' ? input.album_name
+      : Array.isArray(input.sources) ? input.sources.find(hint => hint?.label === source.label)?.album_name : undefined;
+    if (typeof hinted === 'string' && hinted.trim()) {
+      const own = await actor.db.from('migration_folders').select('id').eq('source_id', source.id).eq('folder', '')
+        .eq('created_scan_id', source.sealed_scan_id).maybeSingle();
+      if (own.error) throwPhotoDatabaseError(own.error);
+      if (own.data) await photoRpc(actor, 'migration_folder_update', { p_actor: actor.actorId, p_source: source.id, p_folder: '',
+        p_subfolders: false, p_patch: { album_name: hinted.trim().slice(0, 120) } });
+    }
+  }
+
+  if (source.kind !== 'directory' || source.job_id) return;
+  const folders: string[] = [];
+  for (let from = 0; ; from += PREFILL_PAGE) {
+    const page = await actor.db.from('migration_folders').select('folder').eq('source_id', source.id)
+      .eq('created_scan_id', source.sealed_scan_id).is('job_id', null).order('folder').range(from, from + PREFILL_PAGE - 1);
+    if (page.error) throwPhotoDatabaseError(page.error);
+    folders.push(...(page.data ?? []).map(row => row.folder as string));
+    if ((page.data?.length ?? 0) < PREFILL_PAGE) break;
+  }
+  if (!folders.length) return; // an ordinary rescan: nothing new, so no project list is read at all
+  const jobs: SuggestionJob[] = [];
+  for (let from = 0; ; from += PREFILL_PAGE) {
+    const page = await actor.db.from('jobs').select('id,job_number').eq('is_active', true).order('id').range(from, from + PREFILL_PAGE - 1);
+    if (page.error) throwPhotoDatabaseError(page.error);
+    jobs.push(...(page.data ?? []) as SuggestionJob[]);
+    if ((page.data?.length ?? 0) < PREFILL_PAGE) break;
+  }
+  const rows = [...suggestFolderProjects(folders, jobs, source.label)].map(([folder, job_id]) => ({ folder, job_id }));
+  for (let from = 0; from < rows.length; from += PREFILL_PAGE) {
+    await photoRpc(actor, 'migration_folder_suggest', { p_actor: actor.actorId, p_source: source.id, p_scan: source.sealed_scan_id,
+      p_rows: rows.slice(from, from + PREFILL_PAGE) });
+  }
+}
+
+/** Folder rows for review: only folders that still hold photos, in id order for stable paging. */
+export async function readMigrationFolders(actor: PhotoActor, id: string, request: Request) {
+  await readPhotoBatch(actor, id);
+  const params = new URL(request.url).searchParams;
+  const raw = params.get('limit');
+  const limit = raw === null ? 1000 : migrationInteger(Number(raw), 1000);
+  if (limit < 1) throw new PhotoApiError('invalid_input');
+  const after = params.get('after') ? photoId(params.get('after')) : null;
+  let query = actor.db.from('migration_folders')
+    .select('id,source_id,folder,album_name,album_id,job_id,tags,photo_count,jobs(id,job_number,name),albums(id,name),migration_sources!inner(batch_id)')
+    .eq('migration_sources.batch_id', id).gt('photo_count', 0).order('id').limit(limit + 1);
+  if (after) query = query.gt('id', after);
+  const { data, error } = await query;
+  if (error) throwPhotoDatabaseError(error);
+  const folders = (data ?? []).slice(0, limit).map(({ migration_sources: _source, ...row }) => row);
+  return { folders, next_cursor: (data?.length ?? 0) > limit ? folders.at(-1)!.id : null };
+}
+
+const folderPatchKeys = new Set(['folder', 'include_subfolders', 'job_id', 'tags', 'album_name', 'album_id']);
+/** One review edit. `include_subfolders` is how a choice on a top-level folder reaches the folders inside it. */
+export async function updateMigrationFolders(actor: PhotoActor, source: string, body: Body) {
+  if (Object.keys(body).some(key => !folderPatchKeys.has(key))) throw new PhotoApiError('invalid_input');
+  const folder = body.folder;
+  if (typeof folder !== 'string' || folder.length > 4096 || (folder !== '' && path(folder) !== folder)) throw new PhotoApiError('invalid_input');
+  if (body.include_subfolders !== undefined && typeof body.include_subfolders !== 'boolean') throw new PhotoApiError('invalid_input');
+  const patch: Body = {};
+  if ('job_id' in body) patch.job_id = optionalId(body.job_id);
+  if ('album_id' in body) patch.album_id = optionalId(body.album_id);
+  if ('album_name' in body) {
+    if (body.album_name !== null && (typeof body.album_name !== 'string' || body.album_name.length > 512)) throw new PhotoApiError('invalid_input');
+    patch.album_name = body.album_name;
+  }
+  if ('tags' in body) {
+    if (!Array.isArray(body.tags) || body.tags.length > 64 || body.tags.some(tag => typeof tag !== 'string')) throw new PhotoApiError('invalid_input');
+    patch.tags = cleanTags(body.tags);
+  }
+  if (!Object.keys(patch).length) throw new PhotoApiError('invalid_input');
+  return photoRpc(actor, 'migration_folder_update', { p_actor: actor.actorId, p_source: photoId(source), p_folder: folder,
+    p_subfolders: body.include_subfolders === true, p_patch: patch });
 }
 export async function readMigrationBatch(actor: PhotoActor, id: string) {
   const summary = await readPhotoBatch(actor, id);

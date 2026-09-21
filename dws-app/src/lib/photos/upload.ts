@@ -23,14 +23,18 @@ import type {
 } from "./upload-contract";
 
 export interface UploadMeta {
-  jobId: string;
+  /** The upload's project; null when it names only an album (or an import folder with no project). */
+  jobId: string | null;
   /** auth.uid() of the signed-in user — prefixes every storage key. */
   uploaderId: string;
   tags?: string[];
 }
 
-/** What the sheet hands the manager: meta plus per-file shutter times. */
-export interface BatchMeta extends Omit<UploadMeta, "uploaderId"> {
+/** What the sheet hands the manager: meta plus per-file shutter times. The upload pop-up still
+ * names a project here; only the folder import sends none. (Merge note: the screens branch
+ * loosens this when the pop-up learns albums. Take its version of this interface.) */
+export interface BatchMeta extends Omit<UploadMeta, "uploaderId" | "jobId"> {
+  jobId: string;
   shutterAt?: Map<File, Date>;
 }
 
@@ -119,7 +123,7 @@ export const LEASE_RENEW_MS = 30_000;
 
 function canonicalResult(
   outcome: CanonicalUploadOutcome,
-  jobId: string,
+  jobId: string | null,
   warnings: string[]
 ): UploadResult {
   const common = {
@@ -134,7 +138,9 @@ function canonicalResult(
       error: outcome.remedy ?? "This photo is in the trash. Restore it from Trash, then upload again.",
     };
   }
-  if (outcome.job_id !== jobId) {
+  // An upload that names no project cannot conflict with one: the existing photo keeps its
+  // project and simply joins the album (the database answers skipped_duplicate, not job_conflict).
+  if (jobId !== null && outcome.job_id !== jobId) {
     return { ...common, status: "job_conflict", error: "This photo belongs to another job. Confirm a move to use it here." };
   }
   return { ...common, status: outcome.status === "created" ? "done" : "duplicate" };
