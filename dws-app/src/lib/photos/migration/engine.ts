@@ -2,10 +2,13 @@ import { uploadOne, type UploadDeps, type UploadIdentity, type UploadMeta, type 
 import type { UploadAttempt } from '../upload-contract';
 import { abortUploadWork, UploadRequestError } from '../upload-http';
 import type { LocalSource } from './inventory';
+import { folderOf, type MigrationFolder } from './folders';
 import { migrationItemStatusLabel, outcomePayload, retryDue, type BatchView, type ItemPage, type MigrationItem, type MigrationRequest, type MigrationSource } from './client';
 
 export interface MigrationEngineOptions {
   batchId: string; uploaderId: string; sources: MigrationSource[]; localSources: Map<string, LocalSource>;
+  /** The reviewed folder rows. Each file uploads under its own folder's project and tags. */
+  folders?: MigrationFolder[];
   request: MigrationRequest; deps: UploadDeps;
   prepare(input: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<UploadAttempt>;
   meta?: Pick<UploadMeta, 'tags'>;
@@ -21,8 +24,23 @@ export class MigrationEngine {
   private controller = new AbortController();
   private active = false;
   private updates: Promise<void> = Promise.resolve();
-  constructor(private readonly options: MigrationEngineOptions) {}
+  private readonly folders = new Map<string, MigrationFolder>();
+  constructor(private readonly options: MigrationEngineOptions) {
+    for (const row of options.folders ?? []) this.folders.set(`${row.source_id}\n${row.folder}`, row);
+  }
   stop() { this.controller.abort(); }
+  /**
+   * The server takes a file's project and tags from its folder row and refuses a finalize that
+   * names a different project, so this must agree with it: the row wins even when its project
+   * is empty. Only a file with no row (an import scanned before folder rows existed) falls back
+   * to the picked folder's own project.
+   */
+  private destination(item: MigrationItem, source: MigrationSource): { jobId: string | null; tags: string[] } {
+    const row = this.folders.get(`${item.source_id}\n${folderOf(item.relative_path)}`);
+    if (row) return { jobId: row.job_id, tags: row.tags };
+    const tags = Array.isArray(source.selection_rules?.tags) ? source.selection_rules.tags as string[] : this.options.meta?.tags ?? [];
+    return { jobId: source.job_id || null, tags };
+  }
   private changed(itemId?: string) {
     this.updates = this.updates.then(() => this.options.onChange(itemId));
     return this.updates;
@@ -121,8 +139,7 @@ export class MigrationEngine {
       },
     };
     const result = await uploadOne(file, item.upload_attempt_id, {
-      uploaderId: this.options.uploaderId, jobId: source.job_id, ...this.options.meta,
-      ...(Array.isArray(source.selection_rules?.tags) ? { tags: source.selection_rules.tags as string[] } : {}),
+      uploaderId: this.options.uploaderId, ...this.destination(item, source),
     }, deps, (bytes, total) => this.options.onProgress?.(item.id, bytes, total), {
       signal, identity, sidecar,
       expectedSidecarName: item.sidecar?.original_name ?? item.sidecar?.name ?? item.sidecar?.relative_path,

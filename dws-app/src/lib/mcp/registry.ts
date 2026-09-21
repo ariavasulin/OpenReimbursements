@@ -21,9 +21,12 @@ const selector = z.union([
   z.object({ photos: z.array(reference).min(1).max(100) }).strict(),
   z.object({ job_number: job, scope: z.enum(['active', 'trash']) }).strict(),
 ]);
+const tags = z.array(text(MAX_TAG_LENGTH)).max(MAX_TAGS);
 export const scriptSchemas = {
-  migrate_photos: z.object({ sources: z.array(z.object({ label: text(255), job_number: job.optional(), new_project_name: text(120).optional() }).strict()).min(1).max(100).optional() }).strict(),
-  add_photos: z.object({ job_number: job.optional(), new_project_name: text(120).optional(), tags: z.array(text(MAX_TAG_LENGTH)).max(MAX_TAGS).optional() }).strict(),
+  // Every field below `label` is a suggestion that pre-fills review. Nothing is created until the
+  // employee confirms in the browser. An album name is 1-120 characters, like a project name.
+  migrate_photos: z.object({ sources: z.array(z.object({ label: text(255), job_number: job.optional(), new_project_name: text(120).optional(), album_name: text(120).optional(), tags: tags.optional() }).strict()).min(1).max(100).optional() }).strict(),
+  add_photos: z.object({ job_number: job.optional(), new_project_name: text(120).optional(), album_name: text(120).optional(), tags: tags.optional() }).strict(),
   move_photos: z.object({ selector, destination_job_number: job }).strict(),
   remove_photos: z.object({ selector }).strict(),
   restore_photos: z.object({ selector, destination_job_number: job.optional() }).strict(),
@@ -32,8 +35,8 @@ export const scriptSchemas = {
 export const scriptNames = ['migrate_photos', 'add_photos', 'move_photos', 'remove_photos', 'restore_photos', 'create_github_issue'] as const;
 type ScriptName = typeof scriptNames[number];
 const descriptions: Record<ScriptName, string> = {
-  migrate_photos: 'Open folder migration in a browser; source labels, job numbers, and new project names are editable suggestions. Originals upload directly to Storage after login and confirmation.',
-  add_photos: 'Open compact file selection with editable job, new project name, and tag suggestions. Uses the same durable upload and recovery workflow.',
+  migrate_photos: 'Open folder import in a browser. Each folder becomes an album with the same name; a project is optional. Source labels, job numbers, new project names, album names, and tags are editable suggestions. Originals upload directly to Storage after login and confirmation.',
+  add_photos: 'Open compact file selection with editable project, new project name, album name, and tag suggestions. The photos need a project or an album. Uses the same durable upload and recovery workflow.',
   move_photos: 'Open browser review of exact photo targets and a destination job; move only after employee confirmation.',
   remove_photos: 'Open browser review of exact photo targets to move to recoverable 30-day trash. Known public image URLs remain accessible.',
   restore_photos: 'Open browser review of recoverable trash, optionally moving restored photos to a destination job. Expired retention cannot be restored.',

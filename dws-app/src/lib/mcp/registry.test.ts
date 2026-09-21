@@ -48,6 +48,33 @@ describe('MCP registry', () => {
       .toThrowError(expect.objectContaining({ code: 'invalid_input' }));
   });
 
+  // photo-albums AC-19: album names and tags are suggestions that pre-fill review; a project is optional.
+  it('accepts album_name and tags on add_photos and on each migrate_photos source, and nothing looser', () => {
+    const loose = { album_name: 'Christmas Party 2015', tags: ['office'] };
+    expect(validateScriptInput('add_photos', loose)).toEqual(loose);
+    const folders = { sources: [
+      { label: 'Marketing', album_name: 'Marketing', tags: ['professional'] },
+      { label: '3612 Smith Residence', job_number: '3612', tags: ['field dimension', 'shop drawing'] },
+      { label: 'No hints at all' },
+    ] };
+    expect(validateScriptInput('migrate_photos', folders)).toEqual(folders);
+    for (const bad of [
+      { album_name: '' }, { album_name: '   ' }, { album_name: 'x'.repeat(121) }, { album_name: ['Marketing'] },
+      { album_id: '5f1f8f0e-5a0e-4d26-9d52-5c1d0f4f5b11' }, { tags: 'office' }, { tags: Array.from({ length: 21 }, (_, n) => `t${n}`) },
+    ]) {
+      expect(() => validateScriptInput('add_photos', bad), JSON.stringify(bad)).toThrow();
+      expect(() => validateScriptInput('migrate_photos', { sources: [{ label: 'Folder', ...bad }] }), JSON.stringify(bad)).toThrow();
+    }
+  });
+
+  it('tells the assistant that folders become albums, a project is optional, and tags can be set per folder', async () => {
+    const { skills } = await import('./harness');
+    const text = skills.photos.instructions;
+    for (const phrase of ['Folders become albums', 'A project is optional', 'Tags can be set per folder', 'need a project or an album']) expect(text, phrase).toContain(phrase);
+    // The sentence this plan replaces must be gone, not merely contradicted further down.
+    expect(text).not.toContain('Every photo belongs to one project');
+  });
+
   it('permits unknown job hints and valid app references without looking them up', () => {
     const id = '10000000-0000-4000-8000-000000000001';
     expect(validateScriptInput('move_photos', {

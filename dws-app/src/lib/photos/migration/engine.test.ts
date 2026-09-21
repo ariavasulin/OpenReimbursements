@@ -41,6 +41,27 @@ describe('foreground migration scheduler', () => {
     expect(options.localSources.get('source')!.getFile).toHaveBeenCalledTimes(8);
   });
 
+  // photo-albums Decision 10: the folder row, not the picked folder, decides a file's project and tags.
+  it('uploads each file under its own folder row’s project and tags, even when that project is empty', async () => {
+    vi.mocked(uploadOne).mockResolvedValue({ status: 'done', warnings: [] });
+    const folder = (path: string, job_id: string | null, tags: string[]) =>
+      ({ id: `row-${path}`, source_id: 'source', folder: path, album_name: path || 'Office drive', album_id: null, job_id, tags, photo_count: 1 });
+    const { options } = setup([item('root'), item('smith', { relative_path: 'Smith/Finished/site.jpg' }), item('party', { relative_path: 'Party/site.jpg' }),
+      item('legacy', { relative_path: 'No row here/site.jpg' })]);
+    options.sources[0].selection_rules = { tags: ['from-the-source'] };
+    options.folders = [folder('', 'job-root', []), folder('Smith/Finished', 'job-smith', ['professional']), folder('Party', null, ['office'])];
+    await new MigrationEngine(options).run();
+    const sent = Object.fromEntries(vi.mocked(uploadOne).mock.calls.map(call => [call[1], { jobId: call[2].jobId, tags: call[2].tags }]));
+    expect(sent).toEqual({
+      'attempt-root': { jobId: 'job-root', tags: [] },
+      'attempt-smith': { jobId: 'job-smith', tags: ['professional'] },
+      // Reviewed as "No project": the row wins over the picked folder's own project.
+      'attempt-party': { jobId: null, tags: ['office'] },
+      // No row at all (scanned before folder rows existed): the picked folder's project and tags, as before.
+      'attempt-legacy': { jobId: 'job', tags: ['from-the-source'] },
+    });
+  });
+
   it('does not retry before durable Retry-After or automatically retry a permanent failure', async () => {
     const { engine } = setup([item('future', { retry_after: new Date(Date.now() + 60_000).toISOString() }), item('permanent', { status: 'retryable_failed', retryable: false })]);
     await engine.run(); expect(uploadOne).not.toHaveBeenCalled();
