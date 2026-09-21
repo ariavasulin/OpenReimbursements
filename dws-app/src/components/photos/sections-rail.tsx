@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
 import { SECTIONS } from "@/components/photos/section-nav";
@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
  * (every album, or every project), then Trash. The lists share their query
  * with the section pages, so the rail and the page are one fetch.
  */
+
+const RAIL_PAGE_SIZE = 100;
 
 const focusRing =
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2680FC]";
@@ -63,6 +65,16 @@ export default function SectionsRail() {
   const jobs = usePhotoJobs(section === "projects");
   const albums = usePhotoAlbums(section === "albums");
   const list = section === "projects" ? jobs : section === "albums" ? albums : null;
+  const [pages, setPages] = useState({ albums: 0, projects: 0 });
+  const collection = section === "albums" ? "albums" : "projects";
+  const pageCount = Math.max(1, Math.ceil((list?.data?.length ?? 0) / RAIL_PAGE_SIZE));
+  const page = Math.min(pages[collection], pageCount - 1);
+  const start = page * RAIL_PAGE_SIZE;
+  const visibleAlbums = albums.data?.slice(start, start + RAIL_PAGE_SIZE);
+  const visibleJobs = jobs.data?.slice(start, start + RAIL_PAGE_SIZE);
+  // Keep the open collection visible even when a deep link lands beyond this page.
+  const pinnedAlbum = albums.data?.find(album => album.id === activeAlbumId && !visibleAlbums?.some(row => row.id === album.id));
+  const pinnedJob = jobs.data?.find(job => job.id === activeJobId && !visibleJobs?.some(row => row.id === job.id));
 
   // ArrowUp/ArrowDown move focus between rows without scrolling the rail;
   // rows are <Link>s so Enter-to-open is native.
@@ -175,7 +187,7 @@ export default function SectionsRail() {
         )}
 
         {section === "albums" &&
-          albums.data?.map((album) => (
+          [...(pinnedAlbum ? [pinnedAlbum] : []), ...(visibleAlbums ?? [])].map((album) => (
             <RailRow
               key={album.id}
               href={`/photos/albums/${album.id}`}
@@ -185,7 +197,7 @@ export default function SectionsRail() {
             />
           ))}
         {section === "projects" &&
-          jobs.data?.map((job) => (
+          [...(pinnedJob ? [pinnedJob] : []), ...(visibleJobs ?? [])].map((job) => (
             <RailRow
               key={job.id}
               href={`/photos/${job.id}`}
@@ -194,6 +206,17 @@ export default function SectionsRail() {
               detail={`Project #${job.job_number} · ${plural(job.photo_count, "photo")}`}
             />
           ))}
+        {list && pageCount > 1 && (
+          <div aria-label="Collection pages" className="flex flex-wrap items-center justify-center gap-2 px-2 py-3 text-sm">
+            <button type="button" disabled={page === 0}
+              onClick={() => setPages({ ...pages, [collection]: page - 1 })}
+              className={cn("min-h-11 rounded px-2 text-[#8bbaff] disabled:opacity-40", focusRing)}>Previous</button>
+            <span aria-live="polite" className="text-[#a8a8a8]">{page + 1} / {pageCount}</span>
+            <button type="button" disabled={page + 1 === pageCount}
+              onClick={() => setPages({ ...pages, [collection]: page + 1 })}
+              className={cn("min-h-11 rounded px-2 text-[#8bbaff] disabled:opacity-40", focusRing)}>Next</button>
+          </div>
+        )}
       </div>
 
       <div className="shrink-0 border-t border-[#3a3a3a] p-2">

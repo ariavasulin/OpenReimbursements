@@ -7,8 +7,44 @@ confirmed issue submission recovery, see the [DWS MCP runbook](dws-mcp-runbook.m
 
 Albums, optional projects, folder review, and sharing require the ordered
 [photo-albums rollout](../plans/active/photo-albums/plan.md#rollout): compatible
-migrations before merge, deploy, then the Sheet # column drop. Production
+migrations before merge, deploy, production checks, then the Sheet # column drop. Production
 activation remains operator work; sharing starts closed.
+
+## Album rollout and recovery
+
+The [activation sequence](#activation-sequence) below is a prerequisite, not an
+alternative to the albums rollout. The operator must verify the `20260907*`
+schema, release gates, and global content-hash index before applying any album
+migration. Missing tables or index stop the rollout; dated observations below are
+not a current production-readiness record.
+
+Retain `sheet_number` until the new deploy passes the production checks in the
+album plan. Its old readers still select that column. Keep the big office import
+paused until the operator records the real folder count/depth and keyword/sidecar
+inspection; the tested bar is 5,000 folders, so a larger tree needs another scale
+check. The column drop is a later, deliberate step, followed by another read smoke
+check. Sharing remains closed until its separate activation gate is satisfied.
+
+If the rollout fails, close `sharing_enabled`, `photo_writes_enabled`, and
+`mcp_enabled`, stop imports, and disable the repair cron using the existing
+activation procedure. Retain the database schema and grants. Before reverting
+this PR's code, check in the operator's database session:
+
+```sql
+select exists(select 1 from information_schema.columns
+  where table_schema='public' and table_name='photos' and column_name='sheet_number')
+  as old_column_exists;
+select count(*) as projectless_photos from public.photos where job_id is null;
+select count(*) as migration_batches from public.migration_batches;
+```
+
+A code revert is eligible only if the column remains, both counts are zero, and
+the activation sequence's existing rollback conditions also hold. Otherwise
+deploy a forward fix with gates closed. Old code cannot safely read album-only
+photos or resume folder-model batches, even paused or not-yet-sealed ones. Do not assign invented
+projects or delete new metadata to make an old build start. Reopening any gate
+requires the operator's recovery checks; changing a browser-origin setting does
+not roll back the data model.
 
 ## Confirmed photo changes and trash
 
@@ -97,17 +133,20 @@ always valid. The rows live in `migration_folders`.
   with that project, as are the folders inside it; project numbers shorter than three
   characters are never suggested. An MCP `job_number` hint takes precedence. Review
   shows every suggestion before Start.
-- **Rescans preserve reviewed rows.** Newly found folders start with visible source
-  defaults and name suggestions, without inheriting an earlier edit to an ancestor
-  row. Applying a parent choice changes the current subtree; review new rows before
-  starting again.
+- **Rescans preserve reviewed rows.** While the import is a draft, newly found
+  folders start with visible source defaults and name suggestions, without
+  inheriting earlier ancestor edits. After approval, a rescan may refresh files
+  in existing folders but refuses newly discovered folders before importing them.
+  Start a new import to review those folders; already imported photos are kept.
 - **Folder import needs Chrome or Edge on a computer.** Phones, Safari, and Firefox
   cannot open folders; the page says so and offers "Add photos" (up to 500 files,
   which need a project or an album).
 
 Large imports: the local regression sealed 100,000 entries with 1,500 live photos
 in 3.4 seconds, under its 8-second limit, even with a stale one-row planner estimate.
-This measures the former statistics cliff, not production throughput. Previously
+The density-zero statistics state is reproduced by the local harness; its
+occurrence in production is unverified. The setting is defensive, and the timings
+are not production throughput or evidence that ordinary growth causes this state. Previously
 Postgres compared every scanned file with every existing photo (1.7 s became
 11.5 s at only 1,500 photos). The two trigger functions on that insert now refuse
 nested-loop joins (`set enable_nestloop=off` on `migration_reserve_uuids` and
@@ -164,8 +203,9 @@ where singleton;
 ```
 
 Use the same statement with `sharing_enabled=true` to open it. Before opening it
-in production for the first time: the security review of the public route and
-`photo_share_read` is recorded in the pull request, and with the gate still
+in production for the first time: an independent security review of the current
+public route and `photo_share_read` is recorded in the pull request (the builder's
+carried handoff read alone is insufficient), and with the gate still
 closed `/s/<anything>` answers 404. After opening it: one real album link opens in
 a private window, and turning it off returns 404.
 

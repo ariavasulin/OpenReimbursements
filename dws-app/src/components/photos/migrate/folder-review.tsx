@@ -10,7 +10,7 @@ import { button, card, field, hint, label as labelClass } from './styles';
 
 // "Your folders": one row per folder, grouped under each picked folder and collapsed by
 // top-level folder with counts (plan § Screens, Decision 10). Built to stay usable at 5,000
-// rows: a collapsed group is one button, and an open group shows 100 rows at a time.
+// rows: groups, open folders, and search results each use bounded pages.
 
 /** One review edit. `includeSubfolders` is how a choice on a folder reaches the folders inside it. */
 export type FolderPatch = { job?: ProjectRef | null; tags?: string[]; album_name?: string };
@@ -60,13 +60,20 @@ export default function FolderReview(props: FolderReviewProps) {
           </label>
         )}
       </div>
-      {directories.map(source => <PickedFolder key={source.id} {...props} source={source} rows={bySource.get(source.id) ?? []} find={find} />)}
+      {directories.map(source => <PickedFolder key={`${source.id}:${find}`} {...props} source={source} rows={bySource.get(source.id) ?? []} find={find} />)}
     </section>
   );
 }
 
 function PickedFolder({ source, rows, find, ...props }: FolderReviewProps & { source: MigrationSource; rows: MigrationFolder[]; find: string }) {
   const groups = useMemo(() => groupFolders(rows, find), [rows, find]);
+  const [page, setPage] = useState(0);
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const matches = useMemo(() => groups.flatMap(group => group.rows), [groups]);
+  const searching = Boolean(find.trim());
+  const entries = searching ? matches : groups;
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(entries.length / ROWS_PER_PAGE) - 1));
+  const offset = currentPage * ROWS_PER_PAGE;
   const photos = rows.reduce((total, row) => total + row.photo_count, 0);
   const connected = props.isConnected(source.id);
   const shared = useMemo(() => sharedChoice(rows), [rows]);
@@ -96,8 +103,12 @@ function PickedFolder({ source, rows, find, ...props }: FolderReviewProps & { so
       )}
       {find.trim() && rows.length > 0 && groups.length === 0 && <p className={`${hint} mt-4`}>No folder in {source.label} matches “{find.trim()}”.</p>}
       <ul className="mt-4 space-y-2">
-        {groups.map(group => <li key={group.topLevel}><Group {...props} source={source} group={group} forceOpen={Boolean(find.trim())} /></li>)}
+        {searching
+          ? matches.slice(offset, offset + ROWS_PER_PAGE).map(row => <li key={row.id}><Row {...props} source={source} row={row} /></li>)
+          : groups.slice(offset, offset + ROWS_PER_PAGE).map(group => <li key={group.topLevel}><Group {...props} source={source} group={group}
+              open={openGroup === group.topLevel} onToggle={() => setOpenGroup(openGroup === group.topLevel ? null : group.topLevel)} /></li>)}
       </ul>
+      <FolderPages page={currentPage} total={entries.length} noun={searching ? 'matching folders' : 'folder groups'} onPage={next => { setPage(next); setOpenGroup(null); }} />
       {props.editable && rows.length === 1 && props.sourceActions?.(source)}
     </div>
   );
@@ -130,36 +141,41 @@ function WholeFolderChoice({ source, folder, scope, shared, rows, underProject, 
   );
 }
 
-function Group({ source, group, forceOpen, ...props }: FolderReviewProps & { source: MigrationSource; group: FolderGroup; forceOpen: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [shown, setShown] = useState(ROWS_PER_PAGE);
+function Group({ source, group, open, onToggle, ...props }: FolderReviewProps & { source: MigrationSource; group: FolderGroup; open: boolean; onToggle(): void }) {
+  const [page, setPage] = useState(0);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(group.rows.length / ROWS_PER_PAGE) - 1));
   const shared = useMemo(() => sharedChoice(group.rows), [group.rows]);
   // A top-level folder holding photos only directly needs no group around its single row.
   if (group.rows.length === 1) return <Row {...props} source={source} row={group.rows[0]} />;
-  const expanded = open || forceOpen;
   return (
     <div className="rounded-lg border border-[#484848]" data-testid="folder-group">
-      <button type="button" aria-expanded={expanded} onClick={() => setOpen(!expanded)}
+      <button type="button" aria-expanded={open} onClick={onToggle}
         className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-[#383838] focus-visible:outline-2 focus-visible:outline-[#2680FC]">
-        <ChevronRight className={`h-5 w-5 shrink-0 text-[#c4c4c4] transition-transform ${expanded ? 'rotate-90' : ''}`} aria-hidden />
+        <ChevronRight className={`h-5 w-5 shrink-0 text-[#c4c4c4] transition-transform ${open ? 'rotate-90' : ''}`} aria-hidden />
         <span className="min-w-0 flex-1"><span className="block break-words text-base font-semibold">{group.topLevel}</span>
           <span className="block text-base text-[#c4c4c4]">{plural(group.rows.length, 'folder')} · {plural(group.photos, 'photo')}</span></span>
       </button>
-      {expanded && (
+      {open && (
         <div className="border-t border-[#484848] p-3">
           {props.editable && <WholeFolderChoice {...props} source={source} folder={group.topLevel} scope={`every folder in ${group.topLevel}`} shared={shared} rows={group.rows} />}
           <ul className="mt-3 space-y-2">
-            {group.rows.slice(0, shown).map(row => <li key={row.id}><Row {...props} source={source} row={row} /></li>)}
+            {group.rows.slice(currentPage * ROWS_PER_PAGE, (currentPage + 1) * ROWS_PER_PAGE).map(row => <li key={row.id}><Row {...props} source={source} row={row} /></li>)}
           </ul>
-          {group.rows.length > shown && (
-            <button type="button" className={`${button} mt-3`} onClick={() => setShown(count => count + ROWS_PER_PAGE)}>
-              Show {Math.min(ROWS_PER_PAGE, group.rows.length - shown)} more ({(group.rows.length - shown).toLocaleString()} left)
-            </button>
-          )}
+          <FolderPages page={currentPage} total={group.rows.length} noun={`folders in ${group.topLevel}`} onPage={setPage} />
         </div>
       )}
     </div>
   );
+}
+
+/** Pages replace their rows, so repeated navigation never accumulates thousands of controls. */
+function FolderPages({ page, total, noun, onPage }: { page: number; total: number; noun: string; onPage(page: number): void }) {
+  if (total <= ROWS_PER_PAGE) return null;
+  return <nav aria-label={`Pages of ${noun}`} className="mt-3 flex flex-wrap items-center gap-3">
+    <p className={hint}>{(page * ROWS_PER_PAGE + 1).toLocaleString()}–{Math.min((page + 1) * ROWS_PER_PAGE, total).toLocaleString()} of {total.toLocaleString()} {noun}</p>
+    <button type="button" className={button} disabled={page === 0} onClick={() => onPage(page - 1)}>Previous {noun}</button>
+    <button type="button" className={button} disabled={(page + 1) * ROWS_PER_PAGE >= total} onClick={() => onPage(page + 1)}>Next {noun}</button>
+  </nav>;
 }
 
 function Row({ source, row, ...props }: FolderReviewProps & { source: MigrationSource; row: MigrationFolder }) {

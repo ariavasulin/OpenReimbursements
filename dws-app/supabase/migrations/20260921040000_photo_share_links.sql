@@ -131,7 +131,7 @@ begin
   if link.album_id is not null then
     select name into target_name from public.albums where id=link.album_id and deleted_at is null;
   else
-    select name into target_name from public.jobs where id=link.job_id;
+    select name into target_name from public.jobs where id=link.job_id and is_active;
   end if;
   if target_name is null then return null; end if;
   size:=case when p_limit between 1 and 200 then p_limit else 100 end;

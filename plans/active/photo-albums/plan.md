@@ -19,6 +19,10 @@ Source of truth: this plan; the request and client context in
 `plans/active/dws-hosted-mcp/sources/planning-contract/`.
 Locked decisions: Decisions 1–14 below.
 Current phase: **all local implementation and verification complete; PR review and operator rollout remain**. The user authorized pushing and opening one PR, with no merge or production work in this continuation (2026-09-21). Production-side checks stay open until the operator observes them.
+The subsequent local review fixes and their verification are recorded in
+[the review-fix disposition](reviews/2026-09-21-review-fixes.md); the latest user
+instruction authorizes committing and pushing those verified fixes to the existing
+PR, without merging or production work.
 Stop-and-ask triggers: any role or permission rule beyond "signed-in employee";
 anything that would make the storage bucket private; nested albums; changing a public
 URL shape in § URLs after it ships; running the office's big folder import before
@@ -247,8 +251,9 @@ parameters take defaults so the deployed app keeps working between migration and
 | `/migrate` | Import folders (unchanged; also the MCP hand-off landing) |
 
 "Copy link" on a photo writes `/photos?photo=<id>`. The MCP photo-link parser
-(`dws-app/src/lib/photos/server/http.ts`) accepts that shape, the old
-`/photos/<jobId>?photo=<id>` shape, and both the new and old origins.
+(`dws-app/src/lib/photos/server/http.ts`) accepts that shape, the old project shape,
+and the album/search viewer URLs copied from the address bar, on both the new and
+old origins. An album context never becomes a project constraint.
 
 ### MCP (`dws-app/src/lib/mcp/registry.ts`, `harness/skills/photos/SKILL.md`)
 
@@ -516,7 +521,7 @@ Shrinks what exists before building on it. Two migrations with opposite ordering
    merge) re-creates every function whose current body names the column —
    `photo_finalize_upload` and `photo_install_write_boundary`
    (`grep -ln sheet_number dws-app/supabase/migrations/*.sql`) — so the database stops
-   writing it. **B2** (apply only **after** the deploy is live, else live queries
+   writing it. **B2** (apply only **after** the deploy and production checks pass, else live queries
    selecting the column fail) drops `photos.sheet_number` and sets the grant to
    `update(tags)`. B2 re-creates no function: it runs after Phase 3's migration in a
    single ship, and would otherwise overwrite Phase 3's newer `photo_finalize_upload`.
@@ -528,7 +533,7 @@ Shrinks what exists before building on it. Two migrations with opposite ordering
 - [x] `npm exec -- tsc --noEmit -p tsconfig.json` (in `dws-app`) and `npm --prefix dws-app run build` pass. *(Observed 2026-09-20: `tsc` clean; build 52/52 pages with placeholder env values, since this worktree has no env file.)*
 - [x] Each re-created SQL function differs from its latest prior definition only by the lines the plan names. *(Observed 2026-09-20: mechanical diff of all five functions.)*
 - [x] Rendered look-and-feel review (Decision 14) run on phone and desktop against a preview of this working tree ([report](reviews/2026-09-20-phase-2.md)). Verdict: the removal looks finished — no Sheet remnants, gaps, or lopsided rows in the project header, viewer, trash, or search. Dispositions by the orchestrator: (1) upload and edit pop-ups now far taller than their content, medium — **deferred to Phase 4**, which rebuilds the upload pop-up's fields and the pop-up container, so sizing it here would be done twice; (2) phone pop-ups have no visible Cancel, medium — **deferred to Phase 4** (already in § Baseline findings); (3) restore confirm page uses internal words, low — **deferred to Phase 5**, which rewrites the confirm page in plain language. Not reviewable on production data: trashing a colleague's photo (one uploader only) — covered by `test:db`, `test:routes`, and browser test 11.
-- [ ] Ship sequence (§ Rollout): migrations A and B1 applied before the merge; after the deploy is live, B2 applied and `sheet_number` is gone.
+- [ ] Ship sequence (§ Rollout): prerequisite activation verified, migrations A and B1 applied before the merge; after the deploy and production checks pass, B2 applied and `sheet_number` is gone.
 
 ### Exit criteria
 Production has no `sheet_number` column; any employee can trash any photo.
@@ -719,6 +724,11 @@ every link off.
   unambiguous whole-word match; an MCP/source hint wins. New rescan rows use visible
   source defaults plus suggestions, without inheriting previously edited ancestor
   rows. Existing rows retain their choices; parent edits apply to the current subtree.
+- **Approval freezes the folder set.** Rescans after approval may refresh files in
+  already reviewed folders. A newly found folder refuses the seal atomically with
+  `new_folders_require_review`; start a new import to review it. Existing photos,
+  folder choices, and album identities are preserved. Reopening the old batch was
+  rejected because it would permit editing choices for photos already imported.
 - **Duplicate claim waits remain.** Two copies in one import can meet the existing
   two-minute content claim. Recovery tests advance the retry timestamp only; the
   claim/identity protocol is unchanged.
@@ -735,7 +745,12 @@ every link off.
 ## Rollout
 
 One ship, in this order. Every migration is a timestamped file under
-`dws-app/supabase/migrations/`, applied with the README convention.
+`dws-app/supabase/migrations/`, applied with the README convention. Before step 1,
+the operator must verify and record completion of the [hosted-photo activation
+sequence](../../../Docs/photos-runbook.md#activation-sequence), including its
+`20260907*` schema, release gates, and global content-hash index. A missing premise
+P2 or prerequisite table stops this rollout; do not apply a partial album migration
+sequence. Historical production observations do not establish current readiness.
 
 1. **Before the merge — every migration except the column drop, in timestamp order.**
    They are additive or behavior-neutral for the app that is live: the open-trash
@@ -744,25 +759,39 @@ One ship, in this order. Every migration is a timestamped file under
    parameters carry defaults, so the live app keeps working between this step and the
    deploy. `sharing_enabled` stays `false`.
 2. **Merge, and wait until the deploy is live.** `DWS_BROWSER_ORIGIN` takes effect here.
-3. **After the deploy — the column drop** (`…_photo_drop_sheet_number.sql`). It refuses
+3. **Production checks with the old column retained.** Verify signed-in browsing,
+   project and album upload, confirmation, import recovery, and the closed sharing
+   gate before removing the fallback column. Keep the office's bulk import paused.
+4. **After those checks pass — the column drop** (`…_photo_drop_sheet_number.sql`). It refuses
    to run if any photo holds a Sheet # value and rolls back if any function still
    names the column. It re-creates no function, so it cannot overwrite a newer one.
-4. **Production checks**, then open `sharing_enabled` (see the gate paragraph below).
+5. **Repeat the photo-read smoke checks**, then open `sharing_enabled` only when the
+   independent security review and activation evidence below have been recorded.
 
-Rollback: before step 3, revert the PR — the new tables sit unused and a nullable
-`job_id` is harmless while no project-less photo exists (afterwards Decision 1
-applies). After step 3 the Sheet # column is gone (P1: no data lost). Share pages:
-set `sharing_enabled=false`. Hand-off links: set `DWS_BROWSER_ORIGIN` back and redeploy.
+Recovery: close sharing, photo writes, and MCP gates; stop imports and disable the
+repair cron before changing code. Keep the schema and grants. Reverting this PR is
+only an option while `sheet_number` still exists, no photo has `job_id is null`,
+and no migration batch exists (including drafts). Otherwise use
+a forward fix: old clients cannot safely read or resume the new state. Do not
+invent fallback projects or discard album membership to force a rollback. The
+[runbook](../../../Docs/photos-runbook.md#album-rollout-and-recovery) gives the
+operator checks. Changing `DWS_BROWSER_ORIGIN` only changes handoff addresses;
+it does not undo schema or data changes.
 
 A phase advances when its exit criteria are observed; none advances on a date. In
 migration terms: making `job_id` nullable is Expand only, dropping `sheet_number` is
 Contract only, and there is no dual-write or backfill because P3 means there is
-nothing to convert. **Rollout gate:** the office's big import waits for Phase 6.
+nothing to convert. **Rollout gate:** the office's big import waits for Phase 6
+and the deployment operator's drive inspection: confirm the tree fits the tested
+5,000-folder bar and record keyword/sidecar observations from the open questions.
+A larger library needs another bounded scale check before import.
 
 The `sharing_enabled` gate: scope — every `/s/<token>` page and `/api/share/*`,
 nothing else; default — `false` in production and previews; who can change it — the
 deployment operator by SQL that records `updated_by`, per `Docs/photos-runbook.md`;
-evidence to open it — Phase 7's production check and the recorded security review;
+evidence to open it — Phase 7's production check and an independent review of the
+current public route and `photo_share_read`, recorded by the deployment operator.
+The builder's carried handoff read alone does not satisfy this gate;
 rollback — set it back to `false`. It is a permanent off switch like the three
 existing gates, not scaffolding, so it has no removal criterion.
 
@@ -773,8 +802,9 @@ existing gates, not scaffolding, so it has no removal criterion.
 - **Anyone can bulk-trash** (Decision 7). Mitigations already in place: the confirm
   page names the exact photos, 30-day restore, `deleted_by`. Signal to revisit: an
   unwanted bulk trash is reported.
-- **A second large import right after the first stalls.** The row-count cliff above is
-  the mechanism; Phase 6 Step 5 owns the fix and the big import waits for Phase 6 anyway.
+- **An import meets density-zero table statistics.** The local harness reproduces
+  this cliff; occurrence in production is unverified. The function-scoped planner
+  setting is defensive. Ordinary growth alone is not evidence of this condition.
 - **A very wide folder tree** makes review slow. AC-17 sets the 5,000-row bar; the
   real shape is unknown until the office drive is inspected (Open question 2).
 - **A share link is forwarded.** Accepted: that is what a link is. Decision 12's

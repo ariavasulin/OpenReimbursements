@@ -547,6 +547,79 @@ as $$
   order by coalesce(c.latest_added, a.created_at) desc, a.id;
 $$;
 
+-- Bounded scalar envelopes bypass PostgREST's table-result max_rows cap. The
+-- legacy RPCs stay callable during rollout. Each continuation retains the exact
+-- database timestamp (including microseconds), and an id breaks every sort tie.
+-- These are live views, not snapshots: concurrent collection activity may move a
+-- row ahead of a cursor; a subsequent refresh picks up its new position.
+create or replace function public.get_photo_album_summaries_page(
+  q text default null, p_limit integer default 200,
+  p_after_activity timestamptz default null, p_after_id uuid default null
+)
+returns jsonb language plpgsql stable security invoker set search_path=public as $$
+declare result jsonb;
+begin
+  if p_limit is null or p_limit not between 1 and 200 or
+     (p_after_activity is null)<>(p_after_id is null) or
+     (p_after_activity is not null and not isfinite(p_after_activity)) then
+    raise exception 'invalid_input';
+  end if;
+  with candidates as (
+    select s.*, row_number() over (order by coalesce(s.latest_added,s.created_at) desc,s.id) as position
+    from public.get_photo_album_summaries(q) s
+    where p_after_id is null or coalesce(s.latest_added,s.created_at)<p_after_activity
+      or (coalesce(s.latest_added,s.created_at)=p_after_activity and s.id>p_after_id)
+    order by coalesce(s.latest_added,s.created_at) desc,s.id
+    limit p_limit+1
+  )
+  select jsonb_build_object(
+    'rows',coalesce(jsonb_agg(to_jsonb(c)-'position' order by position) filter(where position<=p_limit),'[]'::jsonb),
+    'next_cursor',case when count(*)>p_limit then
+      (jsonb_agg(jsonb_build_object('activity',coalesce(c.latest_added,c.created_at),'id',c.id) order by position)
+        filter(where position<=p_limit))->(p_limit-1) else null end
+  ) into result from candidates c;
+  return result;
+end $$;
+
+create or replace function public.get_photo_job_summaries_page(
+  search_query text default null, p_limit integer default 200,
+  p_after_activity timestamptz default null, p_after_number text default null, p_after_id uuid default null
+)
+returns jsonb language plpgsql stable security invoker set search_path=public as $$
+declare result jsonb;
+begin
+  if p_limit is null or p_limit not between 1 and 200 or
+     (p_after_number is null)<>(p_after_id is null) or
+     (p_after_id is null and p_after_activity is not null) or
+     (p_after_activity is not null and not isfinite(p_after_activity)) then
+    raise exception 'invalid_input';
+  end if;
+  with summaries as (
+    select s.*,case when s.job_number ~ '^[0-9]+$' then lpad(s.job_number,20,'0') else s.job_number end as number_key
+    from public.get_photo_job_summaries(search_query) s
+  ), candidates as (
+    select s.*,row_number() over(order by s.latest_upload desc nulls last,s.number_key desc,s.id) as position
+    from summaries s
+    where p_after_id is null
+      or coalesce(s.latest_upload,'-infinity'::timestamptz)<coalesce(p_after_activity,'-infinity'::timestamptz)
+      or (s.latest_upload is not distinct from p_after_activity and
+        (s.number_key<p_after_number or (s.number_key=p_after_number and s.id>p_after_id)))
+    order by s.latest_upload desc nulls last,s.number_key desc,s.id
+    limit p_limit+1
+  )
+  select jsonb_build_object(
+    'rows',coalesce(jsonb_agg(to_jsonb(c)-'position'-'number_key' order by position) filter(where position<=p_limit),'[]'::jsonb),
+    'next_cursor',case when count(*)>p_limit then
+      (jsonb_agg(jsonb_build_object('activity',c.latest_upload,'number',c.number_key,'id',c.id) order by position)
+        filter(where position<=p_limit))->(p_limit-1) else null end
+  ) into result from candidates c;
+  return result;
+end $$;
+revoke all on function public.get_photo_album_summaries_page(text,integer,timestamptz,uuid) from public,anon;
+revoke all on function public.get_photo_job_summaries_page(text,integer,timestamptz,text,uuid) from public,anon;
+grant execute on function public.get_photo_album_summaries_page(text,integer,timestamptz,uuid) to authenticated,service_role;
+grant execute on function public.get_photo_job_summaries_page(text,integer,timestamptz,text,uuid) to authenticated,service_role;
+
 -- Grants, by name. `create or replace` keeps an existing ACL, but a rebuilt
 -- database starts from baseline defaults that let clients execute everything.
 do $$ declare f record; begin

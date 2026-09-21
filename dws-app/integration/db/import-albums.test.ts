@@ -146,8 +146,9 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
       const album = (await folders(s.id))[0].album_id!;
       await action(id, 'pause'); await action(id, 'resume');
       await commit(b);
-      // A rescan that also finds a new file in the same folder.
-      await seal(s.id, [entry('a.jpg'), entry('b.jpg'), entry('c.jpg'), entry('d.jpg')]);
+      // New files in a reviewed folder remain resumable; excluded-only folders
+      // need no review because no photo can be imported into them.
+      await seal(s.id, [entry('a.jpg'), entry('b.jpg'), entry('c.jpg'), entry('d.jpg'), entry('Ignored/cache.jpg', 'skipped_unsupported')]);
       expect((await folders(s.id))[0]).toMatchObject({ album_id: album, photo_count: 4, album_name: label });
       await action(id, 'resume');
       // A retry that needs a fresh attempt, then succeeds.
@@ -157,6 +158,40 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
       expect(await albumsNamed(label)).toEqual([album]);
       expect(await membersOf(album)).toHaveLength(4);
       expect((await folders(s.id))[0].album_id).toBe(album);
+    });
+
+    it('atomically refuses new folders on approved and completed rescans, preserving reviewed choices and history', async () => {
+      for (const completed of [false, true]) {
+        const id = await batch(); const s = await source(id);
+        await seal(s.id, [entry('Reviewed/a.jpg')]);
+        await rpc('migration_folder_update', patch(s.id, 'Reviewed', { job_id: jobA, tags: ['reviewed'] }));
+        await action(id, 'approve');
+        if (completed) {
+          await action(id, 'resume');
+          await commit((await items(s.id))[0]);
+          await action(id, 'complete');
+        }
+        const beforeFolders = await folders(s.id);
+        const scanId = randomUUID();
+        await rpc('migration_scan', { p_source: s.id, p_scan: scanId });
+        const beforeItems = await items(s.id);
+        const entries = [entry('Reviewed/a.jpg'), entry('New/unreviewed.jpg')];
+        const payload = JSON.stringify(entries), digest = createHash('sha256').update(payload).digest('hex');
+        await rpc('migration_chunk', { p_source: s.id, p_scan: scanId, p_number: 0,
+          p_entries: entries, p_digest: digest, p_encoded: Buffer.byteLength(payload) });
+        expect(await refused('migration_seal', { p_source: s.id, p_scan: scanId, p_chunks: 1,
+          p_entries: entries.length, p_bytes: 16, p_job: null,
+          p_fingerprint: createHash('sha256').update(digest).digest('hex') })).toBe('new_folders_require_review');
+        expect(await folders(s.id)).toEqual(beforeFolders);
+        expect(await items(s.id)).toEqual(beforeItems);
+        const state = (await f.admin.from('migration_sources').select('scan_id,sealed_scan_id').eq('id', s.id).single()).data!;
+        expect(state.sealed_scan_id).not.toBe(state.scan_id);
+        // A fresh draft can present the same new folder for actual review.
+        const fresh = await batch(); const freshSource = await source(fresh);
+        await seal(freshSource.id, [entry('New/unreviewed.jpg')]);
+        await rpc('migration_folder_update', patch(freshSource.id, 'New', { job_id: jobB }));
+        expect((await folders(freshSource.id))[0].job_id).toBe(jobB);
+      }
     });
 
     it('leaves no album for a folder whose photos are all skipped, all failed, or all sitting in trash', async () => {

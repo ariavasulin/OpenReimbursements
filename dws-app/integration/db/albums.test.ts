@@ -77,6 +77,42 @@ describe('optional project, albums, and bulk tagging (photo-albums AC-6 to AC-10
   const ledger = async (a: Attempt) =>
     (await f.admin.from('photo_upload_attempts').select('status,result,job_id,album_ids').eq('id', a.id).single()).data!;
 
+  it('bounds album summary pages, retains microsecond/tie ordering and enforces invoker access', async () => {
+    const prefix = `db-pages-${randomUUID()}`;
+    const ids = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await f.sql.query(`insert into public.albums(id,name,created_by,created_at)
+      select id,$2,$3::uuid,case when n=1 then '2040-01-01T00:00:00.000001Z'::timestamptz
+      else '2040-01-01T00:00:00.000002Z'::timestamptz end
+      from unnest($1::uuid[]) with ordinality t(id,n)`, [ids, prefix, f.employeeA.id]);
+    // A deleted album must not enter the envelope even for service_role.
+    await rpc('photo_delete_album', { p_actor: f.employeeA.id, p_album: ids[3] });
+    try {
+      for (const client of [f.employeeA.client, f.admin]) {
+        const seen: string[] = [];
+        let cursor: { id: string; activity: string } | null = null;
+        do {
+          const response = await client.rpc('get_photo_album_summaries_page', {
+            q: prefix, p_limit: 1, p_after_activity: cursor?.activity ?? null, p_after_id: cursor?.id ?? null,
+          });
+          expect(response.error).toBeNull();
+          const data: { rows: { id: string }[]; next_cursor: { id: string; activity: string } | null } = response.data;
+          expect(data.rows).toHaveLength(1);
+          seen.push(data.rows[0].id);
+          cursor = data.next_cursor;
+        } while (cursor !== null);
+        expect(seen).toEqual([...ids.slice(1, 3).sort(), ids[0]]);
+      }
+      expect((await f.anon.rpc('get_photo_album_summaries_page', { q: prefix })).error).not.toBeNull();
+      expect((await f.anon.rpc('get_photo_job_summaries_page', {})).error).not.toBeNull();
+      for (const p_limit of [0, 201, null]) {
+        expect(await refused('get_photo_album_summaries_page', { q: prefix, p_limit })).toBe('invalid_input');
+        expect(await refused('get_photo_job_summaries_page', { p_limit })).toBe('invalid_input');
+      }
+      expect(await refused('get_photo_album_summaries_page', { p_after_id: ids[0] })).toBe('invalid_input');
+      expect(await refused('get_photo_job_summaries_page', { p_after_id: ids[0] })).toBe('invalid_input');
+    } finally { await f.sql.query('delete from public.albums where id=any($1::uuid[])', [ids]); }
+  });
+
   describe('AC-6: every upload names a project, an album, or both', () => {
     it('refuses an attempt that names neither, and one naming a missing or deleted album', async () => {
       expect(await refused('photo_create_upload_attempt', createArgs(draft(null, [])))).toBe('invalid_input');

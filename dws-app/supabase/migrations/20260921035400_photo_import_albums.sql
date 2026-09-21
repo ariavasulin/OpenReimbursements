@@ -59,6 +59,9 @@ grant all on table public.migration_folders to service_role;
 create index if not exists migration_items_canonical_photo on public.migration_items(canonical_photo_id)
   where canonical_photo_id is not null;
 
+-- The density-zero statistics state below is reproduced by the local fixture. Its
+-- occurrence in production has not been established; this setting is defensive,
+-- not evidence that ordinary table growth causes the measured cliff.
 -- Phase 6 Step 5, the row-count cliff. Captured with auto_explain on a throwaway database
 -- holding 1,500 photos whose table statistics still said "empty" (pg_class reltuples=0,
 -- relpages=1, which is what an index build or vacuum records on a table that has pages but
@@ -421,7 +424,9 @@ end $$;
 --     deleted here, so a rescan cannot lose a choice or an album that already exists;
 --   * a NEW row is named from its path (folders) or left without an album (loose files), and
 --     starts from the source's default project and tags. That holds for a folder that first
---     appears on a later rescan too. It deliberately does NOT copy a parent row's choices: a
+--     appears on a later draft rescan too. An approved rescan refuses new folders before
+--     changing any inventory; they must be reviewed in a new import. A new row deliberately
+--     does NOT copy a parent row's choices: a
 --     parent has a row only when it directly holds photos, so copying would work in one
 --     folder layout and silently not in another. Review lists the new row before anything
 --     is imported into it;
@@ -444,6 +449,20 @@ begin
   if s.sealed_scan_id=p_scan then return s; end if;
   if exists(select 1 from public.migration_inventory_chunks c cross join lateral jsonb_array_elements(c.entries) as entry(value)
     where c.source_id=p_source and c.scan_id=p_scan group by entry.value->>'relative_path' having count(*)>1) then raise exception 'conflict'; end if;
+  -- Approval freezes the reviewed folder set as well as its choices. An approved
+  -- rescan may refresh files in those folders, but new folders need a new draft.
+  -- Refuse before reconciliation so no new item or folder can bypass review.
+  if b.status<>'draft' and exists (
+    with scanned_folders as materialized (
+      select distinct public.migration_folder_of(entry.value->>'relative_path') as folder
+      from public.migration_inventory_chunks c cross join lateral jsonb_array_elements(c.entries) as entry(value)
+      where c.source_id=p_source and c.scan_id=p_scan
+        and coalesce(entry.value->>'status','pending') not in ('skipped_unsupported','skipped_missing')
+    )
+    select 1 from scanned_folders scanned where not exists (
+      select 1 from public.migration_folders f where f.source_id=p_source and f.folder=scanned.folder
+    )
+  ) then raise exception 'new_folders_require_review'; end if;
   -- Set-based reconciliation keeps a large scan within one atomic commit without
   -- a separate query round trip for each file. Retire precedes insert, preserving
   -- the partial unique current-path constraint and immutable historical IDs.

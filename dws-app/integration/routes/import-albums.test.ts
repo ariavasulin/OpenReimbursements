@@ -76,6 +76,21 @@ describe('import review routes (photo-albums AC-17, AC-18, AC-19)', () => {
     return (await ok(consume, '', { token, script_name: script })).migration_batch_id as string;
   }
 
+  it('explains that a newly discovered folder needs a new import after approval, without publishing it', async () => {
+    const id = await batch(); const picked = await read(id, ['Reviewed/a.jpg']);
+    expect((await approve(id)).status).toBe(200);
+    const scanId = randomUUID(); await ok(scan, picked.id, { scan_id: scanId });
+    const sent = await ok(chunk, picked.id, { scan_id: scanId, chunk_number: 0,
+      entries: ['Reviewed/a.jpg', 'New/b.jpg'].map(entry) });
+    const response = await invoke(seal, picked.id, { scan_id: scanId, chunk_count: 1,
+      total_entries: sent.entry_count, total_bytes: sent.total_bytes, job_id: null,
+      fingerprint: createHash('sha256').update(sent.payload_digest).digest('hex') });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toMatchObject({ code: 'new_folders_require_review', retryable: false,
+      message: expect.stringContaining('Start a new import to review them') });
+    expect(Object.keys(await rows(id))).toEqual(['Reviewed']);
+  });
+
   describe('AC-18: loose files need a project or an album, new or existing', () => {
     it('refuses to start with neither (400), and accepts a project, a new album, or an existing album', async () => {
       const id = await batch('add_photos'); const picked = await read(id, ['a.jpg', 'b.jpg'], { kind: 'files', label: 'Selected files' });

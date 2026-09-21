@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFixtures, type FixtureActor } from '../fixtures';
 import { withRequest } from './request-context';
+import { fetchAlbums } from '@/lib/photos/api';
 
 vi.mock('next/headers', async () => {
   const { requestContext } = await import('./request-context');
@@ -105,6 +106,44 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
   const members = async (photoId: string) =>
     (await f.sql.query('select album_id from public.album_photos where photo_id=$1 order by album_id', [photoId])).rows.map(row => row.album_id as string);
   const tagsOf = async (photoId: string) => (await f.sql.query('select tags from public.photos where id=$1', [photoId])).rows[0].tags as string[];
+
+  it('pages more than 1000 tied album summaries through the real route and shared client, including literal search', async () => {
+    const prefix = `album-pages-${randomUUID()}%_`;
+    const inserted = await f.sql.query(`insert into public.albums(name,created_by,created_at)
+      select $1 || n::text,$2::uuid,'2040-01-01T00:00:00.000001Z'::timestamptz
+      from generate_series(1,1203) n returning id`, [prefix, f.employeeA.id]);
+    const ids = inserted.rows.map(row => row.id as string);
+    madeAlbums.push(...ids);
+    const unrelated = await album(prefix.replace('%_', 'XX'));
+    const originalFetch = globalThis.fetch;
+    const sizes: number[] = [];
+    const mocked = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (typeof input === 'string' && input.startsWith('/api/photo-albums?')) {
+        const response = await call(listAlbums, input);
+        expect(response.status).toBe(200);
+        sizes.push((await response.clone().json()).albums.length);
+        return response;
+      }
+      return originalFetch(input, init);
+    });
+    try {
+      const rows = await fetchAlbums(prefix);
+      expect(rows.map(row => row.id)).toEqual([...ids].sort());
+      expect(sizes).toEqual([200, 200, 200, 200, 200, 200, 3]);
+      const first = await json(await call(listAlbums, `/api/photo-albums?q=${encodeURIComponent(prefix)}&limit=1`));
+      expect(first.nextCursor).toBeTypeOf('string');
+      await json(await call(listAlbums, `/api/photo-albums?q=other&cursor=${first.nextCursor}`), 400);
+    } finally {
+      mocked.mockRestore();
+      await f.sql.query('delete from public.albums where id=any($1::uuid[])', [[...ids, unrelated]]);
+    }
+  });
+
+  it('rejects malformed album page limits and cursors', async () => {
+    for (const query of ['limit=0', 'limit=201', 'limit=1.5', 'limit=', 'limit=1&limit=2', 'cursor=', 'cursor=garbage']) {
+      await json(await call(listAlbums, `/api/photo-albums?${query}`), 400);
+    }
+  });
 
   describe('AC-6: the upload attempt names a project, an album, or both', () => {
     function input(jobId: string | null | undefined, albumIds: unknown, bytes = randomBytes(8)) {
@@ -418,7 +457,7 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
     });
   });
 
-  describe('AC-11: a photo opens by id, and both link shapes resolve on both addresses', () => {
+  describe('AC-11: a photo opens by id, and canonical and viewer links resolve on both addresses', () => {
     it('GET /api/photos/[id] returns any active photo, however old, with its project or null and its live albums', async () => {
       const project = await job('Old project');
       const ancient = await photo({ jobId: null, capturedAt: '1999-12-31T23:59:59.000Z' });
@@ -445,8 +484,10 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
       await json(await call(onePhoto, '/api/photos/not-a-uuid', { id: 'not-a-uuid' }), 400);
     });
 
-    it('the server parser accepts /photos?photo=<id> and /photos/<jobId>?photo=<id> on the new and the old address, and nothing looser', async () => {
+    it('the server parser resolves canonical, project, album, and search viewer URLs and rejects list or malformed paths', async () => {
       const project = await job(); const owned = await photo({ jobId: project }); const loose = await photo({ jobId: null });
+      const targetAlbum = await album('Viewer link context');
+      await json(await add(targetAlbum, [owned, loose]));
       const draft = (photo_url: string) => call(createBatch, '/api/photo-actions/batches', { method: 'POST', body: { action: 'trash', selector: { photos: [{ photo_url }] } } });
       const resolves = async (photo_url: string, expected: string) => {
         const created = await json(await draft(photo_url));
@@ -458,10 +499,16 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
         await resolves(`${address}/photos?photo=${loose}`, loose);          // the shape "Copy link" writes, for a photo with no project
         await resolves(`${address}/photos?photo=${owned}`, owned);
         await resolves(`${address}/photos/${project}?photo=${owned}`, owned); // a link already sent
+        await resolves(`${address}/photos/albums/${targetAlbum}?photo=${loose}`, loose); // album viewer address bar
+        await resolves(`${address}/photos/albums/${targetAlbum}?photo=${owned}`, owned); // album id is not a project constraint
+        await resolves(`${address}/photos/search?q=viewer&photo=${loose}`, loose);
+        await resolves(`${address}/photos/search?q=viewer&photo=${owned}`, owned);
       }
       for (const photo_url of [`https://evil.example/photos?photo=${loose}`, `http://photos.design-workshops.app/photos?photo=${loose}`,
         '/photos', '/photos?photo=not-a-uuid', `/photos/not-a-uuid?photo=${owned}`, `/photos/albums?photo=${loose}`,
-        `/photos/albums/${project}?photo=${loose}`, `/photos/${project}/more?photo=${owned}`, `/s/${project}?photo=${loose}`, `/?photo=${loose}`]) {
+        `/photos/projects?photo=${owned}`, `/photos/albums/not-a-uuid?photo=${loose}`,
+        `/photos/albums/${targetAlbum}/more?photo=${loose}`, `/photos/search/more?photo=${owned}`,
+        `/photos/${project}/more?photo=${owned}`, `/s/${project}?photo=${loose}`, `/?photo=${loose}`]) {
         expect((await json(await draft(photo_url), 400)).error.code, photo_url).toBe('invalid_input');
       }
       expect((await f.admin.from('photos').select('id').in('id', [owned, loose]).is('deleted_at', null)).data).toHaveLength(2);

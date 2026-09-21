@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { BookImage, Plus } from "lucide-react";
 import CollectionCard from "@/components/photos/collection-card";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
@@ -14,10 +15,15 @@ import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import StatusLine from "@/components/photos/status-line";
 import { usePhotoAlbums } from "@/lib/photos/api";
 
-/** Albums: every album as a card, and "New album". */
+const ALBUMS_PER_PAGE = 60;
+
+/** Albums: bounded card pages, and "New album". */
 export default function AlbumsPage() {
   const { openNewAlbum } = usePhotosShell();
   const { data: albums, isLoading, error } = usePhotoAlbums(true);
+  const [requestedPage, setPage] = useState(0);
+  const pageCount = Math.max(1, Math.ceil((albums?.length ?? 0) / ALBUMS_PER_PAGE));
+  const page = Math.min(requestedPage, pageCount - 1);
 
   const newAlbumButton = (
     <button type="button" onClick={openNewAlbum} className={emptyPrimary}>
@@ -55,7 +61,7 @@ export default function AlbumsPage() {
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        {albums?.map((album) => (
+        {albums?.slice(page * ALBUMS_PER_PAGE, (page + 1) * ALBUMS_PER_PAGE).map((album) => (
           <CollectionCard
             key={album.id}
             href={`/photos/albums/${album.id}`}
@@ -66,6 +72,15 @@ export default function AlbumsPage() {
           />
         ))}
       </div>
+      {pageCount > 1 && (
+        <nav aria-label="Album pages" className="mt-5 flex items-center justify-center gap-4 text-sm">
+          <button type="button" disabled={page === 0} onClick={() => setPage(page - 1)}
+            className="min-h-11 rounded border border-[#4e4e4e] px-4 disabled:opacity-40">Previous</button>
+          <span aria-live="polite">Page {page + 1} of {pageCount}</span>
+          <button type="button" disabled={page + 1 === pageCount} onClick={() => setPage(page + 1)}
+            className="min-h-11 rounded border border-[#4e4e4e] px-4 disabled:opacity-40">Next</button>
+        </nav>
+      )}
     </main>
   );
 }

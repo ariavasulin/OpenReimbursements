@@ -1,3 +1,5 @@
+import { collectionNextCursor, readCollectionPage } from '@/lib/photos/server/collectionPagination';
+import type { CollectionPage } from '@/lib/photos/collectionPagination';
 import { escapeIlikeWildcards } from '@/lib/photos/apiShared';
 import { mapAlbumSummary } from '@/lib/photos/albumSummary';
 import type { PhotoAlbumSummaryRow } from '@/lib/photos/types';
@@ -28,10 +30,15 @@ export async function GET(request: Request) {
         restore_before: new Date(Date.parse(album.deleted_at) + RESTORE_DAYS * 86_400_000).toISOString() })) });
     }
     const session = await requirePhotoReader();
-    const q = escapeIlikeWildcards(params.get('q')?.trim() ?? '');
-    const { data, error } = await session.rpc('get_photo_album_summaries', { q: q || null });
+    const { q, limit, cursor } = readCollectionPage(params, 'albums');
+    const { data, error } = await session.rpc('get_photo_album_summaries_page', {
+      q: escapeIlikeWildcards(q) || null, p_limit: limit,
+      p_after_activity: cursor?.activity ?? null, p_after_id: cursor?.id ?? null,
+    });
     if (error) throwPhotoDatabaseError(error);
-    return photoJson({ success: true, albums: ((data ?? []) as PhotoAlbumSummaryRow[]).map(mapAlbumSummary) });
+    const page = data as CollectionPage<PhotoAlbumSummaryRow>;
+    return photoJson({ success: true, albums: page.rows.map(mapAlbumSummary),
+      nextCursor: collectionNextCursor('albums', q, page.next_cursor) });
   });
 }
 

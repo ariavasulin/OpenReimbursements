@@ -49,6 +49,8 @@ export default function MigratePage() {
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(0);
+  const [preparing, setPreparing] = useState(false);
+  const [looseAlbumPending, setLooseAlbumPending] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [userId, setUserId] = useState('');
@@ -71,6 +73,7 @@ export default function MigratePage() {
   const initStarted = useRef(false);
   const scanning = useRef<AbortController | null>(null);
   const edits = useRef<Promise<void>>(Promise.resolve());
+  const failedEdits = useRef(new Set<string>());
 
   const report = (reason: unknown) => setError(reason instanceof Error ? reason.message : 'Something went wrong. Please try again.');
   const act = async (work: () => Promise<void>) => {
@@ -220,11 +223,17 @@ export default function MigratePage() {
     const reaches = (row: MigrationFolder) => row.source_id === source.id && (includeSubfolders ? isInsideFolder(row.folder, folder) : row.folder === folder);
     setFolders(rows => rows.map(row => reaches(row) ? { ...row, ...optimistic } : row));
     setSaving(count => count + 1);
+    // Track failed choices per row/field: correcting an album via its ID must also clear
+    // a failed name edit, and a successful whole-folder choice supersedes its row edits.
+    const fields = [...new Set(Object.keys(body).map(key => key === 'album_id' || key === 'album_name' ? 'album' : key))];
+    const editKeys = folders.filter(reaches).flatMap(row => fields.map(field => JSON.stringify([row.source_id, row.folder, field])));
     const sent = edits.current.then(async () => {
       const result = await request<{ settled?: SettledFolder }>(`sources/${source.id}/folders`, { folder, include_subfolders: includeSubfolders, ...body }, { method: 'PATCH' });
+      for (const key of editKeys) failedEdits.current.delete(key);
       if (result.settled) setFolders(rows => rows.map(row => reaches(row) ? { ...row, ...result.settled } : row));
     });
     edits.current = sent.catch(async reason => {
+      for (const key of editKeys) failedEdits.current.add(key);
       report(reason);
       if (batchId.current) setFolders(await loadMigrationFolders(request, batchId.current).catch(() => [] as MigrationFolder[]));
     }).finally(() => setSaving(count => count - 1));
@@ -257,9 +266,9 @@ export default function MigratePage() {
     const { jobs } = await request<{ jobs: ProjectRef[] }>('jobs?limit=100'); setProjects(jobs);
   };
 
-  const makeEngine = (id: string) => {
+  const makeEngine = (id: string, savedFolders = folders) => {
     const uploadRequest = createUploadRequest({ refreshAuth });
-    return new MigrationEngine({ batchId: id, uploaderId: userId, sources, folders,
+    return new MigrationEngine({ batchId: id, uploaderId: userId, sources, folders: savedFolders,
       localSources: localSources.current, request, deps: buildBrowserUploadDeps(),
       prepare: (input, options) => uploadRequest<UploadAttempt>('prepare', input, options),
       onChange: async completedItemId => {
@@ -286,16 +295,20 @@ export default function MigratePage() {
 
   const start = async (approve: boolean) => {
     if (starting.current || engine.current) return;
-    starting.current = true;
+    starting.current = true; setPreparing(true);
+    let savedFolders: MigrationFolder[];
     const id = batchId.current!;
     try {
       if (sources.some(source => !readThisVisit.current.has(source.id))) throw new Error('Choose every folder again before starting.');
-      await edits.current; // every review edit is saved before the choices freeze
+      await edits.current; // blur queues its edit before the Start click
+      if (failedEdits.current.size) throw new Error('An edit could not be saved. Make that choice again before starting.');
+      savedFolders = await loadMigrationFolders(request, id);
       if (approve) await request(`batches/${id}`, { action: 'approve' }, { method: 'PATCH' });
       await request(`batches/${id}`, { action: 'resume' }, { method: 'PATCH' });
-    } catch (reason) { starting.current = false; throw reason; }
+    } catch (reason) { starting.current = false; setPreparing(false); throw reason; }
     setLooseOpen(false); setRunning(true); setProgress({}); setError(''); setMessage('Importing. Keep this page open until it finishes.');
-    const worker = makeEngine(id);
+    const worker = makeEngine(id, savedFolders);
+    setPreparing(false);
     engine.current = worker;
     try { await worker.run(); }
     catch (reason) {
@@ -319,7 +332,7 @@ export default function MigratePage() {
 
   const status = view?.batch.status ?? 'draft';
   const owner = view?.can_mutate ?? true;
-  const editable = owner && status === 'draft';
+  const editable = owner && status === 'draft' && !preparing;
   const terminal = status === 'completed' || status === 'cancelled';
   const totals = view?.counts ?? {};
   const byStatus = (totals.by_status ?? {}) as Record<string, number>;
@@ -330,7 +343,7 @@ export default function MigratePage() {
   const photos = folders.reduce((total, row) => total + row.photo_count, 0);
   // AC-18: loose photos need a project or an album. A folder always has its album, so this only ever stops loose photos.
   const looseNeedsChoice = Boolean(looseRow && looseRow.photo_count > 0 && !looseRow.job_id && !looseRow.album_id && !looseRow.album_name);
-  const canStart = owner && allRead && photos > 0 && !looseNeedsChoice && !busy && !running && saving === 0;
+  const canStart = owner && allRead && photos > 0 && !looseNeedsChoice && !looseAlbumPending && !busy && !running && !preparing;
   const imported = count('completed'), already = count('skipped_duplicate'), leftOut = count('skipped_unsupported');
   const waiting = ['pending', 'hashing', 'waiting_claim', 'uploading', 'finalizing'].reduce((total, key) => total + count(key), 0);
   const trouble = count('retryable_failed') + count('job_conflict') + count('restore_required');
@@ -366,7 +379,7 @@ export default function MigratePage() {
         {editable && newProject('loose', looseJob ? '' : suggestionFor('')?.new_project_name ?? '', project => editLoose({ job: project }))}
       </div>
       <div><label className={labelClass} htmlFor="loose-album">Album <span className="font-normal text-[#c4c4c4]">(optional)</span></label>
-        <div className="mt-1"><AlbumChoice inputId="loose-album" value={looseAlbum} disabled={!editable} onChange={album => editLoose({ album })} /></div>
+        <div className="mt-1"><AlbumChoice inputId="loose-album" value={looseAlbum} onPendingChange={setLooseAlbumPending} disabled={!editable} onChange={album => editLoose({ album })} /></div>
       </div>
       <div><span className={labelClass}>Tags <span className="font-normal text-[#c4c4c4]">(optional)</span></span>
         <div className="mt-1"><FolderTags tags={looseTags} known={knownTags} disabled={!editable} ariaLabel="Tags for these photos" onChange={tags => editLoose({ tags })} /></div>

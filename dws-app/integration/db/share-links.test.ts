@@ -145,6 +145,19 @@ describe('share links (photo-albums AC-21, AC-22)', () => {
       await rpc('photo_restore_album', { p_actor: f.employeeA.id, p_album: a });
       expect(await read(live)).not.toBeNull();
     });
+    it('an inactive project shares nothing and its link can still be revoked', async () => {
+      const made = await f.admin.from('jobs').insert({ job_number: `inactive-${randomUUID()}`, name: 'Inactive shared project', is_active: true }).select('id').single();
+      expect(made.error).toBeNull(); const project = made.data!.id as string;
+      await photo({ jobId: project });
+      const token = (await share({ job: project })).token!;
+      expect(await read(token)).not.toBeNull();
+      await f.sql.query('update public.jobs set is_active=false where id=$1', [project]);
+      expect(await read(token)).toBeNull();
+      await share({ job: project }, false);
+      await f.sql.query('update public.jobs set is_active=true where id=$1', [project]);
+      expect(await read(token)).toBeNull();
+    });
+
     it('[4] the answer holds no uploader, tag, XMP, other album, or project number, and only images and videos', async () => {
       const a = await album(`Private ${tag}`), other = await album(`Other album ${tag}`);
       const image = await photo({ albums: [a, other], jobId: job, name: 'kitchen.jpg' }), video = await photo({ albums: [a], kind: 'video', name: 'walkthrough.mp4' });

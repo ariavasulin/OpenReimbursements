@@ -1,3 +1,4 @@
+import { collectPages, COLLECTION_PAGE_SIZE } from "./collectionPagination";
 import {
   keepPreviousData,
   useQuery,
@@ -36,13 +37,15 @@ export function fetchPhotosPage(params: URLSearchParams): Promise<PhotosPage> {
   return fetchJson<PhotosPage>(`/api/photos?${params}`, "Failed to load photos");
 }
 
-export async function fetchJobs(q = ""): Promise<PhotoJobSummary[]> {
-  const params = q ? `?q=${encodeURIComponent(q)}` : "";
-  const data = await fetchJson<{ jobs: PhotoJobSummary[] }>(
-    `/api/photo-jobs${params}`,
-    "Failed to load jobs"
-  );
-  return data.jobs;
+export async function fetchJobs(q = "", signal?: AbortSignal): Promise<PhotoJobSummary[]> {
+  return collectPages(async (cursor) => {
+    const params = new URLSearchParams({ q, limit: String(COLLECTION_PAGE_SIZE) });
+    if (cursor !== null) params.set("cursor", cursor);
+    const data = await fetchJson<{ jobs: PhotoJobSummary[]; nextCursor: string | null }>(
+      `/api/photo-jobs?${params}`, "Failed to load jobs", { signal }
+    );
+    return { rows: data.jobs, nextCursor: data.nextCursor };
+  });
 }
 
 export async function fetchTags(jobId?: string): Promise<string[]> {
@@ -58,7 +61,7 @@ export async function fetchTags(jobId?: string): Promise<string[]> {
 export function usePhotoJobs(enabled: boolean, q = "") {
   return useQuery({
     queryKey: ["photo-jobs", q],
-    queryFn: () => fetchJobs(q),
+    queryFn: ({ signal }) => fetchJobs(q, signal),
     enabled,
     staleTime: 60_000,
     // Each debounced prefix is a cold key; keep the list the user is reading
@@ -108,20 +111,22 @@ export function renameJob(id: string, name: string) {
 
 // ---- Albums ---------------------------------------------------------------
 
-export async function fetchAlbums(q = ""): Promise<PhotoAlbumSummary[]> {
-  const params = q ? `?q=${encodeURIComponent(q)}` : "";
-  const data = await fetchJson<{ albums: PhotoAlbumSummary[] }>(
-    `/api/photo-albums${params}`,
-    "Failed to load albums"
-  );
-  return data.albums;
+export async function fetchAlbums(q = "", signal?: AbortSignal): Promise<PhotoAlbumSummary[]> {
+  return collectPages(async (cursor) => {
+    const params = new URLSearchParams({ q, limit: String(COLLECTION_PAGE_SIZE) });
+    if (cursor !== null) params.set("cursor", cursor);
+    const data = await fetchJson<{ albums: PhotoAlbumSummary[]; nextCursor: string | null }>(
+      `/api/photo-albums?${params}`, "Failed to load albums", { signal }
+    );
+    return { rows: data.albums, nextCursor: data.nextCursor };
+  });
 }
 
 /** Album cards, most recently added-to first. Shared by the list, rail, and pickers. */
 export function usePhotoAlbums(enabled: boolean, q = "") {
   return useQuery({
     queryKey: ["photo-albums", q],
-    queryFn: () => fetchAlbums(q),
+    queryFn: ({ signal }) => fetchAlbums(q, signal),
     enabled,
     staleTime: 60_000,
     placeholderData: keepPreviousData,

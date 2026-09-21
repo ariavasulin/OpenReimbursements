@@ -230,6 +230,13 @@ test('AC-17: 5,000 folder rows stay usable: review scrolls, finds, and edits', a
   await expect(picked.getByTestId('folder-group')).toHaveCount(0);
   await expect(picked.getByTestId('folder-row')).toHaveCount(1);
   await expect(picked.getByRole('textbox', { name: 'Album name for Group 23 / Set 2345', exact: true })).toHaveValue('Group 23 – Set 2345');
+  // A broad query is a page of matching rows, not 50 automatically expanded groups.
+  await page.getByPlaceholder('Find a folder').fill('Set');
+  await expect(picked.getByTestId('folder-group')).toHaveCount(0);
+  await expect(picked.getByTestId('folder-row')).toHaveCount(100);
+  await picked.getByRole('button', { name: 'Next matching folders', exact: true }).click();
+  await expect(picked.getByTestId('folder-row')).toHaveCount(100);
+  await expect(picked.getByRole('textbox', { name: 'Album name for Group 01 / Set 0100', exact: true })).toBeVisible();
   await page.getByPlaceholder('Find a folder').fill('');
 
   // One choice on the picked folder reaches all 5,000 rows, in one request.
@@ -290,3 +297,137 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       style: 'div:has(> button[aria-label="Open Tanstack query devtools"]) { visibility: hidden !important; }' });
   });
 }
+
+
+test('flat 5,000-folder trees and broad searches keep a bounded page of controls', async ({ page, context }) => {
+  test.setTimeout(420_000);
+  const root = `Flat ${run}`;
+  await signIn(context, [{ label: root, folders: Array.from({ length: 5000 }, (_, n) => ({
+    label: `Flat set ${String(n).padStart(4, '0')}`, count: 1, metadataOnly: true,
+  })) }]);
+  await page.goto('/migrate');
+  const picked = await chooseFolder(page, root);
+  await expect(picked.getByTestId('source-counts')).toHaveText('5,000 folders with photos · 5,000 photos', { timeout: 300_000 });
+  await expect(picked.getByTestId('folder-row')).toHaveCount(100);
+  await expect(picked.getByTestId('folder-group')).toHaveCount(0);
+  await picked.getByRole('button', { name: 'Next folder groups', exact: true }).click();
+  await expect(picked.getByTestId('folder-row')).toHaveCount(100);
+  await expect(picked.getByRole('textbox', { name: 'Album name for Flat set 0100', exact: true })).toBeVisible();
+  await page.getByPlaceholder('Find a folder').fill('Flat set');
+  await expect(picked.getByTestId('folder-row')).toHaveCount(100);
+  await picked.getByRole('button', { name: 'Next matching folders', exact: true }).click();
+  await expect(picked.getByTestId('folder-row')).toHaveCount(100);
+  await page.getByPlaceholder('Find a folder').fill('Flat set 4999');
+  await expect(picked.getByTestId('folder-row')).toHaveCount(1);
+  const name = picked.getByRole('textbox', { name: 'Album name for Flat set 4999', exact: true });
+  await name.fill('Last flat folder'); await name.press('Enter');
+  const batch = await latestBatch();
+  await expect.poll(async () => (await fixtures.sql.query(`select f.album_name from public.migration_folders f
+    join public.migration_sources s on s.id=f.source_id where s.batch_id=$1 and f.folder='Flat set 4999'`, [batch])).rows[0]?.album_name).toBe('Last flat folder');
+  await page.getByRole('button', { name: 'Cancel import', exact: true }).click();
+  await expect(status(page)).toHaveAttribute('data-status', 'cancelled');
+});
+
+for (const failSave of [false, true]) {
+  test(`Start receives the mouse-up after a blur save and ${failSave ? 'blocks approval on failure' : 'waits for the saved choice'}`, async ({ page, context }) => {
+    const root = `Blur ${failSave} ${run}`;
+    await signIn(context, [{ label: root, files: [photo(`blur-${failSave}.png`)] }]);
+    await page.goto('/migrate');
+    const picked = await chooseFolder(page, root);
+    const name = picked.getByRole('textbox', { name: `Album name for Photos directly in ${root}`, exact: true });
+    const desired = `${root} saved`;
+    await name.fill(desired);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let received = false, approvals = 0;
+    page.on('request', request => {
+      if (request.method() === 'PATCH' && /\/api\/photo-migrations\/batches\/[^/]+$/.test(new URL(request.url()).pathname) && request.postDataJSON()?.action === 'approve') approvals++;
+    });
+    await page.route('**/api/photo-migrations/sources/*/folders', async route => {
+      if (route.request().method() !== 'PATCH') return route.continue();
+      received = true;
+      await gate;
+      if (failSave) await route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ error: { code: 'test_save_failed', message: 'The album name could not be saved.' } }) });
+      else await route.continue();
+    }, { times: 1 });
+    const start = page.getByRole('button', { name: 'Start import', exact: true });
+    await start.scrollIntoViewIfNeeded();
+    const box = (await start.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await expect.poll(() => received).toBe(true);
+    await expect(start).toBeEnabled();
+    await page.mouse.up();
+    await expect(start).toBeDisabled();
+    expect(approvals).toBe(0);
+    release();
+    if (failSave) {
+      await expect(page.locator('main').getByRole('alert')).toContainText('An edit could not be saved');
+      expect(approvals).toBe(0);
+      await expect(status(page)).toHaveAttribute('data-status', 'draft');
+      // Re-entering the failed choice saves it and removes the approval block.
+      await name.fill(`${desired} retried`); await name.press('Enter');
+      await start.click();
+    }
+    await expect(status(page)).toHaveAttribute('data-status', 'completed', { timeout: 120_000 });
+    expect(approvals).toBe(1);
+    expect(await albums(root)).toEqual([{ name: failSave ? `${desired} retried` : desired, photos: [`blur-${failSave}.png`] }]);
+  });
+}
+
+test('loose albums require an explicit keyboard or mouse choice; blur cannot create a duplicate', async ({ page, context }) => {
+  const existing = `Exact choice ${run}`;
+  const id = (await fixtures.sql.query('insert into public.albums(name,created_by) values($1,$2) returning id', [existing, fixtures.employeeA.id])).rows[0].id;
+  await signIn(context, null);
+  await page.goto('/migrate?mode=add_photos');
+  const dialog = page.getByRole('dialog');
+  const album = dialog.getByRole('combobox', { name: 'Album (optional)', exact: true });
+  // Choose before picking files, then confirm the same choice reaches the new source row.
+  const newName = `Explicit new ${run}`;
+  await album.fill(newName);
+  await dialog.getByRole('option', { name: `Create album “${newName}”`, exact: true }).click();
+  await dialog.getByLabel('Select photos', { exact: true }).setInputFiles({ name: 'album-choice.png', mimeType: 'image/png', buffer: png });
+  await expect(dialog.getByTestId('batch-counts')).toContainText('1 photo');
+  const start = dialog.getByRole('button', { name: 'Start import', exact: true });
+  await expect(start).toBeEnabled();
+  const batch = await latestBatch();
+  const choice = async () => (await fixtures.sql.query(`select f.album_id,f.album_name from public.migration_folders f
+    join public.migration_sources s on s.id=f.source_id where s.batch_id=$1`, [batch])).rows[0];
+  await expect.poll(choice).toEqual({ album_id: null, album_name: newName });
+  await album.fill(existing);
+  await album.press('Tab'); // immediately leaves before the 200 ms search can settle
+  await expect(start).toBeDisabled();
+  expect(await choice()).toEqual({ album_id: null, album_name: newName });
+  await album.focus();
+  await expect(dialog.getByRole('option', { name: `${existing} 0 photos`, exact: true })).toBeVisible();
+  await expect(dialog.getByRole('option', { name: `Create album “${existing}”`, exact: true })).toHaveCount(0);
+  await album.press('ArrowDown'); await album.press('ArrowUp'); await album.press('Enter');
+  // Existing albums persist their ID; album_name is reserved for a new album.
+  await expect.poll(choice).toEqual({ album_id: id, album_name: null });
+  await expect(start).toBeEnabled();
+  expect((await fixtures.sql.query('select count(*)::int as n from public.albums where name=$1', [existing])).rows[0].n).toBe(1);
+
+  const tags = dialog.getByRole('combobox', { name: 'Tags for these photos', exact: true });
+  await tags.focus();
+  await expect(tags).toHaveAttribute('aria-expanded', 'true');
+  await tags.press('Escape');
+  await expect(tags).toHaveAttribute('aria-expanded', 'false');
+  await expect(dialog).toBeVisible();
+  await tags.press('Escape');
+  await expect(dialog).toHaveCount(0);
+});
+
+test('the upload album suggestions consume the first Escape and let the second close the popup', async ({ page, context }) => {
+  await signIn(context, null);
+  await page.goto('/photos');
+  await page.locator('input[type=file][multiple]').first().setInputFiles({ name: 'escape.png', mimeType: 'image/png', buffer: png });
+  const dialog = page.getByRole('dialog');
+  const album = dialog.getByLabel('Album (optional)', { exact: true });
+  await album.fill(`Escape new ${run}`);
+  await expect(album).toHaveAttribute('aria-expanded', 'true');
+  await album.press('Escape');
+  await expect(album).toHaveAttribute('aria-expanded', 'false');
+  await expect(dialog).toBeVisible();
+  await album.press('Escape');
+  await expect(dialog).toHaveCount(0);
+});

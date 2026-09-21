@@ -6,6 +6,7 @@ import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { createAlbum, usePhotoAlbums } from "@/lib/photos/api";
 import type { PhotoAlbumRef } from "@/lib/photos/types";
+import { useSuggestionEscape } from "@/hooks/use-suggestion-escape";
 import { useCloseOnBlur } from "@/hooks/use-close-on-blur";
 import { cn } from "@/lib/utils";
 
@@ -63,6 +64,7 @@ export default function AlbumField({
   const rowCount = options.length + (canCreate ? 1 : 0);
   const busy = disabled || creating;
   const listOpen = open && !busy && (rowCount > 0 || isLoading);
+  useSuggestionEscape(inputRef, listOpen, () => setOpen(false));
 
   const pick = (album: PhotoAlbumRef) => {
     onChange([...value, { id: album.id, name: album.name }]);
@@ -143,6 +145,10 @@ export default function AlbumField({
             } else if (event.key === "ArrowUp") {
               event.preventDefault();
               setActiveIndex((index) => Math.max(index - 1, 0));
+            } else if (event.key === "Escape" && listOpen) {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
             } else if (event.key === "Backspace" && !input && value.length > 0) {
               onChange(value.slice(0, -1));
             }

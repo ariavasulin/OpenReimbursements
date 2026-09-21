@@ -134,6 +134,22 @@ describe('share link routes (photo-albums AC-21, AC-22)', () => {
     expect((await turn({ job_id: project }, false)).status).toBe(200);
   });
 
+  it('inactive projects return the unavailable result from both public API and page', async () => {
+    const name = `Inactive project ${tag}`;
+    const made = await f.admin.from('jobs').insert({ job_number: `inactive-routes-${tag}`, name, is_active: true }).select('id').single();
+    expect(made.error).toBeNull(); const id = made.data!.id as string;
+    await photo({ jobId: id });
+    const url = (await (await turn({ job_id: id }, true)).json()).url as string;
+    expect((await visit(tokenOf(url))).status).toBe(200);
+    await f.sql.query('update public.jobs set is_active=false where id=$1', [id]);
+    const api = await visit(tokenOf(url));
+    expect(api.status).toBe(404); expectHeaders(api);
+    expect(await api.text()).toBe(await (await visit('missing')).text());
+    const page = await fetch(url, { redirect: 'manual' });
+    expect(page.status).toBe(404); expectHeaders(page, true);
+    expect(await page.text()).not.toContain(name);
+  });
+
   it('the switch is for signed-in employees only, from this site only, and takes exactly one target', async () => {
     const a = await album(`Guarded ${tag}`);
     expect((await turn({ album_id: a }, true, { actor: null })).status).toBe(401);

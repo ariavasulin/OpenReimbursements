@@ -368,7 +368,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await expect(start).toBeDisabled();
     // An album alone is enough: a new one, typed.
     await dialog.getByRole('combobox', { name: /Album/ }).fill(`Compact ${viewport.name} party`);
-    await dialog.getByRole('combobox', { name: /Album/ }).press('Enter');
+    await dialog.getByRole('option', { name: `Create album “Compact ${viewport.name} party”`, exact: true }).click();
     await expect(dialog.getByText(`A new album “Compact ${viewport.name} party” will be made`, { exact: false })).toBeVisible();
     await expect(start).toBeEnabled();
     expect((await fixtures.sql.query('select count(*)::int as n from public.albums where name=$1', [`Compact ${viewport.name} party`])).rows[0].n).toBe(0);

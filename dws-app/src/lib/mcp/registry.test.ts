@@ -84,13 +84,14 @@ describe('MCP registry', () => {
   });
   // photo-albums AC-11. "Copy link" now writes /photos?photo=<id>; links already pasted into
   // messages use /photos/<jobId>?photo=<id>. Both must pass, on the new and the old address.
-  it('accepts both photo link shapes on every allowed origin, and nothing looser', () => {
+  it('accepts photo grid URLs on every allowed origin, and nothing looser', () => {
     const job = '10000000-0000-4000-8000-000000000001', photo = '20000000-0000-4000-8000-000000000002';
     const check = (photo_url: string) => validateScriptInput('remove_photos', { selector: { photos: [{ photo_url }] } });
     const origins = ['', 'https://photos.design-workshops.app', 'https://design-workshops.app',
       'https://photos.dws-receipts.com', 'https://dws-receipts.com', 'https://www.dws-receipts.com'];
     for (const origin of origins) {
-      for (const path of [`/photos?photo=${photo}`, `/photos/?photo=${photo}`, `/photos/${job}?photo=${photo}`]) {
+      for (const path of [`/photos?photo=${photo}`, `/photos/?photo=${photo}`, `/photos/${job}?photo=${photo}`,
+        `/photos/albums/${job}?photo=${photo}`, `/photos/search?q=kitchen&photo=${photo}`]) {
         expect(check(`${origin}${path}`), `${origin}${path}`).toEqual({ selector: { photos: [{ photo_url: `${origin}${path}` }] } });
       }
     }
@@ -103,8 +104,10 @@ describe('MCP registry', () => {
       '/photos?photo=not-a-uuid',
       `/photos/not-a-uuid?photo=${photo}`,                                // old shape still needs a project UUID
       `/photos/${job}`,
-      `/photos/albums?photo=${photo}`,                                    // only the two shapes are links to a photo
-      `/photos/albums/${job}?photo=${photo}`,
+      `/photos/albums?photo=${photo}`,                                    // album list has no photo viewer
+      `/photos/albums/not-a-uuid?photo=${photo}`,
+      `/photos/albums/${job}/extra?photo=${photo}`,
+      `/photos/search/extra?photo=${photo}`,
       `/photos/${job}/extra?photo=${photo}`,
       `/photo?photo=${photo}`, `/photosx?photo=${photo}`, `/?photo=${photo}`,
       `/s/${job}?photo=${photo}`,

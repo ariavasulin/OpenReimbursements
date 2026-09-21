@@ -9,6 +9,7 @@ import {
   tagChoices,
   tagMenu,
 } from "@/lib/photos/tags";
+import { useSuggestionEscape } from "@/hooks/use-suggestion-escape";
 import { useCloseOnBlur } from "@/hooks/use-close-on-blur";
 import { MAX_TAGS } from "@/lib/photos/apiShared";
 import { cn } from "@/lib/utils";
@@ -73,6 +74,7 @@ export default function TagDropdown({
   const rowCount = menu.options.length + (menu.add ? 1 : 0);
   const full = tags.length >= MAX_TAGS;
   const listOpen = open && !disabled && !full && rowCount > 0;
+  useSuggestionEscape(inputRef, listOpen, () => setOpen(false));
 
   const add = (raw: string) => {
     const next = appendResolvedTag(tags, raw, choices);
@@ -141,6 +143,10 @@ export default function TagDropdown({
             } else if (event.key === "ArrowUp") {
               event.preventDefault();
               setActiveIndex((index) => Math.max(index - 1, 0));
+            } else if (event.key === "Escape" && listOpen) {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
             } else if (event.key === "Backspace" && !input && tags.length > 0) {
               onChange(tags.slice(0, -1));
             }
