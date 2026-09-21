@@ -61,13 +61,16 @@ const IMAGE_TYPES = { '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'ima
 
 const usage = `Usage: node scripts/review-stack.mjs [options]
   --dev                           run "next dev" instead of "next build" + "next start"
+  --live                          serve the working tree itself with "next dev", so edits hot-reload
+                                  (for fixing screens while looking at them); refuses to start if
+                                  any .env file is present, because Next would load it
   --migrations-through <stamp>    apply only migrations whose 14-digit timestamp is <= <stamp>
                                   (baseline files always apply)
   --seed-dir <dir>                photos to seed (default: <repo>/.artifacts/photo-albums/review-seed)
   --info-file <path>              also write the ready JSON here (removed again on shutdown)`;
 
 function parseArgs(argv) {
-  const options = { dev: false, migrationsThrough: null, seedDir: defaultSeedDir, infoFile: null };
+  const options = { dev: false, live: false, migrationsThrough: null, seedDir: defaultSeedDir, infoFile: null };
   const args = argv.flatMap(arg => (arg.startsWith('--') && arg.includes('=') ? [arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)] : [arg]));
   for (let i = 0; i < args.length; i++) {
     const name = args[i];
@@ -77,6 +80,7 @@ function parseArgs(argv) {
     };
     if (name === '--help' || name === '-h') { console.log(usage); process.exit(0); }
     else if (name === '--dev') options.dev = true;
+    else if (name === '--live') { options.live = true; options.dev = true; }
     else if (name === '--migrations-through') options.migrationsThrough = value();
     else if (name === '--seed-dir') options.seedDir = resolve(value());
     else if (name === '--info-file') options.infoFile = resolve(value());
@@ -526,13 +530,22 @@ try {
 
   // Duplicated from test-integration.mjs. Next automatically loads .env.local, so it runs from a
   // source-only snapshot: no .env files, no stale .next, and immune to edits made while it is up.
-  const snapshot = resolve(workdir, 'app');
-  await mkdir(snapshot);
-  for (const name of ['src', 'public', 'baml_client', 'package.json', 'tsconfig.json', 'next.config.ts', 'postcss.config.mjs', 'next-env.d.ts']) {
-    try { await cp(resolve(app, name), resolve(snapshot, name), { recursive: true }); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  let snapshot = resolve(workdir, 'app');
+  if (options.live) {
+    // --live gives up the snapshot's immunity on purpose: it serves the working tree so a person or
+    // agent fixing a screen sees each edit hot-reload. The snapshot's other guarantee still has to
+    // hold, so refuse when Next would find an .env file to load.
+    const stray = (await readdir(app)).filter(name => name.startsWith('.env'));
+    if (stray.length) throw new Error(`--live refuses to start: Next would load ${stray.join(', ')} from ${app}, which could point at a real database`);
+    snapshot = app;
+  } else {
+    await mkdir(snapshot);
+    for (const name of ['src', 'public', 'baml_client', 'package.json', 'tsconfig.json', 'next.config.ts', 'postcss.config.mjs', 'next-env.d.ts']) {
+      try { await cp(resolve(app, name), resolve(snapshot, name), { recursive: true }); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    await symlink(resolve(app, 'node_modules'), resolve(snapshot, 'node_modules'), 'dir');
   }
-  await symlink(resolve(app, 'node_modules'), resolve(snapshot, 'node_modules'), 'dir');
   // Next gets only what it needs: no database URL, no Docker settings, nothing inherited.
   const buildEnv = {
     ...Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'LANG', 'TERM'].filter(key => env[key]).map(key => [key, env[key]])),

@@ -318,6 +318,15 @@ the build agents also screenshot and inspect their own screens while building.
   confirm changes to real photos, projects, or albums. Where a flow can only be
   judged by completing it, it works on scratch items whose names start with
   `UX Test`, and the orchestrator removes them afterwards.
+- **The end-of-build pass repairs; it does not only report** (user instruction
+  2026-09-20). The reviewer runs with write access against a live, hot-reloading local
+  app (`review:stack -- --live`), and for each front-end problem it finds it changes the
+  code, reloads, and re-screenshots until the screen is right. It stays inside this
+  plan's contract — the three words, the dark theme and existing components, no new
+  features — and leaves its edits uncommitted. The orchestrator then checks that the
+  diff is real and scoped, re-runs every suite, and commits. Anything it judged out of
+  bounds comes back as a finding for the orchestrator to disposition. A run that comes
+  back with findings but no fixes is sent back to fix them.
 - **Outcome:** each finding is dispositioned by the orchestrator — fixed in this
   phase, deferred to a named phase, or declined with a reason — and the list goes in
   the PR for the human to overrule. Reports are kept in `reviews/`; screenshots in the
