@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { PhotoApiError, photoLinkIds } from '@/lib/photos/server/http';
+import { browserOrigin } from '@/lib/photos/server/browser-origin';
 import { assertNoConfiguredSecrets, ConfiguredSecretError } from './secrets';
 import { executeCreateGithubIssue, IssueSubmissionError } from './issues';
 import { IssueInputError } from './issues-validation';
@@ -43,15 +44,8 @@ const descriptions: Record<ScriptName, string> = {
   create_github_issue: 'Publish a feature, bug, or question after the report_issue interview and explicit permission to post the displayed final title, body, and attribution. Never call during brainstorming or draft review. Uses the fixed OpenReimbursements repository with default reporter attribution or explicit anonymity; unchanged confirmed retries return the durable submission status.',
 };
 
-export function browserOrigin(): string {
-  const url = new URL(process.env.DWS_BROWSER_ORIGIN ?? 'https://photos.design-workshops.app');
-  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash ||
-      (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)))) {
-    throw new PhotoApiError('temporarily_unavailable');
-  }
-  assertNoConfiguredSecrets(url.href);
-  return url.origin;
-}
+// Lives with the photo server code so share links use the same rule without loading the MCP SDK.
+export { browserOrigin };
 
 /** Pure syntax validation only. Photo/job lookup belongs to the logged-in browser. */
 function assertScriptName(name: string): asserts name is ScriptName {

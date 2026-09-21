@@ -34,6 +34,7 @@ import {
   useResolvePhotoDeepLink,
 } from "@/hooks/use-photo-deep-link";
 import RenameJob from "@/components/photos/rename-job";
+import ShareButton from "@/components/photos/share-button";
 
 const PINNED_TAG = "professional";
 
@@ -159,6 +160,7 @@ export default function JobPhotosPage() {
           "Job"
         )}
       </h1>
+      {job && <ShareButton project={{ id: job.id, name: job.name }} className="my-2" />}
       <p className="mb-3 text-xs text-[#a0a0a0]">
         {job
           ? `${plural(job.photo_count, "photo")}${

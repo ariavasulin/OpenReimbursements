@@ -90,6 +90,77 @@ joins (`set enable_nestloop=off` on `migration_reserve_uuids` and
 test "seals 100,000 entries inside the limit with 1,500 live photos the planner
 believes are one row" in `integration/db/migrations.test.ts` guards it.
 
+## Share links (`/s/<token>`)
+
+An employee can share one album or one project with a link, from the **Share**
+button on it. Anyone who has the link can see that album's or project's name, a
+photo count, and its photos and videos, and download them, **without signing
+in**. It is the only page in the app that works without a login. A visitor never
+sees who took a photo, its tags, its XMP file, a project number, or any other
+album. Any signed-in employee may turn any link on or off.
+
+**What the switch on one album or project does**
+
+- *On* makes a link: `https://photos.design-workshops.app/s/<token>`. The token is
+  32 random bytes, so it cannot be guessed. The pop-up shows the same link again
+  whenever it is opened.
+- *Off* stops that page at once: it answers "This link is not available" (HTTP
+  404) from then on. Pages are never cached, so there is no delay.
+- *On again* makes a **new** link. The old address never works again.
+- A link that is off, a link that never existed, and any link while sharing is
+  switched off for everyone all look exactly the same to a visitor, on purpose.
+- Trashing a photo removes it from every shared page immediately; restoring it
+  brings it back. Deleting an album stops its page; restoring the album within 30
+  days brings the same link back.
+
+**What turning a link off cannot do.** The `photos` storage bucket is public, so
+every image has its own permanent address. Turning a link off stops the *page*;
+it cannot take back an image address that someone already saved or copied, and it
+cannot take back a photo they downloaded. The Share pop-up says this in plain
+words. The way to close that gap is a private bucket with signed image links
+(Alternative D in `plans/active/photo-albums/plan.md`); revisit it before sharing
+anything client-confidential.
+
+**Turning every link off at once.** Share pages have their own switch,
+`photo_release_state.sharing_enabled`, separate from the three existing gates. It
+starts **false**: after the migration is applied, no share page works anywhere
+until an operator opens it. Closing it stops every `/s/<token>` page and
+`/api/share/*` immediately and touches nothing else — the signed-in app keeps
+working, and employees can still flip individual switches (the pop-up tells them
+links will not open until sharing is switched back on). No link is lost: opening
+it again brings back every link that was on.
+
+```sql
+-- Stop every shared link now. One statement, takes effect on the next request.
+update public.photo_release_state
+set sharing_enabled=false,
+    updated_by='<administrator-user-uuid>', updated_at=clock_timestamp()
+where singleton;
+```
+
+Use the same statement with `sharing_enabled=true` to open it. Before opening it
+in production for the first time: the security review of the public route and
+`photo_share_read` is recorded in the pull request, and with the gate still
+closed `/s/<anything>` answers 404. After opening it: one real album link opens in
+a private window, and turning it off returns 404.
+
+To see what is shared right now (operator database session; no browser role can
+read this table):
+
+```sql
+select coalesce(a.name, j.name) as shared, case when l.album_id is not null then 'album' else 'project' end as kind,
+       l.created_at, p.full_name as turned_on_by
+from public.photo_share_links l
+left join public.albums a on a.id = l.album_id
+left join public.jobs j on j.id = l.job_id
+left join public.user_profiles p on p.user_id = l.created_by
+where l.revoked_at is null order by l.created_at desc;
+```
+
+To turn off one link without the app, set `revoked_at=clock_timestamp()` and
+`revoked_by` on its row. Never clear `revoked_at` to "bring a link back": turn
+sharing on again from the app, which makes a new link.
+
 ## Legacy standalone-sidecar audit
 
 `node dws-app/scripts/attach-orphan-sidecars.mjs` is read-only and considers
