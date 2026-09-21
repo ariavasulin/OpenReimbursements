@@ -293,9 +293,9 @@ dark theme and components (`PhotoGrid`, `SheetShell`, `FilterChip`, `GroupByTogg
 ## Rendered look-and-feel review
 
 Automated suites prove behavior, not whether a screen looks modern and clean or
-makes sense to a non-technical person. For Phases 2, 4, 5, 6, and 7 the orchestrator
-runs this once the phase's automated checks pass, and folds the findings into the
-phase summary the human reviews.
+makes sense to a non-technical person. It ran for Phase 2 on its own. For Phases 4, 5, 6, and 7
+it runs once, over the merged result, before the ship (user instruction 2026-09-20);
+the build agents also screenshot and inspect their own screens while building.
 
 - **Where:** Phase 2 needs no new tables, so it is reviewed on a Vercel preview of the
   working tree, which shows real production photos in look-only mode. From Phase 3 on
@@ -420,6 +420,15 @@ branch can still be cut into stacked PRs at ship time with no rework.
 | Phase 5 | Tag dropdown, tag filter/group, select-many and bulk actions |
 | Phase 6 | Folder import as albums; MCP inputs; desktop entry |
 | Phase 7 | Share links and the `sharing_enabled` gate |
+
+**Changed again 2026-09-20 (user instruction): build first, review once at the end.**
+After Phase 3, two agents build in parallel — all the screens (Phases 4 and 5) in the
+main worktree, and folder import plus share links (Phases 6 and 7) in an isolated
+worktree that is merged in afterwards. The orchestrator's independent verification —
+every suite, the SQL-function diffs, the share-link security review, and the rendered
+look-and-feel review — runs once over the merged result, followed by a fix round.
+Phases 1–3a were verified phase by phase before this change. Commits stay grouped by
+phase as far as the parallel build allows.
 
 **Nothing touches production while the plan is being built**: no production
 migration and no production deploy. Every phase is proven on throwaway local
