@@ -336,7 +336,7 @@ always-reachable phone capture buttons, and the 30-day recovery facts.
 | Phone viewer: details sit on top of the photo and are hard to read (high) | Phase 4 — photo unobscured by default; details and actions in an opaque panel opened from the viewer |
 | Enlarged text pushes the phone Upload action off-screen (high) | Phase 4 — the bottom bar and "+" survive browser text at 200%; names and headings scale |
 | "Where did my folder go?" — no overview, unlabeled numbers beside counts (high) | Phases 4 and 6 — the three sections; job numbers labeled; imported folders arrive as albums of the same name |
-| Move/trash confirm page reads like a batch console: "exact targets", "draft", "pending", "MCP restore handoff" (high) | Phase 5 — it becomes the bulk confirm page: photos first, one plain sentence ("Move 3 photos to …?" / "Move 3 photos to trash?"), verb + Cancel, recovery time stated; conflict detail only when there is a conflict |
+| Move/trash/restore confirm page reads like a batch console: "exact targets", "draft", "pending", "MCP restore handoff" (high) | Phase 5 — it becomes the bulk confirm page: photos first, one plain sentence ("Move 3 photos to …?" / "Move 3 photos to trash?"), verb + Cancel, recovery time stated; conflict detail only when there is a conflict |
 | Controls too small: 28–34 px targets, 12 px labels (medium) | Phases 4–5 — 44 px minimum touch targets and 16 px body text on every screen they touch |
 | Long project names truncated in the list and rail (medium) | Phase 4 — two-line names in lists and cards; full name on focus/tap |
 | Desktop header: red Sign out dominates; too many peers (medium) | Phase 4 — Sign out and Receipts move into a quiet account menu |
@@ -346,7 +346,7 @@ always-reachable phone capture buttons, and the 30-day recovery facts.
 | "Sheet" is unexplained; empty Tag menus say only "None yet" (medium) | Phase 2 removes Sheet #; Phase 5 — the tag dropdown always offers the starter tags and says what a tag is |
 | Import page leads with internal vocabulary (medium) | Phase 6 — lead with "Import folders" and one "Choose folder" action; XMP and exclusion detail behind "More detail"; past imports named by folder and date |
 | Empty project keeps useless filters; no upload action beside the message (medium) | Phase 4 — empty states carry their own action and hide filters |
-| Small forms sit in very tall pop-ups (low) | Phase 4 — desktop pop-ups size to their content |
+| Short forms sit in very tall pop-ups, ~300 px of blank space before the button; worse once Sheet # is gone (medium) | Phase 4 — pop-ups size to their content on desktop and phone, with a viewport-relative maximum and scrolling inside |
 | Sign-in says "DWS Receipts", no resend path (low) | Phase 4 — on the photos address the title and heading say DWS Photos; a timed "Resend code" |
 
 ## Security and privacy (share links only)
@@ -505,7 +505,7 @@ Shrinks what exists before building on it. Two migrations with opposite ordering
 - [x] [AC-5] `test:db` + `test:routes`: employee B trashes then restores employee A's photo; `deleted_by` = B; signed out → 401; gate closed → 503. *(Observed 2026-09-20 by the orchestrator: `test:db` 71/71, `test:routes` 77/77, `test:browser` 15/15, unit 572/572; both migrations replayed twice on a fresh local database.)*
 - [x] `npm exec -- tsc --noEmit -p tsconfig.json` (in `dws-app`) and `npm --prefix dws-app run build` pass. *(Observed 2026-09-20: `tsc` clean; build 52/52 pages with placeholder env values, since this worktree has no env file.)*
 - [x] Each re-created SQL function differs from its latest prior definition only by the lines the plan names. *(Observed 2026-09-20: mechanical diff of all five functions.)*
-- [ ] Rendered look-and-feel review (Decision 14) run on phone and desktop against a preview of this branch; every finding dispositioned by the human.
+- [x] Rendered look-and-feel review (Decision 14) run on phone and desktop against a preview of this working tree ([report](reviews/2026-09-20-phase-2.md)). Verdict: the removal looks finished — no Sheet remnants, gaps, or lopsided rows in the project header, viewer, trash, or search. Dispositions by the orchestrator: (1) upload and edit pop-ups now far taller than their content, medium — **deferred to Phase 4**, which rebuilds the upload pop-up's fields and the pop-up container, so sizing it here would be done twice; (2) phone pop-ups have no visible Cancel, medium — **deferred to Phase 4** (already in § Baseline findings); (3) restore confirm page uses internal words, low — **deferred to Phase 5**, which rewrites the confirm page in plain language. Not reviewable on production data: trashing a colleague's photo (one uploader only) — covered by `test:db`, `test:routes`, and browser test 11.
 - [ ] Ship sequence (§ Rollout): migrations A and B1 applied before the merge; after the deploy is live, B2 applied and `sheet_number` is gone.
 
 ### Exit criteria
