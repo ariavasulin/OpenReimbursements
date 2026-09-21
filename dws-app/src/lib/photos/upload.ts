@@ -105,7 +105,8 @@ export interface UploadResult {
   error?: string;
   errorCode?: string;
   canonicalPhotoId?: string;
-  canonicalJobId?: string;
+  /** Null when the existing photo has no project. */
+  canonicalJobId?: string | null;
   purgeAfter?: string;
   warnings: string[];
   sidecarRetry?: boolean;

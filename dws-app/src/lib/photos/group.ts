@@ -1,5 +1,6 @@
 // Input is newest-first.
 
+import { NO_PROJECT } from "./format";
 import type { PhotoRow } from "./types";
 
 export type GroupBy = "date" | "job";
@@ -48,10 +49,14 @@ export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] 
         );
       }
     } else {
+      // No project is its own group. "Unknown job" is only for a project the
+      // embed could not read, which keeps its id as the key.
       const label = photo.job
         ? `#${photo.job.job_number} · ${photo.job.name}`
-        : "Unknown job";
-      append(map, `job:${photo.job_id}`, label, photo);
+        : photo.job_id === null
+          ? NO_PROJECT
+          : "Unknown job";
+      append(map, `job:${photo.job_id ?? "none"}`, label, photo);
     }
   }
 

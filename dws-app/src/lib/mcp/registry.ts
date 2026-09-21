@@ -65,7 +65,9 @@ export function validateScriptInput(scriptName: string, input: unknown): Record<
       if (!('photo_url' in ref)) continue;
       let ids: ReturnType<typeof photoLinkIds>;
       try { ids = photoLinkIds(ref.photo_url, browserOrigin()); } catch { throw new PhotoApiError('invalid_input'); }
-      if (!z.string().uuid().safeParse(ids.jobId).success ||
+      // `/photos?photo=<id>` names no project. An older `/photos/<jobId>?photo=<id>` link
+      // must still carry a UUID there, and the photo id is a UUID in both shapes.
+      if ((ids.jobId !== null && !z.string().uuid().safeParse(ids.jobId).success) ||
           !z.string().uuid().safeParse(ids.photoId).success) throw new PhotoApiError('invalid_input');
     }
   }

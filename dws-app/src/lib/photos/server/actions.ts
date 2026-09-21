@@ -43,7 +43,8 @@ function referenceId(ref:PhotoReference, origin:string):string|null {
   if ('photo_id' in ref) return photoId(ref.photo_id);
   if (!('photo_url' in ref)) return null;
   const ids=photoLinkIds(ref.photo_url,origin);
-  photoId(ids.jobId);
+  // `/photos?photo=<id>` names no project; an older link's project must still be a UUID.
+  if(ids.jobId!==null) photoId(ids.jobId);
   return photoId(ids.photoId);
 }
 export async function referenceCandidates(actor:PhotoActor,ref:PhotoReference,origin:string,offset=0,limit=100) {
@@ -130,7 +131,10 @@ export async function createAction(actor:PhotoActor,body:Record<string,unknown>,
   if(!['move','trash','restore'].includes(String(body.action))) throw new PhotoApiError('invalid_input');
   const selector=validateSelector(body.selector);
   const destination=body.destination_job_id==null?null:photoId(body.destination_job_id);
-  if(body.action==='move'&&!destination||body.action==='trash'&&destination) throw new PhotoApiError('invalid_input');
+  // A move must say where: a project id, or an explicit null meaning "No project".
+  // A move that leaves the key out is still refused, so a forgotten destination
+  // can never empty a photo's project.
+  if(body.action==='move'&&body.destination_job_id===undefined||body.action==='trash'&&destination) throw new PhotoApiError('invalid_input');
   if(destination){const job=await actor.db.from('jobs').select('id').eq('id',destination).eq('is_active',true).maybeSingle();if(job.error) throwPhotoDatabaseError(job.error);if(!job.data) throw new PhotoApiError('invalid_input');}
   // Validate URL references on draft creation, before persisting any input.
   if('photos' in selector) for(const ref of selector.photos) referenceId(ref,origin);

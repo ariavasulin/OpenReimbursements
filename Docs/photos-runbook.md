@@ -29,11 +29,19 @@ the canonical result.
 
 ## Hand-made projects
 
-Every photo belongs to one job, which employees call a project. Until the office
-project database is bridged, any photo actor can create a project wherever a job
-is chosen (upload, move, and the `/migrate` page) and rename one from its page.
-Both go through `photo_create_job` / `photo_rename_job` behind the
-`photo_writes_enabled` gate.
+A photo has at most one job, which employees call a project, and may have none
+(`photos.job_id` is nullable; the app shows "No project"). It can also sit in any
+number of albums (`albums`, `album_photos`). Every upload must name a project, an
+album, or both; after that, edits are free, including a move to "No project".
+Any signed-in employee can create, rename, delete, and restore any album. A
+deleted album keeps its photos and can be restored for 30 days; deleting an album
+never deletes a photo. Album and bulk-tag writes go through the `photo_*album*`
+and `photo_bulk_tag` functions behind the `photo_writes_enabled` gate.
+
+Until the office project database is bridged, any photo actor can create a
+project wherever a job is chosen (upload, move, and the `/migrate` page) and
+rename one from its page. Both go through `photo_create_job` /
+`photo_rename_job` behind the `photo_writes_enabled` gate.
 
 - A project created without an office job number receives a generated `P-<n>`
   code from `job_project_code_seq`. Office job numbers are digits, so the two

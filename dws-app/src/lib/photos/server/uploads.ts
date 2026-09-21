@@ -41,11 +41,26 @@ export async function describeUploadOutcome(actor: PhotoActor, outcome: Canonica
     remedy: expired ? 'This photo is awaiting permanent cleanup. Retry after cleanup completes.' : 'Confirm restoration before uploading.' };
 }
 
+/** A project is optional: absent or null means "no project". Anything else must be a UUID. */
+function optionalPhotoId(value: unknown): string | null {
+  return value === undefined || value === null ? null : photoId(value);
+}
+/** Albums an upload names. Absent means none; the request body limit bounds the list. */
+function albumIds(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new PhotoApiError('invalid_input');
+  return [...new Set(value.map(photoId))];
+}
+
 export async function createUploadAttempt(actor: PhotoActor, body: Body): Promise<UploadAttempt> {
   const name = string(body.original_name);
   if (/[/\\]/.test(name)) throw new PhotoApiError('invalid_input');
+  const jobId = optionalPhotoId(body.job_id), albums = albumIds(body.album_ids);
+  // Every upload names a project, an album, or both (photo-albums Decision 3). SQL refuses this too.
+  if (jobId === null && albums.length === 0) throw new PhotoApiError('invalid_input');
   const value = await photoRpc(actor, 'photo_create_upload_attempt', {
-    p_actor: actor.actorId, p_job_id: photoId(body.job_id), p_attempt_id: photoId(body.attempt_id),
+    // p_job_id has no SQL default, so "no project" is sent as an explicit null.
+    p_actor: actor.actorId, p_job_id: jobId, p_album_ids: albums, p_attempt_id: photoId(body.attempt_id),
     p_photo_id: photoId(body.photo_id), p_source_signature: string(body.source_signature, 2048),
     p_digest: digest(body.content_sha256), p_original_name: name,
     p_original_bytes: integer(body.original_bytes), p_mime_type: string(body.mime_type, 255),
@@ -58,7 +73,7 @@ export async function createUploadAttempt(actor: PhotoActor, body: Body): Promis
 
 export async function describeAttemptResult(actor: PhotoActor, bound: {
   result: CanonicalUploadOutcome; warnings: string[]; new_attempt_required?: boolean;
-  job_id: string; original_path: string; sidecar_path: string; content_sha256: string;
+  job_id: string | null; original_path: string; sidecar_path: string; content_sha256: string;
 }): Promise<CanonicalUploadOutcome> {
   const result = { ...bound.result, warnings: bound.warnings, ...(bound.new_attempt_required ? { new_attempt_required: true } : {}) };
   if (result.status === 'created') {
@@ -102,7 +117,7 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
   const args = uploadRpcArgs(actor, body, true, true);
   const owner = uploadOwner(body);
   const bound = await photoRpc(actor, 'photo_lock_upload', uploadRpcArgs(actor, body));
-  if (photoId(body.id) !== bound.photo_id || photoId(body.job_id) !== bound.job_id ||
+  if (photoId(body.id) !== bound.photo_id || optionalPhotoId(body.job_id) !== bound.job_id ||
       digest(body.content_sha256) !== bound.content_sha256 || body.original_path !== bound.original_path ||
       integer(body.original_bytes) !== Number(bound.original_bytes) || body.original_name !== bound.original_name || body.mime_type !== bound.mime_type) {
     throw new PhotoApiError('conflict');

@@ -2,14 +2,32 @@ import { describe, expect, it } from "vitest";
 import {
   buildPhotoLink,
   parsePhotoParam,
+  photoPath,
   withPhotoParam,
   withoutPhotoParam,
 } from "./photo-link";
 
+// photo-albums AC-11: "Copy link" names the photo only, on whichever address the app is open.
 describe("buildPhotoLink", () => {
-  it("builds a job-scoped URL", () => {
-    expect(buildPhotoLink("https://photos.dws-receipts.com", "job-1", "p-1"))
-      .toBe("https://photos.dws-receipts.com/photos/job-1?photo=p-1");
+  it("writes /photos?photo=<id> with no project in the path, on the new and the old address", () => {
+    expect(buildPhotoLink("https://photos.design-workshops.app", "p-1"))
+      .toBe("https://photos.design-workshops.app/photos?photo=p-1");
+    expect(buildPhotoLink("https://photos.dws-receipts.com", "p-1"))
+      .toBe("https://photos.dws-receipts.com/photos?photo=p-1");
+  });
+  it("round-trips through parsePhotoParam and escapes the id", () => {
+    const link = new URL(buildPhotoLink("https://photos.design-workshops.app", "a b&c"));
+    expect(link.pathname).toBe("/photos");
+    expect(parsePhotoParam(link.search)).toBe("a b&c");
+  });
+});
+
+describe("photoPath", () => {
+  it("keeps the project page for a photo with a project", () => {
+    expect(photoPath("job-1", "p-1")).toBe("/photos/job-1?photo=p-1");
+  });
+  it("opens a photo with no project from Photos, never from /photos/null", () => {
+    expect(photoPath(null, "p-1")).toBe("/photos?photo=p-1");
   });
 });
 

@@ -8,6 +8,7 @@ import {
   formatCapturedAt,
   formatFileInfo,
   jobLabel,
+  NO_PROJECT,
 } from "@/lib/photos/format";
 import { downloadUrl, sidecarDownloadUrl } from "@/lib/photos/urls";
 import { cn } from "@/lib/utils";
@@ -27,10 +28,10 @@ export default function PhotoInfo({
   onEdit,
 }: PhotoInfoProps) {
   const copyLink = async () => {
-    if (!photo.job) return;
     try {
+      // Names the photo only, so it works with or without a project.
       await navigator.clipboard.writeText(
-        buildPhotoLink(window.location.origin, photo.job.id, photo.id)
+        buildPhotoLink(window.location.origin, photo.id)
       );
       toast.success("Link copied");
     } catch {
@@ -75,8 +76,12 @@ export default function PhotoInfo({
     <div className={outerClass}>
       <div className={innerClass}>
           <div>
-            <div className="text-sm font-semibold text-white">
-              {photo.job ? jobLabel(photo.job) : "Photo"}
+            <div data-testid="photo-project" className="text-sm font-semibold text-white">
+              {photo.job
+                ? jobLabel(photo.job)
+                : photo.job_id === null
+                  ? NO_PROJECT
+                  : "Photo"}
             </div>
             {photo.tags.length > 0 && (
               <div
@@ -133,9 +138,8 @@ export default function PhotoInfo({
             </button>
             <button
               type="button"
-              disabled={!photo.job}
               onClick={copyLink}
-              className={cn(actionClass, secondaryAction, "disabled:opacity-60")}
+              className={cn(actionClass, secondaryAction)}
             >
               Copy link
             </button>

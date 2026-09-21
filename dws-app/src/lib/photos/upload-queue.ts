@@ -33,7 +33,8 @@ export interface QueueItem {
   sentBytes: number;
   error?: string;
   canonicalPhotoId?: string;
-  canonicalJobId?: string;
+  /** Null when the existing photo has no project. */
+  canonicalJobId?: string | null;
   warnings?: string[];
   /** Server attempt identity is independent of the local queue item's key. */
   uploadIdentity?: UploadIdentity;

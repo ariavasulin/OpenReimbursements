@@ -8,6 +8,8 @@ import { supabase } from '@/lib/supabaseClient';
 import { fetchJson, invalidatePhotoCaches, usePhotoJobs } from '@/lib/photos/api';
 import { actionRequest, actionButton as button, actionPrimary as primary, actionField as field, trashDisclosure } from '@/lib/photos/action-client';
 import ActionThumbnail from '@/components/photos/action-thumbnail';
+import { NO_PROJECT } from '@/lib/photos/format';
+import { photoPath } from '@/lib/photos/photo-link';
 
 import type { PhotoAction as Action, ActionPhoto as Photo, UnresolvedPhotoReference as Unresolved, PhotoActionBatchResponse as View } from '@/lib/photos/action-types';
 import NewJobForm from '@/components/photos/new-job-form';
@@ -147,7 +149,7 @@ export default function PhotoActions() {
       <section className="space-y-3 rounded-xl bg-[#2e2e2e] p-4">
         <p data-testid="action-status" className="text-sm">Status: <strong className={view.batch.status === 'completed' ? 'text-green-400' : 'text-[#8bbaff]'}>{view.batch.status}</strong></p>
         <p data-testid="action-count" className="text-lg font-semibold">{view.total.toLocaleString()} exact {view.total === 1 ? 'target' : 'targets'}</p>
-        <p className="text-sm">{action === 'trash' ? 'Outcome: recoverable trash' : `Destination: ${destinationJob ? `${destinationJob.job_number} · ${destinationJob.name}` : view.batch.destination_job_id ? 'Selected job' : 'each photo’s current owning job'}`}</p>
+        <p className="text-sm">{action === 'trash' ? 'Outcome: recoverable trash' : `Destination: ${destinationJob ? `${destinationJob.job_number} · ${destinationJob.name}` : view.batch.destination_job_id ? 'Selected job' : action === 'move' ? NO_PROJECT : 'each photo’s current owning job'}`}</p>
         {!owner && <p className="text-sm text-amber-300">You can inspect this batch. Only its creator or bound handoff consumer can confirm or change it.</p>}
         {view.batch.status === 'draft' && <p className="text-sm text-[#bbb]">{view.batch.materialization_complete ? 'Only the photos shown below will change.' : 'Resolve the references below before confirming.'}</p>}
         <div className="flex flex-wrap gap-3">
@@ -160,19 +162,19 @@ export default function PhotoActions() {
       {view.unresolved.map(reference => <section key={reference.reference_index} className="space-y-3 rounded-xl border border-amber-700 bg-[#2e2e2e] p-4">
         <h2 className="font-semibold">Reference {reference.reference_index + 1}: {reference.reason === 'ambiguous' ? 'Choose the matching photo' : 'No matching photo found'}</h2>
         <p className="break-all text-sm text-[#bbb]">{'job_number' in reference.reference ? `Job ${reference.reference.job_number} · ${reference.reference.original_filename}` : 'photo_url' in reference.reference ? 'Photo from the supplied link' : 'Selected photo'}</p>
-        {reference.candidates.map(photo => <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#555] p-3" key={photo.id}><ActionThumbnail photo={photo} /><span className="min-w-0 flex-1 break-all text-sm">{label(photo)} · Job {photo.job?.job_number ?? 'unavailable'}{!photo.deleted_at && <Link href={`/photos/${photo.job_id}?photo=${photo.id}`} target="_blank" rel="noopener noreferrer" className="mt-1 block w-fit text-[#8bbaff] underline">View photo in new tab</Link>}</span><button className={button} disabled={busy || !owner} onClick={() => void act(() => materialize(id.current!, { [reference.reference_index]: photo.id }))}>Choose this photo</button></div>)}
+        {reference.candidates.map(photo => <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#555] p-3" key={photo.id}><ActionThumbnail photo={photo} /><span className="min-w-0 flex-1 break-all text-sm">{label(photo)} · {photo.job_id === null ? NO_PROJECT : `Job ${photo.job?.job_number ?? 'unavailable'}`}{!photo.deleted_at && <Link href={photoPath(photo.job_id, photo.id)} target="_blank" rel="noopener noreferrer" className="mt-1 block w-fit text-[#8bbaff] underline">View photo in new tab</Link>}</span><button className={button} disabled={busy || !owner} onClick={() => void act(() => materialize(id.current!, { [reference.reference_index]: photo.id }))}>Choose this photo</button></div>)}
         <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || !(candidateOffsets[reference.reference_index] ?? 0)} onClick={() => void act(() => candidates(reference, Math.max(0, (candidateOffsets[reference.reference_index] ?? 0) - 100)))}>Previous matches</button><button className={button} disabled={busy || (candidateOffsets[reference.reference_index] ?? 0) + reference.candidates.length >= reference.total} onClick={() => void act(() => candidates(reference, (candidateOffsets[reference.reference_index] ?? 0) + 100))}>Next matches</button><button className={button} disabled={busy || !owner} onClick={() => void act(() => materialize(id.current!, { [reference.reference_index]: null }))}>Skip unresolved reference</button></div>
       </section>)}
       <section className="space-y-3"><h2 className="font-semibold">Exact target list <span className="text-sm font-normal text-[#aaa]">· {PAGE_SIZE} per page</span></h2>
         {view.items.map(item => <article data-testid="action-item" key={item.photo_id} className="space-y-2 rounded-xl border border-[#444] bg-[#2e2e2e] p-4">
           <div className="flex items-start gap-3"><ActionThumbnail photo={item.photo} /><div className="min-w-0 flex-1"><h3 className="break-all font-medium">{label(item.photo)}</h3><span className={`text-sm ${item.status === 'applied' ? 'text-green-400' : item.status === 'conflict' ? 'text-amber-300' : 'text-[#bbb]'}`}>{item.status.replaceAll('_', ' ')}</span></div></div>
-          <p className="break-all text-sm text-[#bbb]">Expected job: {jobs?.find(job => job.id === item.expected_job_id)?.job_number ?? 'unavailable'} · {item.expected_deleted_at ? 'In trash' : 'Active'}</p>
+          <p className="break-all text-sm text-[#bbb]">Expected job: {item.expected_job_id === null ? NO_PROJECT : jobs?.find(job => job.id === item.expected_job_id)?.job_number ?? 'unavailable'} · {item.expected_deleted_at ? 'In trash' : 'Active'}</p>
           {item.photo?.purge_after && <p className="text-sm text-amber-300">Restore before {new Date(item.photo.purge_after).toLocaleString()}.</p>}
           {item.requested_photo_id && item.requested_photo_id !== item.photo_id && <p className="text-sm text-amber-300">This legacy duplicate points to the canonical photo shown here. The action changes that canonical photo and preserves one active copy.</p>}
           {item.error && <p className="text-sm text-amber-300">{String(item.error.code ?? 'This photo changed. Start a new action to review its current state.')}</p>}
           {item.status === 'conflict' && <p className="text-sm text-[#bbb]">The confirmed state no longer matches. Skip this target or open a new action and confirm its current state.</p>}
           <div className="flex flex-wrap gap-3 text-sm">
-            {item.photo && !item.photo.deleted_at && <Link className="text-[#8bbaff] underline" href={`/photos/${item.photo.job_id}?photo=${item.photo_id}`}>View photo</Link>}
+            {item.photo && !item.photo.deleted_at && <Link className="text-[#8bbaff] underline" href={photoPath(item.photo.job_id, item.photo_id)}>View photo</Link>}
             {owner && !terminal && ['conflict', 'retryable_failed'].includes(item.status) && <button className={button} disabled={busy} onClick={() => void act(async () => { await actionRequest(`batches/${id.current}`, { action: 'skip', photo_ids: [item.photo_id] }, 'PATCH'); await load(id.current!, offset); })}>Skip this target</button>}
             {item.status === 'conflict' && <Link className="text-[#8bbaff] underline" href={`/photos/actions?action=${action}&photo=${item.photo_id}${view.batch.destination_job_id ? `&destination=${view.batch.destination_job_id}` : ''}`}>Review new action</Link>}
             {item.status === 'applied' && action === 'trash' && <Link className="text-[#8bbaff] underline" href={`/photos/actions?action=restore&photo=${item.photo_id}`}>Review restore</Link>}

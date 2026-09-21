@@ -7,6 +7,8 @@ import { fetchJson } from '@/lib/photos/api';
 import { actionButton as button, trashDisclosure } from '@/lib/photos/action-client';
 import type { TrashResponse } from '@/lib/photos/action-types';
 import ActionThumbnail from '@/components/photos/action-thumbnail';
+import { NO_PROJECT } from '@/lib/photos/format';
+import { photoPath } from '@/lib/photos/photo-link';
 
 export default function TrashPage() {
   const [cursor, setCursor] = useState<string | null>(null);
@@ -27,11 +29,11 @@ export default function TrashPage() {
     {!isFetching && !error && data?.photos.length === 0 && <p className="rounded-xl bg-[#2e2e2e] p-5 text-sm text-[#bbb]">No recoverable photos in this part of the trash.</p>}
     <div className="space-y-3">{data?.photos.map(photo => <article key={photo.id} data-testid="trash-photo" className="space-y-3 rounded-xl border border-[#444] bg-[#2e2e2e] p-4">
       <div className="flex items-center gap-3"><ActionThumbnail photo={photo} /><h2 className="min-w-0 break-all font-semibold">{photo.original_name || 'Photo'}</h2></div>
-      <p className="text-sm text-[#bbb]">Job {photo.job ? `${photo.job.job_number} · ${photo.job.name}` : 'unavailable'}</p>
+      <p className="text-sm text-[#bbb]">{photo.job_id === null ? NO_PROJECT : `Job ${photo.job ? `${photo.job.job_number} · ${photo.job.name}` : 'unavailable'}`}</p>
       <p className="text-sm text-amber-300">Restore before {photo.purge_after ? new Date(photo.purge_after).toLocaleString() : 'the retention deadline'}.</p>
       {photo.duplicate_of && <div className="space-y-2 text-sm leading-6 text-[#bbb]"><p>This legacy duplicate points to a canonical photo. Restoring uses that photo and never creates a second active copy.</p>
-        {photo.canonical_photo && <p className="break-all">Canonical: {photo.canonical_photo.original_name || 'Photo'} · Job {photo.canonical_photo.job?.job_number ?? 'unavailable'} · {photo.canonical_photo.deleted_at ? 'In trash' : 'Active'}</p>}
-        {photo.canonical_photo && !photo.canonical_photo.deleted_at && <Link className="inline-block text-[#8bbaff] underline" href={`/photos/${photo.canonical_photo.job_id}?photo=${photo.canonical_photo.id}`}>View canonical photo</Link>}
+        {photo.canonical_photo && <p className="break-all">Canonical: {photo.canonical_photo.original_name || 'Photo'} · {photo.canonical_photo.job_id === null ? NO_PROJECT : `Job ${photo.canonical_photo.job?.job_number ?? 'unavailable'}`} · {photo.canonical_photo.deleted_at ? 'In trash' : 'Active'}</p>}
+        {photo.canonical_photo && !photo.canonical_photo.deleted_at && <Link className="inline-block text-[#8bbaff] underline" href={photoPath(photo.canonical_photo.job_id, photo.canonical_photo.id)}>View canonical photo</Link>}
       </div>}
       {photo.can_restore ? <Link href={`/photos/actions?action=restore&photo=${photo.id}`} className={`${button} inline-block`}>Review restore</Link> : <p className="text-sm text-[#bbb]">{photo.remedy ?? 'This photo can no longer be restored.'}</p>}
     </article>)}</div>

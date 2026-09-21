@@ -61,8 +61,9 @@ export default function PhotoSearchPage() {
     () => data?.pages.flatMap((page) => page.photos) ?? [],
     [data]
   );
+  // Photos with no project are not a job; they group under "No project".
   const jobCount = useMemo(
-    () => new Set(photos.map((photo) => photo.job_id)).size,
+    () => new Set(photos.flatMap((photo) => photo.job_id ?? [])).size,
     [photos]
   );
 
@@ -100,7 +101,7 @@ export default function PhotoSearchPage() {
                 hasNextPage
                   ? `${photos.length}+ photos`
                   : plural(photos.length, "photo")
-              } across ${plural(jobCount, "job")} · "${q}"`}
+              }${jobCount > 0 ? ` across ${plural(jobCount, "job")}` : ""} · "${q}"`}
         </p>
       )}
 

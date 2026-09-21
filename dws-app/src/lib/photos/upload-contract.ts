@@ -4,7 +4,8 @@ export interface UploadOwner { owner_kind: 'ordinary' | 'migration'; owner_id: s
 export interface CanonicalUploadOutcome {
   status: 'created' | 'duplicate_active' | 'duplicate_trashed';
   photo_id: string;
-  job_id: string;
+  /** The photo's project; null when it has none (uploaded into an album only). */
+  job_id: string | null;
   purge_after?: string | null;
   warnings?: string[];
   cleanup_pending?: boolean;
@@ -14,8 +15,9 @@ export interface CanonicalUploadOutcome {
   can_restore?: boolean;
   remedy?: string;
 }
+/** Every upload names a project, an album, or both; naming neither is refused. */
 export interface CreateUploadAttemptInput {
-  attempt_id: string; photo_id: string; job_id: string;
+  attempt_id: string; photo_id: string; job_id: string | null; album_ids?: string[];
   source_signature: string; content_sha256: string;
   original_name: string; original_bytes: number; mime_type: string;
 }
@@ -23,7 +25,7 @@ export interface CreateUploadAttemptInput {
 export interface CancelUploadInput extends CreateUploadAttemptInput { owner_kind: 'ordinary' }
 export type CancelUploadOutcome = { status: 'cancelled' } | CanonicalUploadOutcome;
 export interface UploadAttempt extends UploadOwner {
-  photo_id: string; job_id: string; content_sha256: string;
+  photo_id: string; job_id: string | null; content_sha256: string;
   original_path: string; thumb_path: string; preview_path: string; sidecar_path: string;
   result: CanonicalUploadOutcome | null;
 }
@@ -44,7 +46,7 @@ export interface AttachUploadSidecarInput extends UploadOwner {
   sidecar_name: string; sidecar_bytes: number;
 }
 export interface FinalizeUploadInput extends UploadClaimInput {
-  id: string; job_id: string; kind: PhotoKind;
+  id: string; job_id: string | null; kind: PhotoKind;
   tags: string[];
   captured_at: string | null; captured_at_source: CapturedAtSource;
   original_path: string; original_bytes: number; mime_type: string | null;

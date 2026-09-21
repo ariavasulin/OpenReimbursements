@@ -20,6 +20,9 @@ export function formatDuration(secs: number): string {
     : `${minutes}:${two(seconds)}`;
 }
 
+/** What stands where a project name would be, for a photo that has none. */
+export const NO_PROJECT = "No project";
+
 /** "#3962 · Westbridge" — how a job is written wherever it is plain text. */
 export function jobLabel(job: { job_number: string; name: string }): string {
   return `#${job.job_number} · ${job.name}`;

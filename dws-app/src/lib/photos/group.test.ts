@@ -81,4 +81,20 @@ describe("groupPhotos by job", () => {
     const groups = groupPhotos([makePhoto({ job: null })], "job");
     expect(groups[0].label).toBe("Unknown job");
   });
+
+  // photo-albums Decision 1: a project is optional.
+  it("puts photos with no project in one 'No project' group with a stable key", () => {
+    const groups = groupPhotos(
+      [
+        makePhoto({ job_id: null, job: null }),
+        makePhoto(),
+        makePhoto({ job_id: null, job: null }),
+      ],
+      "job"
+    );
+    expect(groups.map((group) => [group.key, group.label, group.photos.length])).toEqual([
+      ["job:none", "No project", 2],
+      ["job:job-1", "#3612 · Museum Tower Penthouse", 1],
+    ]);
+  });
 });

@@ -55,6 +55,38 @@ describe('MCP registry', () => {
     })).toHaveProperty('destination_job_number', 'unknown-yet');
     expect(mocks.from).not.toHaveBeenCalled();
   });
+  // photo-albums AC-11. "Copy link" now writes /photos?photo=<id>; links already pasted into
+  // messages use /photos/<jobId>?photo=<id>. Both must pass, on the new and the old address.
+  it('accepts both photo link shapes on every allowed origin, and nothing looser', () => {
+    const job = '10000000-0000-4000-8000-000000000001', photo = '20000000-0000-4000-8000-000000000002';
+    const check = (photo_url: string) => validateScriptInput('remove_photos', { selector: { photos: [{ photo_url }] } });
+    const origins = ['', 'https://photos.design-workshops.app', 'https://design-workshops.app',
+      'https://photos.dws-receipts.com', 'https://dws-receipts.com', 'https://www.dws-receipts.com'];
+    for (const origin of origins) {
+      for (const path of [`/photos?photo=${photo}`, `/photos/?photo=${photo}`, `/photos/${job}?photo=${photo}`]) {
+        expect(check(`${origin}${path}`), `${origin}${path}`).toEqual({ selector: { photos: [{ photo_url: `${origin}${path}` }] } });
+      }
+    }
+    const refused = [
+      `https://evil.example/photos?photo=${photo}`,                      // another site
+      `https://photos.design-workshops.app.evil.example/photos?photo=${photo}`,
+      `http://photos.design-workshops.app/photos?photo=${photo}`,        // not https
+      `https://user:pw@photos.design-workshops.app/photos?photo=${photo}`,
+      '/photos',                                                          // no photo named
+      '/photos?photo=not-a-uuid',
+      `/photos/not-a-uuid?photo=${photo}`,                                // old shape still needs a project UUID
+      `/photos/${job}`,
+      `/photos/albums?photo=${photo}`,                                    // only the two shapes are links to a photo
+      `/photos/albums/${job}?photo=${photo}`,
+      `/photos/${job}/extra?photo=${photo}`,
+      `/photo?photo=${photo}`, `/photosx?photo=${photo}`, `/?photo=${photo}`,
+      `/s/${job}?photo=${photo}`,
+    ];
+    for (const photo_url of refused) {
+      expect(() => check(photo_url), photo_url).toThrowError(expect.objectContaining({ code: 'invalid_input' }));
+    }
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
   it('falls back to the design-workshops photo host when no origin is configured', () => {
     vi.stubEnv('DWS_BROWSER_ORIGIN', undefined);
     expect(browserOrigin()).toBe('https://photos.design-workshops.app');

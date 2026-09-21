@@ -69,7 +69,7 @@ execute_dws_script({ script_name, input })
 
 type PhotoReference =
   | { photo_id: string }
-  | { photo_url: string }  // app URL /photos/<job-id>?photo=<photo-id>
+  | { photo_url: string }  // app URL /photos?photo=<photo-id>, or the older /photos/<job-id>?photo=<photo-id>; both accepted on the new and old photo hosts since 2026-09-20 (photo-albums § URLs)
   | { job_number: string; original_filename: string };
 type PhotoSelector =
   | { photos: PhotoReference[] }
@@ -130,9 +130,9 @@ UUID identities, `timestamptz` UTC timestamps, `bigint` byte counts, lower-case 
 | `migration_sources` | One batch, one active destination job, source kind `directory` or `files`, label, current sealed scan ID/fingerprint; mapping changes require a new draft/confirmation |
 | `migration_inventory_chunks` | Unique `(source_id, scan_id, chunk_number)`, payload digest and aggregate counts; same-key same-payload replay succeeds, differing payload conflicts |
 | `migration_items` | Unique `(source_id, relative_path, revision)` and partial unique `(source_id, relative_path) where is_current`; source size/mtime/MIME, optional sidecar descriptor, digest, status/progress, stable upload attempt/photo UUID, canonical photo/job, error and renewable lease |
-| `photo_upload_attempts` | Ordinary-upload attempt UUID, actor, destination job, source signature/digest, stable photo UUID, deterministic Storage paths, status and lease generation/expiry; same-source retry reuses the attempt, changed source cannot overwrite it |
+| `photo_upload_attempts` | Ordinary-upload attempt UUID, actor, destination job (optional since 2026-09-20, with the albums the upload names; an upload must name a job, an album, or both — photo-albums Decisions 1 and 3), source signature/digest, stable photo UUID, deterministic Storage paths, status and lease generation/expiry; same-source retry reuses the attempt, changed source cannot overwrite it |
 | `photo_content_claims` | Digest primary key; exactly one migration-item or ordinary-upload-attempt owner, actor, lease generation/expiry; compare-and-swap reclaim of expired claims |
-| `photo_action_batches/items` | Batch origin/authority, action, selector, destination, approval; unique `(batch_id, photo_id)`, expected prior job/trash state, item outcome and actor; no target additions after approval |
+| `photo_action_batches/items` | Batch origin/authority, action, selector, destination (a UI move may name none, meaning "No project", and an item's expected prior job may be empty — photo-albums Decision 1, 2026-09-20), approval; unique `(batch_id, photo_id)`, expected prior job/trash state, item outcome and actor; no target additions after approval |
 | `issue_report_submissions` | Server ID, optional unique client key, payload digest, 24-hour dedupe expiry, normalized payload/attribution, publishing lease, status, GitHub number/URL, error |
 | `photo_release_state` | Server-only singleton: photo-write, MCP, and repair gates; schema generation and operator timestamps; every new privileged boundary fails closed if its gate is absent/closed |
 | `photo_repair_progress` | Server-only repair lease and bounded scan cursors; checkpoint pages, never persist partial ownership as a complete inventory |
@@ -170,9 +170,10 @@ Use `hash-wasm` incremental SHA-256 in a worker for both ordinary and migration 
 ```ts
 // Contract sketch; private adapter names are implementation-owned.
 type ContentOutcome =
-  | { status: "created"; photo_id: string; job_id: string }
-  | { status: "duplicate_active"; photo_id: string; job_id: string }
-  | { status: "duplicate_trashed"; photo_id: string; job_id: string; purge_after: string };
+  // job_id is null for a photo with no project (photo-albums Decision 1, 2026-09-20).
+  | { status: "created"; photo_id: string; job_id: string | null }
+  | { status: "duplicate_active"; photo_id: string; job_id: string | null }
+  | { status: "duplicate_trashed"; photo_id: string; job_id: string | null; purge_after: string };
 
 // Streaming worker core, initialized once per worker and reset per file.
 hasher.init();

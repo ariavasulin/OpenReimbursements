@@ -31,6 +31,9 @@ export function escapeForIlike(raw: string): string {
   return escapeIlikeWildcards(raw).replace(/[,()]/g, ' ').trim();
 }
 
+/** Most photos one bulk call (album add/remove, bulk tag) may name. SQL enforces the same number. */
+export const MAX_BULK_PHOTOS = 500;
+
 export const MAX_TAGS = 20;
 export const MAX_TAG_LENGTH = 64;
 

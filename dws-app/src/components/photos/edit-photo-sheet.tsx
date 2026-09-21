@@ -37,7 +37,8 @@ export default function EditPhotoSheet({
   useEffect(() => {
     if (open && photo) {
       setMeta({
-        jobId: photo.job_id,
+        // The project field is hidden here (showJob={false}); a photo may have none.
+        jobId: photo.job_id ?? "",
         tags: photo.tags,
         tagInput: "",
       });

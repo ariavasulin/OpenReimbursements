@@ -1,9 +1,23 @@
 import { cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { PhotoApiError, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, photoRpc } from '@/lib/photos/server/http';
-import { photoId, readPhotoOwnership } from '@/lib/photos/server/reads';
+import { photoId, readPhotoOwnership, requirePhotoReader } from '@/lib/photos/server/reads';
 import { createAction, materializeAction, onlyKeys } from '@/lib/photos/server/actions';
 interface RouteContext { params:Promise<{id:string}> }
+
+/**
+ * One active photo by id, with its project (or null) and the live albums it is in.
+ * This is what lets `/photos?photo=<id>` open any photo, however old and with or
+ * without a project, instead of paging a list until the id turns up. A trashed or
+ * unknown id is 404. Read through the employee's session, like the list.
+ */
+export async function GET(_request:Request,context:RouteContext){return photoRoute(async()=>{
+ const session=await requirePhotoReader(),id=photoId((await context.params).id);
+ const {data,error}=await session.from('photos').select(PHOTO_COLUMNS+', albums(id, name)').eq('id',id).is('deleted_at',null)
+  .order('name',{referencedTable:'albums'}).order('id',{referencedTable:'albums'}).maybeSingle();
+ if(error) throwPhotoDatabaseError(error);if(!data) throw new PhotoApiError('not_found');
+ return photoJson({success:true,photo:data});
+});}
 
 /** Metadata edits apply only to active rows. Ownership changes require confirmation. */
 export async function PATCH(request:Request,context:RouteContext){return photoRoute(async()=>{

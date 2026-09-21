@@ -9,6 +9,7 @@ import { useUploadManager } from "@/lib/photos/upload-manager";
 import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
 import UploadProgress, { type UploadRow } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";
+import { photoPath } from "@/lib/photos/photo-link";
 import type { QueueItem } from "@/lib/photos/upload-queue";
 
 // The always-visible upload status bar, pinned above the CaptureBar on every
@@ -114,9 +115,9 @@ export default function UploadTray({
       actions: primary ? (
         <>
           {primary}
-          {item.canonicalPhotoId && item.canonicalJobId && item.status !== "restore_required" && (
+          {item.canonicalPhotoId && item.status !== "restore_required" && (
             <Link
-              href={`/photos/${encodeURIComponent(item.canonicalJobId)}?photo=${encodeURIComponent(item.canonicalPhotoId)}`}
+              href={photoPath(item.canonicalJobId ?? null, item.canonicalPhotoId)}
               className="rounded-md px-2 py-1.5 text-[11px] text-[#8bbaff] underline"
             >
               View photo

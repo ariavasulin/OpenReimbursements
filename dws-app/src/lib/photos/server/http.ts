@@ -108,11 +108,17 @@ export async function photoRpc(actor: PhotoActor, name: string, args: Record<str
   return data;
 }
 
-/** Parse application links without fetching them; callers validate their UUIDs. */
-export function photoLinkIds(reference: string, origin: string) {
+/**
+ * Parse application links without fetching them; callers validate their UUIDs.
+ * Exactly two shapes are links to a photo: `/photos?photo=<id>`, which "Copy link"
+ * writes, and the older `/photos/<jobId>?photo=<id>`, which is already pasted into
+ * messages. `jobId` is null for the first. No other `/photos/...` path is accepted.
+ */
+export function photoLinkIds(reference: string, origin: string): { jobId: string | null; photoId: string | null } {
   let url: URL;
   try { url = new URL(reference, origin); } catch { throw new PhotoApiError('invalid_input'); }
+  const path = /^\/photos(?:\/([0-9a-f-]+))?\/?$/i.exec(url.pathname);
   if (![origin, 'https://design-workshops.app', 'https://photos.design-workshops.app', 'https://dws-receipts.com', 'https://www.dws-receipts.com', 'https://photos.dws-receipts.com'].includes(url.origin) ||
-      url.username || url.password || !/^\/photos\/[0-9a-f-]+\/?$/i.test(url.pathname)) throw new PhotoApiError('invalid_input');
-  return { jobId: url.pathname.split('/')[2], photoId: url.searchParams.get('photo') };
+      url.username || url.password || !path) throw new PhotoApiError('invalid_input');
+  return { jobId: path[1] ?? null, photoId: url.searchParams.get('photo') };
 }
