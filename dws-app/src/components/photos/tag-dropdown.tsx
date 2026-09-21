@@ -92,15 +92,15 @@ export default function TagDropdown({
         {tags.map((tag) => (
           <span
             key={tag}
-            className="flex items-center rounded-full border border-[#4e4e4e] bg-[#2e2e2e] py-0.5 pl-3 text-sm text-white"
+            className="flex min-w-0 items-center rounded-full border border-[#4e4e4e] bg-[#2e2e2e] py-0.5 pl-3 text-base text-white"
           >
-            {tag}
+            <span className="min-w-0 break-words">{tag}</span>
             <button
               type="button"
               aria-label={`Remove tag ${tag}`}
               onClick={() => onChange(tags.filter((have) => have !== tag))}
               disabled={disabled}
-              className="flex h-8 w-8 items-center justify-center rounded-full text-[#b4b4b4] hover:text-white"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#b4b4b4] hover:text-white"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -147,7 +147,7 @@ export default function TagDropdown({
           }}
           placeholder={tags.length === 0 ? "Choose or type a tag" : "Add another"}
           disabled={disabled || full}
-          className="min-h-9 min-w-[120px] flex-1 bg-transparent text-base text-white placeholder:text-[#b4b4b4] focus:outline-none"
+          className="min-h-11 min-w-[120px] flex-1 bg-transparent text-base text-white placeholder:text-[#b4b4b4] focus:outline-none"
         />
       </div>
 
@@ -202,8 +202,8 @@ export default function TagDropdown({
         </ul>
       )}
 
-      {showHint && <p className="mt-1.5 text-sm text-[#b4b4b4]">{TAG_EXPLAINER}</p>}
-      {full && <p className="mt-1.5 text-sm text-[#b4b4b4]">A photo can have up to {MAX_TAGS} tags.</p>}
+      {showHint && <p className="mt-1.5 text-base text-[#b4b4b4]">{TAG_EXPLAINER}</p>}
+      {full && <p className="mt-1.5 text-base text-[#b4b4b4]">A photo can have up to {MAX_TAGS} tags.</p>}
     </div>
   );
 }

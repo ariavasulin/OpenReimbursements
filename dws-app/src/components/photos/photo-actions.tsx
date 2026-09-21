@@ -260,10 +260,10 @@ export default function PhotoActions() {
               {item.status === 'conflict' && <p className="text-sm text-amber-200">Someone changed this photo after this page opened — it was moved, trashed, or restored. Nothing was done to it. Try it again, or leave it out.</p>}
               {item.status === 'retryable_failed' && <p className="text-sm text-amber-200">Something went wrong with this one. Choose Try again below.</p>}
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
-                {item.photo && !item.photo.deleted_at && <Link className="flex min-h-9 items-center text-[#8bbaff] underline" href={photoPath(item.photo.job_id, item.photo_id)}>View photo</Link>}
-                {item.status === 'conflict' && <Link className="flex min-h-9 items-center text-[#8bbaff] underline" href={`/photos/actions?action=${action}&photo=${item.photo_id}${view.batch.destination_job_id ? `&destination=${view.batch.destination_job_id}` : action === 'move' ? `&destination=${NO_PROJECT_VALUE}` : ''}`}>Try this photo again</Link>}
-                {owner && !terminal && trouble && <button className="flex min-h-9 items-center text-[#8bbaff] underline" disabled={busy} onClick={() => void act(async () => { await actionRequest(`batches/${id.current}`, { action: 'skip', photo_ids: [item.photo_id] }, 'PATCH'); await load(id.current!, offset); })}>Leave it out</button>}
-                {item.status === 'applied' && action === 'trash' && <Link className="flex min-h-9 items-center text-[#8bbaff] underline" href={`/photos/actions?action=restore&photo=${item.photo_id}`}>Undo: restore it</Link>}
+                {item.photo && !item.photo.deleted_at && <Link className="flex min-h-11 items-center text-[#8bbaff] underline" href={photoPath(item.photo.job_id, item.photo_id)}>View photo</Link>}
+                {item.status === 'conflict' && <Link className="flex min-h-11 items-center text-[#8bbaff] underline" href={`/photos/actions?action=${action}&photo=${item.photo_id}${view.batch.destination_job_id ? `&destination=${view.batch.destination_job_id}` : action === 'move' ? `&destination=${NO_PROJECT_VALUE}` : ''}`}>Try this photo again</Link>}
+                {owner && !terminal && trouble && <button className="flex min-h-11 items-center text-[#8bbaff] underline" disabled={busy} onClick={() => void act(async () => { await actionRequest(`batches/${id.current}`, { action: 'skip', photo_ids: [item.photo_id] }, 'PATCH'); await load(id.current!, offset); })}>Leave it out</button>}
+                {item.status === 'applied' && action === 'trash' && <Link className="flex min-h-11 items-center text-[#8bbaff] underline" href={`/photos/actions?action=restore&photo=${item.photo_id}`}>Undo: restore it</Link>}
               </div>
               </div>
             </article>;

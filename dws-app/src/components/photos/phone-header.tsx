@@ -31,7 +31,7 @@ export default function PhoneHeader({
             {back.label}
           </Link>
         ) : (
-          <Link href="/photos" className="text-lg font-semibold tracking-wide">
+          <Link href="/photos" className="flex min-h-11 items-center gap-1 text-lg font-semibold tracking-wide">
             DWS <span className="text-[#2680FC]">Photos</span>
           </Link>
         )}

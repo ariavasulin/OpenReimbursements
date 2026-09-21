@@ -33,7 +33,7 @@ interface PhotoMetaFieldsProps {
   showDestination?: boolean;
 }
 
-const labelClass = "mb-1.5 block text-sm font-medium text-[#d0d0d0]";
+const labelClass = "mb-1.5 block text-base font-medium text-[#d0d0d0]";
 
 export default function PhotoMetaFields({
   value,
@@ -73,7 +73,7 @@ export default function PhotoMetaFields({
             disabled={disabled}
           />
           {jobsError && (
-            <p className="-mt-2 mb-3.5 text-sm text-red-300">
+            <p className="-mt-2 mb-3.5 text-base text-red-300">
               Couldn&apos;t load projects.{" "}
               <button
                 type="button"

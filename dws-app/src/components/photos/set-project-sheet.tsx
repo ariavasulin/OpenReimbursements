@@ -80,7 +80,7 @@ export default function SetProjectSheet({
       />
       <span className="min-w-0">
         <span className="block text-base text-white">{title}</span>
-        <span className="block text-sm text-[#b4b4b4]">{detail}</span>
+        <span className="block text-base text-[#b4b4b4]">{detail}</span>
       </span>
     </label>
   );
@@ -94,26 +94,21 @@ export default function SetProjectSheet({
       }}
       title={`Set project for ${plural(photoIds.length, "photo")}`}
       footer={
-        <>
-          <p className="mb-2 text-center text-sm text-[#b4b4b4]">
-            Next you will see the photos and confirm. Nothing changes until then.
-          </p>
-          <Button
-            onClick={() => void submit()}
-            disabled={!ready || busy}
-            className="h-auto min-h-11 w-full bg-[#2680FC] py-2.5 text-base text-white hover:bg-[#1a6fd8]"
-            size="lg"
-          >
-            {busy ? "One moment..." : "Continue"}
-          </Button>
-        </>
+        <Button
+          onClick={() => void submit()}
+          disabled={!ready || busy}
+          className="h-auto min-h-11 w-full bg-[#2680FC] py-2.5 text-base text-white hover:bg-[#1a6fd8]"
+          size="lg"
+        >
+          {busy ? "One moment..." : "Continue"}
+        </Button>
       }
     >
       <div role="radiogroup" aria-label="Project" className="space-y-2">
         {option("project", "A project", "The job these photos belong to.")}
         {choice === "project" && (
           <div className="pl-1 pt-1">
-            <label htmlFor={`${groupId}-project`} className="mb-1.5 block text-sm font-medium text-[#d0d0d0]">
+            <label htmlFor={`${groupId}-project`} className="mb-1.5 block text-base font-medium text-[#d0d0d0]">
               Which project?
             </label>
             <JobField
@@ -132,6 +127,9 @@ export default function SetProjectSheet({
           "The photos stay in Photos and in their albums. They just belong to no project."
         )}
       </div>
+      <p className="mt-3 text-base text-[#b4b4b4]">
+        Next you will see the photos and confirm. Nothing changes until then.
+      </p>
     </SheetShell>
   );
 }

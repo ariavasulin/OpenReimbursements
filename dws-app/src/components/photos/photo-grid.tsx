@@ -200,10 +200,9 @@ function Tile({
               selected && "scale-90 rounded-sm"
             )}
           />
-          {/* TODO(#13): tile hover/focus metadata reads ~3.25:1 over bright photos; needs the rendered pass to settle, not a blind token change. */}
           {/* TODO(#14): prefers-reduced-motion is unhandled app-wide (this transition, the rail skeleton pulse, dialog animations); wants one pass across both apps rather than here alone. */}
           {meta && !selecting && (
-            <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/75 to-transparent px-1.5 pb-1 pt-5 text-left text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <span className="pointer-events-none absolute inset-x-0 bottom-0 break-words bg-[#222222] px-2 py-1.5 text-left text-sm text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
               {meta}
             </span>
           )}
@@ -247,7 +246,7 @@ function Tile({
           href={downloadUrl(photo)}
           aria-label={`Download ${photo.original_name ?? "original"}`}
           onClick={(event) => event.stopPropagation()}
-          className="absolute bottom-1 right-1 rounded-md bg-black/60 p-1.5 text-white hover:bg-[#2680FC]"
+          className="absolute bottom-1 right-1 flex min-h-11 min-w-11 items-center justify-center rounded-md bg-[#222222] p-1.5 text-white hover:bg-[#2680FC]"
         >
           <Download className="h-3.5 w-3.5" />
         </a>

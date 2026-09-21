@@ -226,7 +226,7 @@ export default function UploadSheet({
               key={tag}
               type="button"
               onClick={() => setMeta((prev) => addTagToMeta(prev, tag))}
-              className="min-h-9 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-3 py-1 text-sm text-[#d0d0d0] hover:border-[#2680FC]"
+              className="min-h-11 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-3 py-1 text-base text-[#d0d0d0] hover:border-[#2680FC]"
             >
               {tag}
             </button>
@@ -249,7 +249,7 @@ export default function UploadSheet({
   const footer = (
     <>
       {!hasDestination && (
-        <p id="upload-needs-destination" className="mb-2 text-center text-sm text-[#d0d0d0]">
+        <p id="upload-needs-destination" className="mb-2 text-center text-base text-[#d0d0d0]">
           Choose a project or an album to turn on Upload.
         </p>
       )}

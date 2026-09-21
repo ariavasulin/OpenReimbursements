@@ -128,7 +128,7 @@ export default function SectionsRail() {
               type="button"
               onClick={openNewAlbum}
               className={cn(
-                "flex min-h-9 items-center gap-1 rounded-lg px-2 text-sm text-[#8bbaff] hover:bg-[#2a2a2a]",
+                "flex min-h-11 items-center gap-1 rounded-lg px-2 text-base text-[#8bbaff] hover:bg-[#2a2a2a]",
                 focusRing
               )}
             >

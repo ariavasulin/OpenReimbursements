@@ -6,7 +6,7 @@ import { PAGE_SUBTITLE_CLASS, PAGE_TITLE_CLASS } from "@/components/photos/page-
 
 /** A quiet 44px header action (Rename, Delete album, and Share). */
 export const headerActionClass =
-  "flex min-h-11 items-center gap-2 rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] px-3 text-sm font-medium text-white hover:border-[#2680FC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC] disabled:opacity-50";
+  "flex min-h-11 items-center gap-2 rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] px-3 text-base font-medium text-white hover:border-[#2680FC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC] disabled:opacity-50";
 
 /**
  * The top of an album page and a project page: the name (wrapping, never cut),

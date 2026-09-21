@@ -86,7 +86,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
                     <Link
                       href={`/photos/albums/${album.id}`}
                       onClick={onNavigate}
-                      className="flex min-h-9 items-center rounded-full border border-[#4e4e4e] bg-[#3a3a3a] px-3 text-sm text-[#8bbaff] hover:border-[#2680FC]"
+                      className="flex min-h-11 items-center rounded-full border border-[#4e4e4e] bg-[#3a3a3a] px-3 text-base text-[#8bbaff] hover:border-[#2680FC]"
                     >
                       {album.name}
                     </Link>
@@ -160,7 +160,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
           <Trash2 className="h-5 w-5 shrink-0 text-red-300" aria-hidden="true" />
           Move to trash
         </Link>
-        <p className="mt-2 text-sm leading-relaxed text-[#b4b4b4]">{trashDisclosure}</p>
+        <p className="mt-2 text-base leading-relaxed text-[#b4b4b4]">{trashDisclosure}</p>
       </div>
     </div>
   );

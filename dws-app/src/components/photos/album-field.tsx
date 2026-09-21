@@ -97,7 +97,7 @@ export default function AlbumField({
         {value.map((album) => (
           <span
             key={album.id}
-            className="flex min-w-0 items-center rounded-full border border-[#4e4e4e] bg-[#2e2e2e] py-0.5 pl-3 text-sm text-white"
+            className="flex min-w-0 items-center rounded-full border border-[#4e4e4e] bg-[#2e2e2e] py-0.5 pl-3 text-base text-white"
           >
             <span className="min-w-0 break-words">{album.name}</span>
             <button
@@ -105,7 +105,7 @@ export default function AlbumField({
               aria-label={`Remove album ${album.name}`}
               onClick={() => onChange(value.filter((chosen) => chosen.id !== album.id))}
               disabled={busy}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#b4b4b4] hover:text-white"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#b4b4b4] hover:text-white"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -155,7 +155,7 @@ export default function AlbumField({
                 : "Add another"
           }
           disabled={busy}
-          className="min-h-9 min-w-[140px] flex-1 bg-transparent text-base text-white placeholder:text-[#b4b4b4] focus:outline-none disabled:opacity-60"
+          className="min-h-11 min-w-[140px] flex-1 bg-transparent text-base text-white placeholder:text-[#b4b4b4] focus:outline-none disabled:opacity-60"
         />
       </div>
 

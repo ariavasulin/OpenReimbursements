@@ -61,9 +61,10 @@ export default function ShareButton(props: ShareButtonProps) {
   return (
     <>
       <button type="button" className={`${button} ${props.className ?? ''}`} onClick={() => setOpen(true)}><Share2 className="h-5 w-5" aria-hidden />Share</button>
-      <SheetShell title={`Share “${target.name}”`} size="compact" open={open} onOpenChange={setOpen}
+      <SheetShell title={`Share ${what}`} size="compact" open={open} onOpenChange={setOpen}
         footer={<div className="flex justify-end"><button type="button" className={button} onClick={() => setOpen(false)}>Done</button></div>}>
         <div className="space-y-5 text-white">
+          <p className="break-words text-base font-medium">{target.name}</p>
           {!status && !problem && <p className="text-base text-[#c4c4c4]" role="status">Loading…</p>}
           {status && <>
             <div className="flex items-start justify-between gap-4">

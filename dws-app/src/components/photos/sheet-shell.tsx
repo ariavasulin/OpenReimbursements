@@ -92,8 +92,8 @@ export default function SheetShell({
   const body = (titleNode: ReactNode) => (
     <SheetLayoutContext.Provider value={{ isMobile }}>
       <div className="shrink-0 px-4 pt-1">
-        {/* pr-8 at desktop keeps a long title clear of the dialog's own X. */}
-        <div className={cn("mb-2 flex min-h-11 items-center gap-3", !isMobile && "pr-8")}>
+        {/* pr-12 at desktop keeps a long title clear of the dialog's own X. */}
+        <div className={cn("mb-2 flex min-h-11 items-center gap-3", !isMobile && "pr-12")}>
           {titleNode}
           {isMobile && (
             <button
@@ -172,7 +172,7 @@ export default function SheetShell({
           // Hung from a fixed top edge, not centered: a pop-up that grows (a
           // suggestion list opening) then only extends downward, instead of
           // its title and fields jumping up under the pointer.
-          "top-[8dvh] flex h-auto max-h-[84dvh] translate-y-0 flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 text-white sm:max-w-md"
+          "top-[8dvh] flex h-auto max-h-[84dvh] translate-y-0 flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 text-white sm:max-w-md [&>button:last-child]:top-1 [&>button:last-child]:right-2 [&>button:last-child]:flex [&>button:last-child]:min-h-11 [&>button:last-child]:min-w-11 [&>button:last-child]:items-center [&>button:last-child]:justify-center"
         )}
         // The forms describe themselves with visible labels; without this Radix
         // warns about a missing description on every open.

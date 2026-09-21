@@ -269,7 +269,7 @@ export default function LoginPage() {
               DWS <span className="text-[#2680FC]">Photos</span>
             </h1>
           )}
-          <p className="mt-2 text-center text-sm text-gray-400">
+          <p className="mt-2 text-center text-base text-gray-400">
             {needsName
               ? "One last thing — what's your name?"
               : otpSent
@@ -278,13 +278,13 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {error && <p className="text-sm text-red-400 bg-red-900/30 p-3 rounded-md text-center">{error}</p>}
-        {message && <p className="text-sm text-green-400 bg-green-900/30 p-3 rounded-md text-center">{message}</p>}
+        {error && <p className="text-base text-red-400 bg-red-900/30 p-3 rounded-md text-center">{error}</p>}
+        {message && <p className="text-base text-green-400 bg-green-900/30 p-3 rounded-md text-center">{message}</p>}
 
         {needsName ? (
           <form onSubmit={handleSubmitName} className="mt-8 space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="fullName" className="text-white">
+              <Label htmlFor="fullName" className="text-base text-white">
                 Full Name
               </Label>
               <Input
@@ -294,16 +294,16 @@ export default function LoginPage() {
                 value={fullNameInput}
                 onChange={(e) => setFullNameInput(e.target.value)}
                 required
-                className="bg-[#333333] border-[#444444] text-white placeholder:text-gray-500 focus:border-[#2680FC] focus:ring-[#2680FC]"
+                className="h-auto min-h-11 text-base md:text-base bg-[#333333] border-[#444444] text-white placeholder:text-gray-400 focus:border-[#2680FC] focus:ring-[#2680FC]"
                 disabled={loading}
                 autoComplete="name"
                 maxLength={120}
               />
-              <p className="text-xs text-gray-400">Shown next to everything you upload</p>
+              <p className="text-base text-gray-400">Shown next to everything you upload</p>
             </div>
             <Button
               type="submit"
-              className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white"
+              className="h-auto min-h-11 w-full whitespace-normal text-base bg-[#2680FC] hover:bg-[#1a6fd8] text-white"
               disabled={loading || !fullNameInput.trim()}
             >
               {loading ? 'Saving...' : 'Continue'}
@@ -313,7 +313,7 @@ export default function LoginPage() {
         ) : !otpSent ? (
           <form onSubmit={handleSendOtp} className="mt-8 space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="phone" className="text-white">
+              <Label htmlFor="phone" className="text-base text-white">
                 Phone Number
               </Label>
               <Input
@@ -323,12 +323,12 @@ export default function LoginPage() {
                 value={phoneNumberInput}
                 onChange={(e) => setPhoneNumberInput(e.target.value)}
                 required
-                className="bg-[#333333] border-[#444444] text-white placeholder:text-gray-500 focus:border-[#2680FC] focus:ring-[#2680FC]"
+                className="h-auto min-h-11 text-base md:text-base bg-[#333333] border-[#444444] text-white placeholder:text-gray-400 focus:border-[#2680FC] focus:ring-[#2680FC]"
                 disabled={loading}
                 autoComplete="tel"
               />
             </div>
-            <Button type="submit" className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || !phoneNumberInput}>
+            <Button type="submit" className="h-auto min-h-11 w-full whitespace-normal text-base bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || !phoneNumberInput}>
               {loading ? 'Sending Code...' : 'Send Code'}
               {!loading && <ArrowRight className="ml-2 h-4 w-4" />}
             </Button>
@@ -336,8 +336,8 @@ export default function LoginPage() {
         ) : (
           <form onSubmit={handleVerifyOtp} className="mt-8 space-y-6">
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="otp" className="text-white">
+              <div className="flex flex-wrap items-center justify-between gap-x-2">
+                <Label htmlFor="otp" className="text-base text-white">
                   One-Time Code
                 </Label>
                 <button
@@ -348,7 +348,7 @@ export default function LoginPage() {
                     setError(null);
                     setMessage(null);
                   }}
-                  className="text-sm text-[#2680FC] hover:text-[#1a6fd8]"
+                  className="min-h-11 shrink-0 px-2 text-base text-[#8bbaff] hover:text-white"
                   disabled={loading}
                 >
                   Change Number
@@ -362,25 +362,25 @@ export default function LoginPage() {
                 value={otp}
                 onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
                 required
-                className="bg-[#333333] border-[#444444] text-white placeholder:text-gray-500 focus:border-[#2680FC] focus:ring-[#2680FC]"
+                className="h-auto min-h-11 text-base md:text-base bg-[#333333] border-[#444444] text-white placeholder:text-gray-400 focus:border-[#2680FC] focus:ring-[#2680FC]"
                 maxLength={4}
                 disabled={loading}
                 autoComplete="one-time-code"
               />
-              <p className="text-xs text-gray-400">We sent a code to {formatUSPhoneNumber(phoneNumberInput) || phoneNumberInput}</p>
-              <p className="pt-1 text-sm text-gray-300">
+              <p className="text-base text-gray-400">We sent a code to {formatUSPhoneNumber(phoneNumberInput) || phoneNumberInput}</p>
+              <p className="pt-1 text-base text-gray-300">
                 Didn&apos;t get it?{' '}
                 <button
                   type="button"
                   onClick={() => void handleSendOtp()}
                   disabled={loading || resendIn > 0}
-                  className="min-h-11 text-sm font-medium text-[#2680FC] hover:text-[#1a6fd8] disabled:text-gray-500"
+                  className="min-h-11 text-base font-medium text-[#8bbaff] hover:text-white disabled:text-gray-500"
                 >
                   {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
                 </button>
               </p>
             </div>
-            <Button type="submit" className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || otp.length !== 4}>
+            <Button type="submit" className="h-auto min-h-11 w-full whitespace-normal text-base bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || otp.length !== 4}>
               {loading ? 'Verifying...' : 'Verify & Login'}
               {!loading && <ArrowRight className="ml-2 h-4 w-4" />}
             </Button>

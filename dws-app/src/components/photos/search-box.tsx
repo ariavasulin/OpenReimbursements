@@ -99,9 +99,9 @@ export default function SearchBox({ className = "" }: { className?: string }) {
                   key={job.id}
                   href={`/photos/${job.id}`}
                   onClick={() => setFocused(false)}
-                  className={rowClass}
+                  className={`${rowClass} flex-col items-start gap-1`}
                 >
-                  <span className="line-clamp-2 min-w-0 break-words">{job.name}</span>
+                  <span className="min-w-0 break-words">{job.name}</span>
                   <span className="shrink-0 text-sm text-[#b4b4b4]">
                     #{job.job_number} · {plural(job.photo_count, "photo")}
                   </span>
@@ -118,9 +118,9 @@ export default function SearchBox({ className = "" }: { className?: string }) {
                   key={album.id}
                   href={`/photos/albums/${album.id}`}
                   onClick={() => setFocused(false)}
-                  className={rowClass}
+                  className={`${rowClass} flex-col items-start gap-1`}
                 >
-                  <span className="line-clamp-2 min-w-0 break-words">{album.name}</span>
+                  <span className="min-w-0 break-words">{album.name}</span>
                   <span className="shrink-0 text-sm text-[#b4b4b4]">
                     {plural(album.photo_count, "photo")}
                   </span>

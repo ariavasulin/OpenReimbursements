@@ -14,7 +14,7 @@ import SearchBox from "@/components/photos/search-box";
  * guards needed here.
  */
 const action =
-  "flex min-h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
+  "flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-base font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
 
 export default function TopBar() {
   const { openPicker, openCamera } = usePhotosShell();
@@ -25,7 +25,7 @@ export default function TopBar() {
       <div className="flex min-h-16 items-center gap-4 px-4 py-2 md:px-6">
         <Link
           href="/photos"
-          className="shrink-0 text-base font-semibold tracking-wide xl:w-[256px]"
+          className="flex min-h-11 shrink-0 items-center gap-1 text-base font-semibold tracking-wide xl:w-[256px]"
         >
           DWS <span className="text-[#2680FC]">Photos</span>
         </Link>

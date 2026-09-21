@@ -76,7 +76,7 @@ export default function NewAlbumSheet({
           void create();
         }}
       >
-        <label htmlFor={inputId} className="mb-1.5 block text-sm font-medium text-[#d0d0d0]">
+        <label htmlFor={inputId} className="mb-1.5 block text-base font-medium text-[#d0d0d0]">
           Album name
         </label>
         <input
@@ -89,9 +89,9 @@ export default function NewAlbumSheet({
           placeholder="e.g. Christmas Party"
           className="min-h-11 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none"
         />
-        <p className="mt-2 text-sm text-[#b4b4b4]">{ALBUM_EXPLAINER}</p>
+        <p className="mt-2 text-base text-[#b4b4b4]">{ALBUM_EXPLAINER}</p>
         {error && (
-          <p role="alert" className="mt-2 text-sm text-red-300">
+          <p role="alert" className="mt-2 text-base text-red-300">
             {error}
           </p>
         )}
