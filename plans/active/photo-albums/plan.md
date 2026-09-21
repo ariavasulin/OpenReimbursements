@@ -516,6 +516,23 @@ Production has no `sheet_number` column; any employee can trash any photo.
 The model everything else stands on. No new screens; the app only becomes safe with
 a project-less photo. Defers import (Phase 6) and sharing (Phase 7).
 
+**Recorded while building the database half (2026-09-20).** Accepted readings where
+the plan was silent; each is pinned by a test in `integration/db/albums.test.ts`:
+- The same-photo rule (Decision 4) runs from one helper at claim, finalize, and refresh —
+  duplicates are normally caught at claim, before any bytes upload, so finalize alone
+  could not satisfy AC-7.
+- Re-uploading into an album a photo that already has a project names no project, so it
+  cannot conflict: the photo joins the album and the outcome is `skipped_duplicate`.
+- A copy sitting in trash is left alone; today's restore-then-retry flow applies the rule.
+- Bulk calls count trashed or unknown ids as `missing` instead of failing the batch.
+- The tag case rule compares against tags stored on active photos. Starter tags are not
+  in SQL; matching typed text against them happens in the tag dropdown (Phase 5).
+- Membership rows of trashed photos are hidden by row-level security, so no client
+  count can include them.
+- `photo_create_upload_attempt` keeps `p_job_id` without a default (Postgres forbids one
+  before the defaulted `p_album_ids`); callers send `null` explicitly. The live app's
+  nine-argument call still resolves.
+
 ### Steps
 1. Migration (additive; apply before merge): § Database items for `photos.job_id`,
    `albums`, `album_photos`, the upload path, album functions, `photo_bulk_tag`, and actions.
@@ -530,12 +547,13 @@ a project-less photo. Defers import (Phase 6) and sharing (Phase 7).
    accepts both shapes.
 
 ### Verify
-- [ ] [AC-6] `test:db`: finalize with neither → `invalid_input`; album only → `job_id is null` and one `album_photos` row.
-- [ ] [AC-7] `test:db`: the three project cases of the same-photo rule, each also adding the album.
-- [ ] [AC-8] `test:db`: two albums, one photo; delete and restore an album; trash, restore, and purge a photo and check membership each time.
-- [ ] [AC-9, AC-10] `test:routes`: repeat add/remove; 501 ids; the 20-tag skip count; `Kitchen` → `kitchen`.
+- [x] [AC-6] `test:db`: finalize with neither → `invalid_input`; album only → `job_id is null` and one `album_photos` row. *(Observed 2026-09-20 by the orchestrator: `test:db` 99/99 — 71 existing + 28 new in `integration/db/albums.test.ts`; the migration replayed twice.)*
+- [x] [AC-7] `test:db`: the three project cases of the same-photo rule, each also adding the album. *(Observed 2026-09-20, same run.)*
+- [x] [AC-8] `test:db`: two albums, one photo; delete and restore an album; trash, restore, and purge a photo and check membership each time. *(Observed 2026-09-20, same run.)*
+- [ ] [AC-9, AC-10] `test:routes`: repeat add/remove; 501 ids; the 20-tag skip count; `Kitchen` → `kitchen`. *(Database halves observed 2026-09-20 in `test:db`: 500 ids idempotent, 501 refused, the 20-tag skip count, `Kitchen` stored as `kitchen`. The route halves land with the routes.)*
 - [ ] [AC-11] unit (`photo-link.test.ts`) and `test:routes` for both link shapes and both origins.
 - [ ] `test:db`, `test:routes`, `test:browser`, `tsc` green — existing upload, move, trash, and MCP hand-off suites unchanged in meaning.
+- [x] Every function the migration re-creates differs from its latest prior definition only by the lines its header names; every new write function is `security definer`, checks the actor and the writes gate, and is granted to `service_role` only; the two internal helpers are callable by no role. *(Observed 2026-09-20: mechanical diff and grant scan by the orchestrator; the helper and read-only-browser cases are also pinned by a test.)*
 
 ### Exit criteria
 Through the API, a photo can be uploaded into an album with no project, joined to a
@@ -568,7 +586,9 @@ Christmas-party photo into a new album with no project.
 
 ### Steps
 1. The tag dropdown component replaces `TagInput` in upload and edit; add the tag
-   filter to Photos and the Tag group mode everywhere Date grouping exists.
+   filter to Photos and the Tag group mode everywhere Date grouping exists. Typed text
+   is matched ignoring case against existing AND starter tags before it is sent, so
+   typing `Professional` yields `professional` even before any photo carries it.
 2. Selection mode in `PhotoGrid` and the action bar per § Screens, shared by the
    Photos, album, project, and search grids.
 3. Wire the actions: album add/remove and tag call the Phase 3 routes; Set project and
@@ -597,6 +617,15 @@ Must be live before the office's big import. Runs on the existing import engine.
    loose-files sheet per AC-18.
 3. MCP inputs and skill text per § MCP.
 4. **Import folders** opens `/migrate`; capability message per AC-20.
+5. Close the import engine's row-count cliff before the big import relies on it. Found
+   while building Phase 3: when `photos` was empty at the moment the content-hash index
+   was built, Postgres kept planning as if the table had no rows, and sealing a
+   100,000-entry inventory went from about 1.6 s to a timeout once ~1,100 photos existed
+   (measured; the query plan itself was not captured). Start at
+   `migration_reserve_uuids()` and the seal path: capture the plan, then fix it at the
+   source (an `analyze` after large loads, or a query that does not depend on the
+   estimate). Add the missing index on `migration_items.canonical_photo_id`, which makes
+   every photo delete scan that table.
 
 ### Verify
 - [ ] [AC-16] `test:db` + `test:browser` (the existing `migration.spec.ts` fixture tree): a 3-level tree imports with no edits; album names match paths; pause/resume, rescan, and retry make no duplicate album; an all-skipped folder leaves none.
@@ -604,6 +633,7 @@ Must be live before the office's big import. Runs on the existing import engine.
 - [ ] [AC-17] unit: project suggestion (whole-word number match, inheritance from the nearest parent); `test:browser`: a top-level project and tag apply to sub-folders; the 5,000-row review scrolls and edits.
 - [ ] [AC-18, AC-19] `test:routes` + `mcp-handoffs.spec.ts`: loose files refuse neither; `album_name`/`tags` hints pre-fill; nothing exists before confirm.
 - [ ] [AC-20] `test:browser`: the entry opens `/migrate` with no token; a browser without `showDirectoryPicker` sees the message.
+- [ ] Step 5: `test:db` seals a 100,000-entry inventory inside its time limit with 1,500 live photos already present and no `analyze` run by the test.
 
 ### Exit criteria
 Pointing the import at a folder tree and pressing Start produces one album per
@@ -678,6 +708,8 @@ existing gates, not scaffolding, so it has no removal criterion.
 - **Anyone can bulk-trash** (Decision 7). Mitigations already in place: the confirm
   page names the exact photos, 30-day restore, `deleted_by`. Signal to revisit: an
   unwanted bulk trash is reported.
+- **A second large import right after the first stalls.** The row-count cliff above is
+  the mechanism; Phase 6 Step 5 owns the fix and the big import waits for Phase 6 anyway.
 - **A very wide folder tree** makes review slow. AC-17 sets the 5,000-row bar; the
   real shape is unknown until the office drive is inspected (Open question 2).
 - **A share link is forwarded.** Accepted: that is what a link is. Decision 12's
