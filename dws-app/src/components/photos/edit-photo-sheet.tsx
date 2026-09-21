@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import SheetShell from "@/components/photos/sheet-shell";
@@ -9,11 +8,13 @@ import PhotoMetaFields, {
   EMPTY_META,
   type PhotoMeta,
 } from "@/components/photos/photo-meta-fields";
-import { appendTag } from "@/lib/photos/tags";
+import { useTagChoices } from "@/components/photos/tag-dropdown";
+import { appendResolvedTag } from "@/lib/photos/tags";
 import { fetchJson } from "@/lib/photos/api";
 import type { PhotoRow } from "@/lib/photos/types";
 
-// Sheet and tags save here; changing ownership opens exact-target review.
+// "Edit details": tags save here. Changing the project is its own action in the
+// viewer ("Set project"), so it is no longer tucked under this form.
 
 interface EditPhotoSheetProps {
   photo: PhotoRow | null;
@@ -31,17 +32,14 @@ export default function EditPhotoSheet({
 }: EditPhotoSheetProps) {
   const [meta, setMeta] = useState<PhotoMeta>(EMPTY_META);
   const [busy, setBusy] = useState(false);
+  const choices = useTagChoices(open);
 
   // Seed from the photo each time the sheet opens on one.
   const photoId = photo?.id;
   useEffect(() => {
     if (open && photo) {
-      setMeta({
-        jobId: photo.job_id,
-        sheetNumber: photo.sheet_number ?? "",
-        tags: photo.tags,
-        tagInput: "",
-      });
+      // Project and albums are not edited here (showDestination={false}).
+      setMeta({ ...EMPTY_META, tags: photo.tags });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, photoId]);
@@ -58,8 +56,7 @@ export default function EditPhotoSheet({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet_number: meta.sheetNumber.trim() || null,
-          tags: appendTag(meta.tags, meta.tagInput),
+          tags: appendResolvedTag(meta.tags, meta.tagInput, choices),
         }),
       });
       toast.success("Photo updated");
@@ -81,13 +78,12 @@ export default function EditPhotoSheet({
     <SheetShell
       open={open}
       onOpenChange={handleOpenChange}
-      title="Edit photo"
-      size="compact"
+      title="Edit details"
       footer={
         <Button
           onClick={save}
           disabled={busy}
-          className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
+          className="h-auto min-h-11 w-full bg-[#2680FC] py-2.5 text-base text-white hover:bg-[#1a6fd8]"
           size="lg"
         >
           {busy ? "Saving..." : "Save"}
@@ -97,18 +93,11 @@ export default function EditPhotoSheet({
       <PhotoMetaFields
         value={meta}
         onChange={setMeta}
+        tagChoices={choices}
         enabled={open}
         disabled={busy}
-        showJob={false}
+        showDestination={false}
       />
-      {photo && <div className="mt-4 border-t border-[#4e4e4e] pt-4 text-sm text-[#bbb]">
-        <p>Save any sheet or tag changes before moving this photo.</p>
-        <Link href={`/photos/actions?action=move&photo=${encodeURIComponent(photo.id)}`}
-          onClick={(event) => { if (busy) event.preventDefault(); else onOpenChange(false); }}
-          aria-disabled={busy} className="mt-2 inline-block text-[#8bbaff] underline">
-          Review move to another job
-        </Link>
-      </div>}
     </SheetShell>
   );
 }

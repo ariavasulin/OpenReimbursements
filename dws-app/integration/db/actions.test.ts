@@ -14,10 +14,23 @@ describe('confirmed action transactions (AC-7, AC-8, AC-9)',()=>{
  async function materialize(actor:string,batch:string,id:string){return f.admin.rpc('photo_materialize_action',{p_actor:actor,p_batch_id:batch,p_cursor:null,p_ids:[id],p_next_cursor:'1',p_complete:true})}
  async function confirm(actor:string,batch:string,id:string){expect((await materialize(actor,batch,id)).error).toBeNull();expect((await f.admin.rpc('photo_approve_action',{p_actor:actor,p_batch_id:batch})).error).toBeNull()}
  const execute=(actor:string,batch:string,id:string)=>f.admin.rpc('photo_execute_action',{p_actor:actor,p_batch_id:batch,p_photo_ids:[id]});
- it('enforces ordinary uploader/admin authority and independently proves MCP bound removal',async()=>{
+ it('lets any employee trash and restore a colleague’s photo, recording them, and independently proves MCP bound removal',async()=>{
   const j=await job();
   for(const actor of [f.employeeA,f.administrator]){const id=await photo(j),b=await batch(actor.id,'trash',id);await confirm(actor.id,b,id);const result=await execute(actor.id,b,id);expect(result.error).toBeNull();expect(result.data[0].status).toBe('applied')}
-  const id=await photo(j),denied=await batch(f.employeeB.id,'trash',id);expect((await materialize(f.employeeB.id,denied,id)).error?.message).toBe('forbidden');
+  // photo-albums AC-5: employeeA uploaded every fixture photo; employeeB is an ordinary employee.
+  const theirs=await photo(j),row=async()=>(await f.admin.from('photos').select('uploader_id,deleted_at,deleted_by,purge_after').eq('id',theirs).single()).data!;
+  const trash=await batch(f.employeeB.id,'trash',theirs);await confirm(f.employeeB.id,trash,theirs);expect((await execute(f.employeeB.id,trash,theirs)).data[0].status).toBe('applied');
+  expect(await row()).toMatchObject({uploader_id:f.employeeA.id,deleted_by:f.employeeB.id});expect((await row()).deleted_at).not.toBeNull();
+  const restore=await batch(f.employeeB.id,'restore',theirs);await confirm(f.employeeB.id,restore,theirs);expect((await execute(f.employeeB.id,restore,theirs)).data[0].status).toBe('applied');
+  expect(await row()).toEqual({uploader_id:f.employeeA.id,deleted_at:null,deleted_by:null,purge_after:null});
+  // What still guards these functions: the batch belongs to its creator, the actor must be live, and the gate must be open.
+  const guarded=await batch(f.employeeB.id,'trash',theirs);
+  expect((await materialize(f.employeeA.id,guarded,theirs)).error?.message).toBe('wrong_consumer');
+  expect((await materialize(randomUUID(),guarded,theirs)).error?.message).toBe('invalid_actor');
+  expect((await f.admin.from('photo_release_state').update({photo_writes_enabled:false}).eq('singleton',true)).error).toBeNull();
+  expect((await materialize(f.employeeB.id,guarded,theirs)).error?.message).toBe('photo_gate_closed');
+  expect((await f.admin.from('photo_release_state').update({photo_writes_enabled:true}).eq('singleton',true)).error).toBeNull();
+  const id=await photo(j);
   const digest=randomBytes(32).toString('hex');expect((await f.admin.from('dws_action_handoffs').insert({token_digest:digest,script_name:'remove_photos',requested_input:{selector:{photos:[{photo_id:id}]}},expires_at:new Date(Date.now()+60_000).toISOString()})).error).toBeNull();
   const consumed=await f.admin.rpc('consume_dws_handoff',{p_actor:f.employeeB.id,p_token_digest:digest,p_script:'remove_photos'});expect(consumed.error).toBeNull();const mcp=consumed.data.photo_action_batch_id;
   await confirm(f.employeeB.id,mcp,id);expect((await execute(f.employeeB.id,mcp,id)).data[0].status).toBe('applied');

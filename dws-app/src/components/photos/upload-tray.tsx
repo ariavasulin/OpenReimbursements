@@ -9,10 +9,12 @@ import { useUploadManager } from "@/lib/photos/upload-manager";
 import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
 import UploadProgress, { type UploadRow } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";
+import { photoPath } from "@/lib/photos/photo-link";
 import type { QueueItem } from "@/lib/photos/upload-queue";
 
-// The always-visible upload status bar, pinned above the CaptureBar on every
-// photos page.
+// The always-visible upload status bar. On the photos pages the shell places it
+// in its floating column, above the phone tab bar; a page with no shell
+// (/capture) pins it to the bottom of the screen with `className`.
 
 function summary(items: QueueItem[], active: boolean): string {
   const count = (statuses: QueueItem["status"][]) =>
@@ -31,20 +33,31 @@ function summary(items: QueueItem[], active: boolean): string {
   if (failed) return `${plural(failed, "upload")} failed`;
   const sidecars = items.filter((i) => i.sidecarRetry).length;
   if (sidecars) return `${plural(sidecars, "photo")} uploaded — XMP needs attention`;
-  // Duplicates are reported apart from uploads: "already in this job" is not
-  // the same news as "uploaded".
+  // Duplicates are reported apart from uploads: "already here" is not the same
+  // news as "uploaded". A duplicate sent to an album was added to that album
+  // (the same-photo rule), so say where it is rather than "this project".
   const uploaded = count(["done"]);
-  const duplicates = count(["duplicate"]);
+  const duplicateItems = items.filter((i) => i.status === "duplicate");
+  const duplicates = duplicateItems.length;
   if (!duplicates) return `${uploaded} uploaded`;
-  if (!uploaded) return `${plural(duplicates, "photo")} already in this job`;
-  return `${uploaded} uploaded, ${duplicates} already in this job`;
+  const where = duplicateItems.every((i) => i.albumIds?.length)
+    ? "already in Photos, added to the album"
+    : duplicateItems.every((i) => i.jobId)
+      ? "already in this project"
+      : "already in Photos";
+  if (!uploaded) return `${plural(duplicates, "photo")} ${where}`;
+  return `${uploaded} uploaded, ${duplicates} ${where}`;
 }
 
+/** Pinned to the bottom of the screen: for pages without the photos shell. */
+export const TRAY_FIXED_CLASS =
+  "fixed bottom-[calc(1rem_+_env(safe-area-inset-bottom))] left-0 right-0 z-40 px-4";
+
 export default function UploadTray({
-  maxWidthClass,
+  className = "",
 }: {
-  /** Tailwind max-width class matching the page's <main>. */
-  maxWidthClass: string;
+  /** Positioning only; the tray's own look is fixed. */
+  className?: string;
 }) {
   const manager = useUploadManager();
   const [expanded, setExpanded] = useState(false);
@@ -114,9 +127,9 @@ export default function UploadTray({
       actions: primary ? (
         <>
           {primary}
-          {item.canonicalPhotoId && item.canonicalJobId && item.status !== "restore_required" && (
+          {item.canonicalPhotoId && item.status !== "restore_required" && (
             <Link
-              href={`/photos/${encodeURIComponent(item.canonicalJobId)}?photo=${encodeURIComponent(item.canonicalPhotoId)}`}
+              href={photoPath(item.canonicalJobId ?? null, item.canonicalPhotoId)}
               className="rounded-md px-2 py-1.5 text-[11px] text-[#8bbaff] underline"
             >
               View photo
@@ -124,13 +137,13 @@ export default function UploadTray({
           )}
           {item.canonicalPhotoId && ["job_conflict", "restore_required"].includes(item.status) && (
             <Link
-              href={`/photos/actions?${new URLSearchParams({ action: item.status === "job_conflict" ? "move" : "restore", photo: item.canonicalPhotoId, destination: item.jobId })}`}
+              href={`/photos/actions?${new URLSearchParams({ action: item.status === "job_conflict" ? "move" : "restore", photo: item.canonicalPhotoId, from: "upload", ...(item.jobId ? { destination: item.jobId } : {}) })}`}
               className="rounded-md px-2 py-1.5 text-[11px] text-[#8bbaff] underline"
             >
               {item.status === "job_conflict" ? "Review move" : "Review restore"}
             </Link>
           )}
-          {["job_conflict", "restore_required"].includes(item.status) && <span className="basis-full text-xs text-[#bbb]">After the action, choose Check again. No second copy is uploaded.</span>}
+          {["job_conflict", "restore_required"].includes(item.status) && <span className="basis-full text-xs text-[#bbb]">When that is done, choose Check again. No second copy is uploaded.</span>}
           {item.status !== "cancel_pending" && <RemoveButton
             onClick={() => manager.remove(item.photoId)}
             name={item.name}
@@ -143,10 +156,7 @@ export default function UploadTray({
   });
 
   return (
-    <div
-      // 4.5rem clears the phone CaptureBar; at desktop that bar is hidden.
-      className={`fixed bottom-[calc(4.5rem_+_env(safe-area-inset-bottom))] left-0 right-0 z-40 mx-auto w-full ${maxWidthClass} px-4 desktop:bottom-4`}
-    >
+    <div className={`pointer-events-auto mx-auto w-full max-w-3xl ${className}`}>
       <input
         ref={sidecarInputRef}
         type="file"
@@ -172,9 +182,9 @@ export default function UploadTray({
             type="button"
             onClick={() => setExpanded((previous) => !previous)}
             aria-expanded={expanded}
-            className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left"
           >
-            <span className="truncate text-[13px] font-semibold text-white">
+            <span className="min-w-0 break-words text-sm font-semibold text-white">
               {summary(items, active)}
             </span>
             {expanded ? (
@@ -187,7 +197,7 @@ export default function UploadTray({
             <button
               type="button"
               onClick={() => manager.dismissDone()}
-              className="shrink-0 px-3 py-2.5 text-[13px] text-[#a0a0a0] hover:text-white"
+              className="min-h-11 shrink-0 px-3 text-sm text-[#b4b4b4] hover:text-white"
             >
               Dismiss
             </button>

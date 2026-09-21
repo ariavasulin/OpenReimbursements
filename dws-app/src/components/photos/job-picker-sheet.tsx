@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronLeft } from "lucide-react";
-import FullScreenSheet from "@/components/photos/full-screen-sheet";
+import { Check } from "lucide-react";
+import FullScreenSheet, { FullScreenSheetLeave } from "@/components/photos/full-screen-sheet";
 import { useKeyboardInset } from "@/hooks/use-keyboard-inset";
 import { filterJobs } from "@/lib/photos/job-filter";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 import { cn } from "@/lib/utils";
 
-// Full-screen job search for phones. Its own search input means the keyboard
+// Full-screen project search for phones. Its own search input means the keyboard
 // only ever covers a list that is designed to be covered — never the sheet.
 
 // The full-screen list has room; filterJobs' default cap is a dropdown constraint.
@@ -56,21 +56,14 @@ export default function JobPickerSheet({
     <FullScreenSheet
       open={open}
       onClose={onClose}
-      title="Pick a job"
+      title="Pick a project"
       onOpenAutoFocus={(event) => {
         event.preventDefault();
         inputRef.current?.focus();
       }}
     >
       <div className="flex shrink-0 items-center gap-2 px-3 pb-2 pt-[calc(0.75rem_+_env(safe-area-inset-top))]">
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Back"
-          className="rounded-full p-2 hover:bg-white/10"
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </button>
+        <FullScreenSheetLeave label="Back" onClick={onClose} />
         <input
           ref={inputRef}
           type="search"
@@ -83,13 +76,13 @@ export default function JobPickerSheet({
           onKeyDown={(event) => {
             if (event.key === "Enter" && results[0]) onSelect(results[0]);
           }}
-          placeholder="Job # or name"
+          placeholder="Project name or number"
           className="min-w-0 flex-1 rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none"
         />
       </div>
 
       <ul
-        aria-label="Jobs"
+        aria-label="Projects"
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         // Lift the tail of the list above the keyboard so every row is reachable.
         style={{
@@ -109,8 +102,8 @@ export default function JobPickerSheet({
                   current && "border-l-2 border-l-[#2680FC] bg-[#2e2e2e]"
                 )}
               >
-                <span className="shrink-0 text-[#2680FC]">#{job.job_number}</span>
-                <span className="truncate">{job.name}</span>
+                <span className="shrink-0 text-[#8bbaff]">#{job.job_number}</span>
+                <span className="min-w-0 break-words">{job.name}</span>
                 {current && (
                   <Check
                     aria-hidden="true"
@@ -123,7 +116,7 @@ export default function JobPickerSheet({
         })}
         {results.length === 0 && (
           <li className="px-4 py-6 text-center text-sm text-[#a0a0a0]">
-            No matching jobs
+            No matching projects
           </li>
         )}
         {onCreate && query.trim() && (

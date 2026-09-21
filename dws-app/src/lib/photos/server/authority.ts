@@ -46,12 +46,6 @@ export async function requirePhotoGates(actor: PhotoActor, gates: PhotoGate[]): 
   }
 }
 
-export async function isPhotoAdministrator(actor: PhotoActor): Promise<boolean> {
-  const { data, error } = await actor.session.rpc('is_admin');
-  if (error) throwPhotoDatabaseError(error);
-  return data === true;
-}
-
 /** Later mutations must call this with the route's action, never a client-selected permission. */
 export async function assertPhotoBatchActor(
   actor: PhotoActor, batchId: string, kind: 'migration' | 'action', action?: PhotoAction,

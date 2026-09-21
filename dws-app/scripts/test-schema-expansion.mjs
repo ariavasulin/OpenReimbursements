@@ -35,9 +35,19 @@ export async function verifyExpansion(sql, env) {
     .in('id', ids);
   assert.equal(legacyRead.error, null, 'Old unqualified uploader embed must survive additive expansion');
   assert.equal(legacyRead.data?.length, 3, 'Old application must still read all retained active fixture rows');
-  const originalColumns = Object.keys(before[0]);
-  const after = (await snapshot()).rows.map(row => Object.fromEntries(originalColumns.map(key => [key, row[key]])));
-  assert.deepEqual(after, before, 'Expansion must preserve every legacy source field');
+  // The one legacy column removed on purpose (photo-albums plan, Decision 6).
+  // It may go only because it held nothing; every other field must survive.
+  const droppedOnPurpose = ['sheet_number'];
+  for (const column of droppedOnPurpose) {
+    assert.ok(before.every(row => row[column] === null), `Dropped column ${column} must have been empty`);
+  }
+  const originalColumns = Object.keys(before[0]).filter(key => !droppedOnPurpose.includes(key));
+  const keep = row => Object.fromEntries(originalColumns.map(key => [key, row[key]]));
+  const afterRows = (await snapshot()).rows;
+  for (const column of droppedOnPurpose) {
+    assert.ok(afterRows.every(row => !(column in row)), `Column ${column} must be gone after replay`);
+  }
+  assert.deepEqual(afterRows.map(keep), before.map(keep), 'Expansion must preserve every legacy source field');
   assert.equal((await sql.query('select count(*)::int as n from public.photos where id=any($1::uuid[]) and deleted_at is null and duplicate_of is null', [ids])).rows[0].n, 3, 'Expansion must perform no photo cleanup');
   assert.deepEqual((await sql.query('select photo_writes_enabled,mcp_enabled,repair_enabled from public.photo_release_state')).rows, [{ photo_writes_enabled: false, mcp_enabled: false, repair_enabled: false }]);
   assert.equal((await sql.query("select has_table_privilege('authenticated','public.photos','INSERT') as permitted")).rows[0].permitted, true, 'Expansion must not install the operator write boundary');

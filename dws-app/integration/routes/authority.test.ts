@@ -201,9 +201,9 @@ describe('authenticated photo routes against isolated Auth and PostgREST (AC-2, 
     for (const actor of [f.employeeA, f.employeeB, f.administrator]) {
       const lookup = get(`/api/photos/dedupe?sha256=${digest}`);
       const result = await (await invoke(lookup, () => dedupe(lookup), actor)).json();
+      // Uploader, another employee, and an administrator are treated alike (photo-albums Decision 7).
       expect(result).toMatchObject({ status: 'duplicate_trashed', photo_id: trashId,
-        can_restore: actor.id !== f.employeeB.id });
-      if (actor.id === f.employeeB.id) expect(result.remedy).toContain('MCP restore handoff');
+        can_restore: true, remedy: 'Confirm restoration before uploading.' });
     }
     const retained = get(`/api/photos/${expiredId}/ownership`);
     const owner = await (await invoke(retained, () => ownership(retained, { params: Promise.resolve({ id: expiredId }) }))).json();

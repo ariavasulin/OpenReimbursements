@@ -2,18 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { PHOTOS_PAGE_SIZE } from "@/lib/photos/apiShared";
+import { fetchPhotoDetail } from "@/lib/photos/api";
+import { isOpenable } from "@/lib/photos/group";
 import {
   parsePhotoParam,
   withPhotoParam,
   withoutPhotoParam,
 } from "@/lib/photos/photo-link";
 import type { PhotoRow } from "@/lib/photos/types";
-
-/** How far ?photo= resolution will paginate looking for its id. */
-const MAX_DEEP_LINK_PAGES = 5;
-/** The photo count the give-up toast quotes — derived so it cannot go stale. */
-const DEEP_LINK_PHOTO_CAP = MAX_DEEP_LINK_PAGES * PHOTOS_PAGE_SIZE;
 
 /** Same-document URL with `search` swapped in, hash and path untouched. */
 function urlWithSearch(search: string): string {
@@ -178,41 +174,36 @@ export function useLightboxByPhotoId(openablePhotos: PhotoRow[]) {
   };
 }
 
-interface UseResolvePhotoDeepLinkOptions {
-  /** Openable photos in display order — the set the lightbox flips through. */
+interface UseOpenLinkedPhotoOptions {
+  /** Openable photos loaded so far — the set the lightbox flips through. */
   photos: PhotoRow[];
-  /** Pages fetched so far; 0 means the first fetch has not landed (or errored). */
-  pagesLoaded: number;
-  /** True while any page of the set is in flight. */
-  isFetching: boolean;
-  hasNextPage: boolean;
-  /** The last next-page request errored (hasNextPage is still the last good page's). */
-  fetchFailed: boolean;
-  fetchNextPage(): void;
+  /** True once the first page of the grid has landed. */
+  firstPageLoaded: boolean;
   /** True once the lightbox is showing something — the link has lost its claim. */
   isLightboxOpen: boolean;
-  /** Called with the id the link named, once that photo is loaded. */
-  onResolve(photoId: string): void;
+  /**
+   * Called with the photo the link named. `fetched` is set when the photo was
+   * not among the loaded ones and had to be read by id — an old photo far down
+   * the list, or one that has since left this project or album. The page adds
+   * it to the viewer's set.
+   */
+  onResolve(photoId: string, fetched: PhotoRow | null): void;
 }
 
 /**
  * The inbound half of the `?photo=<id>` contract: reads the param once on
- * mount, then opens that photo if it is loaded, pages deeper (up to
- * MAX_DEEP_LINK_PAGES) if it is not, and gives up with a toast once out of
- * pages. Paging can take seconds, so the link only ever gets to open the
- * viewer while the viewer is still closed — otherwise a late page would yank
- * the user off a photo they opened by hand.
+ * mount and opens that photo. If it is already loaded, at once; if not, it is
+ * read by id (GET /api/photos/[id]), so ANY active photo opens — however old,
+ * with or without a project, and even when an older `/photos/<jobId>?photo=`
+ * link names a project the photo has since left. A trashed or unknown id says
+ * so and clears the param.
  */
-export function useResolvePhotoDeepLink({
+export function useOpenLinkedPhoto({
   photos,
-  pagesLoaded,
-  isFetching,
-  hasNextPage,
-  fetchFailed,
-  fetchNextPage,
+  firstPageLoaded,
   isLightboxOpen,
   onResolve,
-}: UseResolvePhotoDeepLinkOptions): void {
+}: UseOpenLinkedPhotoOptions): void {
   // The ?photo=<id> a pasted link arrived with, captured once on mount (the
   // outbound half rewrites the URL afterwards, so it must not be tracked).
   // Lazy initializers DO run during SSR, hence the window guard.
@@ -221,54 +212,47 @@ export function useResolvePhotoDeepLink({
   );
   const onResolveRef = useRef(onResolve);
   onResolveRef.current = onResolve;
+  const fetchingRef = useRef(false);
 
   useEffect(() => {
     if (deepLinkId === null) return;
-    // The user got there first — hand the viewer over and stop paging for it.
+    // The user got there first — hand the viewer over.
     if (isLightboxOpen) {
       setDeepLinkId(null);
       return;
     }
     if (photos.some((candidate) => candidate.id === deepLinkId)) {
-      onResolveRef.current(deepLinkId);
+      onResolveRef.current(deepLinkId, null);
       setDeepLinkId(null);
       return;
     }
-    if (isFetching) return;
-    if (pagesLoaded === 0) return; // first page not in yet (or errored)
-    if (fetchFailed) {
-      // Re-asking would loop the failing request — the same trap
-      // InfiniteSentinel's `failed` guard exists for. Settle instead; the
-      // param stays, so a reload is a real second attempt. Not waiting for
-      // the Load-more retry: that would leave the resolver armed to yank the
-      // viewer open minutes later.
-      toast.error("Couldn't load more photos — reload to keep looking for it.");
-      setDeepLinkId(null);
-      return;
-    }
-    if (hasNextPage && pagesLoaded < MAX_DEEP_LINK_PAGES) {
-      fetchNextPage();
-      return;
-    }
-    if (hasNextPage) {
-      // Out of budget, not out of photos: "we stopped looking", not "absent".
-      // The param stays, so a reload is a real second attempt.
-      toast.error(
-        `Stopped looking after ${DEEP_LINK_PHOTO_CAP} photos — reload to keep searching for it.`
-      );
-    } else {
-      toast.error("Photo not found in this job");
-      stripPhotoParam();
-    }
-    setDeepLinkId(null);
-  }, [
-    deepLinkId,
-    photos,
-    isFetching,
-    pagesLoaded,
-    hasNextPage,
-    fetchFailed,
-    fetchNextPage,
-    isLightboxOpen,
-  ]);
+    // Wait for the first page: most links name a recent photo, and opening it
+    // from the loaded set keeps its place among its neighbours.
+    if (!firstPageLoaded || fetchingRef.current) return;
+    fetchingRef.current = true;
+    let cancelled = false;
+    fetchPhotoDetail(deepLinkId)
+      .then((photo) => {
+        if (cancelled) return;
+        if (isOpenable(photo)) {
+          onResolveRef.current(photo.id, photo);
+        } else {
+          toast.error("That file has no preview to open. Find it in the grid to download it.");
+          stripPhotoParam();
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        toast.error("Photo not found. It may have been moved to the trash.");
+        stripPhotoParam();
+      })
+      .finally(() => {
+        fetchingRef.current = false;
+        if (!cancelled) setDeepLinkId(null);
+      });
+    return () => {
+      cancelled = true;
+      fetchingRef.current = false;
+    };
+  }, [deepLinkId, photos, firstPageLoaded, isLightboxOpen]);
 }

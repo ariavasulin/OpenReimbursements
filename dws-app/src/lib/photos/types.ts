@@ -16,10 +16,10 @@ export type CapturedAtSource = (typeof CAPTURED_AT_SOURCES)[number];
 /** One photos row as returned by GET /api/photos (uploader + job embedded). */
 export interface PhotoRow {
   id: string;
-  job_id: string;
+  /** The photo's project. Null when it has none: show "No project". */
+  job_id: string | null;
   uploader_id: string;
   kind: PhotoKind;
-  sheet_number: string | null;
   tags: string[];
   /** Never null after finalize: EXIF capture time, or upload time fallback. */
   captured_at: string;
@@ -42,8 +42,51 @@ export interface PhotoRow {
   sidecar_name: string | null;
   created_at: string;
   uploader: { full_name: string | null } | null;
-  /** Embedded job, for cross-job grids (search results grouped by job). */
+  /** Embedded project, for cross-project grids. Null when `job_id` is null. */
   job: { id: string; job_number: string; name: string } | null;
+}
+
+/** An album as a photo carries it. */
+export interface PhotoAlbumRef {
+  id: string;
+  name: string;
+}
+
+/** GET /api/photos/[id]: one active photo plus the albums it is in. */
+export interface PhotoDetail extends PhotoRow {
+  albums: PhotoAlbumRef[];
+}
+
+/** One row of the get_photo_album_summaries RPC. */
+export interface PhotoAlbumSummaryRow {
+  id: string;
+  name: string;
+  photo_count: number | string; // bigint arrives as a string over PostgREST
+  /** Drives the RPC's ordering; not part of the wire shape we return. */
+  latest_added: string | null;
+  thumbs: string[] | null;
+  created_at: string;
+}
+
+/** One album card: name, active-photo count, up to 4 newest thumbnails. */
+export interface PhotoAlbumSummary {
+  id: string;
+  name: string;
+  photo_count: number;
+  /** Storage paths (photos bucket) of up to 4 newest grid thumbnails. */
+  thumb_paths: string[];
+  created_at: string;
+}
+
+/** An album row as the create, rename, delete, and restore routes return it. */
+export interface PhotoAlbum {
+  id: string;
+  name: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  deleted_by: string | null;
 }
 
 /** One row of the get_photo_tags RPC. */

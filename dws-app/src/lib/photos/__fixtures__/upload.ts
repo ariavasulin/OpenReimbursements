@@ -37,7 +37,6 @@ export const sha256 = async (file: File) => createHash("sha256").update(new Uint
 export const META: UploadMeta = {
   jobId: "0b7f0000-0000-4000-8000-000000000001",
   uploaderId: "user-1",
-  sheetNumber: "12",
   tags: ["professional"],
 };
 

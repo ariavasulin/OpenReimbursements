@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
-import FullScreenSheet from "@/components/photos/full-screen-sheet";
+import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import FullScreenSheet, { FullScreenSheetLeave } from "@/components/photos/full-screen-sheet";
 import { formatBytes } from "@/lib/photos/format";
 import { canDecodePreview } from "@/lib/photos/decode-limits";
 
@@ -85,20 +85,13 @@ export default function BatchPreview({
       }}
     >
       <div className="flex items-center justify-between px-3 pb-2 pt-[calc(0.75rem_+_env(safe-area-inset-top))]">
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close preview"
-          className="rounded-full p-2 hover:bg-white/10"
-        >
-          <X className="h-5 w-5" />
-        </button>
+        <FullScreenSheetLeave label="Close" onClick={onClose} />
         {count > 1 && (
           <span className="text-xs text-[#a0a0a0]">
             {(index ?? 0) + 1} / {count}
           </span>
         )}
-        <span className="w-9" />
+        <span className="w-16" />
       </div>
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center">

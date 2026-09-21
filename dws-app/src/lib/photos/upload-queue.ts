@@ -22,8 +22,10 @@ export type QueueStatus =
 
 export interface QueueItem {
   photoId: string;
-  jobId: string;
-  sheetNumber: string | null;
+  /** The project, or null when the upload names only albums. */
+  jobId: string | null;
+  /** Albums the photo joins. Persisted: a retry must replay the same list. */
+  albumIds?: string[];
   tags: string[];
   name: string;
   size: number;
@@ -34,7 +36,8 @@ export interface QueueItem {
   sentBytes: number;
   error?: string;
   canonicalPhotoId?: string;
-  canonicalJobId?: string;
+  /** Null when the existing photo has no project. */
+  canonicalJobId?: string | null;
   warnings?: string[];
   /** Server attempt identity is independent of the local queue item's key. */
   uploadIdentity?: UploadIdentity;
@@ -84,7 +87,7 @@ export function enqueue(
     items.push({
       photoId,
       jobId: meta.jobId,
-      sheetNumber: meta.sheetNumber ?? null,
+      albumIds: meta.albumIds ?? [],
       tags: meta.tags ?? [],
       name: file.name,
       size: file.size,
@@ -151,7 +154,8 @@ export function cancellationInput(item: QueueItem): CancelUploadInput | null {
     throw new Error("Upload identity is unavailable.");
   }
   return { owner_kind: "ordinary", attempt_id: identity.attemptId, photo_id: identity.photoId,
-    job_id: item.jobId, source_signature: identity.sourceSignature, content_sha256: identity.contentSha256,
+    job_id: item.jobId, album_ids: item.albumIds ?? [],
+    source_signature: identity.sourceSignature, content_sha256: identity.contentSha256,
     original_name: source[0], original_bytes: source[1], mime_type: source[3] };
 }
 

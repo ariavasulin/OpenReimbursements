@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupPhotos } from "./group";
+import { groupPhotos, openableInDisplayOrder } from "./group";
 import type { PhotoRow } from "./types";
 
 let counter = 0;
@@ -11,7 +11,6 @@ function makePhoto(overrides: Partial<PhotoRow> = {}): PhotoRow {
     job_id: "job-1",
     uploader_id: "user-1",
     kind: "image",
-    sheet_number: null,
     tags: [],
     captured_at: "2026-08-14T14:41:00.000Z",
     captured_at_source: "exif",
@@ -61,49 +60,6 @@ describe("groupPhotos by date", () => {
   });
 });
 
-describe("groupPhotos by sheet", () => {
-  it("orders numeric sheets high-to-low with No sheet last", () => {
-    const photos = [
-      makePhoto({ sheet_number: null }),
-      makePhoto({ sheet_number: "7" }),
-      makePhoto({ sheet_number: "12" }),
-      makePhoto({ sheet_number: "7" }),
-    ];
-    const groups = groupPhotos(photos, "sheet");
-    expect(groups.map((group) => group.label)).toEqual([
-      "Sheet 12",
-      "Sheet 7",
-      "No sheet",
-    ]);
-    expect(groups[1].photos).toHaveLength(2);
-  });
-
-  it("treats empty/whitespace sheet numbers as No sheet", () => {
-    const photos = [
-      makePhoto({ sheet_number: "  " }),
-      makePhoto({ sheet_number: "" }),
-      makePhoto({ sheet_number: "3" }),
-    ];
-    const groups = groupPhotos(photos, "sheet");
-    expect(groups.map((group) => group.label)).toEqual(["Sheet 3", "No sheet"]);
-    expect(groups[1].photos).toHaveLength(2);
-  });
-
-  it("puts non-numeric sheets after numeric ones, before No sheet", () => {
-    const photos = [
-      makePhoto({ sheet_number: null }),
-      makePhoto({ sheet_number: "A2" }),
-      makePhoto({ sheet_number: "5" }),
-    ];
-    const groups = groupPhotos(photos, "sheet");
-    expect(groups.map((group) => group.label)).toEqual([
-      "Sheet 5",
-      "Sheet A2",
-      "No sheet",
-    ]);
-  });
-});
-
 describe("groupPhotos by job", () => {
   it("groups by job in encounter order with #number · name labels", () => {
     const jobA = { id: "job-a", job_number: "3612", name: "Museum Tower" };
@@ -124,5 +80,51 @@ describe("groupPhotos by job", () => {
   it("labels photos with no embedded job as Unknown job", () => {
     const groups = groupPhotos([makePhoto({ job: null })], "job");
     expect(groups[0].label).toBe("Unknown job");
+  });
+
+  // photo-albums Decision 1: a project is optional.
+  it("puts photos with no project in one 'No project' group with a stable key", () => {
+    const groups = groupPhotos(
+      [
+        makePhoto({ job_id: null, job: null }),
+        makePhoto(),
+        makePhoto({ job_id: null, job: null }),
+      ],
+      "job"
+    );
+    expect(groups.map((group) => [group.key, group.label, group.photos.length])).toEqual([
+      ["job:none", "No project", 2],
+      ["job:job-1", "#3612 · Museum Tower Penthouse", 1],
+    ]);
+  });
+});
+
+describe("groupPhotos by tag", () => {
+  it("shows a photo under each of its tags, tags A to Z ignoring case, and No tags last", () => {
+    const both = makePhoto({ tags: ["shop drawing", "Kitchen"] });
+    const bare = makePhoto({ tags: [] });
+    const one = makePhoto({ tags: ["kitchen tile"] });
+    const groups = groupPhotos([bare, both, one], "tag");
+    expect(groups.map((group) => [group.key, group.label, group.photos.map((photo) => photo.id)])).toEqual([
+      ["tag:Kitchen", "Kitchen", [both.id]],
+      ["tag:kitchen tile", "kitchen tile", [one.id]],
+      ["tag:shop drawing", "shop drawing", [both.id]],
+      ["tag:none", "No tags", [bare.id]],
+    ]);
+  });
+
+  it("leaves out the No tags group when every photo has a tag, and keeps newest first inside a group", () => {
+    const newer = makePhoto({ tags: ["roof"], captured_at: "2026-08-14T18:00:00.000Z" });
+    const older = makePhoto({ tags: ["roof"], captured_at: "2026-08-01T18:00:00.000Z" });
+    const groups = groupPhotos([newer, older], "tag");
+    expect(groups.map((group) => group.label)).toEqual(["roof"]);
+    expect(groups[0].photos.map((photo) => photo.id)).toEqual([newer.id, older.id]);
+  });
+
+  it("hands the viewer each photo once even when it sits in two tag groups", () => {
+    const both = makePhoto({ tags: ["a", "b"] });
+    const other = makePhoto({ tags: ["b"] });
+    const openable = openableInDisplayOrder(groupPhotos([both, other], "tag"));
+    expect(openable.map((photo) => photo.id)).toEqual([both.id, other.id]);
   });
 });

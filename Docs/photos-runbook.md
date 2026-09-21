@@ -5,13 +5,54 @@ Operational notes for the DWS Photos hub (uploads, confirmed changes, repair swe
 For hosted assistant configuration, shared-key rotation, photo handoffs, and
 confirmed issue submission recovery, see the [DWS MCP runbook](dws-mcp-runbook.md).
 
+Albums, optional projects, folder review, and sharing require the ordered
+[photo-albums rollout](../plans/active/photo-albums/plan.md#rollout): compatible
+migrations before merge, deploy, production checks, then the Sheet # column drop. Production
+activation remains operator work; sharing starts closed.
+
+## Album rollout and recovery
+
+The [activation sequence](#activation-sequence) below is a prerequisite, not an
+alternative to the albums rollout. The operator must verify the `20260907*`
+schema, release gates, and global content-hash index before applying any album
+migration. Missing tables or index stop the rollout; dated observations below are
+not a current production-readiness record.
+
+Retain `sheet_number` until the new deploy passes the production checks in the
+album plan. Its old readers still select that column. Keep the big office import
+paused until the operator records the real folder count/depth and keyword/sidecar
+inspection; the tested bar is 5,000 folders, so a larger tree needs another scale
+check. The column drop is a later, deliberate step, followed by another read smoke
+check. Sharing remains closed until its separate activation gate is satisfied.
+
+If the rollout fails, close `sharing_enabled`, `photo_writes_enabled`, and
+`mcp_enabled`, stop imports, and disable the repair cron using the existing
+activation procedure. Retain the database schema and grants. Before reverting
+this PR's code, check in the operator's database session:
+
+```sql
+select exists(select 1 from information_schema.columns
+  where table_schema='public' and table_name='photos' and column_name='sheet_number')
+  as old_column_exists;
+select count(*) as projectless_photos from public.photos where job_id is null;
+select count(*) as migration_batches from public.migration_batches;
+```
+
+A code revert is eligible only if the column remains, both counts are zero, and
+the activation sequence's existing rollback conditions also hold. Otherwise
+deploy a forward fix with gates closed. Old code cannot safely read album-only
+photos or resume folder-model batches, even paused or not-yet-sealed ones. Do not assign invented
+projects or delete new metadata to make an old build start. Reopening any gate
+requires the operator's recovery checks; changing a browser-origin setting does
+not roll back the data model.
+
 ## Confirmed photo changes and trash
 
 Move a photo through its review/confirmation screen. Direct `PATCH job_id`
-writes are rejected; sheet and tag edits apply only to active photos. Any
-signed-in employee can move a photo. Ordinary removal and restoration require
-the uploader or an administrator; a consumed MCP handoff authorizes only its
-bound consumer, action, and confirmed targets.
+writes are rejected; tag edits apply only to active photos. Any signed-in
+employee can move, remove, or restore any photo, and `deleted_by` records who
+removed it. Each confirmation belongs to the employee who started it; a consumed
+MCP handoff authorizes only its bound consumer, action, and confirmed targets.
 
 Removal sends a photo to `/photos/trash` for 30 days. Repeating removal does
 not extend its original `purge_after`; restoration is unavailable at or after
@@ -22,17 +63,39 @@ Library listings, search, counts, tags, and deep links exclude all trash.
 A legacy duplicate in trash points to its canonical photo. Review the canonical
 target before restoring or moving it; restoration never creates another active
 copy. Uploading matching bytes keeps the item unresolved until that action
-succeeds or the employee explicitly skips it. An employee who cannot restore
-the matching photo should ask an administrator or use an MCP restore handoff,
-then retry the original queue item to resolve the canonical result.
+succeeds or the employee explicitly skips it. The employee restores the matching
+photo from the upload tray's **Review restore** link (any signed-in employee
+can, while the 30 days last), then retries the original queue item to resolve
+the canonical result.
 
 ## Hand-made projects
 
-Every photo belongs to one job, which employees call a project. Until the office
-project database is bridged, any photo actor can create a project wherever a job
-is chosen (upload, move, and the `/migrate` page) and rename one from its page.
-Both go through `photo_create_job` / `photo_rename_job` behind the
-`photo_writes_enabled` gate.
+A photo has at most one job, which employees call a project, and may have none
+(`photos.job_id` is nullable; the app shows "No project"). It can also sit in any
+number of albums (`albums`, `album_photos`). Every upload must name a project, an
+album, or both; after that, edits are free, including a move to "No project".
+Any signed-in employee can create, rename, delete, and restore any album. A
+deleted album keeps its photos and can be restored for 30 days; deleting an album
+never deletes a photo. Album and bulk-tag writes go through the `photo_*album*`
+and `photo_bulk_tag` functions behind the `photo_writes_enabled` gate.
+
+Where employees find things: `/photos` lists every photo, newest first (phone and
+desktop both open here); `/photos/albums` and `/photos/projects` list albums and
+projects; `/photos/<jobId>` is still one project, so links already sent keep
+working. Deleted albums are listed on `/photos/trash` above the trashed photos,
+each with **Restore album** for 30 days. "Copy link" writes
+`/photos?photo=<id>`, which opens any active photo by id however old it is.
+
+Selecting many photos: **Add to album**, **Tag**, and **Remove from album** act at
+once on up to 500 photos (`MAX_BULK_PHOTOS`). **Set project** and **Trash** open
+the confirm page (`/photos/actions`) with exactly the selected photos, up to 500
+in one batch. Review and apply requests process at most 100 photos per page;
+nothing changes until the employee confirms the complete selection.
+
+Until the office project database is bridged, any photo actor can create a
+project wherever a job is chosen (upload, move, and the `/migrate` page) and
+rename one from its page. Both go through `photo_create_job` /
+`photo_rename_job` behind the `photo_writes_enabled` gate.
 
 - A project created without an office job number receives a generated `P-<n>`
   code from `job_project_code_seq`. Office job numbers are digits, so the two
@@ -44,6 +107,124 @@ Both go through `photo_create_job` / `photo_rename_job` behind the
   same real office number takes over a hand-made row in place, and may overwrite
   a renamed imported job's name. `P-` projects are never touched by the import.
   How the future office sync should reconcile is undecided.
+
+## Importing folders (`/migrate`)
+
+Each imported folder that directly holds photos becomes one album named from its
+path under the picked folder (`Smith Residence/Finished` arrives as
+`Smith Residence – Finished`). A project is optional. The employee reviews one row
+per folder — album name, project, tags — and may set a project and tags on a
+top-level folder to cover every folder inside it. Pressing Start with no edits is
+always valid. The rows live in `migration_folders`.
+
+- **No album is created before Start, and then only once a photo lands in it.**
+  So a folder whose photos all fail, are skipped, or already sit in trash leaves no
+  album, and closing the page, choosing the folder again, or retrying never makes a
+  second album for the same folder (`migration_folders.album_id` is set once).
+- **A folder of copies becomes an album of the photos you already have.** Matching
+  bytes never make a second photo: the existing photo joins the folder's album. It
+  keeps an existing project; if it has no project, the reviewed choice can fill it.
+  Existing tags stay unchanged; use bulk Tag to change them. The file list says
+  "Already in DWS Photos".
+- **The choices freeze when the import starts.** To change a project or tags after
+  that, use the bulk tools on the album, not the import page.
+- **A project is suggested, never assigned silently.** A folder whose name holds an
+  existing project number as a whole word (`3612 Smith`, not `13612`) is pre-filled
+  with that project, as are the folders inside it; project numbers shorter than three
+  characters are never suggested. An MCP `job_number` hint takes precedence. Review
+  shows every suggestion before Start.
+- **Rescans preserve reviewed rows.** While the import is a draft, newly found
+  folders start with visible source defaults and name suggestions, without
+  inheriting earlier ancestor edits. After approval, a rescan may refresh files
+  in existing folders but refuses newly discovered folders before importing them.
+  Start a new import to review those folders; already imported photos are kept.
+- **Folder import needs Chrome or Edge on a computer.** Phones, Safari, and Firefox
+  cannot open folders; the page says so and offers "Add photos" (up to 500 files,
+  which need a project or an album).
+
+Large imports: the local regression sealed 100,000 entries with 1,500 live photos
+in 3.4 seconds, under its 8-second limit, even with a stale one-row planner estimate.
+The density-zero statistics state is reproduced by the local harness; its
+occurrence in production is unverified. The setting is defensive, and the timings
+are not production throughput or evidence that ordinary growth causes this state. Previously
+Postgres compared every scanned file with every existing photo (1.7 s became
+11.5 s at only 1,500 photos). The two trigger functions on that insert now refuse
+nested-loop joins (`set enable_nestloop=off` on `migration_reserve_uuids` and
+`photo_repair_guard_owner_ids`); do not remove that setting when editing them. The
+test "seals 100,000 entries inside the limit with 1,500 live photos the planner
+believes are one row" in `integration/db/migrations.test.ts` guards it.
+
+## Share links (`/s/<token>`)
+
+An employee can share one album or one project with a link, from the **Share**
+button on it. Anyone who has the link can see that album's or project's name, a
+photo count, and its photos and videos, and download them, **without signing
+in**. It is the only page in the app that works without a login. A visitor never
+sees who took a photo, its tags, its XMP file, a project number, or any other
+album. Any signed-in employee may turn any link on or off.
+
+**What the switch on one album or project does**
+
+- *On* makes a link: `https://photos.design-workshops.app/s/<token>`. The token is
+  32 random bytes, so it cannot be guessed. The pop-up shows the same link again
+  whenever it is opened.
+- *Off* stops that page at once: it answers "This link is not available" (HTTP
+  404) from then on. Pages are never cached, so there is no delay.
+- *On again* makes a **new** link. The old address never works again.
+- A link that is off, a link that never existed, and any link while sharing is
+  switched off for everyone all look exactly the same to a visitor, on purpose.
+- Trashing a photo removes it from every shared page immediately; restoring it
+  brings it back. Deleting an album stops its page; restoring the album within 30
+  days brings the same link back.
+
+**What turning a link off cannot do.** The `photos` storage bucket is public, so
+every image has its own permanent address. Turning a link off stops the *page*;
+it cannot take back an image address that someone already saved or copied, and it
+cannot take back a photo they downloaded. The Share pop-up says this in plain
+words. The way to close that gap is a private bucket with signed image links
+(Alternative D in `plans/active/photo-albums/plan.md`); revisit it before sharing
+anything client-confidential.
+
+**Turning every link off at once.** Share pages have their own switch,
+`photo_release_state.sharing_enabled`, separate from the three existing gates. It
+starts **false**: after the migration is applied, no share page works anywhere
+until an operator opens it. Closing it stops every `/s/<token>` page and
+`/api/share/*` immediately and touches nothing else — the signed-in app keeps
+working, and employees can still flip individual switches (the pop-up tells them
+links will not open until sharing is switched back on). No link is lost: opening
+it again brings back every link that was on.
+
+```sql
+-- Stop every shared link now. One statement, takes effect on the next request.
+update public.photo_release_state
+set sharing_enabled=false,
+    updated_by='<administrator-user-uuid>', updated_at=clock_timestamp()
+where singleton;
+```
+
+Use the same statement with `sharing_enabled=true` to open it. Before opening it
+in production for the first time: an independent security review of the current
+public route and `photo_share_read` is recorded in the pull request (the builder's
+carried handoff read alone is insufficient), and with the gate still
+closed `/s/<anything>` answers 404. After opening it: one real album link opens in
+a private window, and turning it off returns 404.
+
+To see what is shared right now (operator database session; no browser role can
+read this table):
+
+```sql
+select coalesce(a.name, j.name) as shared, case when l.album_id is not null then 'album' else 'project' end as kind,
+       l.created_at, p.full_name as turned_on_by
+from public.photo_share_links l
+left join public.albums a on a.id = l.album_id
+left join public.jobs j on j.id = l.job_id
+left join public.user_profiles p on p.user_id = l.created_by
+where l.revoked_at is null order by l.created_at desc;
+```
+
+To turn off one link without the app, set `revoked_at=clock_timestamp()` and
+`revoked_by` on its row. Never clear `revoked_at` to "bring a link back": turn
+sharing on again from the app, which makes a new link.
 
 ## Legacy standalone-sidecar audit
 
@@ -248,7 +429,7 @@ reporting and lease release, inside the 300-second function limit.
 
 ```sh
 curl -X POST -H "Authorization: Bearer $CRON_SECRET" \
-  https://photos.dws-receipts.com/api/photos/repair
+  https://photos.design-workshops.app/api/photos/repair
 ```
 
 `CRON_SECRET` is the Vercel environment variable of the same name. The
@@ -427,8 +608,8 @@ approximate time, the job, and ideally the filename.
    - Row present with `deleted_at` → it is in trash. Open the trash view and
      check the recovery deadline and canonical reference before restoring.
    - Active row with `thumb_path` → it landed. "Vanished" is a viewing
-     problem: check which grid/filter they're looking at (wrong job, a tag
-     filter, or grouping by a sheet number they didn't expect).
+     problem: check which grid/filter they're looking at (wrong job, or a tag
+     or uploader filter they didn't expect).
    - Active row, `thumb_path` null → derivative hole (e.g. HEIC picked in
      desktop Chrome). It shows after the next sweep; run the sweep by hand
      (above) to fix it now.

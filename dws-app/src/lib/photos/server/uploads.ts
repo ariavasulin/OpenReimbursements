@@ -1,10 +1,10 @@
 import 'server-only';
 import { isDeepStrictEqual } from 'node:util';
-import { cleanSheet, cleanTags, isSha256 } from '../apiShared';
+import { cleanTags, isSha256 } from '../apiShared';
 import { CAPTURED_AT_SOURCES, PHOTO_KINDS } from '../types';
 import type { CanonicalUploadOutcome, UploadOwner, UploadAttempt, OriginalUploadState } from '../upload-contract';
 import type { PhotoActor } from './authority';
-import { canManageOwnPhoto, photoId } from './reads';
+import { photoId } from './reads';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc } from './http';
 
 type Body = Record<string, unknown>;
@@ -33,20 +33,34 @@ export function uploadRpcArgs(actor: PhotoActor, body: Body, generation = false,
 
 export async function describeUploadOutcome(actor: PhotoActor, outcome: CanonicalUploadOutcome): Promise<CanonicalUploadOutcome> {
   if (outcome.status !== 'duplicate_trashed') return outcome;
-  const { data, error } = await actor.db.from('photos').select('uploader_id,purge_after').eq('id', outcome.photo_id).maybeSingle();
+  const { data, error } = await actor.db.from('photos').select('purge_after').eq('id', outcome.photo_id).maybeSingle();
   if (error) throwPhotoDatabaseError(error);
+  // Any signed-in employee may restore; only retention can still prevent it.
   const expired = !data || !data.purge_after || Date.parse(data.purge_after) <= Date.now();
-  const canRestore = !expired && await canManageOwnPhoto(actor, data.uploader_id);
-  return { ...outcome, can_restore: canRestore,
-    remedy: expired ? 'This photo is awaiting permanent cleanup. Retry after cleanup completes.' : canRestore
-      ? 'Confirm restoration before uploading.' : 'Ask an administrator to restore this photo, or use the MCP restore handoff.' };
+  return { ...outcome, can_restore: !expired,
+    remedy: expired ? 'This photo is awaiting permanent cleanup. Retry after cleanup completes.' : 'Confirm restoration before uploading.' };
+}
+
+/** A project is optional: absent or null means "no project". Anything else must be a UUID. */
+function optionalPhotoId(value: unknown): string | null {
+  return value === undefined || value === null ? null : photoId(value);
+}
+/** Albums an upload names. Absent means none; the request body limit bounds the list. */
+function albumIds(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new PhotoApiError('invalid_input');
+  return [...new Set(value.map(photoId))];
 }
 
 export async function createUploadAttempt(actor: PhotoActor, body: Body): Promise<UploadAttempt> {
   const name = string(body.original_name);
   if (/[/\\]/.test(name)) throw new PhotoApiError('invalid_input');
+  const jobId = optionalPhotoId(body.job_id), albums = albumIds(body.album_ids);
+  // Every upload names a project, an album, or both (photo-albums Decision 3). SQL refuses this too.
+  if (jobId === null && albums.length === 0) throw new PhotoApiError('invalid_input');
   const value = await photoRpc(actor, 'photo_create_upload_attempt', {
-    p_actor: actor.actorId, p_job_id: photoId(body.job_id), p_attempt_id: photoId(body.attempt_id),
+    // p_job_id has no SQL default, so "no project" is sent as an explicit null.
+    p_actor: actor.actorId, p_job_id: jobId, p_album_ids: albums, p_attempt_id: photoId(body.attempt_id),
     p_photo_id: photoId(body.photo_id), p_source_signature: string(body.source_signature, 2048),
     p_digest: digest(body.content_sha256), p_original_name: name,
     p_original_bytes: integer(body.original_bytes), p_mime_type: string(body.mime_type, 255),
@@ -59,7 +73,7 @@ export async function createUploadAttempt(actor: PhotoActor, body: Body): Promis
 
 export async function describeAttemptResult(actor: PhotoActor, bound: {
   result: CanonicalUploadOutcome; warnings: string[]; new_attempt_required?: boolean;
-  job_id: string; original_path: string; sidecar_path: string; content_sha256: string;
+  job_id: string | null; original_path: string; sidecar_path: string; content_sha256: string;
 }): Promise<CanonicalUploadOutcome> {
   const result = { ...bound.result, warnings: bound.warnings, ...(bound.new_attempt_required ? { new_attempt_required: true } : {}) };
   if (result.status === 'created') {
@@ -103,7 +117,7 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
   const args = uploadRpcArgs(actor, body, true, true);
   const owner = uploadOwner(body);
   const bound = await photoRpc(actor, 'photo_lock_upload', uploadRpcArgs(actor, body));
-  if (photoId(body.id) !== bound.photo_id || photoId(body.job_id) !== bound.job_id ||
+  if (photoId(body.id) !== bound.photo_id || optionalPhotoId(body.job_id) !== bound.job_id ||
       digest(body.content_sha256) !== bound.content_sha256 || body.original_path !== bound.original_path ||
       integer(body.original_bytes) !== Number(bound.original_bytes) || body.original_name !== bound.original_name || body.mime_type !== bound.mime_type) {
     throw new PhotoApiError('conflict');
@@ -118,7 +132,7 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
   if (body.sidecar_name !== null) string(body.sidecar_name);
   // Persist the normalized request alongside the effective paths, so lost-response
   // replay does not depend on objects that duplicate cleanup already removed.
-  const requested = { kind: body.kind, sheet_number: cleanSheet(body.sheet_number), tags: cleanTags(body.tags),
+  const requested = { kind: body.kind, tags: cleanTags(body.tags),
     captured_at: body.captured_at, captured_at_source: body.captured_at_source,
     thumb_path: body.thumb_path, preview_path: body.preview_path, sidecar_path: body.sidecar_path,
     sidecar_name: body.sidecar_name, duration_secs: body.duration_secs, warnings: [...new Set(body.warnings)] };

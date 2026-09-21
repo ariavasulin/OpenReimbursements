@@ -1,10 +1,11 @@
-import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { collectionNextCursor, readCollectionPage } from '@/lib/photos/server/collectionPagination';
+import { requirePhotoReader } from '@/lib/photos/server/reads';
+import type { CollectionPage } from '@/lib/photos/collectionPagination';
 import { escapeIlikeWildcards } from '@/lib/photos/apiShared';
 import { mapJobSummary } from '@/lib/photos/jobSummary';
-import type { PhotoJobSummary, PhotoJobSummaryRow } from '@/lib/photos/types';
+import type { PhotoJobSummaryRow } from '@/lib/photos/types';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
-import { PhotoApiError, photoJson, photoRoute, photoRpc, readPhotoJson } from '@/lib/photos/server/http';
+import { PhotoApiError, photoJson, photoRoute, photoRpc, readPhotoJson, throwPhotoDatabaseError } from '@/lib/photos/server/http';
 
 // GET /api/photo-jobs?q= — job cards for the photos home screen and the
 // upload job dropdown: job number, name, photo count, up to 4 newest thumbs.
@@ -12,31 +13,19 @@ import { PhotoApiError, photoJson, photoRoute, photoRpc, readPhotoJson } from '@
 // upload first; then job number descending).
 
 export async function GET(request: Request) {
-  const supabase = await createSupabaseServerClient();
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const q = new URL(request.url).searchParams.get('q')?.trim() ?? '';
-
-  const escaped = escapeIlikeWildcards(q);
-  const { data, error } = await supabase.rpc('get_photo_job_summaries', {
-    search_query: escaped || null,
+  return photoRoute(async () => {
+    const supabase = await requirePhotoReader();
+    const { q, limit, cursor } = readCollectionPage(new URL(request.url).searchParams, 'jobs');
+    const { data, error } = await supabase.rpc('get_photo_job_summaries_page', {
+      search_query: escapeIlikeWildcards(q) || null, p_limit: limit,
+      p_after_activity: cursor?.activity ?? null, p_after_number: cursor?.number ?? null,
+      p_after_id: cursor?.id ?? null,
+    });
+    if (error) throwPhotoDatabaseError(error);
+    const page = data as CollectionPage<PhotoJobSummaryRow>;
+    return photoJson({ success: true, jobs: page.rows.map(mapJobSummary),
+      nextCursor: collectionNextCursor('jobs', q, page.next_cursor) });
   });
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const jobs: PhotoJobSummary[] = ((data ?? []) as PhotoJobSummaryRow[]).map(
-    mapJobSummary
-  );
-
-  return NextResponse.json({ success: true, jobs });
 }
 
 const optionalText = (value: unknown): string | null => {

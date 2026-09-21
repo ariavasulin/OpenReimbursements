@@ -1,11 +1,34 @@
 import 'server-only';
 import { validate as isUuid } from 'uuid';
-import { assertPhotoBatchActor, isPhotoAdministrator, type PhotoActor } from './authority';
+import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { MAX_BULK_PHOTOS } from '../apiShared';
+import { assertPhotoBatchActor, type PhotoActor } from './authority';
 import { PhotoApiError, throwPhotoDatabaseError } from './http';
 
 export function photoId(value: unknown): string {
   if (typeof value !== 'string' || !isUuid(value)) throw new PhotoApiError('invalid_input');
   return value;
+}
+
+/** 500 UUIDs are about 20 KB of JSON, over the 16 KB default body limit. */
+export const BULK_BODY_BYTES = 64 * 1024;
+
+/** 1-500 photo ids, counted as sent. SQL applies the same limits; this saves the round trip. */
+export function bulkPhotoIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_BULK_PHOTOS) throw new PhotoApiError('invalid_input');
+  return value.map(photoId);
+}
+
+/**
+ * A signed-in library read through the employee's own session, like GET /api/photos:
+ * the row rules decide what is visible (active photos, live albums), and the
+ * writes gate is not consulted, so browsing still works while writes are closed.
+ */
+export async function requirePhotoReader() {
+  const session = await createSupabaseServerClient();
+  const { data } = await session.auth.getSession();
+  if (!data.session) throw new PhotoApiError('unauthenticated');
+  return session;
 }
 
 /** Intentional ownership read includes retained trash; paths remain server-side. */
@@ -16,10 +39,6 @@ export async function readPhotoOwnership(actor: PhotoActor, id: string) {
   if (error) throwPhotoDatabaseError(error);
   if (!data) throw new PhotoApiError('not_found');
   return data;
-}
-
-export async function canManageOwnPhoto(actor: PhotoActor, uploaderId: string): Promise<boolean> {
-  return uploaderId === actor.actorId || await isPhotoAdministrator(actor);
 }
 
 /** Employee-readable summary, with mutation authority checked independently by SQL. */

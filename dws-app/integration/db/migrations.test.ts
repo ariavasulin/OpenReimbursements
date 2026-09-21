@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
 import type { SourceMetadata } from '../../src/lib/photos/migration/inventory';
@@ -348,4 +349,94 @@ describe('durable migration inventory and recovery (AC-3, AC-4, AC-6)', () => {
       sealer.release(); ordinary.release();
     }
   });
+
+  // photo-albums plan, Phase 6 Step 5: the row-count cliff. With 1,500 photos whose table
+  // statistics still said "empty", the seal's UUID-reservation trigger joined the 100,000
+  // inserted rows to photos with photos on the OUTSIDE of a nested loop (150,000,000 comparisons):
+  // 1.7 s became 11.5 s, past this suite's 8 s limit, and it grows with the library.
+  //
+  // That only happens under one statistics state -- pg_class says zero rows but at least one
+  // page, so the planner's density is zero and it estimates 1 row however large the table is.
+  // A table gets there by having known statistics, being emptied, and then being index-built,
+  // which is what this harness does to photos. But autovacuum can repair it between test files,
+  // so whether a run is in that state is a matter of timing, and a run that is not in it proves
+  // nothing. So this test puts both tables the trigger reads into that state itself, and checks
+  // the planner really believes it BEFORE and AFTER the seal. It runs no ANALYZE before the seal.
+  it('seals 100,000 entries inside the limit with 1,500 live photos the planner believes are one row', async () => {
+    const url = new URL(process.env.DWS_TEST_DATABASE_URL!); url.username = 'supabase_admin';
+    const superuser = new pg.Client({ connectionString: url.toString() }); await superuser.connect();
+    const tables = ['public.photos', 'public.photo_repair_retired_ids'];
+    const estimate = async (table: string) => (await f.sql.query(`explain (format json) select * from ${table}`)).rows[0]['QUERY PLAN'][0].Plan['Plan Rows'] as number;
+    const marker = `cliff-${randomUUID()}`; const retired: string[] = [];
+    try {
+      for (const table of tables) await superuser.query(`alter table ${table} set (autovacuum_enabled=false)`);
+      // In batches: each photo insert takes about four transaction-scoped advisory path locks,
+      // and one 1,500-row statement sits close to the shared lock table's size.
+      for (let done = 0; done < 1500; done += 250) {
+        await f.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_path,original_name,original_bytes,content_sha256,captured_at)
+          select gen_random_uuid(),$1::uuid,$2::uuid,'image','originals/'||($2::uuid)::text||'/'||gen_random_uuid()::text||'/cliff.jpg',$3::text,4,
+            encode(extensions.digest($3::text||n::text||random()::text,'sha256'),'hex'),now() from generate_series(1,250) n`, [jobs[0], f.employeeA.id, marker]);
+      }
+      for (let n = 0; n < 1500; n++) retired.push(randomUUID());
+      await f.sql.query('insert into public.photo_repair_retired_ids(id) select unnest($1::uuid[])', [retired]);
+      for (const table of tables) await superuser.query(`update pg_class set reltuples=0,relpages=1 where oid='${table}'::regclass`);
+      expect((await f.sql.query('select count(*)::int as n from public.photos where original_name=$1', [marker])).rows[0].n).toBe(1500);
+      for (const table of tables) expect(await estimate(table), `${table} must look like one row to the planner`).toBe(1);
+
+      // The mechanism, not just the timing: both trigger functions switch nested loops off for themselves.
+      const config = (await f.sql.query("select proname,proconfig from pg_proc where pronamespace='public'::regnamespace and proname in ('migration_reserve_uuids','photo_repair_guard_owner_ids') order by proname")).rows;
+      expect(config).toEqual([
+        { proname: 'migration_reserve_uuids', proconfig: expect.arrayContaining(['enable_nestloop=off']) },
+        { proname: 'photo_repair_guard_owner_ids', proconfig: expect.arrayContaining(['enable_nestloop=off']) },
+      ]);
+
+      const id = await batch(); const s = await source(id); const scanId = await scan(s.id);
+      await f.sql.query(`with chunks as (
+        select (n-1)/500 chunk_number, jsonb_agg(jsonb_build_object(
+          'relative_path','cliff/'||n||'.jpg','original_name',n||'.jpg','original_bytes',4,
+          'source_mtime',1,'source_signature',n||':4:1','mime_type','image/jpeg',
+          'status','pending','warnings','[]'::jsonb,'sidecar',null) order by n) entries
+        from generate_series(1,100000) n group by (n-1)/500
+      ) insert into public.migration_inventory_chunks(source_id,scan_id,chunk_number,payload_digest,entry_count,encoded_bytes,total_bytes,entries)
+        select $1,$2,chunk_number,encode(extensions.digest(entries::text,'sha256'),'hex'),
+          jsonb_array_length(entries),octet_length(entries::text),jsonb_array_length(entries)*4,entries from chunks`, [s.id, scanId]);
+      const expected = await sealArgs(s.id, scanId, 200);
+      // A fresh session, so the trigger is planned now, against the stale statistics.
+      const sealer = new pg.Client({ connectionString: process.env.DWS_TEST_DATABASE_URL }); await sealer.connect();
+      let sealMs = 0;
+      try {
+        await sealer.query("set statement_timeout='8s'");
+        const started = performance.now();
+        await sealer.query('select public.migration_seal($1,$2,$3,$4,$5,$6,$7,$8)',
+          [f.employeeA.id, s.id, scanId, 200, expected.p_entries, expected.p_bytes, jobs[0], expected.p_fingerprint]);
+        sealMs = Math.round(performance.now() - started);
+      } finally { await sealer.end(); }
+      expect((await f.sql.query("select count(*)::int as n from public.migration_items where source_id=$1 and is_current and status='pending'", [s.id])).rows[0].n).toBe(100_000);
+      // Still stale afterwards: nothing repaired the statistics while the seal ran, so the pass means something.
+      for (const table of tables) expect(await estimate(table), `${table} was re-analyzed during the test`).toBe(1);
+      console.info('MIGRATION_CLIFF_BENCHMARK', JSON.stringify({ entries: 100_000, live_photos: 1500, retired_ids: 1500, planner_row_estimate: 1, seal_ms: sealMs, limit_ms: 8000 }));
+
+      // Step 5's other half: the index on migration_items.canonical_photo_id. Without it every
+      // photo delete scanned this table, which now holds well over 100,000 rows. Shown the way the
+      // foreign key asks (a parameter, so a generic plan), then felt: 1,500 deletes finish quickly.
+      const lookup = await f.sql.connect();
+      try {
+        await lookup.query('begin'); await lookup.query("set local plan_cache_mode='force_generic_plan'");
+        await lookup.query('prepare canonical(uuid) as select 1 from public.migration_items where canonical_photo_id=$1');
+        // EXPLAIN EXECUTE takes no bind parameters, so the (locally generated) UUID is written inline.
+        const plan = JSON.stringify((await lookup.query(`explain (format json) execute canonical('${randomUUID()}')`)).rows[0]['QUERY PLAN']);
+        expect(plan).toContain('migration_items_canonical_photo'); expect(plan).not.toContain('Seq Scan');
+      } finally { await lookup.query('rollback'); lookup.release(); }
+      const deleteStarted = performance.now();
+      await f.sql.query('delete from public.photos where original_name=$1', [marker]);
+      expect(performance.now() - deleteStarted).toBeLessThan(10_000);
+      await rpc('migration_batch_action', { p_batch: id, p_action: 'cancel' });
+    } finally {
+      // A large fixture left behind slows every later file. Remove it, then hand back honest statistics.
+      await f.sql.query('delete from public.photos where original_name=$1', [marker]);
+      await f.sql.query('delete from public.photo_repair_retired_ids where id=any($1::uuid[])', [retired]);
+      for (const table of tables) { await superuser.query(`alter table ${table} reset (autovacuum_enabled)`); await superuser.query(`analyze ${table}`); }
+      await superuser.end();
+    }
+  }, 120_000);
 });

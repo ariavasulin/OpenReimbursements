@@ -32,7 +32,6 @@ describe("uploadOne", () => {
       id: "photo-1",
       job_id: META.jobId,
       kind: "image",
-      sheet_number: "12",
       tags: ["professional"],
       captured_at: CAPTURED.toISOString(),
       captured_at_source: "exif",
@@ -301,6 +300,46 @@ describe("canonical hash/attempt/claim/finalize contract", () => {
     await uploadOne(file, "local-photo", META, deps);
     expect(uploads.map((entry) => entry.path)).toEqual(["server-original", "server-thumb", "server-preview"]);
     expect(finalized[0]).toMatchObject({ id: "server-photo", content_sha256: await sha256(file), owner_id: "local-photo", lease_generation: 1, claim_generation: 2, warnings: [] });
+  });
+});
+
+// photo-albums Decision 3 and 4: an upload may name albums and no project.
+describe("an upload into an album with no project", () => {
+  const ALBUMS = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
+  const ALBUM_ONLY = { ...META, jobId: null, albumIds: ALBUMS };
+
+  it("sends a null project and the albums on the attempt, and a null project on finalize", async () => {
+    const { deps } = makeDeps();
+    deps.finalize = vi.fn(async () => ({ status: "created" as const, photo_id: "photo-1", job_id: null }));
+    const result = await uploadOne(makeFile("party.jpg", "image/jpeg"), "photo-1", ALBUM_ONLY, deps);
+    expect(result.status).toBe("done");
+    expect(deps.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ job_id: null, album_ids: ALBUMS }), expect.anything());
+    expect(deps.finalize).toHaveBeenCalledWith(expect.objectContaining({ job_id: null }), expect.anything());
+  });
+
+  it("sends an empty album list, never undefined, for a project-only upload", async () => {
+    const { deps } = makeDeps();
+    await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    expect(deps.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ job_id: META.jobId, album_ids: [] }), expect.anything());
+  });
+
+  // The existing photo keeps its project and just joins the album (the database answers
+  // skipped_duplicate), so this must read as "already here", not as a conflict to resolve.
+  it("reports a photo that already has a project as a duplicate, not a project conflict", async () => {
+    const { deps, uploads } = makeDeps();
+    deps.claimContent = vi.fn(async () => ({ status: "duplicate_active" as const, photo_id: "canonical", job_id: "some-project" }));
+    const result = await uploadOne(makeFile("copy.jpg", "image/jpeg"), "photo-1", ALBUM_ONLY, deps);
+    expect(result).toMatchObject({ status: "duplicate", canonicalPhotoId: "canonical", canonicalJobId: "some-project" });
+    expect(uploads).toEqual([]);
+  });
+
+  it("still reports a conflict when the upload names a different project", async () => {
+    const { deps } = makeDeps();
+    deps.claimContent = vi.fn(async () => ({ status: "duplicate_active" as const, photo_id: "canonical", job_id: "some-project" }));
+    const result = await uploadOne(makeFile("copy.jpg", "image/jpeg"), "photo-1", { ...META, albumIds: ALBUMS }, deps);
+    expect(result.status).toBe("job_conflict");
   });
 });
 

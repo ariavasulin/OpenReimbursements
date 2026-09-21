@@ -135,7 +135,7 @@ describe('migration route ingestion and review (AC-3, AC-4)', () => {
  });
  it('resumed handoff exposes planning hints only to its bound consumer',async()=>{
   const token=Buffer.from(randomUUID()+randomUUID()).subarray(0,32).toString('base64url');
-  const hints={sources:[{label:'Archive',job_number:'1234'}],tags:['site'],sheet_number:'A-1'};
+  const hints={sources:[{label:'Archive',job_number:'1234'}],tags:['site']};
   expect((await f.admin.from('dws_action_handoffs').insert({token_digest:createHash('sha256').update(token).digest('hex'),script_name:'migrate_photos',requested_input:hints,expires_at:new Date(Date.now()+60000).toISOString()})).error).toBeNull();
   const bound=await ok(consume,'',{token,script_name:'migrate_photos'});
   expect((await ok(detail,bound.migration_batch_id)).batch.requested_input).toEqual(hints);

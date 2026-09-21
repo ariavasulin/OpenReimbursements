@@ -44,9 +44,11 @@ test('a project created from the move page receives the photo, and can be rename
   expect(created.job_number).toMatch(/^P-\d+$/);
   expect(created.created_by).toBe(fixtures.employeeA.id);
 
-  await page.getByRole('button', { name: 'Review exact targets' }).click();
-  await page.getByRole('button', { name: 'Confirm move', exact: true }).click();
-  await expect(page.getByTestId('action-status')).toContainText('completed');
+  // A move with no destination asks for the project first, then shows the photo and the question.
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByTestId('action-question')).toHaveText(new RegExp(`^Move 1 photo to #P-\\d+ · ${name}\\?$`));
+  await page.getByRole('button', { name: 'Move photo', exact: true }).click();
+  await expect(page.getByTestId('action-status')).toHaveText('Done');
   expect((await fixtures.sql.query('select job_id from public.photos where id=$1', [id])).rows[0].job_id).toBe(created.id);
 
   await page.goto(`/photos/${created.id}`);
@@ -71,14 +73,14 @@ test('an MCP-suggested project name is pre-filled and created only on confirmati
 
   await installDirectories(context, [{ label: 'Shop folder', files: [{ name: 'shop.png', bytes: 4096, seed: 11 }] }], png.toString('base64'));
   await page.goto(handoff_url);
-  await page.getByRole('button', { name: 'Select folder', exact: true }).click();
-  const offer = page.getByRole('button', { name: `New project “${suggestion}”` });
+  await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+  const offer = page.getByRole('button', { name: `Make a new project “${suggestion}”` });
   await expect(offer).toBeVisible();
   expect((await fixtures.sql.query('select 1 from public.jobs where name=$1', [suggestion])).rowCount).toBe(0);
   await offer.click();
   await expect(page.getByLabel('Project name')).toHaveValue(suggestion);
   await page.getByRole('button', { name: 'Create project' }).click();
   await expect(page.getByLabel('Project name')).toBeHidden();
-  const created = (await fixtures.sql.query('select id from public.jobs where name=$1', [suggestion])).rows[0];
-  await expect(page.getByLabel('Destination job for Shop folder')).toHaveValue(created.id);
+  const created = (await fixtures.sql.query('select id,job_number from public.jobs where name=$1', [suggestion])).rows[0];
+  await expect(page.getByRole('button', { name: `Project for Shop folder: ${created.job_number} · ${suggestion}`, exact: true })).toBeVisible();
 });

@@ -1,48 +1,58 @@
 "use client";
 
 import Link from "next/link";
+import { Briefcase, Download, Link2, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { usePhotoDetail } from "@/lib/photos/api";
 import { buildPhotoLink } from "@/lib/photos/photo-link";
 import { trashDisclosure } from "@/lib/photos/action-client";
 import {
   formatCapturedAt,
   formatFileInfo,
   jobLabel,
+  NO_PROJECT,
 } from "@/lib/photos/format";
 import { downloadUrl, sidecarDownloadUrl } from "@/lib/photos/urls";
 import { cn } from "@/lib/utils";
 import type { PhotoRow } from "@/lib/photos/types";
 
+// What the viewer knows about the open photo, and what can be done with it:
+// the desktop viewer's side panel, and the body of the phone's "Details"
+// pop-up. Opaque in both — never laid over the photo itself.
+
 interface PhotoInfoProps {
   photo: PhotoRow;
-  /** "bar" = today's bottom gradient overlay; "panel" = 320px desktop column. */
-  layout: "bar" | "panel";
-  canDelete: boolean;
-  /** Opens the edit sheet (owned by the lightbox, so it stacks above it). */
+  /** Opens "Edit details" (owned by the lightbox, so it stacks above it). */
   onEdit(): void;
+  /** Opens "Set project". */
+  onSetProject(): void;
+  /** A link inside is about to leave the viewer (an album, the confirm page). */
+  onNavigate?(): void;
 }
 
-export default function PhotoInfo({
-  photo,
-  layout,
-  canDelete,
-  onEdit,
-}: PhotoInfoProps) {
+const factLabel = "text-sm text-[#a8a8a8]";
+const action =
+  "flex min-h-11 w-full items-center gap-3 rounded-lg border border-[#4e4e4e] bg-[#3a3a3a] px-3 text-base text-white hover:border-[#2680FC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
+const actionIcon = "h-5 w-5 shrink-0 text-[#b4b4b4]";
+
+export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: PhotoInfoProps) {
+  // The grid's rows do not carry albums; the one-photo read does.
+  const { data: detail, isLoading: albumsLoading } = usePhotoDetail(photo.id);
+  const albums = detail?.albums ?? [];
+
   const copyLink = async () => {
-    if (!photo.job) return;
     try {
+      // Names the photo only, so it works with or without a project.
       await navigator.clipboard.writeText(
-        buildPhotoLink(window.location.origin, photo.job.id, photo.id)
+        buildPhotoLink(window.location.origin, photo.id)
       );
       toast.success("Link copied");
     } catch {
-      // Insecure origin or permission denied — never an unhandled
-      // rejection.
+      // Insecure origin or permission denied — never an unhandled rejection.
       toast.error("Couldn't copy the link");
     }
   };
 
-  const bar = layout === "bar";
   const fileInfo = formatFileInfo(photo);
   const sidecarUrl = sidecarDownloadUrl(photo);
   // 'file'/'upload' dates are fallbacks (lastModified / server time), never
@@ -51,112 +61,106 @@ export default function PhotoInfo({
     photo.captured_at_source === "file" || photo.captured_at_source === "upload"
       ? "Approx."
       : "Taken";
-  const captureMeta = [
-    `${capturedPrefix} ${formatCapturedAt(photo.captured_at)}`,
-    photo.uploader?.full_name && `Uploaded by ${photo.uploader.full_name}`,
-    fileInfo,
-  ].filter((line): line is string => Boolean(line));
-
-  const outerClass = bar
-    ? "pointer-events-auto bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10"
-    : // break-words: job names, sheet numbers and 64-char tags are unconstrained
-      // text inside a fixed 320px column.
-      "flex flex-col gap-4 break-words p-4";
-  // `contents` so the panel's header and actions stay its flex children.
-  const innerClass = bar ? "mx-auto w-full max-w-3xl" : "contents";
-  const actionClass = bar && "flex-1";
-  // #3e3e3e, not a fourth near-identical grey: it is the raised-surface value
-  // the sheet's own fields use.
-  const secondaryBg = bar ? "bg-[#2e2e2e]/90" : "bg-[#3e3e3e]";
-  const secondaryAction = cn(
-    "rounded-lg border border-[#4e4e4e] py-2 text-center text-xs font-medium text-white hover:border-[#2680FC]",
-    secondaryBg
-  );
 
   return (
-    <div className={outerClass}>
-      <div className={innerClass}>
-          <div>
-            <div className="text-sm font-semibold text-white">
-              {photo.job ? jobLabel(photo.job) : "Photo"}
+    // break-words: project names and 64-char tags are unconstrained text.
+    <div className="flex flex-col gap-4 break-words">
+      <dl className="space-y-2.5">
+        <div>
+          <dt className={factLabel}>Project</dt>
+          <dd data-testid="photo-project" className="text-base font-semibold text-white">
+            {photo.job
+              ? jobLabel(photo.job)
+              : photo.job_id === null
+                ? NO_PROJECT
+                : "Photo"}
+          </dd>
+        </div>
+        <div>
+          <dt className={factLabel}>Albums</dt>
+          <dd data-testid="photo-albums" className="text-base text-white">
+            {albums.length > 0 ? (
+              <ul className="mt-1 flex flex-wrap gap-1.5">
+                {albums.map((album) => (
+                  <li key={album.id}>
+                    <Link
+                      href={`/photos/albums/${album.id}`}
+                      onClick={onNavigate}
+                      className="flex min-h-11 items-center rounded-full border border-[#4e4e4e] bg-[#3a3a3a] px-3 text-base text-[#8bbaff] hover:border-[#2680FC]"
+                    >
+                      {album.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-[#d0d0d0]">
+                {albumsLoading ? "Loading..." : "Not in an album"}
+              </span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt className={factLabel}>Tags</dt>
+          <dd data-testid="photo-tags" className="text-base text-[#d0d0d0]">
+            {photo.tags.length > 0 ? photo.tags.join(" · ") : "No tags"}
+          </dd>
+        </div>
+        <div>
+          <dt className={factLabel}>About this file</dt>
+          <dd className="space-y-0.5 text-base text-[#d0d0d0]">
+            <div>
+              {capturedPrefix} {formatCapturedAt(photo.captured_at)}
             </div>
-            {(photo.sheet_number || photo.tags.length > 0) && (
-              <div
-                className={
-                  bar
-                    ? "mt-0.5 text-xs text-[#d0d0d0]"
-                    : "mt-1 text-xs text-[#d0d0d0]"
-                }
-              >
-                {photo.sheet_number && (
-                  <span className="font-semibold text-[#2680FC]">
-                    Sheet {photo.sheet_number}
-                  </span>
-                )}
-                {photo.sheet_number && photo.tags.length > 0 && " · "}
-                {photo.tags.join(" · ")}
+            {photo.uploader?.full_name && <div>Uploaded by {photo.uploader.full_name}</div>}
+            {(photo.original_name || fileInfo) && (
+              <div className="break-all">
+                {[photo.original_name, fileInfo].filter(Boolean).join(" · ")}
               </div>
             )}
-            <div
-              className={
-                bar
-                  ? "mt-0.5 text-xs text-[#a0a0a0]"
-                  : "mt-2 space-y-0.5 text-xs text-[#a0a0a0]"
-              }
-            >
-              {bar
-                ? captureMeta.join(" · ")
-                : captureMeta.map((line) => <div key={line}>{line}</div>)}
-            </div>
-          </div>
-
-        <div
-          className={
-            bar ? "mt-3 grid grid-cols-2 gap-2 sm:flex" : "flex flex-col gap-2"
-          }
-        >
-            <a
-              href={downloadUrl(photo)}
-              className={cn(
-                actionClass,
-                "rounded-lg bg-[#2680FC] py-2 text-center text-xs font-medium text-white hover:bg-[#1a6fd8]"
-              )}
-            >
-              Download original
-            </a>
-            {sidecarUrl && (
-              <a
-                href={sidecarUrl}
-                className={cn(actionClass, secondaryAction)}
-              >
-                Download XMP
-              </a>
-            )}
-            <button
-              type="button"
-              onClick={onEdit}
-              className={cn(actionClass, secondaryAction)}
-            >
-              Edit tags
-            </button>
-            <button
-              type="button"
-              disabled={!photo.job}
-              onClick={copyLink}
-              className={cn(actionClass, secondaryAction, "disabled:opacity-60")}
-            >
-              Copy link
-            </button>
-            {canDelete && (
-              <Link
-                href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
-                className={cn(actionClass, "rounded-lg border border-[#4e4e4e] py-2 text-center text-xs font-medium text-red-300 hover:border-red-500", secondaryBg)}
-              >
-                Move to trash
-              </Link>
-            )}
+          </dd>
         </div>
-        {canDelete && <p className="mt-2 text-xs text-[#bbb]">{trashDisclosure} Restore through Trash.</p>}
+      </dl>
+
+      <div className="flex flex-col gap-2">
+        <a
+          href={downloadUrl(photo)}
+          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#2680FC] px-3 text-base font-medium text-white hover:bg-[#1a6fd8] focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+        >
+          <Download className="h-5 w-5" aria-hidden="true" />
+          Download original
+        </a>
+        {sidecarUrl && (
+          <a href={sidecarUrl} className={action}>
+            <Download className={actionIcon} aria-hidden="true" />
+            Download XMP
+          </a>
+        )}
+        <button type="button" onClick={onEdit} className={action}>
+          <Pencil className={actionIcon} aria-hidden="true" />
+          Edit details
+        </button>
+        <button type="button" onClick={onSetProject} className={action}>
+          <Briefcase className={actionIcon} aria-hidden="true" />
+          Set project
+        </button>
+        <button type="button" onClick={copyLink} className={action}>
+          <Link2 className={actionIcon} aria-hidden="true" />
+          Copy link
+        </button>
+      </div>
+
+      {/* The recovery facts sit with the one action they are about. */}
+      <div className="border-t border-[#4e4e4e] pt-4">
+        <Link
+          href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
+          onClick={onNavigate}
+          className={cn(action, "text-red-200 hover:border-red-400")}
+        >
+          <Trash2 className="h-5 w-5 shrink-0 text-red-300" aria-hidden="true" />
+          Move to trash
+        </Link>
+        <p className="mt-2 text-base leading-relaxed text-[#b4b4b4]">{trashDisclosure}</p>
       </div>
     </div>
   );

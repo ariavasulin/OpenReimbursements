@@ -22,10 +22,13 @@ import {
   parseLimit,
 } from '@/lib/keysetCursor';
 
-// GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
-//      Filtered photo list, newest capture first, keyset-paginated on
-//      (captured_at, id). `q` searches across job number/name, uploader name,
-//      and tag membership (ILIKE — no search infrastructure at DWS scale).
+// GET  /api/photos?job=&album=&tags=&uploader=&q=&cursor=&limit=
+//      Active photos, newest capture first, keyset-paginated on
+//      (captured_at, id). With no filter it lists every photo (the Photos
+//      screen). `job` is a project id, or `none` for photos with no project;
+//      `album` is an album id. Filters combine. `q` searches across job
+//      number/name, uploader name, and tag membership (ILIKE — no search
+//      infrastructure at DWS scale).
 // POST /api/photos — finalize an upload: insert the row for files the browser
 //      already put in storage. The row existing is what makes a photo "in".
 
@@ -33,6 +36,8 @@ const MAX_LIMIT = 200;
 // Upper bound on tags spliced into one or() filter — a URL-length guard, not a
 // recall choice; the type-ahead (/api/photo-tags) is unbounded.
 const MAX_SEARCH_TAGS = 500;
+/** `job=none`: photos with no project. */
+const NO_PROJECT = 'none';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -105,8 +110,10 @@ export async function GET(request: Request) {
   }
 
   const params = new URL(request.url).searchParams;
-  const job = params.get('job');
-  const sheet = params.get('sheet')?.trim() || null;
+  const jobParam = params.get('job');
+  const noProject = jobParam === NO_PROJECT;
+  const job = noProject ? null : jobParam;
+  const album = params.get('album');
   const uploader = params.get('uploader');
   const tags = (params.get('tags') ?? '')
     .split(',')
@@ -117,14 +124,11 @@ export async function GET(request: Request) {
   if (job && !isUuid(job)) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
   }
+  if (album && !isUuid(album)) {
+    return NextResponse.json({ error: 'Invalid album id' }, { status: 400 });
+  }
   if (uploader && !isUuid(uploader)) {
     return NextResponse.json({ error: 'Invalid uploader id' }, { status: 400 });
-  }
-  if (!job && !q && !uploader && tags.length === 0) {
-    return NextResponse.json(
-      { error: 'Provide at least one of job, q, uploader, or tags' },
-      { status: 400 }
-    );
   }
 
   const limit = parseLimit(params.get('limit'), PHOTOS_PAGE_SIZE, MAX_LIMIT);
@@ -132,17 +136,21 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid limit' }, { status: 400 });
   }
 
+  // The album filter is an inner join through album_photos to albums, read with
+  // the employee's session: a deleted album is hidden from them by its row rule,
+  // so it lists nothing. The joined column is dropped again before responding.
   let query = supabase
     .from('photos')
-    .select(PHOTO_COLUMNS)
+    .select(album ? `${PHOTO_COLUMNS}, albums!inner(id)` : PHOTO_COLUMNS)
     .is('deleted_at', null)
     .order('captured_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(limit + 1);
 
   if (job) query = query.eq('job_id', job);
+  if (noProject) query = query.is('job_id', null);
+  if (album) query = query.eq('albums.id', album);
   if (uploader) query = query.eq('uploader_id', uploader);
-  if (sheet) query = query.eq('sheet_number', sheet);
   for (const tag of tags) query = query.contains('tags', [tag]);
 
   if (q) {
@@ -180,7 +188,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = (data ?? []) as unknown as PhotoRow[];
+  const rows = (data ?? []) as unknown as (PhotoRow & { albums?: unknown })[];
+  // The join column only served the album filter; a list row carries no albums.
+  if (album) for (const row of rows) delete row.albums;
   const page = rows.slice(0, limit);
   const last = page[page.length - 1];
   const nextCursor =

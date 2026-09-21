@@ -13,10 +13,12 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer";
 import { cn } from "@/lib/utils";
 
-// Fixed-size form sheet: Drawer on phones, Dialog on desktop. The frame never
-// resizes while the user interacts — header and footer are pinned and only the
-// middle scrolls. On phones, vaul's input repositioning is off and the drawer
-// is lifted above the software keyboard by useKeyboardInset instead.
+// Form pop-up: Drawer on phones, Dialog on desktop. It is as tall as its
+// content, up to a viewport-relative maximum; past that the header and footer
+// stay pinned and only the middle scrolls. On phones, vaul's input
+// repositioning is off and the drawer is lifted above the software keyboard by
+// useKeyboardInset instead. The phone header always carries a visible, labeled
+// Cancel: a drag handle alone does not say "leave without saving".
 
 // A focused field is scrolled into view only after the iOS keyboard has
 // finished animating in (~250ms), so the scroll targets the settled layout.
@@ -24,17 +26,6 @@ const KEYBOARD_SETTLE_MS = 300;
 
 // Gap kept above the drawer so it never covers the whole screen.
 const DRAWER_TOP_GAP = "2rem";
-
-const SIZES = {
-  full: {
-    mobile: "h-[85dvh] max-h-[85dvh]",
-    desktop: "h-[min(85dvh,640px)] max-h-[85dvh]",
-  },
-  compact: {
-    mobile: "h-[70dvh] max-h-[70dvh]",
-    desktop: "h-[min(85dvh,520px)] max-h-[85dvh]",
-  },
-} as const;
 
 const SheetLayoutContext = createContext<{ isMobile: boolean }>({
   isMobile: false,
@@ -54,9 +45,14 @@ interface SheetShellProps {
   header?: ReactNode;
   /** The scrolling middle. Nested full-screen steps can go here too. */
   children: ReactNode;
-  /** Pinned below the scroll body (primary action lives here). */
-  footer: ReactNode;
-  size?: keyof typeof SIZES;
+  /** Pinned below the scroll body (primary action lives here). Optional: a
+   *  pop-up that only shows things (the phone viewer's Details) has none. */
+  footer?: ReactNode;
+  /** Label of the phone header's leave-without-saving button. */
+  cancelLabel?: string;
+  /** No longer has an effect: the pop-up is as tall as its content. Still
+   *  accepted so callers written for the fixed sizes keep compiling. */
+  size?: "full" | "compact";
 }
 
 export default function SheetShell({
@@ -66,7 +62,7 @@ export default function SheetShell({
   header,
   children,
   footer,
-  size = "full",
+  cancelLabel = "Cancel",
 }: SheetShellProps) {
   const isMobile = useMobile();
   const keyboardInset = useKeyboardInset(isMobile && open);
@@ -91,12 +87,24 @@ export default function SheetShell({
     }, KEYBOARD_SETTLE_MS);
   };
 
-  const titleClass = "mb-3 text-[15px] font-semibold text-white";
+  const titleClass = "min-w-0 flex-1 break-words text-base font-semibold text-white";
 
   const body = (titleNode: ReactNode) => (
     <SheetLayoutContext.Provider value={{ isMobile }}>
       <div className="shrink-0 px-4 pt-1">
-        {titleNode}
+        {/* pr-12 at desktop keeps a long title clear of the dialog's own X. */}
+        <div className={cn("mb-2 flex min-h-11 items-center gap-3", !isMobile && "pr-12")}>
+          {titleNode}
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="-mr-2 flex min-h-11 shrink-0 items-center rounded-lg px-3 text-base font-medium text-[#8bbaff] active:bg-white/10"
+            >
+              {cancelLabel}
+            </button>
+          )}
+        </div>
         {header}
       </div>
 
@@ -117,9 +125,13 @@ export default function SheetShell({
         {children}
       </div>
 
-      <div className="shrink-0 border-t border-[#3e3e3e] px-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] pt-3">
-        {footer}
-      </div>
+      {footer ? (
+        <div className="shrink-0 border-t border-[#3e3e3e] px-4 pb-[calc(1rem_+_env(safe-area-inset-bottom))] pt-3">
+          {footer}
+        </div>
+      ) : (
+        <div className="h-[calc(0.5rem_+_env(safe-area-inset-bottom))] shrink-0" />
+      )}
     </SheetLayoutContext.Provider>
   );
 
@@ -136,8 +148,7 @@ export default function SheetShell({
             // scrolled content once the drawer has a fixed height (vaul #575).
             // `!` because vaul's stylesheet is unlayered and beats a layered
             // utility.
-            "border-[#4e4e4e] bg-[#2e2e2e] text-white [&::after]:h-[unset]!",
-            SIZES[size].mobile
+            "h-auto border-[#4e4e4e] bg-[#2e2e2e] text-white [&::after]:h-[unset]!"
           )}
           style={{
             bottom: keyboardInset,
@@ -158,9 +169,14 @@ export default function SheetShell({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "flex flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 text-white sm:max-w-md",
-          SIZES[size].desktop
+          // Hung from a fixed top edge, not centered: a pop-up that grows (a
+          // suggestion list opening) then only extends downward, instead of
+          // its title and fields jumping up under the pointer.
+          "top-[8dvh] flex h-auto max-h-[84dvh] translate-y-0 flex-col gap-0 overflow-hidden border-none bg-[#2e2e2e] p-0 text-white sm:max-w-md [&>button:last-child]:top-1 [&>button:last-child]:right-2 [&>button:last-child]:flex [&>button:last-child]:min-h-11 [&>button:last-child]:min-w-11 [&>button:last-child]:items-center [&>button:last-child]:justify-center"
         )}
+        // The forms describe themselves with visible labels; without this Radix
+        // warns about a missing description on every open.
+        aria-describedby={undefined}
       >
         {body(
           <DialogTitle className={cn("leading-normal tracking-normal", titleClass)}>

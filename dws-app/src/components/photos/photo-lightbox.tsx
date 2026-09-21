@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { Info, X } from "lucide-react";
 import Lightbox, {
   type GenericSlide,
   type Slide,
@@ -16,11 +15,12 @@ import Thumbnails from "yet-another-react-lightbox/plugins/thumbnails";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/counter.css";
 import "yet-another-react-lightbox/plugins/thumbnails.css";
-import { supabase } from "@/lib/supabaseClient";
 import { useDesktop } from "@/hooks/use-desktop";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
 import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
 import PhotoInfo from "@/components/photos/photo-info";
+import SetProjectSheet from "@/components/photos/set-project-sheet";
+import SheetShell from "@/components/photos/sheet-shell";
 import {
   PHOTOS_SCROLLPORT_ID,
   usePhotosShell,
@@ -30,11 +30,13 @@ import type { PhotoRow } from "@/lib/photos/types";
 import { videoSource } from "@/lib/photos/video-source";
 
 // Zoom/swipe run on the screen-quality preview, never the original —
-// "Download original" streams the untouched file. Editing opens
-// EditPhotoSheet on top of the viewer; both viewer paths sit at z-40 so the
-// sheet (z-50) and its nested pickers (z-[60]) stack above them.
+// "Download original" streams the untouched file. "Edit details" and "Set
+// project" open pop-ups on top of the viewer; both viewer paths sit at z-40 so
+// a pop-up (z-50) and its nested pickers (z-[60]) stack above them.
 //
-// - Phone: YARL's overlay mode with the info bar in render.controls.
+// - Phone: YARL's overlay mode. The photo is unobscured; a labeled "Details"
+//   button in the toolbar opens an opaque pop-up with the facts and actions.
+//   (They used to sit on a gradient over the photo, unreadable on bright ones.)
 // - Desktop: YARL's Inline plugin inside our own fixed fullscreen row, with
 //   PhotoInfo as a *sibling* 320px panel. Sibling, never render.controls:
 //   inside YARL's container its keydown handling would turn arrow keys into
@@ -186,6 +188,8 @@ export default function PhotoLightbox({
   const isDesktop = useDesktop();
   const { setViewerOpen } = usePhotosShell();
   const [editing, setEditing] = useState(false);
+  const [settingProject, setSettingProject] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   // The shell's drop intake treats an open desktop viewer as busy: a drop
   // would otherwise open the upload sheet over a layer still asserting
@@ -230,33 +234,14 @@ export default function PhotoLightbox({
     [photos]
   );
 
-  // Who am I? Delete is uploader-or-admin; hide the button otherwise (RLS
-  // still enforces it server-side either way).
-  const { data: me } = useQuery({
-    queryKey: ["own-profile"],
-    queryFn: async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) return null;
-      const { data } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .single();
-      return { id: session.user.id, role: data?.role ?? "employee" };
-    },
-    enabled: open,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const canDelete =
-    !!photo && !!me && (photo.uploader_id === me.id || me.role === "admin");
-
   // Leaving a slide abandons any half-done edit on it.
   useEffect(() => {
     setEditing(false);
+    setSettingProject(false);
   }, [index, open]);
+  useEffect(() => {
+    if (!open) setDetailsOpen(false);
+  }, [open]);
 
   // The fixed fullscreen row (portalled to <body>) and the info panel.
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -268,7 +253,7 @@ export default function PhotoLightbox({
   // inner control can pre-empt it, so the panel is carved out by hand, and so
   // is the edit sheet: while it is up Escape belongs to the sheet.
   useEffect(() => {
-    if (!(open && isDesktop) || editing) return;
+    if (!(open && isDesktop) || editing || settingProject) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       const { target } = event;
@@ -277,7 +262,7 @@ export default function PhotoLightbox({
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [open, isDesktop, editing, onClose]);
+  }, [open, isDesktop, editing, settingProject, onClose]);
 
   // Everything outside the viewer goes inert + aria-hidden while it is up —
   // the loop YARL's Portal ran over its own siblings — and closing hands focus
@@ -405,13 +390,31 @@ export default function PhotoLightbox({
     />
   );
 
+  // One pop-up at a time on a phone: Details closes as the next one opens.
+  const startEdit = () => {
+    setDetailsOpen(false);
+    setEditing(true);
+  };
+  const startSetProject = () => {
+    setDetailsOpen(false);
+    setSettingProject(true);
+  };
+
   const editSheet = (
-    <EditPhotoSheet
-      photo={photo ?? null}
-      open={editing}
-      onOpenChange={setEditing}
-      onSaved={onChanged}
-    />
+    <>
+      <EditPhotoSheet
+        photo={photo ?? null}
+        open={editing}
+        onOpenChange={setEditing}
+        onSaved={onChanged}
+      />
+      <SetProjectSheet
+        photoIds={photo ? [photo.id] : []}
+        open={settingProject}
+        onOpenChange={setSettingProject}
+        onContinue={onClose}
+      />
+    </>
   );
 
   // Shared by both paths; each adds its own plugins, styles and render slots.
@@ -423,7 +426,8 @@ export default function PhotoLightbox({
     slides,
     zoom: { maxZoomPixelRatio: 4, doubleTapDelay: 300 },
     carousel: { finite: false },
-    styles: { container: { backgroundColor: "rgba(0,0,0,.92)" } },
+    // Solid: the page behind a see-through viewer reads as clutter around the photo.
+    styles: { container: { backgroundColor: "#000" } },
     render: {
       // Returning undefined falls through to the default slide renderers
       // (image, and the Video plugin's player).
@@ -490,13 +494,15 @@ export default function PhotoLightbox({
                 onKeyDown={(event) => {
                   if (event.key === "Escape") onClose();
                 }}
-                className="w-[320px] shrink-0 overflow-y-auto border-l border-[#4e4e4e] bg-[#2e2e2e]"
+                aria-label="Details"
+                className="w-[340px] shrink-0 overflow-y-auto border-l border-[#4e4e4e] bg-[#2e2e2e] p-5"
               >
+                <h2 className="mb-4 text-base font-semibold text-white">Details</h2>
                 <PhotoInfo
                   photo={photo}
-                  layout="panel"
-                  canDelete={canDelete}
-                  onEdit={() => setEditing(true)}
+                  onEdit={startEdit}
+                  onSetProject={startSetProject}
+                  onNavigate={onClose}
                 />
               </aside>
             )}
@@ -518,22 +524,39 @@ export default function PhotoLightbox({
         plugins={[Zoom, Video, Counter]}
         controller={{ closeOnBackdropClick: false }}
         styles={{ ...common.styles, root: { zIndex: 40 } }}
-        render={{
-          ...common.render,
-          controls: () => (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
-              {photo && (
-                <PhotoInfo
-                  photo={photo}
-                  layout="bar"
-                  canDelete={canDelete}
-                  onEdit={() => setEditing(true)}
-                />
-              )}
-            </div>
-          ),
+        // A word, not an "i" alone: this is the only way to the photo's project,
+        // albums, tags, and actions on a phone.
+        toolbar={{
+          buttons: [
+            <button
+              key="details"
+              type="button"
+              onClick={() => setDetailsOpen(true)}
+              className="mr-1 mt-1 flex min-h-11 items-center gap-2 rounded-full bg-black/55 px-4 text-base font-medium text-white backdrop-blur"
+            >
+              <Info className="h-5 w-5" aria-hidden="true" />
+              Details
+            </button>,
+            "close",
+          ],
         }}
+        render={common.render}
       />
+      <SheetShell
+        open={detailsOpen && Boolean(photo)}
+        onOpenChange={setDetailsOpen}
+        title="Details"
+        cancelLabel="Close"
+      >
+        {photo && (
+          <PhotoInfo
+            photo={photo}
+            onEdit={startEdit}
+            onSetProject={startSetProject}
+            onNavigate={onClose}
+          />
+        )}
+      </SheetShell>
       {editSheet}
     </>
   );

@@ -1,19 +1,21 @@
 "use client";
 
 import { useId } from "react";
+import AlbumField from "@/components/photos/album-field";
 import JobField from "@/components/photos/job-combobox";
-import TagInput from "@/components/photos/tag-input";
-import { usePhotoJobs, usePhotoTags } from "@/lib/photos/api";
-import { addTagToMeta, type PhotoMeta } from "@/lib/photos/tags";
+import TagDropdown from "@/components/photos/tag-dropdown";
+import { usePhotoJobs } from "@/lib/photos/api";
+import type { PhotoMeta } from "@/lib/photos/tags";
 
-// The job / sheet # / tags form shared by the upload and edit sheets. Owns the
-// jobs and tags queries; the host owns the values.
+// The project / album / tags form shared by the upload pop-up and Edit details.
+// Owns the project list query; the host owns the values and the tag choices
+// (it needs them again on save, to keep a half-typed tag).
 
 export type { PhotoMeta } from "@/lib/photos/tags";
 
 export const EMPTY_META: PhotoMeta = {
   jobId: "",
-  sheetNumber: "",
+  albums: [],
   tags: [],
   tagInput: "",
 };
@@ -22,31 +24,34 @@ interface PhotoMetaFieldsProps {
   value: PhotoMeta;
   /** Functional, so two edits in one event (add tag + clear input) compose. */
   onChange(update: (prev: PhotoMeta) => PhotoMeta): void;
-  /** Whether to fetch jobs/tags (pass the sheet's `open`). */
+  /** From useTagChoices: existing tags plus the starter tags. */
+  tagChoices: string[];
+  /** Whether to fetch projects and albums (pass the pop-up's `open`). */
   enabled?: boolean;
   disabled?: boolean;
-  showJob?: boolean;
+  /** Project and Album fields: the upload pop-up shows them, Edit details does not. */
+  showDestination?: boolean;
 }
 
-const labelClass = "mb-1.5 block text-xs text-[#a0a0a0]";
+const labelClass = "mb-1.5 block text-base font-medium text-[#d0d0d0]";
 
 export default function PhotoMetaFields({
   value,
   onChange,
+  tagChoices,
   enabled = true,
   disabled,
-  showJob = true,
+  showDestination = true,
 }: PhotoMetaFieldsProps) {
   const {
     data: jobs,
     isLoading: jobsLoading,
     error: jobsError,
     refetch: refetchJobs,
-  } = usePhotoJobs(enabled && showJob);
-  const { data: knownTags } = usePhotoTags(enabled);
+  } = usePhotoJobs(enabled && showDestination);
   const id = useId();
-  const jobInputId = `${id}-job`;
-  const sheetInputId = `${id}-sheet`;
+  const jobInputId = `${id}-project`;
+  const albumInputId = `${id}-album`;
   const tagInputId = `${id}-tags`;
 
   const patch = (changes: Partial<PhotoMeta>) =>
@@ -54,59 +59,57 @@ export default function PhotoMetaFields({
 
   return (
     <>
-      {showJob && <><label htmlFor={jobInputId} className={labelClass}>
-        Job
-      </label>
-      <JobField
-        inputId={jobInputId}
-        jobs={jobs ?? []}
-        jobsLoading={jobsLoading}
-        value={value.jobId}
-        onChange={(jobId) => patch({ jobId })}
-        disabled={disabled}
-      />
-      {jobsError && (
-        <p className="-mt-2 mb-3.5 text-xs text-red-300">
-          Couldn&apos;t load jobs.{" "}
-          <button
-            type="button"
-            onClick={() => refetchJobs()}
-            className="underline hover:text-white"
-          >
-            Retry
-          </button>
-        </p>
-      )}
-      </>}
+      {showDestination && (
+        <>
+          <label htmlFor={jobInputId} className={labelClass}>
+            Project (optional)
+          </label>
+          <JobField
+            inputId={jobInputId}
+            jobs={jobs ?? []}
+            jobsLoading={jobsLoading}
+            value={value.jobId}
+            onChange={(jobId) => patch({ jobId })}
+            disabled={disabled}
+          />
+          {jobsError && (
+            <p className="-mt-2 mb-3.5 text-base text-red-300">
+              Couldn&apos;t load projects.{" "}
+              <button
+                type="button"
+                onClick={() => refetchJobs()}
+                className="underline hover:text-white"
+              >
+                Retry
+              </button>
+            </p>
+          )}
 
-      <label htmlFor={sheetInputId} className={labelClass}>
-        Sheet # (optional)
-      </label>
-      <input
-        id={sheetInputId}
-        type="text"
-        inputMode="numeric"
-        value={value.sheetNumber}
-        onChange={(event) => patch({ sheetNumber: event.target.value })}
-        placeholder="e.g. 12"
-        disabled={disabled}
-        className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none md:text-sm"
-      />
+          <label htmlFor={albumInputId} className={labelClass}>
+            Album (optional)
+          </label>
+          <AlbumField
+            className="mb-3.5"
+            inputId={albumInputId}
+            value={value.albums}
+            onChange={(albums) => patch({ albums })}
+            enabled={enabled}
+            disabled={disabled}
+          />
+        </>
+      )}
 
       <label htmlFor={tagInputId} className={labelClass}>
         Tags (optional)
       </label>
-      <TagInput
+      <TagDropdown
         className="mb-1"
         inputId={tagInputId}
         tags={value.tags}
+        onChange={(tags) => patch({ tags })}
         input={value.tagInput}
         onInputChange={(tagInput) => patch({ tagInput })}
-        onAdd={(tag) => onChange((prev) => addTagToMeta(prev, tag))}
-        onRemove={(tag) =>
-          onChange((prev) => ({ ...prev, tags: prev.tags.filter((t) => t !== tag) }))
-        }
-        suggestions={knownTags}
+        choices={tagChoices}
         disabled={disabled}
       />
     </>

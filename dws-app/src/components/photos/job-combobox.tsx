@@ -2,23 +2,22 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronRight, X } from "lucide-react";
-import {
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-} from "@/components/ui/popover";
 import JobPickerSheet from "@/components/photos/job-picker-sheet";
 import NewJobForm from "@/components/photos/new-job-form";
 import { useSheetLayout } from "@/components/photos/sheet-shell";
+import { useCloseOnBlur } from "@/hooks/use-close-on-blur";
 import { filterJobs } from "@/lib/photos/job-filter";
 import type { PhotoJobSummary } from "@/lib/photos/types";
 import { cn } from "@/lib/utils";
 
 // Job field for the upload/edit sheets, picked by the enclosing SheetShell's
 // layout:
-// - JobTypeahead (desktop): a text field whose suggestions render in a
-//   portaled Popover anchored to it, so the list floats over the fields below
-//   and never changes the sheet's layout.
+// - JobTypeahead (desktop): a text field whose suggestions render inline under
+//   it, like the album and tag fields beside it. (They used to float in a
+//   portalled Popover. Inside the pop-up's modal Dialog that list could not be
+//   clicked with a mouse: the two Radix packages resolve different copies of
+//   their layer bookkeeping, so the Popover never learned it was allowed
+//   pointer events. An inline list has no layers to disagree about.)
 // - JobPickerField (phones): a button-like field that opens JobPickerSheet, a
 //   full-screen search step, so the keyboard never fights the drawer.
 
@@ -31,7 +30,7 @@ interface JobFieldProps {
   value: string;
   onChange(jobId: string): void;
   disabled?: boolean;
-  /** True while `jobs` is still fetching: the field shows "Loading jobs...". */
+  /** True while `jobs` is still fetching: the field shows "Loading projects...". */
   jobsLoading?: boolean;
   /** Label source when `value` is set but absent from `jobs` (e.g. editing
    *  a photo before the list has loaded). */
@@ -109,17 +108,26 @@ export function JobPickerField({
         aria-haspopup="dialog"
         aria-expanded={pickerOpen}
         onClick={() => setPickerOpen(true)}
-        className="flex w-full items-center justify-between rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-left text-base text-white disabled:opacity-50"
+        className="flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-left text-base text-white disabled:opacity-50"
       >
-        <span className={selected ? "truncate" : "text-[#b4b4b4]"}>
+        <span className={selected ? "min-w-0 break-words" : "text-[#b4b4b4]"}>
           {selected
             ? jobLabel(selected)
             : jobsLoading
-              ? "Loading jobs..."
-              : "Pick a job..."}
+              ? "Loading projects..."
+              : "Pick a project"}
         </span>
         <ChevronRight className="h-4 w-4 shrink-0 text-[#b4b4b4]" />
       </button>
+      {selected && !disabled && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          className="mt-1 flex min-h-11 items-center text-base text-[#8bbaff]"
+        >
+          Clear project
+        </button>
+      )}
       <JobPickerSheet
         jobs={jobs}
         value={value}
@@ -156,6 +164,7 @@ export function JobTypeahead({
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
+  const closeOnBlur = useCloseOnBlur(inputRef, () => setOpen(false));
 
   const selected = useSelectedJob(jobs, value, fallback);
   const suggestions = useMemo(
@@ -194,124 +203,110 @@ export function JobTypeahead({
 
   return (
     <div className="mb-3.5">
-      <Popover open={listOpen} onOpenChange={setOpen}>
-        <PopoverAnchor asChild>
-          <div className="flex items-center rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] focus-within:border-[#2680FC]">
-            <input
-              ref={inputRef}
-              id={inputId}
-              type="text"
-              role="combobox"
-              aria-expanded={listOpen}
-              aria-controls={listId}
-              aria-activedescendant={
-                listOpen && lastIndex >= 0
-                  ? `${listId}-${activeIndex}`
-                  : undefined
+      <div className="flex items-center rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] focus-within:border-[#2680FC]">
+        <input
+          ref={inputRef}
+          id={inputId}
+          type="text"
+          role="combobox"
+          aria-expanded={listOpen}
+          aria-controls={listId}
+          aria-activedescendant={
+            listOpen && lastIndex >= 0
+              ? `${listId}-${activeIndex}`
+              : undefined
+          }
+          aria-autocomplete="list"
+          inputMode="search"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          value={selected ? jobLabel(selected) : query}
+          readOnly={Boolean(selected)}
+          onChange={(event) => {
+            changeQuery(event.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={closeOnBlur}
+          onKeyDown={(event) => {
+            if (selected) {
+              if (event.key === "Backspace") {
+                event.preventDefault();
+                clear();
               }
-              aria-autocomplete="list"
-              inputMode="search"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              value={selected ? jobLabel(selected) : query}
-              readOnly={Boolean(selected)}
-              onChange={(event) => {
-                changeQuery(event.target.value);
+              return;
+            }
+            switch (event.key) {
+              case "ArrowDown":
+                event.preventDefault();
                 setOpen(true);
-              }}
-              onFocus={() => setOpen(true)}
-              onBlur={() => setOpen(false)}
-              onKeyDown={(event) => {
-                if (selected) {
-                  if (event.key === "Backspace") {
-                    event.preventDefault();
-                    clear();
-                  }
-                  return;
+                setActiveIndex((i) => Math.min(i + 1, Math.max(lastIndex, 0)));
+                break;
+              case "ArrowUp":
+                event.preventDefault();
+                setActiveIndex((i) => Math.max(i - 1, 0));
+                break;
+              case "Enter":
+                if (listOpen && suggestions[activeIndex]) {
+                  event.preventDefault();
+                  select(suggestions[activeIndex]);
+                } else if (listOpen && canCreate && activeIndex === suggestions.length) {
+                  event.preventDefault();
+                  onCreate?.(query.trim());
                 }
-                switch (event.key) {
-                  case "ArrowDown":
-                    event.preventDefault();
-                    setOpen(true);
-                    setActiveIndex((i) => Math.min(i + 1, Math.max(lastIndex, 0)));
-                    break;
-                  case "ArrowUp":
-                    event.preventDefault();
-                    setActiveIndex((i) => Math.max(i - 1, 0));
-                    break;
-                  case "Enter":
-                    if (listOpen && suggestions[activeIndex]) {
-                      event.preventDefault();
-                      select(suggestions[activeIndex]);
-                    } else if (listOpen && canCreate && activeIndex === suggestions.length) {
-                      event.preventDefault();
-                      onCreate?.(query.trim());
-                    }
-                    break;
-                  case "Escape":
-                    if (listOpen) {
-                      event.preventDefault();
-                      setOpen(false);
-                    } else {
-                      changeQuery("");
-                    }
-                    break;
+                break;
+              case "Escape":
+                if (listOpen) {
+                  event.preventDefault();
+                  setOpen(false);
+                } else {
+                  changeQuery("");
                 }
-              }}
-              placeholder={
-                jobsLoading ? "Loading jobs..." : "Search by job # or name..."
-              }
-              disabled={disabled || jobsLoading}
-              className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:outline-none disabled:opacity-50 md:text-sm"
-            />
-            {selected && (
-              <button
-                type="button"
-                aria-label="Clear job"
-                onClick={clear}
-                disabled={disabled}
-                className="px-3 py-2.5 text-[#b4b4b4] hover:text-white disabled:opacity-50"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        </PopoverAnchor>
-
-        <PopoverContent
-          align="start"
-          sideOffset={4}
-          // Keep focus (and the keyboard) in the input.
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          onInteractOutside={(event) => {
-            // Clicks on the field itself must not close the list.
-            if (inputRef.current?.contains(event.target as Node)) {
-              event.preventDefault();
+                break;
             }
           }}
-          // 21rem fits filterJobs' 8-item cap at ~40px per option.
-          className="max-h-[21rem] w-[var(--radix-popover-trigger-width)] overflow-y-auto rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] p-0 text-white shadow-md"
+          placeholder={
+            jobsLoading ? "Loading projects..." : "Search by project name or number"
+          }
+          disabled={disabled || jobsLoading}
+          className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:outline-none disabled:opacity-50"
+        />
+        {selected && (
+          <button
+            type="button"
+            aria-label="Clear project"
+            onClick={clear}
+            disabled={disabled}
+            className="px-3 py-2.5 text-[#b4b4b4] hover:text-white disabled:opacity-50"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {listOpen && (
+        <div
+          // Keeps focus (and the keyboard) in the input while a row is clicked.
+          onMouseDown={(event) => event.preventDefault()}
+          className="mt-1 max-h-64 overflow-y-auto overscroll-contain rounded-lg border border-[#4e4e4e] bg-[#262626] text-white"
         >
-          <div id={listId} role="listbox">
+          <div id={listId} role="listbox" aria-label="Projects">
             {suggestions.map((job, index) => (
               <div
                 key={job.id}
                 id={`${listId}-${index}`}
                 role="option"
                 aria-selected={index === activeIndex}
-                // onMouseDown fires before the input's blur, so the click lands.
-                onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => select(job)}
                 className={cn(
-                  "flex cursor-pointer items-baseline gap-2 px-3 py-2.5 text-sm",
+                  "flex min-h-11 cursor-pointer items-baseline gap-2 px-3 py-2.5 text-base",
                   index === activeIndex && "bg-[#353535]"
                 )}
               >
                 <span className="shrink-0 text-[#a0a0a0]">#{job.job_number}</span>
-                <span className="truncate">{job.name}</span>
+                <span className="min-w-0 break-words">{job.name}</span>
               </div>
             ))}
             {canCreate && (
@@ -319,11 +314,10 @@ export function JobTypeahead({
                 id={`${listId}-${suggestions.length}`}
                 role="option"
                 aria-selected={activeIndex === suggestions.length}
-                onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActiveIndex(suggestions.length)}
                 onClick={() => onCreate?.(query.trim())}
                 className={cn(
-                  "cursor-pointer truncate border-t border-[#4e4e4e] px-3 py-2.5 text-sm text-[#8bbaff]",
+                  "flex min-h-11 cursor-pointer items-center break-words border-t border-[#4e4e4e] px-3 py-2.5 text-base text-[#8bbaff]",
                   activeIndex === suggestions.length && "bg-[#353535]"
                 )}
               >
@@ -332,12 +326,12 @@ export function JobTypeahead({
             )}
           </div>
           {noMatches && (
-            <div role="status" className="px-3 py-2.5 text-xs text-[#a0a0a0]">
-              No matching jobs
+            <div role="status" className="px-3 py-2.5 text-sm text-[#b4b4b4]">
+              No matching projects
             </div>
           )}
-        </PopoverContent>
-      </Popover>
+        </div>
+      )}
     </div>
   );
 }

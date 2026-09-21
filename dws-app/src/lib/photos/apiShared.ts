@@ -2,7 +2,7 @@ import { PATH_COLUMNS } from './repair/known-paths';
 
 /** Columns every photos response returns (uploader name + job embedded). */
 export const PHOTO_COLUMNS =
-  'id, job_id, uploader_id, kind, sheet_number, tags, captured_at, ' +
+  'id, job_id, uploader_id, kind, tags, captured_at, ' +
   'captured_at_source, ' +
   'original_path, original_bytes, mime_type, original_name, thumb_path, ' +
   'preview_path, playback_path, duration_secs, sidecar_path, sidecar_name, ' +
@@ -31,10 +31,8 @@ export function escapeForIlike(raw: string): string {
   return escapeIlikeWildcards(raw).replace(/[,()]/g, ' ').trim();
 }
 
-/** Trimmed sheet number; null when absent, blank, or not a string. */
-export function cleanSheet(input: unknown): string | null {
-  return typeof input === 'string' && input.trim() ? input.trim() : null;
-}
+/** Most photos one bulk call (album add/remove, bulk tag) may name. SQL enforces the same number. */
+export const MAX_BULK_PHOTOS = 500;
 
 export const MAX_TAGS = 20;
 export const MAX_TAG_LENGTH = 64;

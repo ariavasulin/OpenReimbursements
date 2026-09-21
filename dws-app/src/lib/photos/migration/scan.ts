@@ -4,7 +4,7 @@ import type { MigrationRequest, MigrationSource } from './client';
 /** Register, stream, and seal one selected source under its reviewed mapping. */
 export async function scanMigrationSource(request: MigrationRequest, options: {
   batchId: string; source: MigrationSource; local: LocalSource;
-  register: boolean; selectionRules: { sheet_number: string; tags: string[] };
+  register: boolean; selectionRules: { tags: string[] };
   signal: AbortSignal; onChunk(chunkCount: number): void;
 }): Promise<void> {
   const { batchId, source, local, signal } = options;

@@ -1,107 +1,64 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { Camera, FolderInput, Upload } from "lucide-react";
+import AccountMenu from "@/components/photos/account-menu";
 import { useHasCamera } from "@/components/photos/multi-shot-camera";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
-import SearchInput from "@/components/photos/search-input";
-import { PHOTO_SEARCH_PATH, photoSearchHref } from "@/lib/photos/photo-link";
-import { signOut } from "@/hooks/use-session-guard";
+import SearchBox from "@/components/photos/search-box";
 
 /**
- * Desktop-only header, styled after the receipts admin shell
- * (user-management-dashboard.tsx) so the two halves read as one product.
- * Only mounted when useDesktop() is true — no desktop: guards needed here.
+ * Desktop-only header: the name, search, and the ways to add photos. Receipts
+ * and Sign out live in the account menu at the far right; Trash is at the foot
+ * of the left rail. Only mounted when useDesktop() is true — no desktop:
+ * guards needed here.
  */
+const action =
+  "flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-3 text-base font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
+
 export default function TopBar() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const { query, setQuery, debouncedQuery, openPicker, openCamera } =
-    usePhotosShell();
+  const { openPicker, openCamera } = usePhotosShell();
   const hasCamera = useHasCamera();
-
-  const onRoot = pathname === "/photos";
-  const trimmed = query.trim();
-
-  // On /photos, typing already filters the overview and the rail (both read
-  // ["photo-jobs", debouncedQuery]), so Enter does nothing extra. Elsewhere it
-  // submits to photo search — replacing on the search route itself, so
-  // refining a query does not make Back walk every intermediate one.
-  const handleSubmit = () => {
-    if (onRoot || !trimmed) return;
-    const href = photoSearchHref(trimmed);
-    if (pathname === PHOTO_SEARCH_PATH) router.replace(href);
-    else router.push(href);
-  };
 
   return (
     <div className="shrink-0 border-b border-[#444444]">
-      <div className="flex h-16 items-center gap-4 px-4 md:px-8">
+      <div className="flex min-h-16 items-center gap-4 px-4 py-2 md:px-6">
         <Link
           href="/photos"
-          className="shrink-0 text-[15px] font-semibold tracking-wide"
+          className="flex min-h-11 shrink-0 items-center gap-1 text-base font-semibold tracking-wide xl:w-[256px]"
         >
           DWS <span className="text-[#2680FC]">Photos</span>
         </Link>
 
-        <div className="relative w-full max-w-sm">
-          <SearchInput
-            value={query}
-            onChange={setQuery}
-            onSubmit={handleSubmit}
-            className="py-2"
-          />
-          {onRoot && debouncedQuery && (
-            <Link
-              href={photoSearchHref(debouncedQuery)}
-              className="absolute left-0 top-full z-20 mt-1 block w-full truncate rounded-lg border border-[#3e3e3e] bg-[#2e2e2e] px-3 py-1.5 text-xs text-[#2680FC] shadow-lg hover:text-[#1a6fd8]"
-            >
-              Search photos for &ldquo;{debouncedQuery}&rdquo; &rsaquo;
-            </Link>
-          )}
-        </div>
+        <SearchBox className="w-full max-w-md" />
 
-        <div className="ml-auto flex shrink-0 items-center space-x-4">
-          <Link href="/photos/trash" className="text-sm text-[#8bbaff] hover:underline">Trash</Link>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Link
+            href="/migrate"
+            className={`${action} text-[#d0d0d0] hover:bg-[#333333] hover:text-white`}
+          >
+            <FolderInput className="h-4 w-4" aria-hidden="true" />
+            Import folders
+          </Link>
           {hasCamera && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
+              type="button"
               onClick={openCamera}
-              className="bg-[#333333] text-white hover:bg-[#444444]"
+              className={`${action} bg-[#333333] text-white hover:bg-[#444444]`}
             >
-              Take Photos
-            </Button>
+              <Camera className="h-4 w-4" aria-hidden="true" />
+              Take photos
+            </button>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
+          <button
+            type="button"
             onClick={openPicker}
-            className="bg-[#333333] text-white hover:bg-[#444444]"
+            className={`${action} bg-[#2680FC] text-white hover:bg-[#1a6fd8]`}
           >
+            <Upload className="h-4 w-4" aria-hidden="true" />
             Upload
-          </Button>
-          {/* asChild, not a Button inside the Link: nesting them is invalid
-              interactive content and two focus stops for one action. */}
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="bg-[#333333] text-white hover:bg-[#444444]"
-          >
-            <Link href="/employee">Receipts</Link>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={signOut}
-            // red-600, not the admin shell's red-500: white on red-500 is
-            // 3.82:1, under the 4.5:1 floor for this small label.
-            className="bg-red-600 text-white hover:bg-red-700"
-          >
-            Sign out
-          </Button>
+          </button>
+          <AccountMenu />
         </div>
       </div>
     </div>

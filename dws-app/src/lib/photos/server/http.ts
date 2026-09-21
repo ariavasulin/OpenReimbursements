@@ -7,6 +7,7 @@ const errors = {
   forbidden: [403, 'This action is not permitted.'],
   not_found: [404, 'The requested record was not found.'],
   conflict: [409, 'The record changed or has already been used.'],
+  new_folders_require_review: [409, 'New folders were found after this import was approved. Start a new import to review them. Photos already imported are kept.'],
   handoff_expired: [410, 'This handoff has expired.'],
   payload_too_large: [413, 'The request is too large.'],
   rate_limited: [429, 'Please try again later.'],
@@ -92,6 +93,7 @@ export function throwPhotoDatabaseError(error: { code?: string; message?: string
   if (message === 'invalid_input') throw new PhotoApiError('invalid_input');
   if (message === 'invalid_actor') throw new PhotoApiError('unauthenticated');
   if (message === 'handoff_expired') throw new PhotoApiError('handoff_expired');
+  if (message === 'new_folders_require_review') throw new PhotoApiError('new_folders_require_review');
   if (error.code === '42501' || message === 'forbidden' || message === 'wrong_consumer' || message === 'wrong_script') {
     throw new PhotoApiError('forbidden');
   }
@@ -108,11 +110,17 @@ export async function photoRpc(actor: PhotoActor, name: string, args: Record<str
   return data;
 }
 
-/** Parse application links without fetching them; callers validate their UUIDs. */
-export function photoLinkIds(reference: string, origin: string) {
+/**
+ * Parse application links without fetching them; callers validate their UUIDs.
+ * Accept the canonical Copy link address and the URLs the photo grids put in the
+ * address bar. Album/search context does not constrain the photo's project.
+ */
+export function photoLinkIds(reference: string, origin: string): { jobId: string | null; photoId: string | null } {
   let url: URL;
   try { url = new URL(reference, origin); } catch { throw new PhotoApiError('invalid_input'); }
+  const path = /^\/photos(?:\/([0-9a-f-]+))?\/?$/i.exec(url.pathname);
+  const collection = /^\/photos\/(?:search|albums\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.test(url.pathname);
   if (![origin, 'https://design-workshops.app', 'https://photos.design-workshops.app', 'https://dws-receipts.com', 'https://www.dws-receipts.com', 'https://photos.dws-receipts.com'].includes(url.origin) ||
-      url.username || url.password || !/^\/photos\/[0-9a-f-]+\/?$/i.test(url.pathname)) throw new PhotoApiError('invalid_input');
-  return { jobId: url.pathname.split('/')[2], photoId: url.searchParams.get('photo') };
+      url.username || url.password || (!path && !collection)) throw new PhotoApiError('invalid_input');
+  return { jobId: path?.[1] ?? null, photoId: url.searchParams.get('photo') };
 }

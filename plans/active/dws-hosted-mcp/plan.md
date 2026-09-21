@@ -1,16 +1,18 @@
 ---
 status: active
 created: 2026-09-04
-updated: 2026-09-09
+updated: 2026-09-21
 ---
 
 # Hosted DWS MCP, photo migration, and issue reporting
 
 This technical specification and implementation plan changes live photo authorization, library identity, deletion, uploads, and repair. Deliver it in one PR through sequential, independently verified phases, followed by an operator-controlled production cutover.
 
-**Agent brief.** Intent: deliver both `photos` and `report_issue` through two hosted MCP tools in the existing Next.js application. Source of truth: this plan, then the frozen [System Design](sources/system-design.md), [research](sources/research.md), and [ticket](sources/ticket.md). This plan replaces the remaining separate Program Design interview. The user subsequently requested a Claude review and incorporation of its findings; the [review dispositions](journal.md) record those changes. Locked decisions: direct browser-to-Supabase uploads, shared secret-bearing MCP URL, SMS identity for photo actions, full photo authority through a valid handoff, ordinary uploader-or-admin deletion, global hashed content identity, and 30-day trash. Current phase: **issue-interview revision and local implementation verified; external office/activation checks outstanding**; preflight passed on 2026-09-07. Stop-and-ask triggers: a need to change those decisions, provision another runtime, remove a must-ship skill, automatically choose production canonical photos, or make trash private by changing the bucket model. Dependency/API adaptation, test failures, and ordinary code organization remain implementation-owned.
+**Agent brief.** Intent: deliver both `photos` and `report_issue` through two hosted MCP tools in the existing Next.js application. Source of truth: this plan, then the frozen [System Design](sources/system-design.md), [research](sources/research.md), and [ticket](sources/ticket.md). This plan replaces the remaining separate Program Design interview. The user subsequently requested a Claude review and incorporation of its findings; the [review dispositions](journal.md) record those changes. Locked decisions: direct browser-to-Supabase uploads, shared secret-bearing MCP URL, SMS identity for photo actions, full photo authority through a valid handoff, ordinary deletion (first uploader-or-admin; opened to any signed-in employee on 2026-09-20 by `plans/active/photo-albums/plan.md` Decision 7), global hashed content identity, and 30-day trash. Current phase: **issue-interview revision and local implementation verified; external office/activation checks outstanding**; preflight passed on 2026-09-07. Stop-and-ask triggers: a need to change those decisions, provision another runtime, remove a must-ship skill, automatically choose production canonical photos, or make trash private by changing the bucket model. Dependency/API adaptation, test failures, and ordinary code organization remain implementation-owned.
 
 The user-requested [planning contract](sources/planning-contract/AGENTS.md), [authoring reference](sources/planning-contract/refs/authoring.md), and [implementation discipline](sources/planning-contract/IMPLEMENTATION.md) are frozen alongside this plan for portability. Their demo-only tooling and cross-repository paths are reference context, not commands or missing prerequisites for OpenReimbursements; this plan supplies the applicable execution and verification entry points. Every build phase runs continuously to its exit criteria; there are no recurring phase-approval gates. Production mutations remain subject to the explicit cutover actions below.
+
+The [photo-albums extension](../photo-albums/plan.md) is locally implemented and verified on 2026-09-21: optional projects, albums, per-folder import review, bulk tools, and gated sharing. Its production rollout and this plan’s office/vendor activation obligations remain open. See its [verification record](../photo-albums/reviews/2026-09-21-verification.md).
 
 ## Why and scope
 
@@ -48,7 +50,7 @@ Recheck the relevant anchor at every phase entry. A changed implementation detai
 |---|---|
 | Current source baseline | `git rev-parse HEAD`; compare changes since `142b09c80977c25206ff6883294aa54326efb0d5` in the touched domain |
 | Existing TUS and finalization engine | `rg -n 'createResumableUpload|uploadOne|exists|finalize' dws-app/src/lib/photos/upload.ts dws-app/src/lib/photos/upload-tus.ts dws-app/src/lib/photos/upload-manager.tsx` |
-| Uploader-or-admin deletion and direct organizational grants | `cat dws-app/supabase/migrations/20260822130100_rls_photos_tighten_update.sql`; read current `dws-app/src/app/api/photos/[id]/route.ts` |
+| Uploader-or-admin deletion (true when written; removed 2026-09-20 by `plans/active/photo-albums/plan.md` Decision 7) and direct organizational grants | `cat dws-app/supabase/migrations/20260822130100_rls_photos_tighten_update.sql`; read current `dws-app/src/app/api/photos/[id]/route.ts` |
 | Repair is one 300-second function | `rg -n 'maxDuration|BUDGET|planSweep|deleteDeadRow' dws-app/src/app/api/photos/repair/route.ts`; read `dws-app/vercel.json` |
 | Build does not enforce TypeScript success | `cat dws-app/next.config.ts dws-app/package.json dws-app/vitest.config.ts` |
 | Production identity and bucket configuration | Read-only `vercel project inspect dws-receipts`; authenticated read of the linked Storage bucket; compare project and aliases with the research follow-up |
@@ -69,14 +71,16 @@ execute_dws_script({ script_name, input })
 
 type PhotoReference =
   | { photo_id: string }
-  | { photo_url: string }  // app URL /photos/<job-id>?photo=<photo-id>
+  | { photo_url: string }  // app URL /photos?photo=<photo-id>, or the older /photos/<job-id>?photo=<photo-id>; both accepted on the new and old photo hosts since 2026-09-20 (photo-albums § URLs)
   | { job_number: string; original_filename: string };
 type PhotoSelector =
   | { photos: PhotoReference[] }
   | { job_number: string; scope: "active" | "trash" };
 
-migrate_photos({ sources?: { label: string; job_number?: string }[] })
-add_photos({ job_number?: string; sheet_number?: string; tags?: string[] })
+// Every field but `label` is a suggestion that pre-fills browser review; nothing is created before the employee confirms.
+// album_name and per-source tags added 2026-09-20 (photo-albums Decisions 9 and 10): each imported folder becomes an album, and a project is optional.
+migrate_photos({ sources?: { label: string; job_number?: string; new_project_name?: string; album_name?: string; tags?: string[] }[] })
+add_photos({ job_number?: string; new_project_name?: string; album_name?: string; tags?: string[] })  // sheet_number removed 2026-09-20 (photo-albums Decision 6); the schema is strict, so sending it is invalid_input
 move_photos({ selector: PhotoSelector; destination_job_number: string })
 remove_photos({ selector: PhotoSelector })
 restore_photos({ selector: PhotoSelector; destination_job_number?: string })
@@ -106,18 +110,18 @@ Photo routes live under `/api/photo-migrations/*` for upload ledgers and `/api/p
 | Surface | Mutation authority |
 |---|---|
 | Ordinary upload | Authenticated employee; own Storage prefix; shared hash/finalize contract |
-| Ordinary in-app Delete | Uploader or administrator, checked server-side; soft delete |
+| Ordinary in-app Delete | Any signed-in employee (`plans/active/photo-albums/plan.md` Decision 7); soft delete; `deleted_by` records who |
 | Ordinary in-app move | Any signed-in employee as today, but through an exact-target confirmation; UI-origin action can grant move only |
-| Ordinary trash restore | Uploader or administrator; confirmed target; broader restore requires MCP handoff |
+| Ordinary trash restore | Any signed-in employee (`plans/active/photo-albums/plan.md` Decision 7); confirmed target |
 | MCP-launched upload/move/remove/restore | Authenticated handoff consumer, bound script kind and confirmed target set; no per-job ACL |
 | Duplicate cutover choices | Administrator-confirmed mapping, executed by an authorized operator |
 | Purge | Existing `CRON_SECRET` boundary, server-only |
 
 References resolve only after login. Parse app photo links without fetching arbitrary URLs. For job + filename, zero matches stays unresolved and multiple matches require selection. A bulk selector materializes a paginated, exact list of IDs with expected job/trash state; confirmation freezes membership. Subsequent requests use that list, not a re-evaluated job-wide predicate. Same already-applied outcome is a no-op; incompatible concurrent changes are item conflicts. Ordinary UI-origin actions cannot be changed into MCP-origin remove actions.
 
-Revise `DELETE /api/photos/:id` to trash while preserving uploader-or-admin checks. `PATCH` accepts sheet/tags on active rows only and rejects `job_id`; job edits use the move workflow. Revoke authenticated direct INSERT, DELETE, and `job_id` UPDATE on `photos`; keep active-row-only sheet/tag UPDATE. Finalize becomes a narrow service-side transaction that independently validates caller, object prefix, job, digest, and attempt, preventing null-hash inserts through PostgREST. RLS and grants deny all direct ledger writes and all deletion/provenance field updates.
+Revise `DELETE /api/photos/:id` to trash; any signed-in employee may use it (the first release kept uploader-or-admin checks; `plans/active/photo-albums/plan.md` Decision 7 removed them). `PATCH` accepts tags on active rows only and rejects `job_id` and every other key, including the removed `sheet_number`; job edits use the move workflow. Revoke authenticated direct INSERT, DELETE, and `job_id` UPDATE on `photos`; keep active-row-only tag UPDATE. Finalize becomes a narrow service-side transaction that independently validates caller, object prefix, job, digest, and attempt, preventing null-hash inserts through PostgREST. RLS and grants deny all direct ledger writes and all deletion/provenance field updates.
 
-Replace the authenticated `photos_select` policy with `using (deleted_at is null)` and remove any other permissive photo SELECT policy that would widen it. Ordinary session-client reads and the existing security-invoker summary/tag RPCs inherit the same active-only rule, including queries issued by older application code. Retain explicit active filters at application boundaries for clarity. Intentional trash/dedupe/action reads use narrow routes that verify the session and then query with the service role; internal ownership checks and repair use their existing server-only authority. Ordinary PATCH on trash returns not found; idempotent Delete replay can inspect the row through the verified server boundary while preserving uploader-or-admin authorization.
+Replace the authenticated `photos_select` policy with `using (deleted_at is null)` and remove any other permissive photo SELECT policy that would widen it. Ordinary session-client reads and the existing security-invoker summary/tag RPCs inherit the same active-only rule, including queries issued by older application code. Retain explicit active filters at application boundaries for clarity. Intentional trash/dedupe/action reads use narrow routes that verify the session and then query with the service role; internal ownership checks and repair use their existing server-only authority. Ordinary PATCH on trash returns not found; idempotent Delete replay can inspect the row through the verified server boundary.
 
 ### Durable relationships make retries explicit
 
@@ -127,12 +131,13 @@ UUID identities, `timestamptz` UTC timestamps, `bigint` byte counts, lower-case 
 |---|---|
 | `dws_action_handoffs` | Unique `token_digest`; script and validated requested input; `expires_at`, `consumed_at`, `consumed_by`; exactly one `migration_batch_id` or `photo_action_batch_id` when consumed |
 | `migration_batches` | Creator, approval actor/time, status, timestamps; approved source/job rules are the permission scope |
-| `migration_sources` | One batch, one active destination job, source kind `directory` or `files`, label, current sealed scan ID/fingerprint; mapping changes require a new draft/confirmation |
+| `migration_sources` | One batch, an optional default project (since 2026-09-20 only a default for its folder rows — photo-albums Decision 10), source kind `directory` or `files`, label, current sealed scan ID/fingerprint; mapping changes require a new draft/confirmation |
+| `migration_folders` | Added 2026-09-20 (photo-albums Decisions 9 and 10). One row per folder that directly holds importable photos: path under the picked folder, album name, optional project, tags, and the album once created. Derived at seal, editable while the batch is a draft, frozen on approve. Each imported photo takes its row's project and tags and joins its row's album, which is created once, when the first photo lands |
 | `migration_inventory_chunks` | Unique `(source_id, scan_id, chunk_number)`, payload digest and aggregate counts; same-key same-payload replay succeeds, differing payload conflicts |
 | `migration_items` | Unique `(source_id, relative_path, revision)` and partial unique `(source_id, relative_path) where is_current`; source size/mtime/MIME, optional sidecar descriptor, digest, status/progress, stable upload attempt/photo UUID, canonical photo/job, error and renewable lease |
-| `photo_upload_attempts` | Ordinary-upload attempt UUID, actor, destination job, source signature/digest, stable photo UUID, deterministic Storage paths, status and lease generation/expiry; same-source retry reuses the attempt, changed source cannot overwrite it |
+| `photo_upload_attempts` | Ordinary-upload attempt UUID, actor, destination job (optional since 2026-09-20, with the albums the upload names; an upload must name a job, an album, or both — photo-albums Decisions 1 and 3), source signature/digest, stable photo UUID, deterministic Storage paths, status and lease generation/expiry; same-source retry reuses the attempt, changed source cannot overwrite it |
 | `photo_content_claims` | Digest primary key; exactly one migration-item or ordinary-upload-attempt owner, actor, lease generation/expiry; compare-and-swap reclaim of expired claims |
-| `photo_action_batches/items` | Batch origin/authority, action, selector, destination, approval; unique `(batch_id, photo_id)`, expected prior job/trash state, item outcome and actor; no target additions after approval |
+| `photo_action_batches/items` | Batch origin/authority, action, selector, destination (a UI move may name none, meaning "No project", and an item's expected prior job may be empty — photo-albums Decision 1, 2026-09-20), approval; unique `(batch_id, photo_id)`, expected prior job/trash state, item outcome and actor; no target additions after approval |
 | `issue_report_submissions` | Server ID, optional unique client key, payload digest, 24-hour dedupe expiry, normalized payload/attribution, publishing lease, status, GitHub number/URL, error |
 | `photo_release_state` | Server-only singleton: photo-write, MCP, and repair gates; schema generation and operator timestamps; every new privileged boundary fails closed if its gate is absent/closed |
 | `photo_repair_progress` | Server-only repair lease and bounded scan cursors; checkpoint pages, never persist partial ownership as a complete inventory |
@@ -159,7 +164,7 @@ Definitive rejection: failed -> publishing on explicit eligible retry; unknown -
 
 ### Inventory and uploads scale by bounded work
 
-Select multiple directories in Chrome/Edge from the office machine; the server never receives a usable local absolute path. Each source maps to exactly one active job. Directory names suggest jobs but do not assign them. `add_photos` uses ordinary file selection and one source in the same durable engine. Its new compact picker accepts at most 500 files per selection and directs larger selections to the folder workflow before approval. This bounds retained File objects; it is separate from the 500-entry request limit and does not cap directory migration or change the existing phone upload sheet. Source metadata and XMP pairing are computed within source-relative directory + case-insensitive basename; ambiguous same-basename image pairs warn and do not attach arbitrarily.
+Select multiple directories in Chrome/Edge from the office machine; the server never receives a usable local absolute path. Since 2026-09-20 (photo-albums Decisions 9 and 10) a source no longer maps to exactly one job: every folder that directly holds photos becomes one album named from its path, and each folder row carries an optional project and tags, which a choice on a top-level folder sets for the folders inside it. Directory names suggest projects (a folder name holding an existing project number as a whole word) but nothing is assigned that review did not show. `add_photos` uses ordinary file selection and one source in the same durable engine. Its new compact picker accepts at most 500 files per selection and directs larger selections to the folder workflow before approval. This bounds retained File objects; it is separate from the 500-entry request limit and does not cap directory migration or change the existing phone upload sheet. Source metadata and XMP pairing are computed within source-relative directory + case-insensitive basename; ambiguous same-basename image pairs warn and do not attach arbitrarily.
 
 Supported images/videos and paired XMP are included. `.picasa.ini`, `.picasaoriginals/**`, hidden/cache data, unknown non-media files, and unmatched XMP are exclusions with reason counts. Inventory chunk requests are at most 500 entries **and** 1 MiB encoded JSON; split on whichever bound is reached first. Reject oversized requests before accumulating their full body. Seal each scan only when chunk continuity, digests, totals, and source mapping agree. Approval shows sources/jobs, count, total bytes, XMP counts, exclusions, and warnings; incomplete inventories cannot approve.
 
@@ -170,9 +175,10 @@ Use `hash-wasm` incremental SHA-256 in a worker for both ordinary and migration 
 ```ts
 // Contract sketch; private adapter names are implementation-owned.
 type ContentOutcome =
-  | { status: "created"; photo_id: string; job_id: string }
-  | { status: "duplicate_active"; photo_id: string; job_id: string }
-  | { status: "duplicate_trashed"; photo_id: string; job_id: string; purge_after: string };
+  // job_id is null for a photo with no project (photo-albums Decision 1, 2026-09-20).
+  | { status: "created"; photo_id: string; job_id: string | null }
+  | { status: "duplicate_active"; photo_id: string; job_id: string | null }
+  | { status: "duplicate_trashed"; photo_id: string; job_id: string | null; purge_after: string };
 
 // Streaming worker core, initialized once per worker and reset per file.
 hasher.init();
@@ -182,7 +188,7 @@ for (let offset = 0; offset < file.size; offset += chunkBytes) {
 const digest = hasher.digest("hex");
 ```
 
-Digest lookup and global claim precede all original transfers. An active same-job match skips; another-job match requires a separate confirmed move; trash requires confirmed restore or restore-and-move. If the ordinary uploader is neither that photo's uploader nor an administrator, show: "Ask an administrator to restore this photo, or use the MCP restore handoff." Keep the item unresolved until that action succeeds or the employee skips it; do not upload a second copy. The browser receives canonical photo/job references but MCP does not. Finalize verifies original existence and size through Storage metadata, then atomically inserts or resolves the canonical row, completes the item, and releases its claim. Client-computed hashes provide application dedupe, not independent server attestation of bytes. A replayed photo UUID must match its original actor, digest, and attempt; unrelated reuse is a conflict, not success. Sidecar/derivative upload is best effort, with persistent warnings; repair cannot reconstruct a missing XMP from nothing, so offer reselection/retry for that sidecar.
+Digest lookup and global claim precede all original transfers. An active same-job match skips; another-job match requires a separate confirmed move; trash requires confirmed restore or restore-and-move, which any signed-in employee may confirm while the 30 days last (`plans/active/photo-albums/plan.md` Decision 7; the first release showed non-uploaders an ask-an-administrator remedy instead). Keep the item unresolved until that action succeeds or the employee skips it; do not upload a second copy. The browser receives canonical photo/job references but MCP does not. Finalize verifies original existence and size through Storage metadata, then atomically inserts or resolves the canonical row, completes the item, and releases its claim. Client-computed hashes provide application dedupe, not independent server attestation of bytes. A replayed photo UUID must match its original actor, digest, and attempt; unrelated reuse is a conflict, not success. Sidecar/derivative upload is best effort, with persistent warnings; repair cannot reconstruct a missing XMP from nothing, so offer reselection/retry for that sidecar.
 
 On a race after bytes transfer, return the same typed duplicate outcome. After the database transaction commits, the finalize route uses the server-side service-role Storage client for best-effort removal of only that attempt's unreferenced objects; it never deletes canonical or shared paths. Storage deletion is not part of the Postgres transaction, and failure leaves the successful canonical result intact for repair to clean up later. Remove the browser `storage.remove` cleanup seam: authenticated users have no photos-bucket DELETE policy. Network/5xx/429 retry up to five attempts with jittered delays capped at 20 seconds, respecting a longer Retry-After by interrupting until due rather than holding a Vercel request. Refresh expired auth once; a failed refresh requires sign-in. Permission/quota/unsupported/oversize errors require the stated remedy or explicit skip. Closing the tab stops foreground work; reopening after TUS URL expiry restarts only the unfinished file and preserves completed rows.
 
@@ -362,17 +368,17 @@ Photo actions depend on established authority and identity. This phase changes a
 
 ### Steps
 
-1. Implement reference resolution, target materialization, approval, and per-target compare-and-swap move/trash/restore. Add the ordinary UI move origin with move-only authority; preserve uploader-or-admin Delete and restore checks.
+1. Implement reference resolution, target materialization, approval, and per-target compare-and-swap move/trash/restore. Add the ordinary UI move origin with move-only authority; preserve uploader-or-admin Delete and restore checks. *(Those checks were removed on 2026-09-20 by `plans/active/photo-albums/plan.md` Decision 7; do not re-add them.)*
 2. Apply the read-boundary inventory to library listing/search/counts, job summaries, tags, deep-link resolution, and repair candidates. Preserve security-invoker RPCs so Phase 1's SELECT policy governs them; only deliberate trash/dedupe/ownership routes use service-role reads after their authority check. Add trash view and canonical legacy-duplicate explanation; route all ownership edits away from PATCH/direct `job_id` writes. Retire the one-time sidecar utility’s mutation mode while retaining its active-only dry-run audit, so that legacy entry point cannot bypass write gates or retention.
 3. Update copy and cache invalidation so removal says recoverable trash, undo/restore shows retention, and a known URL's continued access is disclosed without claiming revocation.
 
 ### Verify
 
 - [x] [AC-7, AC-8] `npm --prefix dws-app run test:routes` confirms 20 targets, adds a 21st, and proves it is untouched; retry, changed owning job, wrong actor, and repurposed UI-origin action take the declared outcomes.
-- [x] [AC-8] `npm --prefix dws-app run test:db` proves ordinary uploader/admin vs MCP-bound removal; direct grants cannot change jobs, write trash/provenance, insert unhashed photos, or delete rows.
+- [x] [AC-8] `npm --prefix dws-app run test:db` proves ordinary uploader/admin vs MCP-bound removal; direct grants cannot change jobs, write trash/provenance, insert unhashed photos, or delete rows. *(Observed 2026-09-07. Since `plans/active/photo-albums/plan.md` Decision 7 the same suite proves the opposite for ordinary authority: any employee may trash and restore a colleague's photo. MCP binding and the direct-grant denials are unchanged.)*
 - [x] [AC-9] Read-filter integration fixtures contain active/unexpired/expired trash and a legacy duplicate; every categorized library boundary excludes trash, while trash and dedupe endpoints return only their intentional scopes.
 - [x] [AC-5, AC-9] Restore-before-expiry, reject-at-expiry, cross-job restore-and-move, and legacy-duplicate-to-canonical behavior preserve one indexed identity. Repeat removal does not extend retention.
-- [x] [AC-5, AC-8, AC-9] An ordinary uploader matching someone else's trash sees the administrator/MCP remedy, cannot restore through ordinary authority, and sends no duplicate bytes; a properly bound MCP restore then resolves the item.
+- [x] [AC-5, AC-8, AC-9] An ordinary uploader matching someone else's trash sees the administrator/MCP remedy, cannot restore through ordinary authority, and sends no duplicate bytes; a properly bound MCP restore then resolves the item. *(Observed 2026-09-07. Since `plans/active/photo-albums/plan.md` Decision 7 the ordinary restore succeeds for any employee; the browser scenario still proves no duplicate bytes are sent.)*
 - [x] `npm --prefix dws-app test -- src/lib/photos` remains green for library helpers and query behavior.
 
 ### Exit criteria

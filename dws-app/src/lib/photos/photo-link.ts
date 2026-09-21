@@ -4,16 +4,23 @@
 
 export const PHOTO_PARAM = "photo";
 
-/** Shareable link to one photo inside its job. */
-export function buildPhotoLink(
-  origin: string,
-  jobId: string,
-  photoId: string
-): string {
-  return new URL(
-    `/photos/${jobId}?${PHOTO_PARAM}=${encodeURIComponent(photoId)}`,
-    origin
-  ).toString();
+/**
+ * In-app path that opens one photo. A photo with a project keeps its project
+ * page; a photo with none opens from Photos, which shows every photo.
+ */
+export function photoPath(jobId: string | null, photoId: string): string {
+  const query = `?${PHOTO_PARAM}=${encodeURIComponent(photoId)}`;
+  return jobId ? `/photos/${encodeURIComponent(jobId)}${query}` : `/photos${query}`;
+}
+
+/**
+ * The link "Copy link" writes: `/photos?photo=<id>`. It names no project, so it
+ * keeps working when the photo is moved or has no project at all. Older
+ * `/photos/<jobId>?photo=<id>` links already sent stay valid; the server parser
+ * (`photoLinkIds`) accepts both.
+ */
+export function buildPhotoLink(origin: string, photoId: string): string {
+  return new URL(photoPath(null, photoId), origin).toString();
 }
 
 /**
