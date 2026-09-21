@@ -50,7 +50,7 @@ export default function FolderReview(props: FolderReviewProps) {
           <h2 id="your-folders" className="text-xl font-semibold">Your folders</h2>
           <p className={hint}>
             {props.editable
-              ? 'Each folder becomes an album with the same name. You can change a name, and add a project or tags, before you start. Nothing here is required.'
+              ? 'Nothing here is required. Before you start you can change an album’s name (leave it empty to use the folder’s name), and add a project or tags.'
               : 'This is what was chosen for each folder. It cannot be changed once an import has started.'}
           </p>
         </div>
@@ -89,21 +89,23 @@ function PickedFolder({ source, rows, find, ...props }: FolderReviewProps & { so
           </div>
         )}
       </div>
+      {/* "Make a new project" sits with the Project control it feeds: the whole-folder one when there is one, else the single row's. */}
       {props.editable && rows.length > 1 && (
-        <WholeFolderChoice {...props} source={source} folder="" scope={`every folder in ${source.label}`} shared={shared} rows={rows} />
+        <WholeFolderChoice {...props} source={source} folder="" scope={`every folder in ${source.label}`} shared={shared} rows={rows}
+          underProject={props.sourceActions?.(source)} />
       )}
-      {props.editable && props.sourceActions?.(source)}
       {find.trim() && rows.length > 0 && groups.length === 0 && <p className={`${hint} mt-4`}>No folder in {source.label} matches “{find.trim()}”.</p>}
       <ul className="mt-4 space-y-2">
         {groups.map(group => <li key={group.topLevel}><Group {...props} source={source} group={group} forceOpen={Boolean(find.trim())} /></li>)}
       </ul>
+      {props.editable && rows.length === 1 && props.sourceActions?.(source)}
     </div>
   );
 }
 
 /** A project and tags for a folder and everything inside it. It sets them; any one folder can differ afterwards. */
-function WholeFolderChoice({ source, folder, scope, shared, rows, ...props }: FolderReviewProps & {
-  source: MigrationSource; folder: string; scope: string; rows: MigrationFolder[]; shared: ReturnType<typeof sharedChoice>;
+function WholeFolderChoice({ source, folder, scope, shared, rows, underProject, ...props }: FolderReviewProps & {
+  source: MigrationSource; folder: string; scope: string; rows: MigrationFolder[]; shared: ReturnType<typeof sharedChoice>; underProject?: React.ReactNode;
 }) {
   const project = shared.jobId === undefined ? undefined : shared.jobId === null ? null : rows.find(row => row.job_id === shared.jobId)?.jobs ?? undefined;
   return (
@@ -113,6 +115,7 @@ function WholeFolderChoice({ source, folder, scope, shared, rows, ...props }: Fo
         <div><span className={labelClass}>Project</span>
           <div className="mt-1"><ProjectChoice request={props.request} value={project} ariaLabel={`Project for ${scope}`}
             onChange={job => props.onPatch(source, folder, true, { job })} /></div>
+          {underProject}
         </div>
         <div><span className={labelClass}>Tags</span>
           <div className="mt-1"><FolderTags tags={shared.tags} known={props.knownTags} ariaLabel={`Tags for ${scope}`}
@@ -175,7 +178,6 @@ function Row({ source, row, ...props }: FolderReviewProps & { source: MigrationS
                 onChange={event => setName(event.target.value)} onBlur={commit}
                 onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
             : <span className="mt-1 block break-words text-base text-white">{album}</span>}
-          {props.editable && <span className={`${hint} mt-1 block`}>Leave it empty to use the folder’s name.</span>}
         </label>
         <div><span className={labelClass}>Project</span>
           <div className="mt-1"><ProjectChoice request={props.request} value={row.jobs ?? null} disabled={!props.editable || props.busy}

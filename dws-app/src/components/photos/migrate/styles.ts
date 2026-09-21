@@ -11,6 +11,9 @@ export const primaryButton =
 export const quietButton =
   `inline-flex min-h-11 items-center gap-2 rounded-lg px-2 py-2 text-left text-base text-[#8bbaff] underline underline-offset-2 hover:text-white disabled:opacity-40 ${focus}`;
 export const dangerButton = `${button} text-red-300`;
+/** A control that opens a list: its value reads from the left like a text field, with the chevron at the far edge. */
+export const chooserButton =
+  `flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-[#555] bg-[#222222] px-3 py-2 text-left text-base text-white hover:bg-[#2c2c2c] disabled:opacity-40 ${focus}`;
 export const field =
   'min-h-11 w-full rounded-lg border border-[#555] bg-[#222222] px-3 py-2 text-base text-white placeholder:text-[#a8a8a8] focus:border-[#2680FC] focus:outline-none disabled:opacity-60';
 export const label = 'block text-base font-medium text-white';

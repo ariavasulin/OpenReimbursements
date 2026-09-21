@@ -109,21 +109,23 @@ async function prefillMigrationFolders(actor: PhotoActor, source: SealedSource) 
   }
 
   if (source.kind !== 'directory' || source.job_id) return;
+  // Both reads advance by the rows that actually came back and stop on an empty page, never on
+  // a "short" one: the API caps a response at its own maximum, which would look like the end.
   const folders: string[] = [];
-  for (let from = 0; ; from += PREFILL_PAGE) {
+  for (;;) {
     const page = await actor.db.from('migration_folders').select('folder').eq('source_id', source.id)
-      .eq('created_scan_id', source.sealed_scan_id).is('job_id', null).order('folder').range(from, from + PREFILL_PAGE - 1);
+      .eq('created_scan_id', source.sealed_scan_id).is('job_id', null).order('id').range(folders.length, folders.length + PREFILL_PAGE - 1);
     if (page.error) throwPhotoDatabaseError(page.error);
-    folders.push(...(page.data ?? []).map(row => row.folder as string));
-    if ((page.data?.length ?? 0) < PREFILL_PAGE) break;
+    if (!page.data?.length) break;
+    folders.push(...page.data.map(row => row.folder as string));
   }
   if (!folders.length) return; // an ordinary rescan: nothing new, so no project list is read at all
   const jobs: SuggestionJob[] = [];
-  for (let from = 0; ; from += PREFILL_PAGE) {
-    const page = await actor.db.from('jobs').select('id,job_number').eq('is_active', true).order('id').range(from, from + PREFILL_PAGE - 1);
+  for (;;) {
+    const page = await actor.db.from('jobs').select('id,job_number').eq('is_active', true).order('id').range(jobs.length, jobs.length + PREFILL_PAGE - 1);
     if (page.error) throwPhotoDatabaseError(page.error);
-    jobs.push(...(page.data ?? []) as SuggestionJob[]);
-    if ((page.data?.length ?? 0) < PREFILL_PAGE) break;
+    if (!page.data?.length) break;
+    jobs.push(...page.data as SuggestionJob[]);
   }
   const rows = [...suggestFolderProjects(folders, jobs, source.label)].map(([folder, job_id]) => ({ folder, job_id }));
   for (let from = 0; from < rows.length; from += PREFILL_PAGE) {
@@ -132,22 +134,31 @@ async function prefillMigrationFolders(actor: PhotoActor, source: SealedSource) 
   }
 }
 
-/** Folder rows for review: only folders that still hold photos, in id order for stable paging. */
+/**
+ * Folder rows for review: only folders that still hold photos, in id order for stable paging.
+ *
+ * The cursor does NOT use the usual "ask for one row more than the page" test. The API caps every
+ * response at its own maximum (1,000 rows by default), so asking for 1,001 quietly returns 1,000,
+ * "one more" is never seen, and paging stops early: a 5,000-folder import showed 1,000 rows. So a
+ * cursor is returned whenever the page held any row, and the reader stops on an EMPTY page. That
+ * is right whatever the cap is, at the price of one extra small request at the end.
+ */
+export const MIGRATION_FOLDER_PAGE = 500;
 export async function readMigrationFolders(actor: PhotoActor, id: string, request: Request) {
   await readPhotoBatch(actor, id);
   const params = new URL(request.url).searchParams;
   const raw = params.get('limit');
-  const limit = raw === null ? 1000 : migrationInteger(Number(raw), 1000);
+  const limit = raw === null ? MIGRATION_FOLDER_PAGE : migrationInteger(Number(raw), MIGRATION_FOLDER_PAGE);
   if (limit < 1) throw new PhotoApiError('invalid_input');
   const after = params.get('after') ? photoId(params.get('after')) : null;
   let query = actor.db.from('migration_folders')
     .select('id,source_id,folder,album_name,album_id,job_id,tags,photo_count,jobs(id,job_number,name),albums(id,name),migration_sources!inner(batch_id)')
-    .eq('migration_sources.batch_id', id).gt('photo_count', 0).order('id').limit(limit + 1);
+    .eq('migration_sources.batch_id', id).gt('photo_count', 0).order('id').limit(limit);
   if (after) query = query.gt('id', after);
   const { data, error } = await query;
   if (error) throwPhotoDatabaseError(error);
-  const folders = (data ?? []).slice(0, limit).map(({ migration_sources: _source, ...row }) => row);
-  return { folders, next_cursor: (data?.length ?? 0) > limit ? folders.at(-1)!.id : null };
+  const folders = (data ?? []).map(({ migration_sources: _source, ...row }) => row);
+  return { folders, next_cursor: folders.length ? folders.at(-1)!.id : null };
 }
 
 async function anyRow(actor: PhotoActor, source: string) {

@@ -69,18 +69,28 @@ describe('migration control requests', () => {
     expect(request.mock.calls.filter(([path]) => path.includes('/sources?'))).toHaveLength(2);
   });
 
-  it('loads every folder row, a thousand per request, so 5,000 folders is five requests', async () => {
-    const pages = Array.from({ length: 5 }, (_, page) => Array.from({ length: 1000 }, (_, n) => ({ id: `row-${page}-${n}` })));
-    const request = vi.fn(async (path: string) => {
-      const after = new URL(path, 'http://x').searchParams.get('after');
-      const index = after ? Number(after.split('-')[1]) + 1 : 0;
-      return { folders: pages[index], next_cursor: index < 4 ? pages[index].at(-1)!.id : null };
-    });
-    const rows = await loadMigrationFolders(request as MigrationRequest, 'batch');
-    expect(rows).toHaveLength(5000);
-    expect(request).toHaveBeenCalledTimes(5);
-    expect(request.mock.calls[0][0]).toBe('batches/batch/folders?limit=1000');
-    expect(request.mock.calls[1][0]).toBe('batches/batch/folders?limit=1000&after=row-0-999');
+  // Found in a real browser at 5,000 folders: the API caps a response's rows, the server's "is there
+  // one more?" test never saw one, and the page showed 1,000 of 5,000. The loader must therefore
+  // keep going until a page is EMPTY, whatever size the pages are and whatever the cursor says.
+  const all = Array.from({ length: 5000 }, (_, n) => ({ id: `row-${String(n).padStart(4, '0')}` }));
+  const server = (cap: number, cursors: boolean) => vi.fn(async (path: string) => {
+    const params = new URL(path, 'http://x').searchParams; const after = params.get('after');
+    const rows = all.filter(row => !after || row.id > after).slice(0, Math.min(Number(params.get('limit')), cap));
+    return { folders: rows, next_cursor: cursors && rows.length ? rows.at(-1)!.id : null };
+  });
+  it('loads all 5,000 folder rows, stopping only on an empty page', async () => {
+    const request = server(Infinity, true);
+    expect(await loadMigrationFolders(request as MigrationRequest, 'batch')).toHaveLength(5000);
+    expect(request).toHaveBeenCalledTimes(11); // ten pages of 500 and the empty one that ends it
+    expect(request.mock.calls[0][0]).toBe('batches/batch/folders?limit=500');
+    expect(request.mock.calls[1][0]).toBe('batches/batch/folders?limit=500&after=row-0499');
+  });
+  it('still loads every row when the API caps pages below what was asked, or sends no cursor at all', async () => {
+    for (const [cap, cursors] of [[137, true], [500, false], [1, false]] as const) {
+      const rows = await loadMigrationFolders(server(cap, cursors) as MigrationRequest, 'batch');
+      expect(rows.length, `cap ${cap}, cursors ${cursors}`).toBe(5000);
+      expect(new Set(rows.map(row => row.id)).size).toBe(5000);
+    }
   });
 });
 

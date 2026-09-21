@@ -300,7 +300,14 @@ export default function MigratePage() {
     try { await worker.run(); }
     catch (reason) {
       if (!(reason instanceof DOMException && reason.name === 'AbortError')) report(reason);
-    } finally { setRunning(false); starting.current = false; engine.current = null; await refresh(id); }
+    } finally {
+      setRunning(false); starting.current = false; engine.current = null;
+      const after = await refresh(id);
+      // Never leave "Importing…" on a page that has stopped. Pause and Cancel set their own message, so only replace ours.
+      const finished = after?.view.batch.status === 'completed';
+      const done = after?.view.batch.script_name === 'add_photos' ? 'Finished. Your photos are in DWS Photos.' : 'Finished. Every folder is now an album: find them under Albums.';
+      setMessage(current => finished ? done : current.startsWith('Importing.') ? '' : current);
+    }
   };
 
   const stop = async (cancel: boolean) => {
@@ -474,7 +481,8 @@ export default function MigratePage() {
                 </td>
               </tr>;
             })}</tbody></table></div>
-          <div className="flex flex-wrap gap-3"><button className={button} disabled={!cursor || busy} onClick={() => void act(async () => { setCursor(null); await refresh(batchId.current, null, false); })}>First page</button><button className={button} disabled={!items.next_cursor || busy} onClick={() => void act(async () => { const next = items.next_cursor; setCursor(next); await refresh(batchId.current, next, false); })}>Next page</button></div>
+          {/* Only when there is more than one page: controls that cannot help are hidden. */}
+          {(cursor || items.next_cursor) && <div className="flex flex-wrap gap-3"><button className={button} disabled={!cursor || busy} onClick={() => void act(async () => { setCursor(null); await refresh(batchId.current, null, false); })}>First page</button><button className={button} disabled={!items.next_cursor || busy} onClick={() => void act(async () => { const next = items.next_cursor; setCursor(next); await refresh(batchId.current, next, false); })}>Next page</button></div>}
         </section>
       )}
 

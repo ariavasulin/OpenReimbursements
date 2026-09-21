@@ -54,6 +54,42 @@ rename one from its page. Both go through `photo_create_job` /
   a renamed imported job's name. `P-` projects are never touched by the import.
   How the future office sync should reconcile is undecided.
 
+## Importing folders (`/migrate`)
+
+Each imported folder that directly holds photos becomes one album named from its
+path under the picked folder (`Smith Residence/Finished` arrives as
+`Smith Residence – Finished`). A project is optional. The employee reviews one row
+per folder — album name, project, tags — and may set a project and tags on a
+top-level folder to cover every folder inside it. Pressing Start with no edits is
+always valid. The rows live in `migration_folders`.
+
+- **Nothing is created before Start, and an album only once a photo lands in it.**
+  So a folder whose photos all fail, are skipped, or already sit in trash leaves no
+  album, and closing the page, choosing the folder again, or retrying never makes a
+  second album for the same folder (`migration_folders.album_id` is set once).
+- **A folder of copies becomes an album of the photos you already have.** Matching
+  bytes never make a second photo: the existing photo joins the folder's album and
+  keeps its project. The file list says "Already in DWS Photos".
+- **The choices freeze when the import starts.** To change a project or tags after
+  that, use the bulk tools on the album, not the import page.
+- **A project is suggested, never assigned silently.** A folder whose name holds an
+  existing project number as a whole word (`3612 Smith`, not `13612`) is pre-filled
+  with that project, as are the folders inside it; project numbers shorter than three
+  characters are never suggested. An MCP `job_number` hint takes precedence. Review
+  shows every suggestion before Start.
+- **Folder import needs Chrome or Edge on a computer.** Phones, Safari, and Firefox
+  cannot open folders; the page says so and offers "Add photos" (up to 500 files,
+  which need a project or an album).
+
+Large imports: sealing a 100,000-file scan takes two to three seconds and does not
+slow down as the library grows. It once did — a statistics quirk made Postgres
+compare every scanned file with every existing photo (1.7 s became 11.5 s at only
+1,500 photos). The two trigger functions on that insert now refuse nested-loop
+joins (`set enable_nestloop=off` on `migration_reserve_uuids` and
+`photo_repair_guard_owner_ids`); do not remove that setting when editing them. The
+test "seals 100,000 entries inside the limit with 1,500 live photos the planner
+believes are one row" in `integration/db/migrations.test.ts` guards it.
+
 ## Legacy standalone-sidecar audit
 
 `node dws-app/scripts/attach-orphan-sidecars.mjs` is read-only and considers

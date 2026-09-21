@@ -87,14 +87,20 @@ export async function loadMigrationBatch(request: MigrationRequest, id: string, 
   return { view, items, sources };
 }
 
-/** Every folder row of one import, 1,000 per request: 5,000 folders is five small requests. */
+/**
+ * Every folder row of one import, 500 per request. It stops on an EMPTY page, never on a short
+ * one: the API caps how many rows one response may hold, so a short page does not mean the end.
+ * (Stopping early once hid 4,000 of 5,000 folders.) The guard bounds a misbehaving server.
+ */
 export async function loadMigrationFolders(request: MigrationRequest, id: string, options: { signal?: AbortSignal } = {}): Promise<MigrationFolder[]> {
   const all: MigrationFolder[] = []; let cursor: string | null = null;
-  do {
+  for (let pages = 0; pages < 10_000; pages++) {
     const page: { folders: MigrationFolder[]; next_cursor: string | null } = await request(
-      `batches/${id}/folders?limit=1000${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`, undefined, options);
-    all.push(...page.folders); cursor = page.next_cursor;
-  } while (cursor);
+      `batches/${id}/folders?limit=500${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`, undefined, options);
+    if (!page.folders.length) break;
+    all.push(...page.folders);
+    cursor = page.next_cursor ?? page.folders.at(-1)!.id;
+  }
   return all;
 }
 

@@ -47,14 +47,16 @@ export default function AlbumChoice({ value, onChange, inputId, disabled }: Albu
   const exact = albums.some(album => album.name.toLowerCase() === typed.toLowerCase());
 
   return (
-    <div>
+    // `relative`: the list floats over what is below. It comes and goes with focus, and a list that
+    // pushed the page around would make the next click miss (see folder-tags.tsx).
+    <div className="relative">
       <input id={inputId} type="text" value={text} maxLength={120} disabled={disabled} className={field} placeholder="Type a new album, or find one"
         role="combobox" aria-expanded={focused && albums.length > 0} aria-controls={listId} aria-autocomplete="list"
         onChange={event => setText(event.target.value)} onFocus={() => setFocused(true)}
         onBlur={() => { setFocused(false); settle(); }}
         onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
       {focused && (albums.length > 0 || typed) && (
-        <ul id={listId} role="listbox" aria-label="Albums" className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-[#555] bg-[#262626] p-1">
+        <ul id={listId} role="listbox" aria-label="Albums" className="absolute left-0 right-0 top-11 z-20 mt-1 max-h-56 overflow-y-auto rounded-lg border border-[#555] bg-[#262626] p-1 shadow-lg shadow-black/40">
           {albums.map(album => (
             <li key={album.id} role="option" aria-selected={value.kind === 'existing' && value.id === album.id}>
               {/* onMouseDown: choose before the input's blur settles the half-typed text as a new album. */}
@@ -68,7 +70,8 @@ export default function AlbumChoice({ value, onChange, inputId, disabled }: Albu
           {typed && !exact && <li className="px-3 py-2 text-base text-[#c4c4c4]" role="presentation">New album “{typed}”</li>}
         </ul>
       )}
-      <p className={`${hint} mt-1`}>
+      {/* Two lines reserved: this sentence changes when the field settles on blur, and must not move what is below it. */}
+      <p className={`${hint} mt-1 min-h-12`}>
         {value.kind === 'existing' ? `These photos will be added to the album “${value.name}”.`
           : value.kind === 'new' ? `A new album “${value.name}” will be made when the first photo is imported.`
           : 'An album is like a folder. A photo can be in more than one.'}

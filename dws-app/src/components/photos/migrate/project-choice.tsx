@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { MigrationRequest } from '@/lib/photos/migration/client';
-import { button, field } from './styles';
+import { chooserButton, field } from './styles';
 
 // Choose a project, or "No project", for one import row or for a whole folder of rows.
 // Closed, it is a single button, so a list of thousands of folders stays light; open, it
@@ -52,7 +52,7 @@ export default function ProjectChoice({ request, value, onChange, ariaLabel, dis
   return (
     <div onKeyDown={event => { if (event.key === 'Escape' && open) { event.stopPropagation(); close(); } }}>
       <button ref={opener} type="button" aria-label={`${ariaLabel}: ${shown}`} aria-expanded={open} aria-controls={open ? listId : undefined}
-        onClick={() => (open ? close() : setOpen(true))} className={`${button} w-full justify-between font-normal`}>
+        onClick={() => (open ? close() : setOpen(true))} className={chooserButton}>
         <span className={`break-words ${value ? '' : 'text-[#c4c4c4]'}`}>{shown}</span>
         <ChevronDown className={`h-5 w-5 shrink-0 text-[#c4c4c4] transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
       </button>

@@ -28,6 +28,8 @@ interface FolderTagsProps {
 
 export default function FolderTags({ tags, onChange, known = [], ariaLabel, disabled }: FolderTagsProps) {
   const [input, setInput] = useState('');
+  // Suggestions show only while this field is in use: a list of 100 rows must not grow 300 extra buttons.
+  const [focused, setFocused] = useState(false);
   const listId = useId();
   const offered = useMemo(() => {
     const seen = new Set<string>(); const all: string[] = [];
@@ -52,8 +54,13 @@ export default function FolderTags({ tags, onChange, known = [], ariaLabel, disa
     return <p className="text-base text-[#c4c4c4]" aria-label={ariaLabel}>{tags.length ? tags.join(', ') : 'No tags'}</p>;
   }
   return (
-    <div>
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#555] bg-[#222222] px-2 py-1.5 focus-within:border-[#2680FC]">
+    // `relative`: the suggestions float over what is below instead of pushing it down. They appear
+    // and vanish with focus, and if that moved the page, pressing a button right after choosing a
+    // tag would miss: the button jumps between mouse-down and mouse-up, so no click happens. (It
+    // did: "Start import" silently did nothing after a tag was added.)
+    <div className="relative">
+      {/* No vertical padding: the 44px input and remove buttons set the height, so an empty box is exactly as tall as the project button beside it. */}
+      <div className="flex flex-wrap items-center gap-x-2 rounded-lg border border-[#555] bg-[#222222] px-2 focus-within:border-[#2680FC]">
         {tags.map(tag => (
           <span key={tag} className="inline-flex items-center rounded-full border border-[#4e4e4e] bg-[#2e2e2e] pl-3 text-base text-white">
             <span className="break-all">{tag}</span>
@@ -63,15 +70,15 @@ export default function FolderTags({ tags, onChange, known = [], ariaLabel, disa
             </button>
           </span>
         ))}
-        <input type="text" aria-label={ariaLabel} aria-describedby={matches.length ? listId : undefined} value={input} disabled={full}
-          onChange={event => setInput(event.target.value)}
+        <input type="text" aria-label={ariaLabel} aria-describedby={focused && matches.length ? listId : undefined} value={input} disabled={full}
+          onChange={event => setInput(event.target.value)} onFocus={() => setFocused(true)}
           onKeyDown={event => { if (event.key === 'Enter' || event.key === ',') { event.preventDefault(); add(input); } }}
-          onBlur={() => { if (input.trim()) add(input); }}
+          onBlur={() => { setFocused(false); if (input.trim()) add(input); }}
           placeholder={full ? `${MAX_TAGS} tags is the most a photo can have` : tags.length ? 'Add another' : 'Add a tag'}
-          className="min-h-11 min-w-[8rem] flex-1 bg-transparent px-1 text-base text-white placeholder:text-[#a8a8a8] focus:outline-none" />
+          className="min-h-11 min-w-[5.5rem] flex-1 bg-transparent px-1 text-base text-white placeholder:text-[#a8a8a8] focus:outline-none" />
       </div>
-      {matches.length > 0 && !full && (
-        <div id={listId} className="mt-2 flex flex-wrap gap-2">
+      {focused && matches.length > 0 && !full && (
+        <div id={listId} className="absolute left-0 right-0 top-full z-20 mt-1 flex flex-wrap gap-2 rounded-lg border border-[#555] bg-[#262626] p-2 shadow-lg shadow-black/40">
           {matches.map(tag => (
             // onMouseDown keeps the input's blur from adding half-typed text before the click lands.
             <button key={tag} type="button" onMouseDown={event => event.preventDefault()} onClick={() => add(tag)}

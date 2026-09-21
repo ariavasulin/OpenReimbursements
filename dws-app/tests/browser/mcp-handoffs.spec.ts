@@ -43,38 +43,51 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
   await context.addCookies(fixtures.employeeA.cookies.map(cookie => ({ ...cookie, url: process.env.DWS_BROWSER_BASE_URL!, sameSite: 'Lax' as const })));
   await installDirectories(context, [{ label: 'MCP folder', files: [{ name: 'mcp-folder.png', bytes: 4096, seed: 73 }] }], png.toString('base64'));
   const evidence: Array<Record<string, unknown>> = [];
+  // photo-albums AC-19: album_name and tags are suggestions that pre-fill review, and nothing is
+  // created before the employee confirms. The project is found from the suggested number alone.
+  const suggestedProject = `${numbers[0]} · MCP destination 0`;
   for (const script of ['migrate_photos', 'add_photos']) {
+    const album = `MCP suggested ${script} ${randomUUID().slice(0, 8)}`; const tag = `mcp-${script.replace('_', '-')}`;
     const input = script === 'migrate_photos'
-      ? { sources: [{ label: 'MCP folder', job_number: numbers[0] }] }
-      : { job_number: numbers[0], tags: ['mcp-proof'] };
+      ? { sources: [{ label: 'MCP folder', job_number: numbers[0], album_name: album, tags: [tag] }] }
+      : { job_number: numbers[0], album_name: album, tags: [tag] };
     const output = await handoff(script, input);
+    const albumsNamed = async () => (await fixtures.sql.query('select id from public.albums where name=$1', [album])).rows.map(row => row.id as string);
+    const batchPhotos = async (batch: string) => (await fixtures.sql.query('select p.id,p.job_id,p.tags from public.photos p join public.migration_items i on i.photo_id=p.id join public.migration_sources s on s.id=i.source_id where s.batch_id=$1', [batch])).rows;
+    // Minting the hand-off created nothing.
+    expect(await albumsNamed()).toEqual([]);
     await page.goto(output.handoff_url);
     await expect(page).toHaveURL(/\/migrate\?batch=[a-f0-9-]+$/);
     const batch = new URL(page.url()).searchParams.get('batch')!;
-    // Wait for the authenticated job lookup before exercising the hint mapping.
-    await expect(page.getByLabel('Find destination job').last()).toBeVisible();
-    const lookup = page.waitForResponse(response => response.url().includes(`/jobs?q=${numbers[0]}`) && response.status() === 200);
-    await page.getByLabel('Find destination job').last().fill(numbers[0]);
-    await lookup;
+    // The dialog for loose photos; the page itself for a folder.
+    const review = script === 'migrate_photos' ? page.locator('main') : page.getByRole('dialog');
     if (script === 'migrate_photos') {
-      await page.getByRole('button', { name: 'Select folder', exact: true }).click();
+      await page.getByRole('button', { name: 'Choose folder', exact: true }).click();
+      await expect(review.getByRole('textbox', { name: 'Album name for Photos directly in MCP folder', exact: true })).toHaveValue(album);
+      await expect(review.getByRole('button', { name: `Project for ${album}: ${suggestedProject}`, exact: true })).toBeVisible();
+      await expect(review.getByTestId('folder-row').getByRole('button', { name: `Remove tag ${tag}`, exact: true })).toBeVisible();
     } else {
-      await expect(page.getByLabel('Tags', { exact: true })).toHaveValue('mcp-proof');
-      await expect(page.getByLabel(/sheet/i)).toHaveCount(0);
-      await page.getByLabel('Select photos', { exact: true }).setInputFiles({ name: 'mcp-added.png', mimeType: 'image/png', buffer: Buffer.concat([png, randomBytes(16)]) });
+      // The form is pre-filled before a single photo is chosen.
+      await expect(review.getByRole('button', { name: `Project for these photos: ${suggestedProject}`, exact: true })).toBeVisible();
+      await expect(review.getByRole('combobox', { name: /Album/ })).toHaveValue(album);
+      await expect(review.getByRole('button', { name: `Remove tag ${tag}`, exact: true })).toBeVisible();
+      await expect(review.getByLabel(/sheet/i)).toHaveCount(0);
+      await review.getByLabel('Select photos', { exact: true }).setInputFiles({ name: 'mcp-added.png', mimeType: 'image/png', buffer: Buffer.concat([png, randomBytes(16)]) });
     }
-    const destination = page.getByLabel(/^Destination job for/).last();
-    await expect(destination).toHaveValue(jobs[0]);
-    await page.getByRole('button', { name: 'Review files', exact: true }).last().click();
-    await expect(page.getByRole('button', { name: 'Approve and start', exact: true }).last()).toBeEnabled();
-    await page.getByRole('button', { name: 'Approve and start', exact: true }).last().click();
-    await expect(page.getByTestId('batch-status')).toContainText('completed');
+    const start = review.getByRole('button', { name: 'Start import', exact: true });
+    await expect(start).toBeEnabled();
+    // Reviewed and ready, and still nothing exists: no album, no photo.
+    expect(await albumsNamed()).toEqual([]); expect(await batchPhotos(batch)).toEqual([]);
+    await start.click();
+    await expect(page.getByTestId('batch-status')).toHaveAttribute('data-status', 'completed');
     const binding = (await fixtures.sql.query('select script_name,consumed_by from public.dws_action_handoffs where migration_batch_id=$1', [batch])).rows[0];
     expect(binding).toEqual({ script_name: script, consumed_by: fixtures.employeeA.id });
-    const photos = (await fixtures.sql.query('select p.id,p.job_id,p.tags from public.photos p join public.migration_items i on i.photo_id=p.id join public.migration_sources s on s.id=i.source_id where s.batch_id=$1', [batch])).rows;
-    expect(photos).toHaveLength(1); expect(photos[0].job_id).toBe(jobs[0]);
-    if (script === 'add_photos') expect(photos[0]).toMatchObject({ tags: ['mcp-proof'] });
-    evidence.push({ script, batch, binding, photos });
+    const photos = await batchPhotos(batch);
+    expect(photos).toHaveLength(1); expect(photos[0]).toMatchObject({ job_id: jobs[0], tags: [tag] });
+    // Confirmed: exactly one album with the suggested name, holding the photo.
+    const made = await albumsNamed(); expect(made).toHaveLength(1);
+    expect((await fixtures.sql.query('select photo_id from public.album_photos where album_id=$1', [made[0]])).rows).toEqual([{ photo_id: photos[0].id }]);
+    evidence.push({ script, batch, binding, photos, album: { id: made[0], name: album } });
   }
 
   // This photo belongs to a different employee. Any employee may act on it now,

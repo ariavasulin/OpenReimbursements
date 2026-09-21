@@ -24,10 +24,19 @@ async function authenticate(context: BrowserContext, directories: DirectoryFixtu
   await context.addCookies(fixtures.employeeA.cookies.map(cookie => ({ ...cookie, url: process.env.DWS_BROWSER_BASE_URL!, sameSite: 'Lax' as const })));
   await installDirectories(context, directories, png.toString('base64'));
 }
-async function selectFolder(page: Page, label: string, job: string) {
-  await page.getByRole('button', { name: 'Select folder', exact: true }).click();
-  await page.getByLabel(`Destination job for ${label}`).selectOption(job);
+/**
+ * Choosing a folder reads it straight away; there is no separate "review files" step. These
+ * fixtures are named like "North 3612" and project 3612 exists, so the project is SUGGESTED from
+ * the folder's name (photo-albums AC-17) with no clicks. `project` is what review must then show.
+ */
+async function selectFolder(page: Page, label: string, project: string) {
+  await page.getByRole('button', { name: /^Choose (another )?folder$/ }).click();
+  const picked = page.getByTestId('migration-source').filter({ hasText: label });
+  await expect(picked.getByTestId('source-counts')).toContainText('photo', { timeout: 540_000 });
+  await expect(picked.getByRole('button', { name: `Project for ${label}: ${project}`, exact: true })).toBeVisible();
 }
+const projects = ['3612 · Office North', '4170 · Office South'];
+const batchStatus = (page: Page) => page.getByTestId('batch-status');
 async function screenshot(page: Page, info: TestInfo, name: string) {
   await page.locator('main').evaluate(node => { node.scrollTop = 0; });
   await page.screenshot({ path: info.outputPath(`${name}.png`), fullPage: true,
@@ -83,13 +92,13 @@ test('100,000 lazy entries exceed 100 GB with bounded requests, rows, and previe
     }
   });
   await page.goto('/migrate');
-  await selectFolder(page, 'Corpus 3612', jobs[0]);
-  await page.getByRole('button', { name: 'Review files', exact: true }).click();
   await Promise.race([
-    expect(page.getByTestId('batch-counts')).toContainText('100,000', { timeout: 540_000 }),
+    selectFolder(page, 'Corpus 3612', projects[0]).then(() => expect(page.getByTestId('batch-counts')).toContainText('100,000', { timeout: 540_000 })),
     page.locator('main').getByRole('alert').waitFor({ state: 'visible', timeout: 540_000 }).then(async () => { throw new Error(`Corpus scan failed: ${await page.locator('main').getByRole('alert').textContent()}`); }),
   ]);
-  await expect(page.getByRole('button', { name: 'Approve and start', exact: true })).toBeEnabled();
+  // 100,000 files in one folder are one row and one album, not 100,000 of anything on screen.
+  await expect(page.getByTestId('folder-row')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Start import', exact: true })).toBeEnabled();
   expect(chunks.length).toBeGreaterThanOrEqual(200);
   expect(Math.max(...chunks.map(chunk => chunk.bytes))).toBeLessThanOrEqual(1024 * 1024);
   expect(Math.max(...chunks.map(chunk => chunk.entries))).toBeLessThanOrEqual(500);
@@ -106,8 +115,9 @@ test('100,000 lazy entries exceed 100 GB with bounded requests, rows, and previe
   const observed = await page.evaluate(() => (window as unknown as { __directoryFixture: unknown }).__directoryFixture);
   expect((observed as { materializedBytes: number }).materializedBytes).toBe(0);
   await writeFile(info.outputPath('bounded-corpus.json'), JSON.stringify({ totals, chunks, requests, workflowThroughReviewMilliseconds: Date.now() - workflowStarted, fixture: observed, memory: await finishHeap(), visibleRows: await page.getByTestId('migration-item').count() }, null, 2));
-  await page.getByRole('button', { name: 'Cancel batch', exact: true }).click();
-  await expect(page.getByTestId('batch-status')).toContainText(/cancelled/i);
+  await page.getByRole('button', { name: 'Cancel import', exact: true }).click();
+  await expect(batchStatus(page)).toHaveAttribute('data-status', 'cancelled');
+  await expect(batchStatus(page)).toHaveText('Cancelled');
 });
 
 test('real worker and multi-chunk Storage recover B after A commits and a page closes', async ({ page, context }, info) => {
@@ -129,19 +139,19 @@ test('real worker and multi-chunk Storage recover B after A commits and a page c
     else await route.continue();
   });
   await page.goto('/migrate');
-  await selectFolder(page, directories[0].label, jobs[0]);
-  await selectFolder(page, directories[1].label, jobs[1]);
+  await selectFolder(page, directories[0].label, projects[0]);
   await screenshot(page, info, 'desktop-mapping');
-  await page.getByRole('button', { name: 'Review files', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Approve and start', exact: true })).toBeEnabled();
-  await expect(page.getByTestId('batch-counts')).toContainText('2');
+  await selectFolder(page, directories[1].label, projects[1]);
+  await expect(page.getByRole('button', { name: 'Start import', exact: true })).toBeEnabled();
+  await expect(page.getByTestId('batch-counts')).toContainText('2 photos in 2 folders');
   await screenshot(page, info, 'desktop-review');
-  await page.getByRole('button', { name: 'Approve and start', exact: true }).click();
+  await page.getByRole('button', { name: 'Start import', exact: true }).click();
   const batch = await batchId();
   await expect.poll(async () => (await batchPhotos(batch)).map(photo => photo.original_name)).toEqual(['A.png']);
   await expect.poll(() => interrupted).toBe(true);
-  await expect(page.getByTestId('batch-counts')).toContainText('1 completed');
-  await expect(page.getByTestId('batch-status')).toContainText(/running/i);
+  await expect(page.getByTestId('batch-counts')).toContainText('1 photo imported');
+  await expect(batchStatus(page)).toHaveAttribute('data-status', 'running');
+  await expect(batchStatus(page)).toHaveText('Importing');
   await screenshot(page, info, 'desktop-progress');
   const attempt = (await fixtures.sql.query("select id,lease_generation,lease_expires_at from public.migration_items where source_id in(select id from public.migration_sources where batch_id=$1) and original_name='B.png'", [batch])).rows[0];
   const contender = await context.newPage();
@@ -169,18 +179,29 @@ test('real worker and multi-chunk Storage recover B after A commits and a page c
   const resumedPaths: string[] = [];
   reopened.on('request', request => { if (request.url().includes('/storage/v1/') && ['POST','PATCH'].includes(request.method())) resumedPaths.push(request.url()); });
   await reopened.goto(`/migrate?batch=${batch}`);
-  await expect(reopened.getByText(/reselect/i).first()).toBeVisible();
+  await expect(reopened.getByText(/choose each folder again/i).first()).toBeVisible();
   await expect(reopened.getByRole('button', { name: 'Resume', exact: true })).toBeDisabled();
   const reopenedBeforeSelection = await reopened.evaluate(() => (window as unknown as { __directoryFixture: { materializedBytes: number; metadataReads: number } }).__directoryFixture);
   expect(reopenedBeforeSelection.materializedBytes).toBe(0); expect(reopenedBeforeSelection.metadataReads).toBe(0);
+  // The choices were frozen when the import started: review is now a record, not a form.
+  await expect(reopened.getByRole('textbox', { name: /^Album name for/ })).toHaveCount(0);
   await screenshot(reopened, info, 'desktop-permission-loss');
-  for (const source of directories) await reopened.getByRole('button', { name: `Reselect ${source.label}`, exact: true }).click();
-  await reopened.getByRole('button', { name: 'Review files', exact: true }).click();
+  // Choosing a folder again reads it again; the button waits while the one before is still being read.
+  for (const source of directories) {
+    await reopened.getByRole('button', { name: `Choose ${source.label} again`, exact: true }).click();
+    await expect(reopened.getByRole('button', { name: `Choose ${source.label} again`, exact: true })).toHaveCount(0);
+  }
   await reopened.getByRole('button', { name: 'Resume', exact: true }).click();
-  await expect(reopened.getByTestId('batch-status')).toContainText(/completed/i);
+  await expect(batchStatus(reopened)).toHaveAttribute('data-status', 'completed');
+  await expect(batchStatus(reopened)).toHaveText('Finished');
   const photos = await batchPhotos(batch);
   expect(photos.map(photo => photo.original_name)).toEqual(['A.png', 'B.png']);
+  // Each folder's project came from its name, and survived a closed page, a rescan, and a resume.
   expect(photos.map(photo => photo.job_id)).toEqual(jobs);
+  // One album per folder, made once: closing the page, reading both folders again, and resuming made no second one.
+  const albums = (await fixtures.sql.query(`select a.name,count(ap.photo_id)::int as photos from public.albums a left join public.album_photos ap on ap.album_id=a.id
+    where a.name=any($1::text[]) group by a.id,a.name order by a.name`, [directories.map(directory => directory.label)])).rows;
+  expect(albums).toEqual([{ name: 'North 3612', photos: 1 }, { name: 'South 4170', photos: 1 }]);
   const b = photos[1];
   const downloaded = await fixtures.admin.storage.from('photos').download(b.original_path);
   expect(downloaded.error).toBeNull();
@@ -213,9 +234,8 @@ test('pause stops new scheduling and cancellation preserves only the finalize co
     await route.continue().catch(() => {});
   });
   await page.goto('/migrate');
-  await selectFolder(page, 'Cancel 3612', jobs[0]);
-  await page.getByRole('button', { name: 'Review files', exact: true }).click();
-  await page.getByRole('button', { name: 'Approve and start', exact: true }).click();
+  await selectFolder(page, 'Cancel 3612', projects[0]);
+  await page.getByRole('button', { name: 'Start import', exact: true }).click();
   const batch = await batchId();
   await expect.poll(() => pendingOriginals.length).toBe(2);
   // Reproduce the observed race: stop aborts the originals, their real release
@@ -231,19 +251,20 @@ test('pause stops new scheduling and cancellation preserves only the finalize co
     await route.continue();
   });
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
-  await expect(page.getByTestId('batch-status')).toContainText(/interrupted/i);
+  await expect(batchStatus(page)).toHaveAttribute('data-status', 'interrupted');
+  await expect(batchStatus(page)).toHaveText('Paused');
   const paused = (await fixtures.sql.query('select original_name,status,error from public.migration_items where source_id in(select id from public.migration_sources where batch_id=$1) order by original_name', [batch])).rows;
   expect(paused.filter(item => item.status === 'pending').length).toBeGreaterThanOrEqual(1);
   const released = paused.filter(item => item.status === 'retryable_failed' && item.error === null);
   expect(released).toHaveLength(2);
   expect(await batchPhotos(batch)).toEqual([]);
   await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeHidden();
-  await expect(page.getByTestId('inventory-table')).not.toContainText('uploading');
+  await expect(page.getByTestId('inventory-table')).not.toContainText('Uploading');
   for (const item of released) {
     const row = page.getByTestId('migration-item').filter({ hasText: item.original_name });
     const pausedStatus = row.getByText('Paused', { exact: true });
     await expect(pausedStatus).toBeVisible();
-    await expect(pausedStatus).toHaveClass(/(?:^|\s)text-\[#bbb\](?:\s|$)/);
+    await expect(pausedStatus).toHaveClass(/(?:^|\s)text-\[#c4c4c4\](?:\s|$)/);
     await expect(pausedStatus).not.toHaveClass(/text-red-/);
     await expect(row.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0);
     await expect(row.getByRole('button', { name: 'Skip', exact: true })).toHaveCount(0);
@@ -269,8 +290,8 @@ test('pause stops new scheduling and cancellation preserves only the finalize co
   await expect.poll(() => firstCommitName).not.toBe('');
   await expect.poll(async () => (await batchPhotos(batch)).map(photo => photo.original_name)).toEqual([firstCommitName]);
   await expect.poll(() => blockedFinalizes).toBeGreaterThan(0);
-  await page.getByRole('button', { name: 'Cancel batch', exact: true }).click();
-  await expect(page.getByTestId('batch-status')).toContainText(/cancelled/i);
+  await page.getByRole('button', { name: 'Cancel import', exact: true }).click();
+  await expect(batchStatus(page)).toHaveAttribute('data-status', 'cancelled');
   releaseFinalize();
   const lateFinalizeStatuses: number[] = [];
   for (const payload of blockedPayloads) {
@@ -290,14 +311,17 @@ test('typed Storage permission failure remains visible and unresolved', async ({
     else await route.continue();
   });
   await page.goto('/migrate');
-  await selectFolder(page, 'Error 4170', jobs[1]);
-  await page.getByRole('button', { name: 'Review files', exact: true }).click();
-  await page.getByRole('button', { name: 'Approve and start', exact: true }).click();
+  await selectFolder(page, 'Error 4170', projects[1]);
+  await page.getByRole('button', { name: 'Start import', exact: true }).click();
   await expect(page.getByTestId('migration-item').first()).toContainText(/failed|permission/i);
-  await expect(page.getByTestId('batch-status')).toContainText('Needs attention');
+  await expect(batchStatus(page)).toHaveText('Needs attention');
   await screenshot(page, info, 'desktop-error');
-  expect(await batchPhotos(await batchId())).toEqual([]);
-  await page.getByRole('button', { name: 'Cancel batch', exact: true }).click();
+  const batch = await batchId();
+  expect(await batchPhotos(batch)).toEqual([]);
+  // photo-albums AC-16: a folder whose photos all fail leaves no album behind.
+  expect((await fixtures.sql.query('select album_id from public.migration_folders where source_id in(select id from public.migration_sources where batch_id=$1)', [batch])).rows).toEqual([{ album_id: null }]);
+  expect((await fixtures.sql.query("select count(*)::int as n from public.albums where name='Error 4170'")).rows[0].n).toBe(0);
+  await page.getByRole('button', { name: 'Cancel import', exact: true }).click();
 });
 
 for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 'phone', width: 390, height: 844 }]) {
@@ -322,22 +346,36 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel(/sheet/i)).toHaveCount(0);
     await expect(dialog.getByText(/sheet/i)).toHaveCount(0);
-    await expect(dialog.getByLabel('Tags', { exact: true })).toHaveValue('office');
+    // The assistant's suggestions pre-fill the form (AC-19): the tag, and the project found by its number.
+    await expect(dialog.getByRole('button', { name: 'Remove tag office', exact: true })).toBeVisible();
+    const project = dialog.getByRole('button', { name: /^Project for these photos:/ });
+    await expect(project).toHaveAccessibleName('Project for these photos: 3612 · Office North');
+    await expect(dialog.getByTestId('loose-rule')).toHaveText('Pick a project, an album, or both.');
+    const start = dialog.getByRole('button', { name: 'Start import', exact: true });
+    await expect(start).toBeDisabled();
     await dialog.getByLabel('Select photos', { exact: true }).setInputFiles([
       { name: 'compact-one.png', mimeType: 'image/png', buffer: png },
       { name: 'compact-two.png', mimeType: 'image/png', buffer: Buffer.concat([png, Buffer.from([2])]) },
     ]);
-    const mapping = dialog.getByRole('combobox');
-    await mapping.selectOption(jobs[0]);
-    await dialog.getByRole('button', { name: 'Review files', exact: true }).click();
-    await expect(dialog.getByRole('button', { name: 'Approve and start', exact: true })).toBeEnabled();
-    await mapping.focus();
-    await expect(mapping).toBeFocused();
+    // Choosing the photos reads them straight away. Nothing has been created by any of this.
+    await expect(dialog.getByTestId('batch-counts')).toContainText('2 photos');
+    await expect(start).toBeEnabled();
+    expect((await fixtures.sql.query('select count(*)::int as n from public.photos p join public.migration_items i on i.photo_id=p.id join public.migration_sources s on s.id=i.source_id where s.batch_id=$1', [binding[0].migration_batch_id])).rows[0].n).toBe(0);
+    // AC-18: loose photos need a project or an album. With neither, Start is off and the page says why.
+    await project.click();
+    await dialog.getByRole('option', { name: 'No project', exact: true }).getByRole('button').click();
+    await expect(dialog.getByText('Choose a project or an album to start.', { exact: false })).toBeVisible();
+    await expect(start).toBeDisabled();
+    // An album alone is enough: a new one, typed.
+    await dialog.getByRole('combobox', { name: /Album/ }).fill(`Compact ${viewport.name} party`);
+    await dialog.getByRole('combobox', { name: /Album/ }).press('Enter');
+    await expect(dialog.getByText(`A new album “Compact ${viewport.name} party” will be made`, { exact: false })).toBeVisible();
+    await expect(start).toBeEnabled();
+    expect((await fixtures.sql.query('select count(*)::int as n from public.albums where name=$1', [`Compact ${viewport.name} party`])).rows[0].n).toBe(0);
+    await project.focus();
+    await expect(project).toBeFocused();
     await page.keyboard.press('Tab');
     expect(await dialog.evaluate(node => node.contains(document.activeElement))).toBe(true);
-    await expect(dialog).toContainText('2');
-    await expect(mapping).toHaveValue(jobs[0]);
-    await expect(dialog.getByRole('button', { name: 'Approve and start', exact: true })).toBeEnabled();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await screenshot(page, info, `compact-${viewport.name}-review-focus`);
     await dialog.getByTestId('batch-counts').scrollIntoViewIfNeeded();
