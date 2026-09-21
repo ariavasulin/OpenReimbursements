@@ -150,6 +150,12 @@ export async function readMigrationFolders(actor: PhotoActor, id: string, reques
   return { folders, next_cursor: (data?.length ?? 0) > limit ? folders.at(-1)!.id : null };
 }
 
+async function anyRow(actor: PhotoActor, source: string) {
+  const { data, error } = await actor.db.from('migration_folders').select('album_name,album_id,job_id,tags,jobs(id,job_number,name),albums(id,name)')
+    .eq('source_id', source).order('folder').limit(1).maybeSingle();
+  if (error) throwPhotoDatabaseError(error);
+  return data;
+}
 const folderPatchKeys = new Set(['folder', 'include_subfolders', 'job_id', 'tags', 'album_name', 'album_id']);
 /** One review edit. `include_subfolders` is how a choice on a top-level folder reaches the folders inside it. */
 export async function updateMigrationFolders(actor: PhotoActor, source: string, body: Body) {
@@ -169,8 +175,29 @@ export async function updateMigrationFolders(actor: PhotoActor, source: string, 
     patch.tags = cleanTags(body.tags);
   }
   if (!Object.keys(patch).length) throw new PhotoApiError('invalid_input');
-  return photoRpc(actor, 'migration_folder_update', { p_actor: actor.actorId, p_source: photoId(source), p_folder: folder,
-    p_subfolders: body.include_subfolders === true, p_patch: patch });
+  const deep = body.include_subfolders === true;
+  const result = await photoRpc(actor, 'migration_folder_update', { p_actor: actor.actorId, p_source: photoId(source), p_folder: folder,
+    p_subfolders: deep, p_patch: patch });
+  // The server settles two things the browser cannot know: a blank album name becomes the
+  // folder's own name again, and a tag takes the spelling already in use. Every row one edit
+  // touches receives the same values, so one row read back speaks for all of them, and the
+  // page never has to download thousands of rows again after an edit.
+  const readOne = async (inside: boolean) => {
+    const query = actor.db.from('migration_folders').select('album_name,album_id,job_id,tags,jobs(id,job_number,name),albums(id,name)').eq('source_id', photoId(source));
+    // Two separate filters rather than one or(): a folder name may hold commas or brackets,
+    // which are or()'s own grammar. The LIKE pattern escapes LIKE's wildcards.
+    const { data, error } = await (inside ? query.like('folder', `${folder.replace(/[\\%_]/g, match => `\\${match}`)}/%`) : query.eq('folder', folder))
+      .order('folder').limit(1).maybeSingle();
+    if (error) throwPhotoDatabaseError(error);
+    return data;
+  };
+  // The folder's own row if it has one; else, for a whole-folder edit, any row inside it.
+  const chosen = await readOne(false) ?? (deep ? folder === '' ? await anyRow(actor, photoId(source)) : await readOne(true) : null);
+  return { ...result, settled: chosen ? {
+    ...('job_id' in patch ? { job_id: chosen.job_id, jobs: chosen.jobs } : {}),
+    ...('tags' in patch ? { tags: chosen.tags } : {}),
+    ...('album_name' in patch || 'album_id' in patch ? { album_name: chosen.album_name, album_id: chosen.album_id, albums: chosen.albums } : {}),
+  } : {} };
 }
 export async function readMigrationBatch(actor: PhotoActor, id: string) {
   const summary = await readPhotoBatch(actor, id);

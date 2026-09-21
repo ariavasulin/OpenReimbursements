@@ -77,7 +77,7 @@ export class MigrationEngine {
       const counts = view.counts.by_status as Record<string, number> | undefined;
       const unresolved = Object.entries(counts ?? {}).filter(([status, count]) => count > 0 &&
         !['completed', 'skipped_duplicate', 'skipped_missing', 'skipped_unsupported', 'skipped_failed', 'skipped_user', 'cancelled'].includes(status));
-      if (unresolved.length) throw new Error(`Review unfinished files before resuming: ${unresolved.map(([status, count]) => `${count} ${migrationItemStatusLabel(status).toLowerCase()}`).join(', ')}.`);
+      if (unresolved.length) throw new Error(`Some files still need you before this can finish: ${unresolved.map(([status, count]) => `${count} ${migrationItemStatusLabel(status).toLowerCase()}`).join(', ')}. See the list of files below.`);
       // The database alone decides whether every current revision is terminal.
       await request(`batches/${batchId}`, { action: 'complete' }, { method: 'PATCH', signal });
     } finally {

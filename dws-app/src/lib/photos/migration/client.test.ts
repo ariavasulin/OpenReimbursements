@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createMigrationRequest, loadMigrationBatch, isPausedMigrationItem, migrationItemStatusLabel, type MigrationItem, type MigrationRequest } from './client';
+import { createMigrationRequest, loadMigrationBatch, loadMigrationFolders, isPausedMigrationItem, migrationBatchName, migrationBatchStatusLabel, migrationExclusionLabel, migrationItemStatusLabel, type MigrationItem, type MigrationRequest } from './client';
 
 const released = {
   status: 'retryable_failed', error: null, retryable: null,
@@ -67,5 +67,48 @@ describe('migration control requests', () => {
     const transition = await loadMigrationBatch(request as MigrationRequest, 'batch');
     expect(transition.sources).toEqual([{ id: 'source-1' }, { id: 'source-2', selection_rules: { tags: ['new'] } }]);
     expect(request.mock.calls.filter(([path]) => path.includes('/sources?'))).toHaveLength(2);
+  });
+
+  it('loads every folder row, a thousand per request, so 5,000 folders is five requests', async () => {
+    const pages = Array.from({ length: 5 }, (_, page) => Array.from({ length: 1000 }, (_, n) => ({ id: `row-${page}-${n}` })));
+    const request = vi.fn(async (path: string) => {
+      const after = new URL(path, 'http://x').searchParams.get('after');
+      const index = after ? Number(after.split('-')[1]) + 1 : 0;
+      return { folders: pages[index], next_cursor: index < 4 ? pages[index].at(-1)!.id : null };
+    });
+    const rows = await loadMigrationFolders(request as MigrationRequest, 'batch');
+    expect(rows).toHaveLength(5000);
+    expect(request).toHaveBeenCalledTimes(5);
+    expect(request.mock.calls[0][0]).toBe('batches/batch/folders?limit=1000');
+    expect(request.mock.calls[1][0]).toBe('batches/batch/folders?limit=1000&after=row-0-999');
+  });
+});
+
+// Baseline finding S7: the import page led with internal vocabulary. Nothing internal reaches the screen.
+describe('plain words for the import screen', () => {
+  const internal = /_|\b(batch|draft|sealed|inventory|migration|source|lease|claim|revision|interrupted|approved)\b/i;
+  it('names every file state without an internal word', () => {
+    const states = ['pending', 'hashing', 'waiting_claim', 'uploading', 'finalizing', 'retryable_failed', 'job_conflict', 'restore_required',
+      'completed', 'skipped_duplicate', 'skipped_missing', 'skipped_unsupported', 'skipped_failed', 'skipped_user', 'cancelled', 'something_new'];
+    for (const state of states) expect(migrationItemStatusLabel(state), state).not.toMatch(internal);
+    expect(migrationItemStatusLabel('completed')).toBe('Imported');
+    expect(migrationItemStatusLabel('skipped_duplicate')).toBe('Already in DWS Photos');
+  });
+  it('names the whole import’s state, and lets "needs attention" win', () => {
+    expect(['draft', 'approved', 'running', 'interrupted', 'completed', 'cancelled', 'unknown'].map(status => migrationBatchStatusLabel(status)))
+      .toEqual(['Not started', 'Importing', 'Importing', 'Paused', 'Finished', 'Cancelled', 'Not started']);
+    expect(migrationBatchStatusLabel('running', true)).toBe('Needs attention');
+  });
+  it('says why files were left out', () => {
+    for (const reason of ['picasa_originals', 'picasa_settings', 'hidden_cache', 'unmatched_xmp', 'ambiguous_xmp', 'unsupported_file', 'brand_new_reason']) {
+      expect(migrationExclusionLabel(reason), reason).not.toMatch(internal);
+    }
+  });
+  it('names an earlier import by its folders and date, never by id', () => {
+    const created_at = '2026-09-20T18:00:00Z';
+    expect(migrationBatchName({ script_name: 'migrate_photos', created_at, labels: ['Smith Residence'] }, 'en-US')).toBe('Smith Residence · Sep 20, 2026');
+    expect(migrationBatchName({ script_name: 'migrate_photos', created_at, labels: ['A', 'B', 'C', 'D'] }, 'en-US')).toBe('A, B and 2 more · Sep 20, 2026');
+    expect(migrationBatchName({ script_name: 'migrate_photos', created_at, labels: [] }, 'en-US')).toBe('Folder import · Sep 20, 2026');
+    expect(migrationBatchName({ script_name: 'add_photos', labels: [] })).toBe('Added photos');
   });
 });

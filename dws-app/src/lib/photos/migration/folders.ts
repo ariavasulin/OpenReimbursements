@@ -34,6 +34,52 @@ export function isInsideFolder(folder: string, ancestor: string): boolean {
   return ancestor === '' || folder === ancestor || folder.startsWith(`${ancestor}/`);
 }
 
+/** The rows of one picked folder that share a top-level folder. Review collapses each of these. */
+export interface FolderGroup {
+  /** The top-level folder's name; '' for photos sitting directly in the picked folder. */
+  topLevel: string;
+  rows: MigrationFolder[];
+  photos: number;
+}
+
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/**
+ * Review's shape: the picked folder's own photos first, then one group per top-level folder in
+ * name order ("Job 2" before "Job 10"), rows inside each in path order. `filter` keeps only rows
+ * whose folder path or album name contains it, ignoring case, and drops groups left empty.
+ */
+export function groupFolders(rows: readonly MigrationFolder[], filter = ''): FolderGroup[] {
+  const wanted = filter.trim().toLowerCase();
+  const groups = new Map<string, FolderGroup>();
+  for (const row of rows) {
+    if (wanted && !row.folder.toLowerCase().includes(wanted) && !(row.album_name ?? '').toLowerCase().includes(wanted)) continue;
+    const topLevel = topLevelFolder(row.folder);
+    let group = groups.get(topLevel);
+    if (!group) { group = { topLevel, rows: [], photos: 0 }; groups.set(topLevel, group); }
+    group.rows.push(row); group.photos += row.photo_count;
+  }
+  const sorted = [...groups.values()].sort((a, b) => (a.topLevel === '' ? -1 : b.topLevel === '' ? 1 : byName.compare(a.topLevel, b.topLevel)));
+  for (const group of sorted) group.rows.sort((a, b) => byName.compare(a.folder, b.folder));
+  return sorted;
+}
+
+/**
+ * What a whole-folder control should show for rows that may disagree: the shared value, or
+ * `undefined` when they differ. Tags: only the tags every row has.
+ */
+export function sharedChoice(rows: readonly MigrationFolder[]): { jobId: string | null | undefined; tags: string[]; tagsDiffer: boolean } {
+  if (!rows.length) return { jobId: null, tags: [], tagsDiffer: false };
+  const jobId = rows.every(row => row.job_id === rows[0].job_id) ? rows[0].job_id : undefined;
+  const tags = rows[0].tags.filter(tag => rows.every(row => row.tags.includes(tag)));
+  return { jobId, tags, tagsDiffer: rows.some(row => row.tags.length !== tags.length) };
+}
+
+/** The name rule the server applies to an album name: trimmed, inner spaces collapsed. */
+export function cleanAlbumName(raw: string): string {
+  return raw.replace(/\s+/g, ' ').trim();
+}
+
 export interface SuggestionJob { id: string; job_number: string }
 
 /** Shorter project numbers ("7", "12") match too many ordinary folder names to be useful. */

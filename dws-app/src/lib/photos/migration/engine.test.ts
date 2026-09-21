@@ -128,7 +128,8 @@ describe('foreground migration scheduler', () => {
   it('does not call complete while conflicts or deferred retries remain', async () => {
     const { engine, request } = setup([]);
     request.mockImplementation(async (path: string) => path.includes('/items?') ? { items: [], next_cursor: null } : { counts: { by_status: { job_conflict: 1 } } });
-    await expect(engine.run()).rejects.toThrow('1 job conflict');
+    // The message uses the screen's plain words for a file's state, never the internal status.
+    await expect(engine.run()).rejects.toThrow('1 in another project');
     expect(request.mock.calls.some(([, body]) => (body as { action?: string })?.action === 'complete')).toBe(false);
   });
 });

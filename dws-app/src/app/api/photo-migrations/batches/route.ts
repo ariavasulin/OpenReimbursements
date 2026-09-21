@@ -11,7 +11,8 @@ export async function GET(request: Request) { return photoRoute(async () => {
   const actor = await requirePhotoActor(request); const params = new URL(request.url).searchParams;
   const limit = migrationInteger(Number(params.get('limit') ?? 50), 100);
   if (limit < 1) throw new PhotoApiError('invalid_input');
-  let query=actor.db.from('migration_batches').select('id,created_by,script_name,status,approved_at,created_at,updated_at').order('created_at',{ascending:false}).order('id',{ascending:false}).limit(limit+1);
+  // The picked folders' names ride along so an earlier import can be listed by folder and date, not by id.
+  let query=actor.db.from('migration_batches').select('id,created_by,script_name,status,approved_at,created_at,updated_at,migration_sources(label,created_at)').order('created_at',{ascending:false}).order('id',{ascending:false}).limit(limit+1);
   const after=params.get('after');
   if(after) {
     const [date,id]=after.split('~');
@@ -19,6 +20,7 @@ export async function GET(request: Request) { return photoRoute(async () => {
     query=query.or(`created_at.lt.${date},and(created_at.eq.${date},id.lt.${photoId(id)})`);
   }
   const {data,error}=await query; if(error) throwPhotoDatabaseError(error);
-  const batches=(data??[]).slice(0,limit).map(batch=>({...batch,can_mutate:batch.created_by===actor.actorId}));
+  const batches=(data??[]).slice(0,limit).map(({migration_sources:picked,...batch})=>({...batch,can_mutate:batch.created_by===actor.actorId,
+    labels:[...(picked??[])].sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at))).map(source=>source.label as string)}));
   const last=batches.at(-1); return photoJson({batches,next_cursor:(data?.length??0)>limit?`${last!.created_at}~${last!.id}`:null});
 }); }

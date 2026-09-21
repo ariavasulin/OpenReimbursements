@@ -1,13 +1,19 @@
 import { createUploadRetryPolicy, UploadRequestError } from '../upload-http';
 import type { UploadResult } from '../upload';
+import type { MigrationFolder } from './folders';
 
+/** What the assistant suggested for one picked folder. Every field is only a suggestion. */
+export interface MigrationSourceHint { label: string; job_number?: string; new_project_name?: string; album_name?: string; tags?: string[] }
 export interface MigrationBatch {
   id: string; status: string; script_name: 'migrate_photos' | 'add_photos';
-  requested_input?: { job_number?: string; new_project_name?: string; tags?: string[]; sources?: { label: string; job_number?: string; new_project_name?: string }[] };
+  /** The picked folders' names, for listing an earlier import by folder and date. */
+  labels?: string[];
+  requested_input?: { job_number?: string; new_project_name?: string; album_name?: string; tags?: string[]; sources?: MigrationSourceHint[] };
   created_at?: string;
 }
 export interface MigrationSource {
-  id: string; batch_id: string; job_id: string; kind: 'directory' | 'files'; label: string;
+  /** Only a default for this picked folder's rows; each folder row carries its own project. */
+  id: string; batch_id: string; job_id: string | null; kind: 'directory' | 'files'; label: string;
   current_scan_id?: string | null; sealed_scan_id?: string | null;
   scan_id?: string | null; sealed_at?: string | null;
   jobs?: { id: string; job_number: string; name: string } | null;
@@ -81,13 +87,60 @@ export async function loadMigrationBatch(request: MigrationRequest, id: string, 
   return { view, items, sources };
 }
 
+/** Every folder row of one import, 1,000 per request: 5,000 folders is five small requests. */
+export async function loadMigrationFolders(request: MigrationRequest, id: string, options: { signal?: AbortSignal } = {}): Promise<MigrationFolder[]> {
+  const all: MigrationFolder[] = []; let cursor: string | null = null;
+  do {
+    const page: { folders: MigrationFolder[]; next_cursor: string | null } = await request(
+      `batches/${id}/folders?limit=1000${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`, undefined, options);
+    all.push(...page.folders); cursor = page.next_cursor;
+  } while (cursor);
+  return all;
+}
+
 export function retryDue(item: MigrationItem, now = Date.now()): boolean {
   const retryAt = item.retry_after ? Date.parse(item.retry_after) : Number(item.result?.retryAt ?? 0);
   return !Number.isFinite(retryAt) || retryAt <= now;
 }
 
+/** What one file's state means, in the words an employee would use. No internal status reaches the screen. */
+const ITEM_STATUS_LABELS: Record<string, string> = {
+  pending: 'Waiting', hashing: 'Checking', waiting_claim: 'Waiting for another upload', uploading: 'Uploading', finalizing: 'Finishing',
+  completed: 'Imported', skipped_duplicate: 'Already in DWS Photos', retryable_failed: 'Upload failed',
+  job_conflict: 'In another project', restore_required: 'In trash',
+  skipped_missing: 'No longer in the folder', skipped_unsupported: 'Left out', skipped_failed: 'Could not be imported',
+  skipped_user: 'Skipped', cancelled: 'Cancelled',
+};
 export function migrationItemStatusLabel(status: string): string {
-  return status === 'retryable_failed' ? 'Upload failed' : status.replaceAll('_', ' ');
+  return ITEM_STATUS_LABELS[status] ?? 'Waiting';
+}
+
+/** The whole import's state in plain words. `attention` wins: something needs the employee. */
+export function migrationBatchStatusLabel(status: string, attention = false): string {
+  if (attention) return 'Needs attention';
+  return ({ draft: 'Not started', approved: 'Importing', running: 'Importing', interrupted: 'Paused',
+    completed: 'Finished', cancelled: 'Cancelled' } as Record<string, string>)[status] ?? 'Not started';
+}
+
+/** Why a file was left out, from the scan's reason codes. */
+const EXCLUSION_LABELS: Record<string, string> = {
+  picasa_originals: 'Picasa backup copies', picasa_settings: 'Picasa settings files', hidden_cache: 'Hidden and system files',
+  unmatched_xmp: 'XMP files with no matching photo', ambiguous_xmp: 'XMP files that match more than one photo',
+  unsupported_file: 'Files that are not photos or videos', unsupported: 'Files that are not photos or videos',
+};
+export function migrationExclusionLabel(reason: string): string {
+  return EXCLUSION_LABELS[reason] ?? 'Other files';
+}
+
+/** "Smith Residence, Marketing and 2 more · Sep 20, 2026": an earlier import named by folder and date, never by id. */
+export function migrationBatchName(batch: { script_name: string; created_at?: string; labels?: string[] }, locale?: string): string {
+  const labels = (batch.labels ?? []).filter(Boolean);
+  const shown = labels.slice(0, 2).join(', ');
+  const what = !labels.length ? (batch.script_name === 'add_photos' ? 'Added photos' : 'Folder import')
+    : labels.length > 2 ? `${shown} and ${labels.length - 2} more` : shown;
+  const when = batch.created_at && Number.isFinite(Date.parse(batch.created_at))
+    ? new Date(batch.created_at).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
+  return when ? `${what} · ${when}` : what;
 }
 
 /** Transport abort releases a resumable lease with no recorded failure.

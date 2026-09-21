@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { folderOf, isInsideFolder, projectNumbersIn, suggestFolderProjects, topLevelFolder } from './folders';
+import { cleanAlbumName, folderOf, groupFolders, isInsideFolder, projectNumbersIn, sharedChoice, suggestFolderProjects, topLevelFolder, type MigrationFolder } from './folders';
 
 // photo-albums plan, AC-17: a project is pre-suggested from a folder name containing an
 // existing project number as a whole word; sub-folders inherit from the nearest parent.
@@ -25,6 +25,46 @@ describe('folder paths', () => {
     expect(isInsideFolder('Smith', 'Smith')).toBe(true);
     expect(isInsideFolder('Smithson/Finished', 'Smith')).toBe(false);
     expect(isInsideFolder('anything/at/all', '')).toBe(true);
+  });
+});
+
+// photo-albums § Screens: rows grouped under each picked folder, collapsed by top-level folder with counts.
+describe('review groups', () => {
+  const row = (folder: string, photo_count = 1, extra: Partial<MigrationFolder> = {}): MigrationFolder =>
+    ({ id: `row-${folder}`, source_id: 'source', folder, album_name: folder.replaceAll('/', ' – ') || 'Office drive', album_id: null, job_id: null, tags: [], photo_count, ...extra });
+  it('puts the picked folder’s own photos first, then top-level folders by name with their counts', () => {
+    const groups = groupFolders([row('Job 10/Finished', 4), row('Job 2', 1), row('', 3), row('Job 10', 2), row('Job 10/Before', 5), row('job 2/Kitchen', 7)]);
+    expect(groups.map(group => [group.topLevel, group.rows.map(r => r.folder), group.photos])).toEqual([
+      ['', [''], 3],
+      // Numbers sort as numbers ("Job 2" before "Job 10"); "Job 2" and "job 2" are different folders on disk.
+      ['Job 2', ['Job 2'], 1],
+      ['job 2', ['job 2/Kitchen'], 7],
+      ['Job 10', ['Job 10', 'Job 10/Before', 'Job 10/Finished'], 11],
+    ]);
+  });
+  it('finds folders by path or album name, ignoring case, and drops groups with no match', () => {
+    const rows = [row('Smith/Finished'), row('Smith/Before'), row('Jones/Finished', 1, { album_name: 'Jones kitchen done' }), row('Party')];
+    expect(groupFolders(rows, 'finished').map(group => [group.topLevel, group.rows.length])).toEqual([['Jones', 1], ['Smith', 1]]);
+    expect(groupFolders(rows, ' KITCHEN ').map(group => group.topLevel)).toEqual(['Jones']);
+    expect(groupFolders(rows, 'nothing like this')).toEqual([]);
+  });
+  it('groups 5,000 rows quickly', () => {
+    const rows = Array.from({ length: 5000 }, (_, n) => row(`Top ${Math.floor(n / 100)}/Folder ${n}`, 2));
+    const started = performance.now();
+    const groups = groupFolders(rows);
+    expect(groups).toHaveLength(50); expect(groups[0].rows).toHaveLength(100); expect(groups[0].photos).toBe(200);
+    expect(groupFolders(rows, 'folder 4999')[0].rows.map(r => r.folder)).toEqual(['Top 49/Folder 4999']);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+  it('shows a whole-folder control the shared value, or that the rows differ', () => {
+    expect(sharedChoice([row('a', 1, { job_id: 'j', tags: ['x', 'y'] }), row('b', 1, { job_id: 'j', tags: ['y', 'x'] })])).toEqual({ jobId: 'j', tags: ['x', 'y'], tagsDiffer: false });
+    expect(sharedChoice([row('a', 1, { job_id: 'j', tags: ['x', 'y'] }), row('b', 1, { job_id: null, tags: ['y'] })])).toEqual({ jobId: undefined, tags: ['y'], tagsDiffer: true });
+    expect(sharedChoice([row('a'), row('b')])).toEqual({ jobId: null, tags: [], tagsDiffer: false });
+    expect(sharedChoice([])).toEqual({ jobId: null, tags: [], tagsDiffer: false });
+  });
+  it('cleans an album name the way the server will', () => {
+    expect(cleanAlbumName('  Smith   kitchen,\tdone ')).toBe('Smith kitchen, done');
+    expect(cleanAlbumName('   ')).toBe('');
   });
 });
 
