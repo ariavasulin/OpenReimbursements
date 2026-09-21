@@ -229,19 +229,22 @@ export default function MultiShotCamera({
       )}
 
       <div className="absolute left-0 right-0 top-0 flex items-center justify-between px-4 pb-4 pt-[max(14px,env(safe-area-inset-top))]">
+        {/* A word, not an X alone, and a full 44px: the same way out every
+            other phone pop-up has. */}
         <button
           type="button"
           onClick={onClose}
           aria-label="Close camera"
-          className="rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
+          className="flex min-h-11 items-center gap-1.5 rounded-full bg-black/50 px-4 text-base font-medium text-white hover:bg-black/70"
         >
-          <X className="h-5 w-5" />
+          <X className="h-5 w-5" aria-hidden="true" />
+          Cancel
         </button>
         {shots.length > 0 && (
           <button
             type="button"
             onClick={finish}
-            className="rounded-full bg-black/40 px-4 py-2 text-sm font-semibold text-[#2680FC]"
+            className="min-h-11 rounded-full bg-black/50 px-5 text-base font-semibold text-[#8bbaff]"
           >
             Done ({shots.length})
           </button>

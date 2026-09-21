@@ -4,6 +4,17 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { pairByBasename } from "@/lib/photos/sidecar";
 import type { CameraShot } from "@/components/photos/multi-shot-camera";
+import type { PhotoAlbumRef } from "@/lib/photos/types";
+
+/**
+ * Where the page a batch started on would put it: the project page's project,
+ * the album page's album, neither on Photos. It only pre-fills the upload
+ * pop-up; the person can change both there.
+ */
+export interface UploadTarget {
+  jobId?: string;
+  album?: PhotoAlbumRef;
+}
 
 // The shared "get files into a batch" state: every intake ends with
 // pickedFiles + capturedAtOverrides and the upload sheet open.
@@ -18,21 +29,21 @@ export function useCaptureBatch(initialCameraOpen = false) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(initialCameraOpen);
   /**
-   * The job the sheet was opened for, snapshotted at open. Navigating while
-   * the sheet is up must never re-derive its job.
+   * The project or album the sheet was opened for, snapshotted at open.
+   * Navigating while the sheet is up must never re-derive it.
    */
-  const [sheetJobId, setSheetJobId] = useState<string | undefined>(undefined);
+  const [sheetTarget, setSheetTarget] = useState<UploadTarget | undefined>(undefined);
   /**
    * Same snapshot for the camera, taken when it opens: the shell outlives
    * route changes, so shooting on job A and navigating to job B before Done
    * would otherwise file the batch to B.
    */
-  const [cameraJobId, setCameraJobId] = useState<string | undefined>(undefined);
+  const [cameraTarget, setCameraTarget] = useState<UploadTarget | undefined>(undefined);
 
   /** The one way a batch starts: picker, camera, and drop all land here. */
   const openSheet = (
     files: File[],
-    jobId?: string,
+    target?: UploadTarget,
     overrides: Map<File, Date> = new Map()
   ) => {
     if (files.length === 0) return;
@@ -50,12 +61,12 @@ export function useCaptureBatch(initialCameraOpen = false) {
       )
     );
     setCapturedAtOverrides(overrides);
-    setSheetJobId(jobId);
+    setSheetTarget(target);
     setSheetOpen(true);
   };
 
-  const openCamera = (jobId?: string) => {
-    setCameraJobId(jobId);
+  const openCamera = (target?: UploadTarget) => {
+    setCameraTarget(target);
     setCameraOpen(true);
   };
 
@@ -67,7 +78,7 @@ export function useCaptureBatch(initialCameraOpen = false) {
       if (shot.capturedAt) overrides.set(shot.file, shot.capturedAt);
     }
     setCameraOpen(false);
-    openSheet(shots.map((shot) => shot.file), cameraJobId, overrides);
+    openSheet(shots.map((shot) => shot.file), cameraTarget, overrides);
   };
 
   return {
@@ -76,7 +87,7 @@ export function useCaptureBatch(initialCameraOpen = false) {
     sidecars,
     sheetOpen,
     setSheetOpen,
-    sheetJobId,
+    sheetTarget,
     cameraOpen,
     openCamera,
     closeCamera,

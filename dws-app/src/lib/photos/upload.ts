@@ -23,7 +23,11 @@ import type {
 } from "./upload-contract";
 
 export interface UploadMeta {
-  jobId: string;
+  /** The project, or null for none. Every upload names a project, an album, or both. */
+  jobId: string | null;
+  /** Albums the photo joins. A retry must send the same list: the server
+   *  compares it when an attempt is replayed. */
+  albumIds?: string[];
   /** auth.uid() of the signed-in user — prefixes every storage key. */
   uploaderId: string;
   tags?: string[];
@@ -119,7 +123,7 @@ export const LEASE_RENEW_MS = 30_000;
 
 function canonicalResult(
   outcome: CanonicalUploadOutcome,
-  jobId: string,
+  jobId: string | null,
   warnings: string[]
 ): UploadResult {
   const common = {
@@ -134,8 +138,10 @@ function canonicalResult(
       error: outcome.remedy ?? "This photo is in the trash. Restore it from Trash, then upload again.",
     };
   }
-  if (outcome.job_id !== jobId) {
-    return { ...common, status: "job_conflict", error: "This photo belongs to another job. Confirm a move to use it here." };
+  // An upload that names no project cannot conflict with the one the existing
+  // photo has: it just joins the album (the database answers skipped_duplicate).
+  if (jobId !== null && outcome.job_id !== jobId) {
+    return { ...common, status: "job_conflict", error: "This photo already belongs to another project. Confirm a move to use it here." };
   }
   return { ...common, status: outcome.status === "created" ? "done" : "duplicate" };
 }
@@ -216,7 +222,8 @@ export async function uploadOne(
       opts.onIdentity?.(identity);
       attempt = await run(() => deps.createAttempt({
         attempt_id: identity.attemptId, photo_id: identity.photoId,
-        job_id: meta.jobId, source_signature: sourceSignature, content_sha256: digest,
+        job_id: meta.jobId, album_ids: meta.albumIds ?? [],
+        source_signature: sourceSignature, content_sha256: digest,
         original_name: file.name, original_bytes: file.size, mime_type: classified.mime,
       }, requestOptions));
       if (attempt.content_sha256 !== digest || attempt.job_id !== meta.jobId) {
@@ -401,6 +408,7 @@ export async function retrySidecar(
     }
     const attempt = await deps.createAttempt({
       attempt_id: identity.attemptId, photo_id: identity.photoId, job_id: meta.jobId,
+      album_ids: meta.albumIds ?? [],
       source_signature: identity.sourceSignature, content_sha256: identity.contentSha256,
       original_name: source[0], original_bytes: source[1], mime_type: source[3],
     }, options);

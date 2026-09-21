@@ -44,9 +44,11 @@ test('a project created from the move page receives the photo, and can be rename
   expect(created.job_number).toMatch(/^P-\d+$/);
   expect(created.created_by).toBe(fixtures.employeeA.id);
 
-  await page.getByRole('button', { name: 'Review exact targets' }).click();
-  await page.getByRole('button', { name: 'Confirm move', exact: true }).click();
-  await expect(page.getByTestId('action-status')).toContainText('completed');
+  // A move with no destination asks for the project first, then shows the photo and the question.
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(page.getByTestId('action-question')).toHaveText(new RegExp(`^Move 1 photo to #P-\\d+ · ${name}\\?$`));
+  await page.getByRole('button', { name: 'Move photo', exact: true }).click();
+  await expect(page.getByTestId('action-status')).toHaveText('Done');
   expect((await fixtures.sql.query('select job_id from public.photos where id=$1', [id])).rows[0].job_id).toBe(created.id);
 
   await page.goto(`/photos/${created.id}`);

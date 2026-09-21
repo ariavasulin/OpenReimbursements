@@ -89,11 +89,11 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
     await page.goto(output.handoff_url);
     await expect(page).toHaveURL(/\/photo-actions\?batch=[a-f0-9-]+$/);
     const batch = new URL(page.url()).searchParams.get('batch')!;
-    await expect(page.getByTestId('action-count')).toHaveText('1 exact target');
-    const confirmation = script === 'move_photos' ? 'Confirm move' : script === 'remove_photos' ? 'Confirm move to trash' : 'Confirm restore';
+    await expect(page.getByTestId('action-count')).toHaveText('1 photo');
+    const confirmation = script === 'move_photos' ? 'Move photo' : script === 'remove_photos' ? 'Move to trash' : 'Restore photo';
     await expect(page.getByRole('button', { name: confirmation, exact: true })).toBeEnabled();
     await page.getByRole('button', { name: confirmation, exact: true }).click();
-    await expect(page.getByTestId('action-status')).toContainText('completed');
+    await expect(page.getByTestId('action-status')).toHaveText('Done');
     const binding = (await fixtures.sql.query('select script_name,consumed_by from public.dws_action_handoffs where photo_action_batch_id=$1', [batch])).rows[0];
     expect(binding).toEqual({ script_name: script, consumed_by: fixtures.employeeA.id });
     const state = (await fixtures.sql.query('select job_id,deleted_at from public.photos where id=$1', [photo])).rows[0];

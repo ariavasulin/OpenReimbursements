@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
 import SheetShell from "@/components/photos/sheet-shell";
@@ -11,20 +10,17 @@ import PhotoMetaFields, {
 } from "@/components/photos/photo-meta-fields";
 import BatchPreview from "@/components/photos/batch-preview";
 import { useUploadManager } from "@/lib/photos/upload-manager";
-import {
-  addTagToMeta,
-  appendTag,
-  tagSuggestions,
-  toTagPairs,
-} from "@/lib/photos/tags";
-import { usePhotoTags } from "@/lib/photos/api";
+import { useTagChoices } from "@/components/photos/tag-dropdown";
+import { addTagToMeta, appendResolvedTag } from "@/lib/photos/tags";
+import type { UploadTarget } from "@/hooks/use-capture-batch";
 import { readSidecarMeta } from "@/lib/photos/sidecar";
 import { plural } from "@/lib/photos/format";
 import { nextPreviewIndex } from "@/lib/photos/batch";
 import { canDecodePreview } from "@/lib/photos/decode-limits";
 
-// One job and tag set per batch, inside SheetShell (Drawer on mobile,
-// Dialog on desktop). The batch is copied into local state so files can be
+// One project, album set, and tag set per batch, inside SheetShell (Drawer on
+// mobile, Dialog on desktop). Every upload names a project, an album, or both
+// (photo-albums Decision 3), so Upload stays disabled until one is set. The batch is copied into local state so files can be
 // removed before it is handed to the upload manager; from there the tray owns
 // the upload and its progress, and this sheet just closes.
 
@@ -43,8 +39,8 @@ interface UploadSheetProps {
   files: File[];
   open: boolean;
   onOpenChange(open: boolean): void;
-  /** Pre-selects the job when uploading from inside a job. */
-  defaultJobId?: string;
+  /** Pre-fills from the page the batch started on: its project or its album. */
+  defaultTarget?: UploadTarget;
   /** Shutter times for in-app camera shots (see CameraShot). */
   capturedAtOverrides?: Map<File, Date>;
   /** Paired .xmp per primary image (pairByBasename ran at pick time). */
@@ -55,15 +51,17 @@ export default function UploadSheet({
   files: initialFiles,
   open,
   onOpenChange,
-  defaultJobId,
+  defaultTarget,
   capturedAtOverrides,
   sidecars,
 }: UploadSheetProps) {
   const manager = useUploadManager();
-  const [meta, setMeta] = useState<PhotoMeta>({
+  const seededMeta = (): PhotoMeta => ({
     ...EMPTY_META,
-    jobId: defaultJobId ?? "",
+    jobId: defaultTarget?.jobId ?? "",
+    albums: defaultTarget?.album ? [defaultTarget.album] : [],
   });
+  const [meta, setMeta] = useState<PhotoMeta>(seededMeta);
   const [files, setFiles] = useState<File[]>(initialFiles);
   const [previews, setPreviews] = useState<(string | null)[]>([]);
   const previewsRef = useRef<(string | null)[]>([]);
@@ -72,7 +70,7 @@ export default function UploadSheet({
   // Reset per new batch.
   useEffect(() => {
     if (open) {
-      setMeta({ ...EMPTY_META, jobId: defaultJobId ?? "" });
+      setMeta(seededMeta());
       setPreviewIndex(null);
       setFiles(initialFiles);
       revokePreviews(previewsRef.current);
@@ -80,7 +78,9 @@ export default function UploadSheet({
       previewsRef.current = next;
       setPreviews(next);
     }
-  }, [open, initialFiles, defaultJobId]);
+    // seededMeta reads defaultTarget, which is in the list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialFiles, defaultTarget]);
   // Object URLs outlive React state, so release whatever is current on unmount.
   useEffect(() => {
     return () => revokePreviews(previewsRef.current);
@@ -133,39 +133,36 @@ export default function UploadSheet({
     };
   }, [open, sidecars]);
 
-  const { data: knownTags } = usePhotoTags(open);
+  const choices = useTagChoices(open);
 
-  // What the sidecars add on top of PhotoMetaFields' own suggestions: the same
-  // matching rule, minus the tags its TagInput is already showing. With no
-  // query typed TagInput shows nothing, so the keywords themselves surface.
+  // Keywords the paired sidecars carry that the tag dropdown is not already
+  // offering: shown as one-tap suggestions, never applied for the person.
   const sidecarSuggestions = useMemo(() => {
-    const alreadyShown = new Set(
-      tagSuggestions(toTagPairs(knownTags ?? []), meta.tagInput, meta.tags)
-    );
+    const offered = new Set(choices.map((tag) => tag.toLowerCase()));
     const query = meta.tagInput.trim().toLowerCase();
     return [...new Set(files.flatMap((file) => keywordsByFile.get(file) ?? []))]
       .filter(
         (tag) =>
           !meta.tags.includes(tag) &&
-          !alreadyShown.has(tag) &&
+          !offered.has(tag.toLowerCase()) &&
           tag.toLowerCase().includes(query)
       )
       .slice(0, 6);
-  }, [files, keywordsByFile, knownTags, meta.tagInput, meta.tags]);
+  }, [files, keywordsByFile, choices, meta.tagInput, meta.tags]);
+
+  const hasDestination = Boolean(meta.jobId) || meta.albums.length > 0;
 
   /** Hand the batch to the manager and close — the tray takes it from here. */
   const submit = () => {
-    if (!meta.jobId) {
-      toast.error("Pick a job first");
-      return;
-    }
+    if (!hasDestination) return;
     // Pairing was decided at pick time; a sidecar whose primary was removed
     // from the strip simply stays behind.
     manager.enqueue(
       files.map((file) => ({ file, sidecar: sidecars?.get(file) })),
       {
-        jobId: meta.jobId,
-        tags: appendTag(meta.tags, meta.tagInput),
+        jobId: meta.jobId || null,
+        albumIds: meta.albums.map((album) => album.id),
+        tags: appendResolvedTag(meta.tags, meta.tagInput, choices),
         shutterAt: capturedAtOverrides,
       }
     );
@@ -199,7 +196,9 @@ export default function UploadSheet({
             type="button"
             onClick={() => removeFile(index)}
             aria-label={`Remove ${file.name}`}
-            className="absolute -right-1 -top-1 flex h-6 w-6 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white hover:bg-red-500"
+            // The visible dot stays small beside a 56px thumbnail; the ::after
+            // pad makes the tap target 44px.
+            className="absolute -right-1 -top-1 flex h-7 w-7 items-center justify-center rounded-full border border-[#4e4e4e] bg-[#222222] text-white after:absolute after:-inset-2 after:content-[''] hover:bg-red-500"
           >
             <X className="h-3 w-3" />
           </button>
@@ -210,16 +209,24 @@ export default function UploadSheet({
 
   const fields = (
     <>
-      <PhotoMetaFields value={meta} onChange={setMeta} enabled={open} />
+      <p className="mb-3 text-base text-[#d0d0d0]">
+        Pick a project, an album, or both.
+      </p>
+      <PhotoMetaFields
+        value={meta}
+        onChange={setMeta}
+        tagChoices={choices}
+        enabled={open}
+      />
 
       {sidecarSuggestions.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
+        <div className="mb-2 mt-2 flex flex-wrap gap-1.5">
           {sidecarSuggestions.map((tag) => (
             <button
               key={tag}
               type="button"
               onClick={() => setMeta((prev) => addTagToMeta(prev, tag))}
-              className="rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-2.5 py-1 text-xs text-[#d0d0d0] hover:border-[#2680FC]"
+              className="min-h-9 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-3 py-1 text-sm text-[#d0d0d0] hover:border-[#2680FC]"
             >
               {tag}
             </button>
@@ -240,14 +247,22 @@ export default function UploadSheet({
   );
 
   const footer = (
-    <Button
-      onClick={submit}
-      disabled={files.length === 0}
-      className="w-full bg-[#2680FC] text-white hover:bg-[#1a6fd8]"
-      size="lg"
-    >
-      {`Upload ${plural(files.length, "file")}`}
-    </Button>
+    <>
+      {!hasDestination && (
+        <p id="upload-needs-destination" className="mb-2 text-center text-sm text-[#d0d0d0]">
+          Choose a project or an album to turn on Upload.
+        </p>
+      )}
+      <Button
+        onClick={submit}
+        disabled={files.length === 0 || !hasDestination}
+        aria-describedby={hasDestination ? undefined : "upload-needs-destination"}
+        className="h-auto min-h-11 w-full whitespace-normal bg-[#2680FC] py-2.5 text-base text-white hover:bg-[#1a6fd8]"
+        size="lg"
+      >
+        {`Upload ${plural(files.length, "file")}`}
+      </Button>
+    </>
   );
 
   return (

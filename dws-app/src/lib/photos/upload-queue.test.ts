@@ -159,6 +159,26 @@ describe("upload-queue", () => {
   });
 });
 
+// A replayed attempt is compared with the albums it first named, so the queue item — and the
+// manifest that survives a reload — must carry them into retry and cancellation.
+describe("an album upload keeps its albums", () => {
+  const albums = ["11111111-1111-4111-8111-111111111111"];
+  const identity = { attemptId: "attempt", photoId: "server-photo", contentSha256: "a".repeat(64), sourceSignature: JSON.stringify(["a.jpg", 10, 7, "image/jpeg"]) };
+  it("through enqueue, the manifest, and cancellation, with no project", () => {
+    let q = Q.enqueue(Q.emptyQueue(), [{ file: f("a.jpg", 10, 7) }], { jobId: null, albumIds: albums, tags: [] }, 0, () => "local-1");
+    expect(q.items[0]).toMatchObject({ jobId: null, albumIds: albums });
+    q = Q.rememberIdentity(q, "local-1", identity);
+    expect(Q.cancellationInput(q.items[0])).toMatchObject({ job_id: null, album_ids: albums });
+    const restored = Q.restoreManifest(Q.toManifest(q, 1), 2);
+    expect(restored.items[0]).toMatchObject({ jobId: null, albumIds: albums, status: "interrupted" });
+  });
+  it("sends an empty list for an item saved before albums existed", () => {
+    const q = Q.rememberIdentity(enq(Q.emptyQueue(), [{ file: f("a.jpg", 10, 7) }]), "x", identity);
+    const legacy = { ...q.items[0], albumIds: undefined, uploadIdentity: identity };
+    expect(Q.cancellationInput(legacy)).toMatchObject({ job_id: "job-1", album_ids: [] });
+  });
+});
+
 describe("durable ordinary upload removal", () => {
   const identity = { attemptId: "attempt", photoId: "server-photo", contentSha256: "a".repeat(64), sourceSignature: JSON.stringify(["a.jpg", 10, 7, "image/jpeg"]) };
   const pending = () => {

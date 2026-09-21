@@ -232,6 +232,7 @@ export function UploadManagerProvider({
               id,
               {
                 jobId: current.jobId,
+                albumIds: current.albumIds,
                 uploaderId: session.user.id,
                 tags: current.tags,
               },
@@ -309,7 +310,7 @@ export function UploadManagerProvider({
       } else if (any) {
         toast.success("Upload complete");
       } else if (duplicates) {
-        toast.success(`${plural(duplicates, "photo")} already in this job`);
+        toast.success(`${plural(duplicates, "photo")} already in Photos`);
       }
     })();
   }, [queue, queryClient, dispatchCurrent]);
@@ -332,7 +333,7 @@ export function UploadManagerProvider({
           const { data: { session } } = await supabase.auth.getSession();
           if (!session) throw new Error("Sign in to retry the XMP sidecar.");
           const result = await uploadSidecar(sidecar, identity, {
-            uploaderId: session.user.id, jobId: item.jobId,
+            uploaderId: session.user.id, jobId: item.jobId, albumIds: item.albumIds,
           }, buildBrowserUploadDeps(), { signal: controller.signal });
           if (unmounted.current) return;
           // The original already committed. A failed XMP retry keeps that

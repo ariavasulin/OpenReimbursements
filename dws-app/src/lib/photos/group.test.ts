@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupPhotos } from "./group";
+import { groupPhotos, openableInDisplayOrder } from "./group";
 import type { PhotoRow } from "./types";
 
 let counter = 0;
@@ -96,5 +96,35 @@ describe("groupPhotos by job", () => {
       ["job:none", "No project", 2],
       ["job:job-1", "#3612 · Museum Tower Penthouse", 1],
     ]);
+  });
+});
+
+describe("groupPhotos by tag", () => {
+  it("shows a photo under each of its tags, tags A to Z ignoring case, and No tags last", () => {
+    const both = makePhoto({ tags: ["shop drawing", "Kitchen"] });
+    const bare = makePhoto({ tags: [] });
+    const one = makePhoto({ tags: ["kitchen tile"] });
+    const groups = groupPhotos([bare, both, one], "tag");
+    expect(groups.map((group) => [group.key, group.label, group.photos.map((photo) => photo.id)])).toEqual([
+      ["tag:Kitchen", "Kitchen", [both.id]],
+      ["tag:kitchen tile", "kitchen tile", [one.id]],
+      ["tag:shop drawing", "shop drawing", [both.id]],
+      ["tag:none", "No tags", [bare.id]],
+    ]);
+  });
+
+  it("leaves out the No tags group when every photo has a tag, and keeps newest first inside a group", () => {
+    const newer = makePhoto({ tags: ["roof"], captured_at: "2026-08-14T18:00:00.000Z" });
+    const older = makePhoto({ tags: ["roof"], captured_at: "2026-08-01T18:00:00.000Z" });
+    const groups = groupPhotos([newer, older], "tag");
+    expect(groups.map((group) => group.label)).toEqual(["roof"]);
+    expect(groups[0].photos.map((photo) => photo.id)).toEqual([newer.id, older.id]);
+  });
+
+  it("hands the viewer each photo once even when it sits in two tag groups", () => {
+    const both = makePhoto({ tags: ["a", "b"] });
+    const other = makePhoto({ tags: ["b"] });
+    const openable = openableInDisplayOrder(groupPhotos([both, other], "tag"));
+    expect(openable.map((photo) => photo.id)).toEqual([both.id, other.id]);
   });
 });

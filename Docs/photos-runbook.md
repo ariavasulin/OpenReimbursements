@@ -38,6 +38,19 @@ deleted album keeps its photos and can be restored for 30 days; deleting an albu
 never deletes a photo. Album and bulk-tag writes go through the `photo_*album*`
 and `photo_bulk_tag` functions behind the `photo_writes_enabled` gate.
 
+Where employees find things: `/photos` lists every photo, newest first (phone and
+desktop both open here); `/photos/albums` and `/photos/projects` list albums and
+projects; `/photos/<jobId>` is still one project, so links already sent keep
+working. Deleted albums are listed on `/photos/trash` above the trashed photos,
+each with **Restore album** for 30 days. "Copy link" writes
+`/photos?photo=<id>`, which opens any active photo by id however old it is.
+
+Selecting many photos: **Add to album**, **Tag**, and **Remove from album** act at
+once on up to 500 photos (`MAX_BULK_PHOTOS`). **Set project** and **Trash** open
+the confirm page (`/photos/actions`) with exactly the selected photos, up to 500
+in one batch. Review and apply requests process at most 100 photos per page;
+nothing changes until the employee confirms the complete selection.
+
 Until the office project database is bridged, any photo actor can create a
 project wherever a job is chosen (upload, move, and the `/migrate` page) and
 rename one from its page. Both go through `photo_create_job` /

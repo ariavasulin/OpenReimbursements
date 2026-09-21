@@ -53,11 +53,13 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await expect(page.getByRole('heading', { name: /^No project · 1 photo$/ })).toBeVisible();
     await expect(page.getByRole('heading', { name: /Has A Project · 1 photo$/ })).toBeVisible();
     // "No project" is not a job: two photos, one job.
-    await expect(page.getByText(`2 photos across 1 job · "${tag}"`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`2 photos across 1 project · “${tag}”`, { exact: true })).toBeVisible();
 
     // The viewer names it "No project", and Copy link works without a project in the path.
     // At desktop the tile's name also carries its hover caption (date and uploader), so match the start.
     await page.getByRole('button', { name: new RegExp(`^loose-${viewport.name}\\.png`) }).click();
+    // Desktop keeps its side panel; on a phone the facts are behind the labeled Details button.
+    if (viewport.name === 'phone') await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(page.getByTestId('photo-project')).toHaveText('No project');
     const copy = page.getByRole('button', { name: 'Copy link', exact: true });
     await expect(copy).toBeEnabled();
@@ -67,25 +69,24 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
 
     // The confirm page lists it, says "No project", and links to it without "/photos/null".
     await page.goto(`/photos/actions?action=trash&photo=${loose}`);
-    await page.getByRole('button', { name: 'Review exact targets' }).click();
     const item = page.getByTestId('action-item');
-    await expect(item).toContainText('Expected job: No project');
+    await expect(item).toContainText('In Photos · No project');
     await expect(item.getByRole('link', { name: 'View photo', exact: true })).toHaveAttribute('href', `/photos?photo=${loose}`);
-    await page.getByRole('button', { name: 'Confirm move to trash' }).click();
-    await expect(page.getByTestId('action-status')).toContainText('completed');
+    await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
+    await expect(page.getByTestId('action-status')).toHaveText('Done');
 
     // The trash names it the same way, and a restore leaves it active and still without a project.
     await page.goto('/photos/trash');
     const row = page.getByTestId('trash-photo').filter({ hasText: `loose-${viewport.name}.png` });
     await expect(row).toContainText('No project');
-    await row.getByRole('link', { name: 'Review restore', exact: true }).click();
-    await page.getByRole('button', { name: 'Review exact targets' }).click();
-    await page.getByRole('button', { name: 'Confirm restore', exact: true }).click();
-    await expect(page.getByTestId('action-status')).toContainText('completed');
+    await row.getByRole('link', { name: 'Restore', exact: true }).click();
+    await expect(page.getByTestId('action-question')).toHaveText('Restore 1 photo to No project?');
+    await page.getByRole('button', { name: 'Restore photo', exact: true }).click();
+    await expect(page.getByTestId('action-status')).toHaveText('Done');
     expect((await fixtures.sql.query('select job_id,deleted_at from public.photos where id=$1', [loose])).rows[0]).toEqual({ job_id: null, deleted_at: null });
 
-    // A move to "No project". No screen offers it yet (Phase 5), so the draft is made through the
-    // API from the signed-in page; the confirm page must still read it correctly and apply it.
+    // A move to "No project" from a draft made through the API (the screens that offer it are
+    // covered in albums-ui.spec.ts); the confirm page must read it correctly and apply it.
     const owned = await seed(`moving-${viewport.name}.png`, project, tag);
     const batch = await page.evaluate(async (photoId) => {
       const response = await fetch('/api/photo-actions/batches', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -93,10 +94,10 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
       return (await response.json()).batch.id as string;
     }, owned);
     await page.goto(`/photos/actions?batch=${batch}`);
-    await expect(page.getByText('Destination: No project', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('action-question')).toHaveText('Move 1 photo to “No project”?');
     await expect(page.getByTestId('action-item')).toContainText(`moving-${viewport.name}.png`);
-    await page.getByRole('button', { name: 'Confirm move', exact: true }).click();
-    await expect(page.getByTestId('action-status')).toContainText('completed');
+    await page.getByRole('button', { name: 'Move photo', exact: true }).click();
+    await expect(page.getByTestId('action-status')).toHaveText('Done');
     expect((await fixtures.sql.query('select job_id,deleted_at from public.photos where id=$1', [owned])).rows[0]).toEqual({ job_id: null, deleted_at: null });
 
     expect(crashes).toEqual([]);

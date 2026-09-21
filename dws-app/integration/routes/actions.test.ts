@@ -129,6 +129,49 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   expect((await json(await call(read,d.batch.id,undefined,f.employeeA,'GET','?offset=200&limit=100'))).items).toHaveLength(5);
   await json(await call(approve,d.batch.id,{}));
  });
+ it('confirms exactly 500 selected IDs in bounded pages, refuses 501, and applies no-project and trash only to that selection', async () => {
+  const j = await job();
+  const rows = Array.from({length: 501}, () => {
+   const id = randomUUID();
+   return {id, job_id: j.id, uploader_id: f.employeeA.id, kind: 'image', captured_at: new Date().toISOString(), original_path: `originals/${f.employeeA.id}/${id}/fixture.jpg`};
+  });
+  expect((await f.admin.from('photos').insert(rows)).error).toBeNull();
+  const ids = rows.slice(0, 500).map(row => row.id);
+  try {
+   await json(await call(create, '', {action:'trash', selector:selected(rows.map(row => row.id))}), 400);
+   for (const action of ['move', 'trash']) {
+    const d = await json(await call(create, '', {action, selector:selected(ids), ...(action === 'move' ? {destination_job_id:null} : {})}));
+    for (let page = 1; page <= 5; page++) {
+     const result = await json(await call(materialize, d.batch.id, {}));
+     expect(result.total).toBe(page * 100);
+     expect(result.batch.materialization_complete).toBe(page === 5);
+     if (page === 1) await json(await call(approve, d.batch.id, {}), 409);
+    }
+    await json(await call(approve, d.batch.id, {}));
+    for (let offset = 0; offset < 500; offset += 100) {
+     const result = await json(await call(apply, d.batch.id, {photo_ids:ids.slice(offset, offset + 100)}));
+     expect(result.outcomes).toHaveLength(100);
+     expect(result.outcomes.every((row:{status:string}) => row.status === 'applied')).toBe(true);
+    }
+    expect((await json(await call(read, d.batch.id, undefined, f.employeeA, 'GET'))).batch.status).toBe('completed');
+   }
+   const changed = await f.sql.query('select job_id, deleted_at from public.photos where id = any($1::uuid[])', [ids]);
+   expect(changed.rows).toHaveLength(500);
+   expect(changed.rows.every(row => row.job_id === null && row.deleted_at !== null)).toBe(true);
+   expect((await f.admin.from('photos').select('job_id,deleted_at').eq('id', rows[500].id).single()).data).toEqual({job_id:j.id, deleted_at:null});
+  } finally { await f.sql.query('delete from public.photos where id = any($1::uuid[])', [rows.map(row => row.id)]); }
+ });
+ it('stops a page of explicit IDs at a missing reference until the employee skips it', async () => {
+  const j = await job(), a = await photo(j.id), b = await photo(j.id), missing = randomUUID();
+  const d = await draft('trash', selected([a, missing, b]));
+  const first = await json(await call(materialize, d.batch.id, {}));
+  expect(first.items.map((item:{photo_id:string}) => item.photo_id)).toEqual([a]);
+  expect(first.unresolved[0]).toMatchObject({reference_index:1, reason:'not_found'});
+  await json(await call(approve, d.batch.id, {}), 409);
+  await json(await call(materialize, d.batch.id, {choices:{1:null}}));
+  const last = await seal(d.batch.id);
+  expect(last.items.map(item => item.photo_id).sort()).toEqual([a,b].sort());
+ });
  it('ordinary delete is open to any employee and records them, PATCH rejects job edits and trash, and cancellation fences apply',async()=>{
   const j=await job(),id=await photo(j.id),other=await photo(j.id,{uploader_id:f.employeeB.id});
   const first=await json(await call(remove,other,{},f.employeeA,'DELETE'));

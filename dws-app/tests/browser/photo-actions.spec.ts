@@ -39,24 +39,29 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
   test(`exact move, trash and restore are reviewable on ${viewport.name}`, async ({ page, context }, info) => {
     await page.setViewportSize(viewport); await authenticate(context);
     const photo = await seed(`retained-${viewport.name}.png`);
+    // One photo and a destination: the page goes straight to the photo and the one question.
     await page.goto(`/photos/actions?action=move&photo=${photo.id}&destination=${jobs[1]}`);
-    await page.getByRole('button', { name: 'Review exact targets' }).click();
-    await expect(page.getByTestId('action-count')).toHaveText('1 exact target');
+    await expect(page.getByTestId('action-count')).toHaveText('1 photo');
     await expect(page.getByTestId('action-item')).toContainText(`retained-${viewport.name}.png`);
-    const confirm = page.getByRole('button', { name: 'Confirm move', exact: true });
+    await expect(page.getByTestId('action-question')).toHaveText(/^Move 1 photo to #ACTION-1-\w+ · Action South\?$/);
+    // Plain language: none of the old console vocabulary is on the page.
+    await expect(page.locator('main')).not.toContainText(/exact target|draft|pending|canonical|MCP/i);
+    const confirm = page.getByRole('button', { name: 'Move photo', exact: true });
     await expect(confirm).toBeEnabled(); await confirm.focus(); await expect(confirm).toBeFocused();
     expect((await fixtures.sql.query('select job_id from public.photos where id=$1', [photo.id])).rows[0].job_id).toBe(jobs[0]);
     await capture(page, info, `${viewport.name}-move-confirmation`);
-    await confirm.click(); await expect(page.getByTestId('action-status')).toContainText('completed');
+    await confirm.click(); await expect(page.getByTestId('action-status')).toHaveText('Done');
     expect((await fixtures.sql.query('select job_id from public.photos where id=$1', [photo.id])).rows[0].job_id).toBe(jobs[1]);
 
     await page.goto(`/photos/actions?action=trash&photo=${photo.id}`);
-    await page.getByRole('button', { name: 'Review exact targets' }).click();
-    await expect(page.getByText(/known public file URL/)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Confirm move to trash' })).toBeEnabled();
+    await expect(page.getByTestId('action-question')).toHaveText('Move 1 photo to trash?');
+    // The 30-day recovery facts stay, in plain words, beside the question.
+    await expect(page.getByText(/restore a photo from Trash for 30 days.*already saved its web address/)).toBeVisible();
+    await expect(page.locator('main')).not.toContainText(/exact target|draft|pending|canonical|MCP/i);
+    await expect(page.getByRole('button', { name: 'Move to trash', exact: true })).toBeEnabled();
     await capture(page, info, `${viewport.name}-trash-confirmation`);
-    await page.getByRole('button', { name: 'Confirm move to trash' }).click();
-    await expect(page.getByTestId('action-status')).toContainText('completed');
+    await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
+    await expect(page.getByTestId('action-status')).toHaveText('Done');
     const trashed = (await fixtures.sql.query('select deleted_at,purge_after from public.photos where id=$1', [photo.id])).rows[0];
     expect(new Date(trashed.purge_after).getTime() - new Date(trashed.deleted_at).getTime()).toBe(30 * 86400_000);
     const publicFile = await context.request.get(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/photos/${photo.path}`);
@@ -69,16 +74,21 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     const row = page.getByTestId('trash-photo').filter({ hasText: `retained-${viewport.name}.png` });
     await expect(row).toContainText('Restore before');
     await capture(page, info, `${viewport.name}-trash-list`);
-    await row.getByRole('link', { name: 'Review restore', exact: true }).click();
-    await page.getByRole('button', { name: 'Review exact targets' }).click();
-    await expect(page.getByTestId('action-item')).toContainText('In trash');
-    await expect(page.getByRole('button', { name: 'Confirm restore', exact: true })).toBeEnabled();
+    await row.getByRole('link', { name: 'Restore', exact: true }).click();
+    await expect(page.getByTestId('action-item')).toContainText('In Trash');
+    await expect(page.getByTestId('action-question')).toHaveText(/^Restore 1 photo to #ACTION-1-\w+ · Action South\?$/);
+    await expect(page.locator('main')).not.toContainText(/exact target|draft|pending|canonical|MCP/i);
+    await expect(page.getByRole('button', { name: 'Restore photo', exact: true })).toBeEnabled();
     await capture(page, info, `${viewport.name}-restore-confirmation`);
-    if (viewport.name === 'phone') { await page.getByTestId('action-item').scrollIntoViewIfNeeded(); await capture(page, info, 'phone-restore-exact-target'); }
-    await page.getByRole('button', { name: 'Confirm restore', exact: true }).click();
-    await expect(page.getByTestId('action-status')).toContainText('completed');
+    if (viewport.name === 'phone') {
+      // The photo, the question, and the verb all fit on the first phone screen.
+      await expect(page.getByTestId('action-item')).toBeInViewport();
+      await expect(page.getByRole('button', { name: 'Restore photo', exact: true })).toBeInViewport();
+    }
+    await page.getByRole('button', { name: 'Restore photo', exact: true }).click();
+    await expect(page.getByTestId('action-status')).toHaveText('Done');
     expect((await fixtures.sql.query('select deleted_at,job_id from public.photos where id=$1', [photo.id])).rows[0]).toMatchObject({ deleted_at: null, job_id: jobs[1] });
-    await expect(page.getByRole('button', { name: 'Refresh results', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Refresh', exact: true })).toBeEnabled();
     await capture(page, info, `${viewport.name}-restored`);
     await writeFile(info.outputPath('retention-action-evidence.json'), JSON.stringify({ photoId: photo.id, trashed, knownPublicUrlStatus: publicFile.status(), deepLink: 'Trash did not open a lightbox', restoredToJob: jobs[1] }, null, 2));
   });
@@ -99,24 +109,28 @@ test('phone upload preserves queue while a colleague’s trashed photo is restor
   await expect(page.getByText(/Ask an administrator to restore/)).toHaveCount(0);
   await capture(page, info, 'phone-other-owner-remedy');
   await page.getByRole('link', { name: 'Review restore', exact: true }).click();
-  await page.getByRole('button', { name: 'Review exact targets' }).click();
   await expect(page.getByTestId('action-item')).toContainText('someone-elses-trash.png');
-  await expect(page.getByRole('button', { name: 'Confirm restore', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Restore photo', exact: true })).toBeEnabled();
   await capture(page, info, 'phone-other-owner-restore-confirmation');
-  await page.getByRole('button', { name: 'Confirm restore', exact: true }).click();
-  await expect(page.getByTestId('action-status')).toContainText('completed');
+  await page.getByRole('button', { name: 'Restore photo', exact: true }).click();
+  await expect(page.getByTestId('action-status')).toHaveText('Done');
+  // It came from a waiting upload, so the page says what to do next.
+  await expect(page.getByText('Your upload was waiting for this. Go back to it and choose Check again.')).toBeVisible();
   const restored = (await fixtures.sql.query('select uploader_id,deleted_at,deleted_by from public.photos where id=$1', [photo.id])).rows[0];
   expect(restored).toEqual({ uploader_id: fixtures.employeeB.id, deleted_at: null, deleted_by: null });
   expect(transfers).toEqual([]);
   await page.getByRole('button', { name: /1 upload needs attention/ }).click();
   await page.getByRole('button', { name: 'Check again', exact: true }).click();
-  await expect(page.getByRole('button', { name: /1 photo already in this job/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /1 photo already in this project/ })).toBeVisible();
   expect(transfers).toEqual([]);
   expect((await fixtures.sql.query('select count(*)::int as count from public.photos where content_sha256=$1', [photo.digest])).rows[0].count).toBe(1);
   await page.getByRole('link', { name: 'DWS Photos', exact: true }).click();
   await expect(page).toHaveURL(/\/photos$/);
-  await expect(page.locator('main').getByRole('link', { name: /Action North/ }).getByText('1 photo', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /1 photo already in this job/ })).toBeVisible();
+  // The project list is one tap away, on the Projects tab; the tray rides along.
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Projects', exact: true }).click();
+  await expect(page).toHaveURL(/\/photos\/projects$/);
+  await expect(page.locator('main').getByRole('link', { name: /Action North/ })).toContainText(/· 1 photo$/);
+  await expect(page.getByRole('button', { name: /1 photo already in this project/ })).toBeVisible();
   await expect(page.getByText('1 upload needs attention — open the tray', { exact: true })).toBeHidden();
   await capture(page, info, 'phone-upload-resolved');
   await writeFile(info.outputPath('ordinary-restore-remedy.json'), JSON.stringify({ photoId: photo.id, transfers, restored, canonicalCount: 1, libraryCountAfterRetry: 1, queue: 'Same retained file resolved with Check again after an ordinary restore by a non-uploader' }, null, 2));
@@ -134,16 +148,16 @@ test('MCP filename ambiguity requires a visible exact choice before confirmation
   await page.goto(`/photo-actions?token=${token}&script_name=move_photos`);
   await expect(page.getByRole('heading', { name: /Choose the matching photo/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Choose this photo', exact: true })).toHaveCount(2);
-  await expect(page.getByRole('button', { name: 'Confirm move', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /^Move photos?$/ })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Choose this photo', exact: true }).first()).toBeEnabled();
   await capture(page, info, 'desktop-ambiguous-reference');
   await page.locator(`a[href="/photos/${jobs[0]}?photo=${first.id}"]`).locator('..').locator('..').getByRole('button', { name: 'Choose this photo' }).click();
-  await expect(page.getByTestId('action-count')).toHaveText('1 exact target');
+  await expect(page.getByTestId('action-count')).toHaveText('1 photo');
   await expect(page.getByTestId('action-item').getByRole('link', { name: 'View photo', exact: true })).toHaveAttribute('href', `/photos/${jobs[0]}?photo=${first.id}`);
-  await expect(page.getByRole('button', { name: 'Confirm move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Move photo', exact: true })).toBeEnabled();
   await capture(page, info, 'desktop-selected-reference');
-  await page.getByRole('button', { name: 'Confirm move', exact: true }).click();
-  await expect(page.getByTestId('action-status')).toContainText('completed');
+  await page.getByRole('button', { name: 'Move photo', exact: true }).click();
+  await expect(page.getByTestId('action-status')).toHaveText('Done');
   const rows = (await fixtures.sql.query('select id,job_id from public.photos where id=any($1::uuid[])', [[first.id, second.id]])).rows;
   expect(rows.find(row => row.id === first.id).job_id).toBe(jobs[1]);
   expect(rows.find(row => row.id === second.id).job_id).toBe(jobs[0]);
@@ -156,7 +170,8 @@ test('upload and edit pop-ups have no Sheet # field and still save; trash is off
   const bytes = Buffer.concat([png, randomBytes(16)]);
   const digest = createHash('sha256').update(bytes).digest('hex');
   await page.goto(`/photos/${jobs[1]}`);
-  await expect(page.getByRole('button', { name: 'Uploader', exact: true })).toBeVisible();
+  // The filter row is up (a chip with nothing to offer, like Uploader for nameless fixture people, is left out).
+  await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: 'All', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sheet', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'sheet', exact: true })).toHaveCount(0);
 
@@ -174,8 +189,10 @@ test('upload and edit pop-ups have no Sheet # field and still save; trash is off
 
   // Edit pop-up: no Sheet # field, and a tag still saves.
   await page.goto(`/photos/${jobs[1]}?photo=${uploaded.id}`);
-  await page.getByRole('button', { name: 'Edit tags', exact: true }).click();
-  const editDialog = page.getByRole('dialog').filter({ hasText: 'Edit photo' });
+  // On a phone the photo is unobscured; its facts and actions are behind the labeled Details button.
+  await page.getByRole('button', { name: 'Details', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit details', exact: true }).click();
+  const editDialog = page.getByRole('dialog', { name: 'Edit details' });
   await expect(editDialog.getByText('Tags (optional)', { exact: true })).toBeVisible();
   await expect(editDialog.getByText(/sheet/i)).toHaveCount(0);
   await expect(editDialog.getByLabel(/sheet/i)).toHaveCount(0);
@@ -188,6 +205,7 @@ test('upload and edit pop-ups have no Sheet # field and still save; trash is off
   // A colleague's photo: the viewer offers trash to someone who is neither uploader nor administrator.
   const theirs = await seed('colleague-photo.png', { uploader: fixtures.employeeB.id });
   await page.goto(`/photos/${jobs[0]}?photo=${theirs.id}`);
+  await page.getByRole('button', { name: 'Details', exact: true }).click();
   await expect(page.getByRole('link', { name: 'Move to trash', exact: true })).toBeVisible();
   await capture(page, info, 'colleague-photo-offers-trash');
 });

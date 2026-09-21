@@ -12,6 +12,19 @@ import { ArrowRight } from "lucide-react";
 import { formatUSPhoneNumber } from '@/lib/phone';
 import { isPhotosHost } from '@/lib/cookieDomain';
 
+/** Seconds before "Resend code" can be pressed (again). */
+const RESEND_WAIT_SECONDS = 30;
+
+/**
+ * Is this sign-in for the photo library? On the photos address, or when the
+ * page the person is headed to is a photos page (previews and local runs have
+ * no photos address of their own).
+ */
+function isPhotosSignIn(): boolean {
+  const next = new URLSearchParams(window.location.search).get('next') ?? '';
+  return isPhotosHost(window.location.hostname) || next === '/photos' || next.startsWith('/photos/') || next.startsWith('/photos?');
+}
+
 function getPostLoginPath(): string {
   const params = new URLSearchParams(window.location.search);
   const next = params.get('next');
@@ -53,7 +66,24 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [needsName, setNeedsName] = useState(false);
   const [fullNameInput, setFullNameInput] = useState('');
+  const [photosSignIn, setPhotosSignIn] = useState(false);
+  const [resendIn, setResendIn] = useState(0);
   const router = useRouter();
+
+  // The browser tab and the heading say which product this is. Decided on the
+  // client because it depends on the address the page was opened at.
+  useEffect(() => {
+    if (!isPhotosSignIn()) return;
+    setPhotosSignIn(true);
+    document.title = 'DWS Photos';
+  }, []);
+
+  // Counts "Resend code" down to zero, one second at a time.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn((seconds) => seconds - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
 
   const mountedRef = useRef(true);
 
@@ -97,8 +127,9 @@ export default function LoginPage() {
     };
   }, [router]);
 
-  const handleSendOtp = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleSendOtp = async (e?: React.FormEvent<HTMLFormElement>) => {
+    e?.preventDefault();
+    const resending = otpSent;
     setLoading(true);
     setError(null);
     setMessage(null);
@@ -120,8 +151,10 @@ export default function LoginPage() {
       if (!response.ok) {
         throw new Error(data.error || 'Failed to send OTP');
       }
-      setMessage('Login code sent successfully! Please check your phone.');
+      setMessage(resending ? 'We sent a new code. Please check your phone.' : 'Login code sent successfully! Please check your phone.');
       setOtpSent(true);
+      setOtp('');
+      setResendIn(RESEND_WAIT_SECONDS);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       setError(errorMessage);
@@ -231,6 +264,11 @@ export default function LoginPage() {
               priority
             />
           </div>
+          {photosSignIn && (
+            <h1 className="mb-1 text-center text-2xl font-semibold tracking-wide text-white">
+              DWS <span className="text-[#2680FC]">Photos</span>
+            </h1>
+          )}
           <p className="mt-2 text-center text-sm text-gray-400">
             {needsName
               ? "One last thing — what's your name?"
@@ -330,6 +368,17 @@ export default function LoginPage() {
                 autoComplete="one-time-code"
               />
               <p className="text-xs text-gray-400">We sent a code to {formatUSPhoneNumber(phoneNumberInput) || phoneNumberInput}</p>
+              <p className="pt-1 text-sm text-gray-300">
+                Didn&apos;t get it?{' '}
+                <button
+                  type="button"
+                  onClick={() => void handleSendOtp()}
+                  disabled={loading || resendIn > 0}
+                  className="min-h-11 text-sm font-medium text-[#2680FC] hover:text-[#1a6fd8] disabled:text-gray-500"
+                >
+                  {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
+                </button>
+              </p>
             </div>
             <Button type="submit" className="w-full bg-[#2680FC] hover:bg-[#1a6fd8] text-white" disabled={loading || otp.length !== 4}>
               {loading ? 'Verifying...' : 'Verify & Login'}

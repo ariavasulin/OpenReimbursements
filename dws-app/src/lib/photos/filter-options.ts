@@ -1,12 +1,14 @@
-// Filter-chip menus for a job page. The options accumulate across every page
-// of photos seen for the job, so picking a filter never shrinks the menus to
-// the filtered set.
+// Filter-chip menus for a photo grid. The options accumulate across every page
+// of photos seen, so picking a filter never shrinks the menus to the filtered
+// set.
 
 import type { PhotoRow } from "./types";
 
 export interface SeenOptions {
   /** uploader_id -> display name. */
   uploaders: Map<string, string>;
+  /** Every tag carried by a photo seen so far. */
+  tags: Set<string>;
 }
 
 export interface FilterOption {
@@ -15,7 +17,7 @@ export interface FilterOption {
 }
 
 export function emptySeenOptions(): SeenOptions {
-  return { uploaders: new Map() };
+  return { uploaders: new Map(), tags: new Set() };
 }
 
 /**
@@ -28,14 +30,28 @@ export function accumulateSeenOptions(
 ): SeenOptions {
   let changed = false;
   const uploaders = new Map(previous.uploaders);
+  const tags = new Set(previous.tags);
   for (const photo of photos) {
     const name = photo.uploader?.full_name;
     if (name && uploaders.get(photo.uploader_id) !== name) {
       uploaders.set(photo.uploader_id, name);
       changed = true;
     }
+    for (const tag of photo.tags) {
+      if (!tags.has(tag)) {
+        tags.add(tag);
+        changed = true;
+      }
+    }
   }
-  return changed ? { uploaders } : previous;
+  return changed ? { uploaders, tags } : previous;
+}
+
+/** Tags A to Z ignoring case; `known` adds tags no loaded photo has shown yet. */
+export function toTagOptions(seen: SeenOptions, known: string[] = []): FilterOption[] {
+  return [...new Set([...known, ...seen.tags])]
+    .sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }))
+    .map((tag) => ({ value: tag, label: tag }));
 }
 
 /** Uploaders by display name. */

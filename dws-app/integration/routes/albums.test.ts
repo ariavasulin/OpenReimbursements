@@ -15,7 +15,7 @@ vi.mock('next/headers', async () => {
 });
 
 import { GET as listAlbums, POST as createAlbum } from '@/app/api/photo-albums/route';
-import { PATCH as patchAlbum, DELETE as deleteAlbum } from '@/app/api/photo-albums/[id]/route';
+import { GET as oneAlbum, PATCH as patchAlbum, DELETE as deleteAlbum } from '@/app/api/photo-albums/[id]/route';
 import { POST as addPhotos, DELETE as removePhotos } from '@/app/api/photo-albums/[id]/photos/route';
 import { POST as bulkTag } from '@/app/api/photos/tags/route';
 import { GET as listPhotos, POST as finalize } from '@/app/api/photos/route';
@@ -220,6 +220,26 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
       expect(restored.album).toMatchObject({ id, deleted_at: null, deleted_by: null });
       expect(ids(await list(`?album=${id}`))).toEqual([inAlbum]); // it came back whole
       expect((await json(await call(listAlbums, '/api/photo-albums?deleted=1'))).albums.map((entry: { id: string }) => entry.id)).not.toContain(id);
+    });
+
+    // The album page's header (photo-albums Phase 4): one live album with a count of ACTIVE photos.
+    it('GET /api/photo-albums/[id] returns a live album with its active-photo count; deleted, unknown, malformed and signed-out are refused', async () => {
+      const id = await album('One album'), kept = await photo(), trashed = await photo(), loose = await photo({ jobId: null });
+      await json(await add(id, [kept, trashed, loose]));
+      const get = (albumId: string, actor?: FixtureActor | null) => call(oneAlbum, `/api/photo-albums/${albumId}`, { id: albumId, actor });
+      expect((await json(await get(id))).album).toMatchObject({ id, name: 'One album', photo_count: 3 });
+      // A trashed photo keeps its membership (restore brings it back) but is not counted.
+      await f.sql.query("update public.photos set deleted_at=now(),deleted_by=$2,purge_after=now()+interval '30 days' where id=$1", [trashed, f.employeeA.id]);
+      expect((await json(await get(id, f.employeeB))).album.photo_count).toBe(2);
+      // It is a read: it still answers while the writes gate is closed.
+      await gate(false);
+      expect((await json(await get(id))).album.photo_count).toBe(2);
+      await gate(true);
+      expect((await json(await get(id, null), 401)).error.code).toBe('unauthenticated');
+      expect((await json(await get(randomUUID()), 404)).error.code).toBe('not_found');
+      expect((await json(await get('not-a-uuid'), 400)).error.code).toBe('invalid_input');
+      await json(await call(deleteAlbum, `/api/photo-albums/${id}`, { method: 'DELETE', id }));
+      expect((await json(await get(id), 404)).error.code).toBe('not_found');
     });
 
     it('after 30 days a deleted album is no longer listed or restorable', async () => {

@@ -7,7 +7,8 @@ import type { QueueItem } from "@/lib/photos/upload-queue";
 export type UploadItem = Pick<
   QueueItem,
   "name" | "status" | "sentBytes" | "size" | "error" | "warnings"
->;
+> &
+  Partial<Pick<QueueItem, "albumIds">>;
 
 export interface UploadRow {
   item: UploadItem;
@@ -37,11 +38,12 @@ function statusLabel(item: UploadItem): string {
     case "done":
       return "Done";
     case "duplicate":
-      return "Already in this job";
+      // Sent to an album, the existing photo joined it (the same-photo rule).
+      return item.albumIds?.length ? "Already in Photos, added to the album" : "Already in this project";
     case "failed":
       return "Failed";
     case "job_conflict":
-      return "Move required";
+      return "In another project";
     case "restore_required":
       return "Restore required";
     case "waiting_claim":

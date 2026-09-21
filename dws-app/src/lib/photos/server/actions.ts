@@ -2,6 +2,7 @@ import 'server-only';
 import type { ActionPhoto, PhotoActionBatch, PhotoActionBatchResponse, PhotoReference, PhotoSelector } from '../action-types';
 import { assertPhotoBatchActor, type PhotoActor } from './authority';
 import { photoId } from './reads';
+import { MAX_BULK_PHOTOS } from '../apiShared';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc, photoLinkIds } from './http';
 
 export const ACTION_PHOTO_COLUMNS = 'id,job_id,uploader_id,original_name,kind,thumb_path,deleted_at,purge_after,duplicate_of,job:jobs(id,job_number,name)';
@@ -19,7 +20,7 @@ export function validateSelector(value: unknown): PhotoSelector {
   const selector = value as Record<string, unknown>;
   if ('photos' in selector) {
     onlyKeys(selector, ['photos']);
-    if (!Array.isArray(selector.photos) || selector.photos.length < 1 || selector.photos.length > 100) throw new PhotoApiError('invalid_input');
+    if (!Array.isArray(selector.photos) || selector.photos.length < 1 || selector.photos.length > MAX_BULK_PHOTOS) throw new PhotoApiError('invalid_input');
     for (const ref of selector.photos) {
       if (!ref || typeof ref !== 'object' || Array.isArray(ref)) throw new PhotoApiError('invalid_input');
       if ('photo_id' in ref) { onlyKeys(ref, ['photo_id']); photoId(ref.photo_id); }
@@ -90,6 +91,28 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
     const index=Number(batch.materialization_cursor??0),ref=selector.photos[index];
     const choices=body.choices??{};
     if(!choices||typeof choices!=='object'||Array.isArray(choices)||Object.keys(choices).some(key=>key!==String(index))) throw new PhotoApiError('invalid_input');
+    // Explicit IDs from the selection grid are unambiguous. Resolve a bounded
+    // page together, stopping before a missing photo so it still needs a choice.
+    if (body.choices === undefined && 'photo_id' in ref) {
+      const page: string[] = [];
+      for (const candidate of selector.photos.slice(index, index + 100)) {
+        if (!('photo_id' in candidate)) break;
+        page.push(candidate.photo_id);
+      }
+      const found = await actor.db.from('photos').select('id').in('id', page);
+      if (found.error) throwPhotoDatabaseError(found.error);
+      const existing = new Set((found.data ?? []).map(row => row.id));
+      const missing = page.findIndex(id => !existing.has(id));
+      ids = missing < 0 ? page : page.slice(0, missing);
+      if (ids.length) {
+        const cursor = index + ids.length;
+        await photoRpc(actor, 'photo_materialize_action', {
+          p_actor: actor.actorId, p_batch_id: id, p_cursor: batch.materialization_cursor,
+          p_ids: ids, p_next_cursor: String(cursor), p_complete: cursor === selector.photos.length,
+        });
+        return readActionBatch(actor, id, origin);
+      }
+    }
     const choice=(choices as Record<string,unknown>)[index];
     if(choice===null) { /* Explicit unresolved-reference skip; no target is added. */ }
     else {

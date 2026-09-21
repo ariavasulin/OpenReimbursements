@@ -3,7 +3,13 @@ import {
   useQuery,
   type QueryClient,
 } from "@tanstack/react-query";
-import type { PhotoJobSummary, PhotoRow } from "./types";
+import type {
+  PhotoAlbum,
+  PhotoAlbumSummary,
+  PhotoDetail,
+  PhotoJobSummary,
+  PhotoRow,
+} from "./types";
 
 /** fetch + JSON; a non-OK response throws the server's `error` message. */
 export async function fetchJson<T>(
@@ -72,7 +78,10 @@ export function usePhotoTags(enabled: boolean) {
 
 /** After an upload, edit, or delete: every photo-derived query refetches. */
 export function invalidatePhotoCaches(queryClient: QueryClient) {
-  for (const key of ["photos", "photo-jobs", "photo-tags", "photo-search", "photo-trash"]) {
+  for (const key of [
+    "photos", "photo-jobs", "photo-tags", "photo-search", "photo-trash",
+    "photo-albums", "photo-album", "photo-detail", "photo-albums-deleted",
+  ]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }
@@ -95,4 +104,150 @@ export function renameJob(id: string, name: string) {
   return fetchJson<{ job: PhotoJobRef }>(
     `/api/photo-jobs/${encodeURIComponent(id)}`, "Failed to rename the project", jsonInit("PATCH", { name })
   );
+}
+
+// ---- Albums ---------------------------------------------------------------
+
+export async function fetchAlbums(q = ""): Promise<PhotoAlbumSummary[]> {
+  const params = q ? `?q=${encodeURIComponent(q)}` : "";
+  const data = await fetchJson<{ albums: PhotoAlbumSummary[] }>(
+    `/api/photo-albums${params}`,
+    "Failed to load albums"
+  );
+  return data.albums;
+}
+
+/** Album cards, most recently added-to first. Shared by the list, rail, and pickers. */
+export function usePhotoAlbums(enabled: boolean, q = "") {
+  return useQuery({
+    queryKey: ["photo-albums", q],
+    queryFn: () => fetchAlbums(q),
+    enabled,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** One live album as its page shows it. */
+export interface PhotoAlbumHeader {
+  id: string;
+  name: string;
+  photo_count: number;
+  created_at: string;
+}
+
+export function usePhotoAlbum(albumId: string, enabled = true) {
+  return useQuery({
+    enabled,
+    queryKey: ["photo-album", albumId],
+    queryFn: async () =>
+      (
+        await fetchJson<{ album: PhotoAlbumHeader }>(
+          `/api/photo-albums/${encodeURIComponent(albumId)}`,
+          "Failed to load the album"
+        )
+      ).album,
+    // A deleted album is a 404; asking three more times only delays saying so.
+    retry: false,
+  });
+}
+
+/** An album deleted in the last 30 days, as the Trash page lists it. */
+export interface DeletedAlbum {
+  id: string;
+  name: string;
+  deleted_at: string;
+  deleted_by: string | null;
+  restore_before: string;
+}
+
+export async function fetchDeletedAlbums(): Promise<DeletedAlbum[]> {
+  const data = await fetchJson<{ albums: DeletedAlbum[] }>(
+    "/api/photo-albums?deleted=1",
+    "Failed to load deleted albums",
+    { cache: "no-store" }
+  );
+  return data.albums;
+}
+
+export function createAlbum(name: string) {
+  return fetchJson<{ status: "created"; album: PhotoAlbum }>(
+    "/api/photo-albums", "Failed to create the album", jsonInit("POST", { name })
+  );
+}
+
+const albumUrl = (id: string) => `/api/photo-albums/${encodeURIComponent(id)}`;
+
+export function renameAlbum(id: string, name: string) {
+  return fetchJson<{ album: PhotoAlbum }>(albumUrl(id), "Failed to rename the album", jsonInit("PATCH", { name }));
+}
+
+export function restoreAlbum(id: string) {
+  return fetchJson<{ album: PhotoAlbum }>(albumUrl(id), "Failed to restore the album", jsonInit("PATCH", { action: "restore" }));
+}
+
+export function deleteAlbum(id: string) {
+  return fetchJson<{ album: PhotoAlbum }>(albumUrl(id), "Failed to delete the album", { method: "DELETE" });
+}
+
+/** 1-500 ids; safe to repeat. `missing` counts ids that are trashed or unknown. */
+export function addPhotosToAlbum(albumId: string, photoIds: string[]) {
+  return fetchJson<{ added: number; already: number; missing: number }>(
+    `${albumUrl(albumId)}/photos`, "Failed to add to the album", jsonInit("POST", { photo_ids: photoIds })
+  );
+}
+
+export function removePhotosFromAlbum(albumId: string, photoIds: string[]) {
+  return fetchJson<{ removed: number }>(
+    `${albumUrl(albumId)}/photos`, "Failed to remove from the album", jsonInit("DELETE", { photo_ids: photoIds })
+  );
+}
+
+// ---- Bulk tags, one photo, action batches ----------------------------------
+
+/** `skipped` counts photos the change would push past 20 tags; they are untouched. */
+export function bulkTagPhotos(photoIds: string[], change: { add?: string[]; remove?: string[] }) {
+  return fetchJson<{ updated: number; skipped: number; missing: number }>(
+    "/api/photos/tags", "Failed to tag the photos", jsonInit("POST", { photo_ids: photoIds, ...change })
+  );
+}
+
+/** One active photo with its albums. Throws when it is trashed or unknown (404). */
+export async function fetchPhotoDetail(photoId: string): Promise<PhotoDetail> {
+  const data = await fetchJson<{ photo: PhotoDetail }>(
+    `/api/photos/${encodeURIComponent(photoId)}`,
+    "Photo not found"
+  );
+  return data.photo;
+}
+
+export function usePhotoDetail(photoId: string | null) {
+  return useQuery({
+    queryKey: ["photo-detail", photoId],
+    queryFn: () => fetchPhotoDetail(photoId!),
+    enabled: photoId !== null,
+    retry: false,
+  });
+}
+
+/**
+ * A draft move or trash of exactly these photos, for the confirm page. Nothing
+ * changes until the person confirms there. `destinationJobId: null` on a move
+ * means "No project".
+ */
+export async function createActionBatch(
+  input:
+    | { action: "trash"; photoIds: string[] }
+    | { action: "move"; photoIds: string[]; destinationJobId: string | null }
+): Promise<string> {
+  const data = await fetchJson<{ batch: { id: string } }>(
+    "/api/photo-actions/batches",
+    "Could not start that. Try again.",
+    jsonInit("POST", {
+      action: input.action,
+      selector: { photos: input.photoIds.map((photo_id) => ({ photo_id })) },
+      ...(input.action === "move" ? { destination_job_id: input.destinationJobId } : {}),
+    })
+  );
+  return data.batch.id;
 }

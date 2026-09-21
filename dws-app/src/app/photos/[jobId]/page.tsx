@@ -1,246 +1,74 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
-import {
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import { CaptureBar } from "@/components/photos/capture-bar";
-import { FilterChip, chipClass } from "@/components/photos/filter-bar";
-import InfiniteSentinel from "@/components/photos/infinite-sentinel";
-import PhotoGrid from "@/components/photos/photo-grid";
-import PhotoLightbox from "@/components/photos/photo-lightbox";
-import StatusLine from "@/components/photos/status-line";
-import {
-  fetchPhotosPage,
-  fetchTags,
-  invalidatePhotoCaches,
-  usePhotoJobs,
-} from "@/lib/photos/api";
-import {
-  accumulateSeenOptions,
-  emptySeenOptions,
-  toUploaderOptions,
-  type SeenOptions,
-} from "@/lib/photos/filter-options";
+import { useQueryClient } from "@tanstack/react-query";
+import { Briefcase, Upload } from "lucide-react";
+import CollectionHeader from "@/components/photos/collection-header";
+import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
+import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
+import PhoneHeader from "@/components/photos/phone-header";
+import PhotoBrowser from "@/components/photos/photo-browser";
+import { usePhotosShell } from "@/components/photos/photos-shell-context";
+import { invalidatePhotoCaches, renameJob, usePhotoJobs } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
-import { groupPhotos, openableInDisplayOrder } from "@/lib/photos/group";
-import {
-  useLightboxByPhotoId,
-  usePhotoDeepLink,
-  useResolvePhotoDeepLink,
-} from "@/hooks/use-photo-deep-link";
-import RenameJob from "@/components/photos/rename-job";
 
 const PINNED_TAG = "professional";
 
-interface Filters {
-  uploader: { id: string; name: string } | null;
-  tag: string | null;
-}
-
-const NO_FILTERS: Filters = { uploader: null, tag: null };
-
-export default function JobPhotosPage() {
+/** One project. The URL is unchanged, so every link already sent keeps working. */
+export default function ProjectPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const queryClient = useQueryClient();
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
+  const { openPicker } = usePhotosShell();
 
   // Always enabled: the shell holds the session guard, so this page only
   // renders once the session is ready.
   const { data: jobs } = usePhotoJobs(true);
   const job = jobs?.find((candidate) => candidate.id === jobId);
 
-  const { data: jobTags } = useQuery({
-    queryKey: ["photo-tags", jobId],
-    queryFn: () => fetchTags(jobId),
-  });
-
-  const {
-    data,
-    error,
-    isLoading,
-    hasNextPage,
-    fetchNextPage,
-    isFetchingNextPage,
-    isFetchNextPageError,
-  } = useInfiniteQuery({
-    queryKey: [
-      "photos",
-      jobId,
-      filters.uploader?.id ?? null,
-      filters.tag,
-    ],
-    queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams({ job: jobId });
-      if (filters.uploader) params.set("uploader", filters.uploader.id);
-      if (filters.tag) params.set("tags", filters.tag);
-      if (pageParam) params.set("cursor", pageParam);
-      return fetchPhotosPage(params);
-    },
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
-  });
-
-  const photos = useMemo(
-    () => data?.pages.flatMap((page) => page.photos) ?? [],
-    [data]
-  );
-
-  useEffect(() => {
-    setSeen((previous) => accumulateSeenOptions(previous, photos));
-  }, [photos]);
-
-  // Keyed on `seen`, which only changes when a page brings a new uploader —
-  // otherwise every scroll-appended page would re-sort the whole accumulated set.
-  const uploaderOptions = useMemo(() => toUploaderOptions(seen), [seen]);
-  const tagOptions = (jobTags ?? []).map((tag) => ({ value: tag, label: tag }));
-
-  const groups = useMemo(() => groupPhotos(photos, "date"), [photos]);
-  // The lightbox flips through the set as displayed: grouped order, images
-  // with previews only (file tiles download instead).
-  const openablePhotos = useMemo(() => openableInDisplayOrder(groups), [groups]);
-
-  const {
-    openPhotoId,
-    setOpenPhotoId,
-    isOpen: lightboxOpen,
-    lightboxProps,
-  } = useLightboxByPhotoId(openablePhotos);
-
-  useResolvePhotoDeepLink({
-    photos: openablePhotos,
-    pagesLoaded: data?.pages.length ?? 0,
-    isFetching: isLoading || isFetchingNextPage,
-    hasNextPage,
-    fetchFailed: isFetchNextPageError,
-    fetchNextPage,
-    isLightboxOpen: lightboxOpen,
-    onResolve: setOpenPhotoId,
-  });
-
-  usePhotoDeepLink({
-    openPhotoId,
-    onPopClose: () => setOpenPhotoId(null),
-    onPopOpen: (photoId) => {
-      if (!openablePhotos.some((candidate) => candidate.id === photoId)) {
-        return false;
-      }
-      setOpenPhotoId(photoId);
-      return true;
-    },
-  });
-
-  const noFiltersActive = !filters.uploader && !filters.tag;
-
-  const refetchPhotos = () => invalidatePhotoCaches(queryClient);
-
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-28 pt-5 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-8">
-      <Link
-        href="/photos"
-        className="desktop:hidden mb-2 block text-[13px] text-[#2680FC] hover:text-[#1a6fd8]"
-      >
-        &lsaquo; All jobs
-      </Link>
+    <main className={PAGE_MAIN_CLASS}>
+      <PhoneHeader back={{ href: "/photos/projects", label: "Projects" }} />
+      <CollectionHeader
+        name={job?.name}
+        fallbackName="Project"
+        subtitle={
+          job
+            ? [
+                `Project #${job.job_number}`,
+                plural(job.photo_count, "photo"),
+                job.location,
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            : " "
+        }
+        renameLabel="Project name"
+        // share={<ShareButton ... />}  <- the Share button goes here (photo-albums Phase 7)
+        onRename={async (name) => {
+          await renameJob(jobId, name);
+          invalidatePhotoCaches(queryClient);
+        }}
+      />
 
-      <h1 className="text-[17px] font-semibold">
-        {job ? (
-          <>
-            <span className="text-[#2680FC]">#{job.job_number}</span> ·{" "}
-            {job.name}
-            <RenameJob key={job.name} jobId={job.id} name={job.name} />
-          </>
-        ) : (
-          "Job"
-        )}
-      </h1>
-      <p className="mb-3 text-xs text-[#a0a0a0]">
-        {job
-          ? `${plural(job.photo_count, "photo")}${
-              job.location ? ` · ${job.location}` : ""
-            }`
-          : " "}
-      </p>
-
-      <div className="desktop:mb-1 desktop:flex desktop:items-center desktop:justify-between desktop:gap-3">
-        <div className="mb-3 flex flex-wrap gap-1.5 desktop:mb-0">
-          <button
-            type="button"
-            onClick={() => setFilters(NO_FILTERS)}
-            className={chipClass(noFiltersActive)}
-          >
-            All
-          </button>
-          <FilterChip
-            label="Uploader"
-            active={filters.uploader?.name ?? null}
-            options={uploaderOptions}
-            onSelect={(value) =>
-              setFilters((previous) => ({
-                ...previous,
-                uploader: {
-                  id: value,
-                  name: seen.uploaders.get(value) ?? "Uploader",
-                },
-              }))
-            }
-            onClear={() =>
-              setFilters((previous) => ({ ...previous, uploader: null }))
-            }
-          />
-          <FilterChip
-            label="Tags"
-            active={filters.tag}
-            options={tagOptions}
-            onSelect={(value) =>
-              setFilters((previous) => ({ ...previous, tag: value }))
-            }
-            onClear={() => setFilters((previous) => ({ ...previous, tag: null }))}
-          />
-        </div>
-      </div>
-
-      {isLoading && <StatusLine>Loading photos...</StatusLine>}
-      {/* A failed next page is the sentinel's to report (it keeps the loaded
-          grid and offers retry); the banner is for the first page only. */}
-      {error && !isFetchNextPageError && (
-        <StatusLine error>
-          {error instanceof Error ? error.message : "Failed to load photos"}
-        </StatusLine>
-      )}
-      {!isLoading && !error && photos.length === 0 && (
-        <StatusLine>
-          {noFiltersActive
-            ? "No photos yet — upload the first one."
-            : "No photos match these filters."}
-        </StatusLine>
-      )}
-
-      <PhotoGrid
-        groups={groups}
-        onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
-        pinnedTag={noFiltersActive ? PINNED_TAG : undefined}
+      <PhotoBrowser
+        scope={{ kind: "job", jobId }}
+        pinnedTag={PINNED_TAG}
         pinnedLabel="Professional Photography"
-        onExpandPinned={() =>
-          setFilters((previous) => ({ ...previous, tag: PINNED_TAG }))
+        empty={
+          <EmptyState
+            icon={<Briefcase className="h-7 w-7" aria-hidden="true" />}
+            title="No photos in this project yet"
+            actions={
+              <button type="button" onClick={openPicker} className={emptyPrimary}>
+                <Upload className="h-5 w-5" aria-hidden="true" />
+                Upload photos to this project
+              </button>
+            }
+          >
+            Photos you upload from here go into this project.
+          </EmptyState>
         }
       />
-
-      <InfiniteSentinel
-        hasNextPage={hasNextPage}
-        isFetching={isFetchingNextPage}
-        failed={isFetchNextPageError}
-        onVisible={() => fetchNextPage()}
-      />
-
-      <CaptureBar maxWidthClass="max-w-3xl" />
-
-      <PhotoLightbox {...lightboxProps} onChanged={refetchPhotos} />
     </main>
   );
 }
