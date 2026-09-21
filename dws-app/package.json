@@ -11,7 +11,8 @@
     "test:db": "node scripts/test-integration.mjs db",
     "test:routes": "node scripts/test-integration.mjs routes",
     "test:browser": "node scripts/test-integration.mjs browser",
-    "test:cutover": "node scripts/test-integration.mjs cutover"
+    "test:cutover": "node scripts/test-integration.mjs cutover",
+    "review:stack": "node scripts/review-stack.mjs"
   },
   "dependencies": {
     "@boundaryml/baml": "^0.214.0",
