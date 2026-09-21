@@ -43,7 +43,6 @@ describe("appendTag", () => {
 describe("addTagToMeta", () => {
   const meta: PhotoMeta = {
     jobId: "j1",
-    sheetNumber: "3",
     tags: ["Roof"],
     tagInput: "dry",
   };

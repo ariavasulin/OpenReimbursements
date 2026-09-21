@@ -31,11 +31,10 @@ export function appendTag(tags: string[], raw: string): string[] {
   return tag && !tags.includes(tag) ? [...tags, tag] : tags;
 }
 
-/** The job / sheet # / tags form values shared by the upload and edit sheets. */
+/** The job / tags form values shared by the upload and edit sheets. */
 export interface PhotoMeta {
   /** Selected job id, or "" for none. */
   jobId: string;
-  sheetNumber: string;
   tags: string[];
   /** Half-typed tag; appended as one more tag on save. */
   tagInput: string;

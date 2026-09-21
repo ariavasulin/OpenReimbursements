@@ -60,7 +60,7 @@ describe('shared upload HTTP boundaries with real Auth, SQL and Storage (AC-4, A
     const value = await fresh(); const claimed = await ok(claim, { ...value.owner, lease_generation: value.lease.lease_generation });
     expect(claimed.status).toBe('claimed');
     const payload: FinalizeUploadInput = { ...value.owner, lease_generation: value.lease.lease_generation, claim_generation: claimed.claim_generation,
-      id: value.created.photo_id, job_id: jobId, kind: 'image', sheet_number: null, tags: [], captured_at: null, captured_at_source: 'upload',
+      id: value.created.photo_id, job_id: jobId, kind: 'image', tags: [], captured_at: null, captured_at_source: 'upload',
       original_path: value.created.original_path, original_bytes: value.bytes.length, mime_type: 'image/jpeg', original_name: 'fixture.jpg',
       thumb_path: null, preview_path: null, duration_secs: null, sidecar_path: null, sidecar_name: null, content_sha256: value.input.content_sha256, warnings: [] };
     const bound = await f.admin.rpc('photo_lock_upload', { p_actor: f.employeeA.id, p_owner_kind: value.owner.owner_kind, p_owner_id: value.owner.owner_id });
@@ -305,8 +305,9 @@ describe('shared upload HTTP boundaries with real Auth, SQL and Storage (AC-4, A
       return client;
     });
     const result = await ok(finalize, value.payload);
-    expect(result).toMatchObject({ status: 'duplicate_trashed', photo_id: existing.id, cleanup_pending: true, can_restore: false });
-    expect(result.remedy).toContain('MCP restore handoff');
+    // Another employee's unexpired trash: any signed-in employee may restore it (photo-albums Decision 7).
+    expect(result).toMatchObject({ status: 'duplicate_trashed', photo_id: existing.id, cleanup_pending: true, can_restore: true });
+    expect(result.remedy).toBe('Confirm restoration before uploading.');
     expect((await f.admin.storage.from('photos').info(value.created.original_path)).error).toBeNull();
     spy.mockRestore();
     const replay = await ok(finalize, value.payload); expect(replay).not.toHaveProperty('cleanup_pending');

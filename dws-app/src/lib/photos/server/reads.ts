@@ -1,6 +1,6 @@
 import 'server-only';
 import { validate as isUuid } from 'uuid';
-import { assertPhotoBatchActor, isPhotoAdministrator, type PhotoActor } from './authority';
+import { assertPhotoBatchActor, type PhotoActor } from './authority';
 import { PhotoApiError, throwPhotoDatabaseError } from './http';
 
 export function photoId(value: unknown): string {
@@ -16,10 +16,6 @@ export async function readPhotoOwnership(actor: PhotoActor, id: string) {
   if (error) throwPhotoDatabaseError(error);
   if (!data) throw new PhotoApiError('not_found');
   return data;
-}
-
-export async function canManageOwnPhoto(actor: PhotoActor, uploaderId: string): Promise<boolean> {
-  return uploaderId === actor.actorId || await isPhotoAdministrator(actor);
 }
 
 /** Employee-readable summary, with mutation authority checked independently by SQL. */

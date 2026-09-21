@@ -32,7 +32,6 @@ describe("uploadOne", () => {
       id: "photo-1",
       job_id: META.jobId,
       kind: "image",
-      sheet_number: "12",
       tags: ["professional"],
       captured_at: CAPTURED.toISOString(),
       captured_at_source: "exif",

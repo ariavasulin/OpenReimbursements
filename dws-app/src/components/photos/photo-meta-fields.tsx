@@ -6,14 +6,13 @@ import TagInput from "@/components/photos/tag-input";
 import { usePhotoJobs, usePhotoTags } from "@/lib/photos/api";
 import { addTagToMeta, type PhotoMeta } from "@/lib/photos/tags";
 
-// The job / sheet # / tags form shared by the upload and edit sheets. Owns the
+// The job / tags form shared by the upload and edit sheets. Owns the
 // jobs and tags queries; the host owns the values.
 
 export type { PhotoMeta } from "@/lib/photos/tags";
 
 export const EMPTY_META: PhotoMeta = {
   jobId: "",
-  sheetNumber: "",
   tags: [],
   tagInput: "",
 };
@@ -46,7 +45,6 @@ export default function PhotoMetaFields({
   const { data: knownTags } = usePhotoTags(enabled);
   const id = useId();
   const jobInputId = `${id}-job`;
-  const sheetInputId = `${id}-sheet`;
   const tagInputId = `${id}-tags`;
 
   const patch = (changes: Partial<PhotoMeta>) =>
@@ -78,20 +76,6 @@ export default function PhotoMetaFields({
         </p>
       )}
       </>}
-
-      <label htmlFor={sheetInputId} className={labelClass}>
-        Sheet # (optional)
-      </label>
-      <input
-        id={sheetInputId}
-        type="text"
-        inputMode="numeric"
-        value={value.sheetNumber}
-        onChange={(event) => patch({ sheetNumber: event.target.value })}
-        placeholder="e.g. 12"
-        disabled={disabled}
-        className="mb-3.5 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none md:text-sm"
-      />
 
       <label htmlFor={tagInputId} className={labelClass}>
         Tags (optional)

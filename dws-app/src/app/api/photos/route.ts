@@ -22,7 +22,7 @@ import {
   parseLimit,
 } from '@/lib/keysetCursor';
 
-// GET  /api/photos?job=&sheet=&tags=&uploader=&q=&cursor=&limit=
+// GET  /api/photos?job=&tags=&uploader=&q=&cursor=&limit=
 //      Filtered photo list, newest capture first, keyset-paginated on
 //      (captured_at, id). `q` searches across job number/name, uploader name,
 //      and tag membership (ILIKE — no search infrastructure at DWS scale).
@@ -106,7 +106,6 @@ export async function GET(request: Request) {
 
   const params = new URL(request.url).searchParams;
   const job = params.get('job');
-  const sheet = params.get('sheet')?.trim() || null;
   const uploader = params.get('uploader');
   const tags = (params.get('tags') ?? '')
     .split(',')
@@ -142,7 +141,6 @@ export async function GET(request: Request) {
 
   if (job) query = query.eq('job_id', job);
   if (uploader) query = query.eq('uploader_id', uploader);
-  if (sheet) query = query.eq('sheet_number', sheet);
   for (const tag of tags) query = query.contains('tags', [tag]);
 
   if (q) {

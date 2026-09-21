@@ -306,6 +306,8 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await authenticate(context, []);
     const token = randomBytes(32).toString('base64url');
     const tokenDigest = createHash('sha256').update(token).digest('hex');
+    // The row is written directly, so it can still carry `sheet_number` the way a hand-off minted
+    // before Sheet # was removed would. The pop-up must ignore it rather than fail (photo-albums AC-4).
     const inserted = await fixtures.admin.from('dws_action_handoffs').insert({ token_digest: tokenDigest, script_name: 'add_photos', expires_at: new Date(Date.now() + 180_000).toISOString(), requested_input: { job_number: '3612', sheet_number: 'S-7', tags: ['office'] } });
     expect(inserted.error).toBeNull();
     let consumeRequests = 0;
@@ -318,7 +320,8 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     expect(binding).toHaveLength(1); expect(binding[0].consumed_by).toBe(fixtures.employeeA.id);
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByLabel('Sheet number', { exact: true })).toHaveValue('S-7');
+    await expect(dialog.getByLabel(/sheet/i)).toHaveCount(0);
+    await expect(dialog.getByText(/sheet/i)).toHaveCount(0);
     await expect(dialog.getByLabel('Tags', { exact: true })).toHaveValue('office');
     await dialog.getByLabel('Select photos', { exact: true }).setInputFiles([
       { name: 'compact-one.png', mimeType: 'image/png', buffer: png },

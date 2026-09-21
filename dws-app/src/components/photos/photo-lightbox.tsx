@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import Lightbox, {
   type GenericSlide,
@@ -16,7 +15,6 @@ import Thumbnails from "yet-another-react-lightbox/plugins/thumbnails";
 import "yet-another-react-lightbox/styles.css";
 import "yet-another-react-lightbox/plugins/counter.css";
 import "yet-another-react-lightbox/plugins/thumbnails.css";
-import { supabase } from "@/lib/supabaseClient";
 import { useDesktop } from "@/hooks/use-desktop";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
 import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
@@ -229,29 +227,6 @@ export default function PhotoLightbox({
       }),
     [photos]
   );
-
-  // Who am I? Delete is uploader-or-admin; hide the button otherwise (RLS
-  // still enforces it server-side either way).
-  const { data: me } = useQuery({
-    queryKey: ["own-profile"],
-    queryFn: async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) return null;
-      const { data } = await supabase
-        .from("user_profiles")
-        .select("role")
-        .eq("user_id", session.user.id)
-        .single();
-      return { id: session.user.id, role: data?.role ?? "employee" };
-    },
-    enabled: open,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const canDelete =
-    !!photo && !!me && (photo.uploader_id === me.id || me.role === "admin");
 
   // Leaving a slide abandons any half-done edit on it.
   useEffect(() => {
@@ -495,7 +470,6 @@ export default function PhotoLightbox({
                 <PhotoInfo
                   photo={photo}
                   layout="panel"
-                  canDelete={canDelete}
                   onEdit={() => setEditing(true)}
                 />
               </aside>
@@ -526,7 +500,6 @@ export default function PhotoLightbox({
                 <PhotoInfo
                   photo={photo}
                   layout="bar"
-                  canDelete={canDelete}
                   onEdit={() => setEditing(true)}
                 />
               )}

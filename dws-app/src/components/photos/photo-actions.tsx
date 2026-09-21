@@ -128,7 +128,7 @@ export default function PhotoActions() {
     <header className="space-y-3"><h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold outline-none">{title(action)}</h1>
       <p className="max-w-3xl text-sm leading-6 text-[#bbb]">Review the exact photos and their current jobs before confirming. Photos added to a job later are outside this list. Concurrent changes appear as individual conflicts.</p>
       {(action === 'trash' || action === 'restore') && <p className="rounded-lg border border-[#555] bg-[#2e2e2e] p-4 text-sm leading-6 text-[#ddd]">{trashDisclosure}</p>}
-      {action === 'restore' && <p className="text-sm text-[#bbb]">An ordinary restore requires the uploader or an administrator. Ask an administrator to restore this photo, or use the MCP restore handoff. A legacy duplicate redirects to its canonical photo; restoring it never creates a second active copy.</p>}
+      {action === 'restore' && <p className="text-sm text-[#bbb]">A legacy duplicate redirects to its canonical photo; restoring it never creates a second active copy.</p>}
     </header>
     {error && <p role="alert" className="rounded-lg border border-red-900 bg-red-950/30 p-4 text-sm text-red-300">{error}</p>}
     <p role="status" className="text-sm text-[#bbb]">{busy ? message || 'Working…' : message}</p>

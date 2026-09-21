@@ -1,10 +1,10 @@
 import 'server-only';
 import { isDeepStrictEqual } from 'node:util';
-import { cleanSheet, cleanTags, isSha256 } from '../apiShared';
+import { cleanTags, isSha256 } from '../apiShared';
 import { CAPTURED_AT_SOURCES, PHOTO_KINDS } from '../types';
 import type { CanonicalUploadOutcome, UploadOwner, UploadAttempt, OriginalUploadState } from '../upload-contract';
 import type { PhotoActor } from './authority';
-import { canManageOwnPhoto, photoId } from './reads';
+import { photoId } from './reads';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc } from './http';
 
 type Body = Record<string, unknown>;
@@ -33,13 +33,12 @@ export function uploadRpcArgs(actor: PhotoActor, body: Body, generation = false,
 
 export async function describeUploadOutcome(actor: PhotoActor, outcome: CanonicalUploadOutcome): Promise<CanonicalUploadOutcome> {
   if (outcome.status !== 'duplicate_trashed') return outcome;
-  const { data, error } = await actor.db.from('photos').select('uploader_id,purge_after').eq('id', outcome.photo_id).maybeSingle();
+  const { data, error } = await actor.db.from('photos').select('purge_after').eq('id', outcome.photo_id).maybeSingle();
   if (error) throwPhotoDatabaseError(error);
+  // Any signed-in employee may restore; only retention can still prevent it.
   const expired = !data || !data.purge_after || Date.parse(data.purge_after) <= Date.now();
-  const canRestore = !expired && await canManageOwnPhoto(actor, data.uploader_id);
-  return { ...outcome, can_restore: canRestore,
-    remedy: expired ? 'This photo is awaiting permanent cleanup. Retry after cleanup completes.' : canRestore
-      ? 'Confirm restoration before uploading.' : 'Ask an administrator to restore this photo, or use the MCP restore handoff.' };
+  return { ...outcome, can_restore: !expired,
+    remedy: expired ? 'This photo is awaiting permanent cleanup. Retry after cleanup completes.' : 'Confirm restoration before uploading.' };
 }
 
 export async function createUploadAttempt(actor: PhotoActor, body: Body): Promise<UploadAttempt> {
@@ -118,7 +117,7 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
   if (body.sidecar_name !== null) string(body.sidecar_name);
   // Persist the normalized request alongside the effective paths, so lost-response
   // replay does not depend on objects that duplicate cleanup already removed.
-  const requested = { kind: body.kind, sheet_number: cleanSheet(body.sheet_number), tags: cleanTags(body.tags),
+  const requested = { kind: body.kind, tags: cleanTags(body.tags),
     captured_at: body.captured_at, captured_at_source: body.captured_at_source,
     thumb_path: body.thumb_path, preview_path: body.preview_path, sidecar_path: body.sidecar_path,
     sidecar_name: body.sidecar_name, duration_secs: body.duration_secs, warnings: [...new Set(body.warnings)] };

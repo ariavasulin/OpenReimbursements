@@ -8,10 +8,10 @@ confirmed issue submission recovery, see the [DWS MCP runbook](dws-mcp-runbook.m
 ## Confirmed photo changes and trash
 
 Move a photo through its review/confirmation screen. Direct `PATCH job_id`
-writes are rejected; sheet and tag edits apply only to active photos. Any
-signed-in employee can move a photo. Ordinary removal and restoration require
-the uploader or an administrator; a consumed MCP handoff authorizes only its
-bound consumer, action, and confirmed targets.
+writes are rejected; tag edits apply only to active photos. Any signed-in
+employee can move, remove, or restore any photo, and `deleted_by` records who
+removed it. Each confirmation belongs to the employee who started it; a consumed
+MCP handoff authorizes only its bound consumer, action, and confirmed targets.
 
 Removal sends a photo to `/photos/trash` for 30 days. Repeating removal does
 not extend its original `purge_after`; restoration is unavailable at or after
@@ -22,9 +22,10 @@ Library listings, search, counts, tags, and deep links exclude all trash.
 A legacy duplicate in trash points to its canonical photo. Review the canonical
 target before restoring or moving it; restoration never creates another active
 copy. Uploading matching bytes keeps the item unresolved until that action
-succeeds or the employee explicitly skips it. An employee who cannot restore
-the matching photo should ask an administrator or use an MCP restore handoff,
-then retry the original queue item to resolve the canonical result.
+succeeds or the employee explicitly skips it. The employee restores the matching
+photo from the upload tray's **Review restore** link (any signed-in employee
+can, while the 30 days last), then retries the original queue item to resolve
+the canonical result.
 
 ## Hand-made projects
 
@@ -427,8 +428,8 @@ approximate time, the job, and ideally the filename.
    - Row present with `deleted_at` → it is in trash. Open the trash view and
      check the recovery deadline and canonical reference before restoring.
    - Active row with `thumb_path` → it landed. "Vanished" is a viewing
-     problem: check which grid/filter they're looking at (wrong job, a tag
-     filter, or grouping by a sheet number they didn't expect).
+     problem: check which grid/filter they're looking at (wrong job, or a tag
+     or uploader filter they didn't expect).
    - Active row, `thumb_path` null → derivative hole (e.g. HEIC picked in
      desktop Chrome). It shows after the next sweep; run the sweep by hand
      (above) to fix it now.

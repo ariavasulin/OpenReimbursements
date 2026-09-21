@@ -35,11 +35,11 @@ describe("withPhotoParam / withoutPhotoParam", () => {
   it("adds, replaces, and preserves other params", () => {
     expect(withPhotoParam("", "p1")).toBe("?photo=p1");
     expect(withPhotoParam("?photo=old", "p2")).toBe("?photo=p2");
-    expect(withPhotoParam("?sheet=12", "p1")).toBe("?sheet=12&photo=p1");
+    expect(withPhotoParam("?q=roof", "p1")).toBe("?q=roof&photo=p1");
   });
   it("removes it and collapses to empty when it was the only param", () => {
     expect(withoutPhotoParam("?photo=p1")).toBe("");
-    expect(withoutPhotoParam("?sheet=12&photo=p1")).toBe("?sheet=12");
-    expect(withoutPhotoParam("?sheet=12")).toBe("?sheet=12");
+    expect(withoutPhotoParam("?q=roof&photo=p1")).toBe("?q=roof");
+    expect(withoutPhotoParam("?q=roof")).toBe("?q=roof");
   });
 });

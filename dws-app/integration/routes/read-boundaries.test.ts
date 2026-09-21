@@ -88,6 +88,16 @@ describe('active library boundaries with retained photo identities (AC-9)', () =
     }
   });
 
+  // photo-albums AC-4. The removed filter matched nothing for this fixture (its sheet was null),
+  // so getting the active row back proves the parameter is no longer read.
+  it('GET /api/photos ignores a sheet parameter and returns no sheet_number field', async () => {
+    const plain = await get(list, `/api/photos?job=${jobId}`);
+    const withSheet = await get(list, `/api/photos?job=${jobId}&sheet=1`);
+    expect(withSheet.photos.map((p: { id: string }) => p.id)).toEqual([ids[0]]);
+    expect(withSheet).toEqual(plain);
+    expect(withSheet.photos[0]).not.toHaveProperty('sheet_number');
+  });
+
   it('tag metadata and summary counts/thumbs exclude all trash through routes and invoker RPCs', async () => {
     for (const actor of [f.employeeA, f.administrator]) {
       expect((await get(tags, `/api/photo-tags?job=${jobId}`, actor)).tags).toEqual(['active-tag']);
@@ -112,8 +122,9 @@ describe('active library boundaries with retained photo identities (AC-9)', () =
     expect(retained.photos.map((p: { id: string }) => p.id).sort()).toEqual([ids[1], ids[3]].sort());
     expect(retained.photos.find((p: { id: string }) => p.id === ids[3])).toMatchObject({ duplicate_of: ids[1] });
     const pending = await get(dedupe, `/api/photos/dedupe?sha256=${digest}`, f.employeeB);
-    expect(pending).toMatchObject({ status: 'duplicate_trashed', photo_id: ids[1], can_restore: false });
-    expect(pending.remedy).toContain('administrator');
+    // employeeB did not upload it; retention, not ownership, decides restore (photo-albums Decision 7).
+    expect(pending).toMatchObject({ status: 'duplicate_trashed', photo_id: ids[1], can_restore: true });
+    expect(pending.remedy).toBe('Confirm restoration before uploading.');
     const expired = await get(dedupe, `/api/photos/dedupe?sha256=${expiredDigest}`);
     expect(expired).toMatchObject({ status: 'duplicate_trashed', photo_id: ids[2], can_restore: false });
     expect(expired.remedy).toContain('cleanup');

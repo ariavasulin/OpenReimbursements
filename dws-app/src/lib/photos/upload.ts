@@ -26,7 +26,6 @@ export interface UploadMeta {
   jobId: string;
   /** auth.uid() of the signed-in user — prefixes every storage key. */
   uploaderId: string;
-  sheetNumber?: string | null;
   tags?: string[];
 }
 
@@ -131,7 +130,7 @@ function canonicalResult(
   if (outcome.status === "duplicate_trashed") {
     return {
       ...common, status: "restore_required", purgeAfter: outcome.purge_after ?? undefined,
-      error: outcome.remedy ?? "Ask an administrator to restore this photo, or use the MCP restore handoff.",
+      error: outcome.remedy ?? "This photo is in the trash. Restore it from Trash, then upload again.",
     };
   }
   if (outcome.job_id !== jobId) {
@@ -349,7 +348,7 @@ export async function uploadOne(
     const result = await run(() => deps.finalize({
       ...claim, id: attempt.photo_id, job_id: meta.jobId,
       kind: classified.kind === "sidecar" ? "file" : classified.kind,
-      sheet_number: meta.sheetNumber?.trim() || null, tags: meta.tags ?? [],
+      tags: meta.tags ?? [],
       captured_at: capturedAt.date ? capturedAt.date.toISOString() : null,
       captured_at_source: capturedAt.source,
       original_path: attempt.original_path, original_bytes: file.size,

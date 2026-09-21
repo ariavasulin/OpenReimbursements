@@ -105,7 +105,7 @@ export default function PhotoSearchPage() {
       )}
 
       <GroupByToggle
-        modes={["job", "date", "sheet"] as const}
+        modes={["job", "date"] as const}
         value={groupBy}
         onChange={(mode) => setGroupBy(mode)}
       />

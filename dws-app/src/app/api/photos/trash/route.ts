@@ -1,4 +1,4 @@
-import { requirePhotoActor, isPhotoAdministrator } from '@/lib/photos/server/authority';
+import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { PhotoApiError, photoJson, photoRoute, throwPhotoDatabaseError } from '@/lib/photos/server/http';
 import { photoId } from '@/lib/photos/server/reads';
 import { ACTION_PHOTO_COLUMNS } from '@/lib/photos/server/actions';
@@ -19,14 +19,12 @@ export async function GET(request:Request){return photoRoute(async()=>{
  if(canonical.error) throwPhotoDatabaseError(canonical.error);
  const canonicalRows=(canonical.data??[]) as unknown as (ActionPhoto&{purge_claimed_at:string|null})[];
  const byId=new Map(canonicalRows.map(row=>[row.id,row]));
- const admin=await isPhotoAdministrator(actor);
  const photos=rows.map(row=>{
    const target=row.duplicate_of?byId.get(row.duplicate_of):row;
    const retained=Boolean(target&&!target.duplicate_of&&(!target.deleted_at||(target.purge_after&&target.purge_after>now&&!target.purge_claimed_at)));
-   const owns=Boolean(target&&(admin||target.uploader_id===actor.actorId));
    const {purge_claimed_at: _claim,...photo}=row;
-   return {...photo,canonical_photo:row.duplicate_of?target??null:null,can_restore:retained&&owns,
-     remedy:!retained?'The canonical photo is unavailable for recovery.':!owns?'Ask an administrator or use an MCP restore handoff.':row.duplicate_of?'This legacy duplicate resolves to its canonical photo. Review the canonical target before restoring.':null};
+   return {...photo,canonical_photo:row.duplicate_of?target??null:null,can_restore:retained,
+     remedy:!retained?'The canonical photo is unavailable for recovery.':row.duplicate_of?'This legacy duplicate resolves to its canonical photo. Review the canonical target before restoring.':null};
  });
  return photoJson({photos,next_cursor:(data??[]).length>limit?photos.at(-1)!.id:null});
 });}

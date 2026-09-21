@@ -40,6 +40,14 @@ describe('MCP registry', () => {
     }
     expect(mocks.from).not.toHaveBeenCalled();
   });
+  it('rejects sheet_number on add_photos now that Sheet # is gone (photo-albums AC-4)', () => {
+    const accepted = { job_number: '3612', tags: ['kitchen'] };
+    // Same input without the key passes, so the key alone causes the rejection.
+    expect(validateScriptInput('add_photos', accepted)).toEqual(accepted);
+    expect(() => validateScriptInput('add_photos', { ...accepted, sheet_number: 'A-1' }))
+      .toThrowError(expect.objectContaining({ code: 'invalid_input' }));
+  });
+
   it('permits unknown job hints and valid app references without looking them up', () => {
     const id = '10000000-0000-4000-8000-000000000001';
     expect(validateScriptInput('move_photos', {

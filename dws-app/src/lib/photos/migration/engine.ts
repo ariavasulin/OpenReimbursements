@@ -8,7 +8,7 @@ export interface MigrationEngineOptions {
   batchId: string; uploaderId: string; sources: MigrationSource[]; localSources: Map<string, LocalSource>;
   request: MigrationRequest; deps: UploadDeps;
   prepare(input: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<UploadAttempt>;
-  meta?: Pick<UploadMeta, 'sheetNumber' | 'tags'>;
+  meta?: Pick<UploadMeta, 'tags'>;
   onChange(completedItemId?: string): Promise<void>;
   onProgress?(itemId: string, bytes: number, total: number): void;
   onIdentity?(itemId: string, identity: UploadIdentity): void;
@@ -122,7 +122,6 @@ export class MigrationEngine {
     };
     const result = await uploadOne(file, item.upload_attempt_id, {
       uploaderId: this.options.uploaderId, jobId: source.job_id, ...this.options.meta,
-      ...(typeof source.selection_rules?.sheet_number === 'string' ? { sheetNumber: source.selection_rules.sheet_number } : {}),
       ...(Array.isArray(source.selection_rules?.tags) ? { tags: source.selection_rules.tags as string[] } : {}),
     }, deps, (bytes, total) => this.options.onProgress?.(item.id, bytes, total), {
       signal, identity, sidecar,

@@ -2,7 +2,7 @@
 
 import type { GroupBy } from "@/lib/photos/group";
 
-/** Segmented control picking how the grid groups (date / sheet / job). */
+/** Segmented control picking how the grid groups (date / job). */
 export default function GroupByToggle<T extends GroupBy>({
   modes,
   value,

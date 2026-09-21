@@ -45,7 +45,7 @@ export interface AttachUploadSidecarInput extends UploadOwner {
 }
 export interface FinalizeUploadInput extends UploadClaimInput {
   id: string; job_id: string; kind: PhotoKind;
-  sheet_number: string | null; tags: string[];
+  tags: string[];
   captured_at: string | null; captured_at_source: CapturedAtSource;
   original_path: string; original_bytes: number; mime_type: string | null;
   original_name: string; thumb_path: string | null; preview_path: string | null;

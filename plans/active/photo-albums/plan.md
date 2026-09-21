@@ -17,8 +17,8 @@ arrive as albums — all simple enough for a non-technical person who thinks in 
 Source of truth: this plan; the request and client context in
 [`sources/ticket.md`](sources/ticket.md); the planning contract at
 `plans/active/dws-hosted-mcp/sources/planning-contract/`.
-Locked decisions: Decisions 1–13 below.
-Current phase: Phase 1.
+Locked decisions: Decisions 1–14 below.
+Current phase: see the ticked Verify boxes; the orchestrator runs every phase through to the ship sequence without pausing (user instruction 2026-09-20). Production-side checks stay open until the ship.
 Stop-and-ask triggers: any role or permission rule beyond "signed-in employee";
 anything that would make the storage bucket private; nested albums; changing a public
 URL shape in § URLs after it ships; running the office's big folder import before
@@ -165,6 +165,13 @@ reversible on later experience; *structural* = no planned reversal.
     working with no redirect. A sign-in does not carry between the two domains. The
     app opens on Photos (all photos by date), per "think Google Photos".
     *First-release*: both are a config change.
+14. **Every phase that changes what people see gets a rendered look-and-feel review
+    by a second model before it is reported for human review** (user instruction
+    2026-09-20; mechanics in § Rendered look-and-feel review). The review is advice.
+    The orchestrator fixes, defers, or declines each finding with a reason and lists
+    them for the human, who can overrule any of them at the PR; the reviewing model's
+    opinion never passes or fails a phase by itself. *First-release*: drop it if the
+    findings stop being useful.
 
 ## Alternatives
 
@@ -283,6 +290,65 @@ dark theme and components (`PhotoGrid`, `SheetShell`, `FilterChip`, `GroupByTogg
   (editable), photo count, Project, Tags. One line at the top: "Each folder becomes an
   album with the same name."
 
+## Rendered look-and-feel review
+
+Automated suites prove behavior, not whether a screen looks modern and clean or
+makes sense to a non-technical person. For Phases 2, 4, 5, 6, and 7 the orchestrator
+runs this once the phase's automated checks pass, and folds the findings into the
+phase summary the human reviews.
+
+- **Where:** Phase 2 needs no new tables, so it is reviewed on a Vercel preview of the
+  working tree, which shows real production photos in look-only mode. From Phase 3 on
+  the new tables exist only locally (nothing touches production before the ship), so
+  the review runs against a local app on a throwaway database seeded with realistic
+  photos — where the reviewer can also complete every flow instead of stopping short.
+- **Sign-in:** the reviewer signs in through the real login page with the operator's
+  own phone number and reads the texted code with the operator's `imsg` CLI (user
+  ruling 2026-09-20, chosen over the orchestrator signing in and passing cookies).
+  Its brief limits `imsg` to reading the newest sign-in code: never send, never open
+  other conversations. The phone number is given in the brief, never written here.
+- **Reviewer:** `/peprkit:delegate design-engineer --target codex --tier xhigh
+  --permissions default --app-url <preview URL>`, which gives it a live browser it
+  clicks through and screenshots. `default` means the operator's own Codex settings;
+  the sandboxed profiles cannot reach the Messages database. Viewports: phone 390×844 and desktop 1440×1000, matching the browser
+  specs. It reports looks (spacing, hierarchy, consistency with the existing dark
+  theme) and sense (would a folder-thinker know what to do next) with a screenshot
+  per finding.
+- **Real data is in play.** The reviewer looks and opens pop-ups but does not
+  confirm changes to real photos, projects, or albums. Where a flow can only be
+  judged by completing it, it works on scratch items whose names start with
+  `UX Test`, and the orchestrator removes them afterwards.
+- **Outcome:** each finding is dispositioned by the orchestrator — fixed in this
+  phase, deferred to a named phase, or declined with a reason — and the list goes in
+  the PR for the human to overrule. Reports are kept in `reviews/`; screenshots in the
+  git-ignored `.artifacts/photo-albums/reviews/`.
+
+## Baseline findings
+
+The live app was reviewed before this plan changed anything
+([`reviews/2026-09-20-baseline.md`](reviews/2026-09-20-baseline.md)). Its findings are
+requirements for the phase that owns each screen. "Keep": the dark palette, the
+compact square grid with date groups, the desktop viewer's large image area, the
+always-reachable phone capture buttons, and the 30-day recovery facts.
+
+| Finding (severity) | Handled in |
+| --- | --- |
+| Phone viewer: details sit on top of the photo and are hard to read (high) | Phase 4 — photo unobscured by default; details and actions in an opaque panel opened from the viewer |
+| Enlarged text pushes the phone Upload action off-screen (high) | Phase 4 — the bottom bar and "+" survive browser text at 200%; names and headings scale |
+| "Where did my folder go?" — no overview, unlabeled numbers beside counts (high) | Phases 4 and 6 — the three sections; job numbers labeled; imported folders arrive as albums of the same name |
+| Move/trash confirm page reads like a batch console: "exact targets", "draft", "pending", "MCP restore handoff" (high) | Phase 5 — it becomes the bulk confirm page: photos first, one plain sentence ("Move 3 photos to …?" / "Move 3 photos to trash?"), verb + Cancel, recovery time stated; conflict detail only when there is a conflict |
+| Controls too small: 28–34 px targets, 12 px labels (medium) | Phases 4–5 — 44 px minimum touch targets and 16 px body text on every screen they touch |
+| Long project names truncated in the list and rail (medium) | Phase 4 — two-line names in lists and cards; full name on focus/tap |
+| Desktop header: red Sign out dominates; too many peers (medium) | Phase 4 — Sign out and Receipts move into a quiet account menu |
+| Phone pop-ups have no visible Cancel (medium) | Phase 4 — a labeled Cancel in the header of every phone pop-up |
+| "Move" is hidden under "Edit tags" (medium) | Phase 5 — "Set project" is its own action; the form is "Edit details" |
+| Search: "No jobs match" shown beside successful photo results (medium) | Phase 4 — project suggestions and photo results are separate, labeled sections |
+| "Sheet" is unexplained; empty Tag menus say only "None yet" (medium) | Phase 2 removes Sheet #; Phase 5 — the tag dropdown always offers the starter tags and says what a tag is |
+| Import page leads with internal vocabulary (medium) | Phase 6 — lead with "Import folders" and one "Choose folder" action; XMP and exclusion detail behind "More detail"; past imports named by folder and date |
+| Empty project keeps useless filters; no upload action beside the message (medium) | Phase 4 — empty states carry their own action and hide filters |
+| Small forms sit in very tall pop-ups (low) | Phase 4 — desktop pop-ups size to their content |
+| Sign-in says "DWS Receipts", no resend path (low) | Phase 4 — on the photos address the title and heading say DWS Photos; a timed "Resend code" |
+
 ## Security and privacy (share links only)
 
 The one cross-cutting concern that is load-bearing here. Everything else in the app
@@ -338,27 +404,30 @@ Sharing
 
 ## Execution shape
 
-One PR per phase, merged in phase order; each branches from `main` after the previous
-one merges, so no two PRs are open against the same files. Out-of-order breakage:
-Phase 4+ reads tables Phase 3 creates; Phase 7 links use the Phase 1 address.
+**Changed 2026-09-20 (user instruction): the whole plan is built and tested first,
+then shipped once.** All phases land on one branch, `ariavasulin/photo-albums`, one
+commit per phase, and the ship sequence opens a single PR. The orchestrator works
+through every phase without pausing for approval; the human reviews at the PR. The
+PR owns the union of the contracts below. Because each phase is its own commit, the
+branch can still be cut into stacked PRs at ship time with no rework.
 
-| PR | Contract it owns |
+| Commit | Contract it owns |
 | --- | --- |
-| 1 | The photos address; the leftover XMP |
-| 2 | No Sheet #; open trash authority |
-| 3 | Optional project, albums, bulk tag, photo-link shapes (database + API) |
-| 4 | Photos · Albums · Projects screens; upload pop-up |
-| 5 | Tag dropdown, tag filter/group, select-many and bulk actions |
-| 6 | Folder import as albums; MCP inputs; desktop entry |
-| 7 | Share links and the `sharing_enabled` gate |
+| Phase 1 | The photos address; the leftover XMP |
+| Phase 2 | No Sheet #; open trash authority |
+| Phase 3 | Optional project, albums, bulk tag, photo-link shapes (database + API) |
+| Phase 4 | Photos · Albums · Projects screens; upload pop-up |
+| Phase 5 | Tag dropdown, tag filter/group, select-many and bulk actions |
+| Phase 6 | Folder import as albums; MCP inputs; desktop entry |
+| Phase 7 | Share links and the `sharing_enabled` gate |
 
-Shared surfaces: `dws-app/supabase/migrations/` — each PR adds its own timestamped
-files and never edits an applied one; `dws-app/src/lib/mcp/registry.ts` — PR 2
-removes `sheet_number`, PR 6 adds the album fields; `apiShared.ts` / `types.ts` — PR 2
-removes the sheet column, PR 3 makes the project nullable. `main` is the source of
-truth; a later PR rebases by branching after the earlier merge.
+**Nothing touches production while the plan is being built**: no production
+migration and no production deploy. Every phase is proven on throwaway local
+databases. The production steps all belong to the ship sequence, in the order under
+§ Rollout. (Already done with the operator's approval in Phase 1: the XMP was trashed
+and `DWS_BROWSER_ORIGIN` was updated.)
 
-Each PR also corrects the lines it makes false in `plans/active/dws-hosted-mcp/plan.md`
+Each phase also corrects the lines it makes false in `plans/active/dws-hosted-mcp/plan.md`
 and the two runbooks. Recipe:
 `grep -nE "sheet|one active (destination )?job|exactly one|Uploader or administrator|dws-receipts\.com" plans/active/dws-hosted-mcp/plan.md Docs/photos-runbook.md Docs/dws-mcp-runbook.md`.
 
@@ -408,7 +477,9 @@ Shrinks what exists before building on it. Two migrations with opposite ordering
 
 ### Steps
 1. Migration A (apply **before** merge): re-create the action functions without the
-   uploader-or-admin check (Decision 7). Worklist recipe:
+   uploader-or-admin check (Decision 7). The permission opens when this migration is
+   applied, not at merge: the confirm page already live relied on these SQL checks.
+   Worklist recipe:
    `grep -n "role='admin'" dws-app/supabase/migrations/20260907100400_photo_actions.sql`.
    Complete when the only `role='admin'` checks left in the photo SQL are the
    deployment tools Decision 7 names.
@@ -416,18 +487,26 @@ Shrinks what exists before building on it. Two migrations with opposite ordering
    `grep -rnE "canManageOwnPhoto|isPhotoAdministrator|role === \"admin\"" dws-app/src/lib/photos dws-app/src/app/api/photos dws-app/src/components/photos`
    — complete when it returns nothing. Then remove Sheet # everywhere. Worklist recipe:
    `grep -rniE "sheet_number|sheetNumber|cleanSheet|\"sheet\"|'sheet'" dws-app/src dws-app/tests dws-app/integration`
-   — every hit goes except the `SheetShell` / `FullScreenSheet` / `sheetOpen` container names.
-3. Migration B (apply **after** the deploy is live, else live queries selecting the
-   column fail): drop `photos.sheet_number`; in the same file re-create every function
-   whose current body names it — `photo_finalize_upload` and
-   `photo_install_write_boundary` (`grep -ln sheet_number dws-app/supabase/migrations/*.sql`)
-   — and set the grant to `update(tags)`.
+   — every product-code hit goes except the `SheetShell` / `FullScreenSheet` /
+   `sheetOpen` container names. With Sheet gone a project page has only Date grouping
+   left, so its group-by toggle is removed here and returns in Phase 5 with Date and Tag.
+3. Migration B, in two files so a single ship stays safe. **B1** (apply before the
+   merge) re-creates every function whose current body names the column —
+   `photo_finalize_upload` and `photo_install_write_boundary`
+   (`grep -ln sheet_number dws-app/supabase/migrations/*.sql`) — so the database stops
+   writing it. **B2** (apply only **after** the deploy is live, else live queries
+   selecting the column fail) drops `photos.sheet_number` and sets the grant to
+   `update(tags)`. B2 re-creates no function: it runs after Phase 3's migration in a
+   single ship, and would otherwise overwrite Phase 3's newer `photo_finalize_upload`.
 
 ### Verify
-- [ ] [AC-4] `test:routes`: `PATCH /api/photos/[id]` ignores a sheet value; `GET /api/photos?sheet=1` does not filter; the registry test rejects `sheet_number`; after Migration B the step-2 grep returns only container names.
-- [ ] [AC-4] `test:browser`: upload and edit pop-ups open and save with no Sheet # field.
-- [ ] [AC-5] `test:db` + `test:routes`: employee B trashes then restores employee A's photo; `deleted_by` = B; signed out → 401; gate closed → 503.
-- [ ] `npm exec -- tsc --noEmit -p tsconfig.json` (in `dws-app`) and `npm --prefix dws-app run build` pass.
+- [x] [AC-4] `test:routes`: `PATCH /api/photos/[id]` refuses a body carrying `sheet_number` with 400 and writes nothing, while a tags-only body still saves; `GET /api/photos?sheet=1` does not filter; the registry test rejects `sheet_number`; the step-2 grep finds no product-code hit — what remains is tests that prove the removal, plus the container names. *(Corrected 2026-09-20: the route is strict about unknown keys, the same rule that refuses `job_id`, so "refuse" is the consistent behavior; naming the field just to ignore it would keep Sheet # alive in product code. Cost: a tab left open across the deploy fails its tag edits until reloaded.)*
+- [x] [AC-4] `test:browser`: upload and edit pop-ups open and save with no Sheet # field.
+- [x] [AC-5] `test:db` + `test:routes`: employee B trashes then restores employee A's photo; `deleted_by` = B; signed out → 401; gate closed → 503. *(Observed 2026-09-20 by the orchestrator: `test:db` 71/71, `test:routes` 77/77, `test:browser` 15/15, unit 572/572; both migrations replayed twice on a fresh local database.)*
+- [x] `npm exec -- tsc --noEmit -p tsconfig.json` (in `dws-app`) and `npm --prefix dws-app run build` pass. *(Observed 2026-09-20: `tsc` clean; build 52/52 pages with placeholder env values, since this worktree has no env file.)*
+- [x] Each re-created SQL function differs from its latest prior definition only by the lines the plan names. *(Observed 2026-09-20: mechanical diff of all five functions.)*
+- [ ] Rendered look-and-feel review (Decision 14) run on phone and desktop against a preview of this branch; every finding dispositioned by the human.
+- [ ] Ship sequence (§ Rollout): migrations A and B1 applied before the merge; after the deploy is live, B2 applied and `sheet_number` is gone.
 
 ### Exit criteria
 Production has no `sheet_number` column; any employee can trash any photo.
@@ -560,13 +639,25 @@ every link off.
 
 ## Rollout
 
-| Phase | Order | Rollback |
-| --- | --- | --- |
-| 1 | set `DWS_BROWSER_ORIGIN` → merge/deploy → trash XMP | set `DWS_BROWSER_ORIGIN` back to `https://photos.dws-receipts.com` and redeploy; the XMP is restorable for 30 days |
-| 2 | Migration A → merge → Migration B | before B: revert the PR. After B the column is gone (P1: no data lost); restoring the field is new work |
-| 3, 6 | additive migration → merge | revert the PR; new tables sit unused. `job_id` stays nullable — harmless while no project-less photo exists; afterwards Decision 1 applies |
-| 4, 5 | merge | revert the PR |
-| 7 | migration → merge (gate closed) → production checks → open gate | `update public.photo_release_state set sharing_enabled=false …` turns every share page off at once |
+One ship, in this order. Every migration is a timestamped file under
+`dws-app/supabase/migrations/`, applied with the README convention.
+
+1. **Before the merge — every migration except the column drop, in timestamp order.**
+   They are additive or behavior-neutral for the app that is live: the open-trash
+   migration (from this moment any employee can trash any photo — Decision 7), the
+   stop-writing-Sheet-# migration, then the Phase 3, 6, and 7 migrations. New function
+   parameters carry defaults, so the live app keeps working between this step and the
+   deploy. `sharing_enabled` stays `false`.
+2. **Merge, and wait until the deploy is live.** `DWS_BROWSER_ORIGIN` takes effect here.
+3. **After the deploy — the column drop** (`…_photo_drop_sheet_number.sql`). It refuses
+   to run if any photo holds a Sheet # value and rolls back if any function still
+   names the column. It re-creates no function, so it cannot overwrite a newer one.
+4. **Production checks**, then open `sharing_enabled` (see the gate paragraph below).
+
+Rollback: before step 3, revert the PR — the new tables sit unused and a nullable
+`job_id` is harmless while no project-less photo exists (afterwards Decision 1
+applies). After step 3 the Sheet # column is gone (P1: no data lost). Share pages:
+set `sharing_enabled=false`. Hand-off links: set `DWS_BROWSER_ORIGIN` back and redeploy.
 
 A phase advances when its exit criteria are observed; none advances on a date. In
 migration terms: making `job_id` nullable is Expand only, dropping `sheet_number` is

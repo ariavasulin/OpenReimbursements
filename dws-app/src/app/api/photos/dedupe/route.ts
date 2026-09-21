@@ -1,7 +1,6 @@
 import { isSha256 } from '@/lib/photos/apiShared';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { PhotoApiError, photoJson, photoRoute, throwPhotoDatabaseError } from '@/lib/photos/server/http';
-import { canManageOwnPhoto } from '@/lib/photos/server/reads';
 
 /** Intentional global digest read: retained trash continues reserving its digest. */
 export async function GET(request: Request) {
@@ -10,7 +9,7 @@ export async function GET(request: Request) {
     const digest = new URL(request.url).searchParams.get('sha256');
     if (!isSha256(digest)) throw new PhotoApiError('invalid_input');
     const { data, error } = await actor.db.from('photos')
-      .select('id,job_id,uploader_id,deleted_at,purge_after')
+      .select('id,job_id,deleted_at,purge_after')
       .eq('content_sha256', digest).limit(2);
     if (error) throwPhotoDatabaseError(error);
     // Until operator cutover establishes global uniqueness, never choose a canonical row.
@@ -23,13 +22,11 @@ export async function GET(request: Request) {
     const expiresAt = Date.parse(photo.purge_after);
     if (!Number.isFinite(expiresAt)) throw new PhotoApiError('temporarily_unavailable');
     const expired = expiresAt <= Date.now();
-    const canRestore = !expired && await canManageOwnPhoto(actor, photo.uploader_id);
     return photoJson({
       status: 'duplicate_trashed', photo_id: photo.id, job_id: photo.job_id,
-      purge_after: photo.purge_after, can_restore: canRestore,
+      purge_after: photo.purge_after, can_restore: !expired,
       remedy: expired ? 'This photo is awaiting permanent cleanup. Retry after cleanup completes.' :
-        canRestore ? 'Confirm restoration before uploading.' :
-        'Ask an administrator to restore this photo, or use the MCP restore handoff.',
+        'Confirm restoration before uploading.',
     });
   });
 }

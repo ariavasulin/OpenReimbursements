@@ -19,7 +19,7 @@ export default function TrashPage() {
     <Link href="/photos" className="text-sm text-[#8bbaff]">DWS Photos</Link>
     <header className="space-y-3"><h1 className="text-2xl font-semibold">Photo trash</h1>
       <p className="max-w-3xl text-sm leading-6 text-[#bbb]">{trashDisclosure} Restore before the date shown to return a photo to the library.</p>
-      <p className="text-sm leading-6 text-[#bbb]">You can restore photos you uploaded; administrators can restore anyone’s photos. Broader access requires an MCP restore handoff. Expired photos are no longer recoverable here.</p>
+      <p className="text-sm leading-6 text-[#bbb]">Anyone signed in can restore any photo. Expired photos are no longer recoverable here.</p>
     </header>
     {error && <p role="alert" className="rounded-lg border border-red-900 bg-red-950/30 p-4 text-sm text-red-300">{error.message}</p>}
     <button className={button} disabled={isFetching} onClick={() => void refetch()}>Refresh trash</button>
@@ -33,7 +33,7 @@ export default function TrashPage() {
         {photo.canonical_photo && <p className="break-all">Canonical: {photo.canonical_photo.original_name || 'Photo'} · Job {photo.canonical_photo.job?.job_number ?? 'unavailable'} · {photo.canonical_photo.deleted_at ? 'In trash' : 'Active'}</p>}
         {photo.canonical_photo && !photo.canonical_photo.deleted_at && <Link className="inline-block text-[#8bbaff] underline" href={`/photos/${photo.canonical_photo.job_id}?photo=${photo.canonical_photo.id}`}>View canonical photo</Link>}
       </div>}
-      {photo.can_restore ? <Link href={`/photos/actions?action=restore&photo=${photo.id}`} className={`${button} inline-block`}>Review restore</Link> : <p className="text-sm text-[#bbb]">{photo.remedy ?? 'Ask an administrator to restore this photo, or use the MCP restore handoff.'}</p>}
+      {photo.can_restore ? <Link href={`/photos/actions?action=restore&photo=${photo.id}`} className={`${button} inline-block`}>Review restore</Link> : <p className="text-sm text-[#bbb]">{photo.remedy ?? 'This photo can no longer be restored.'}</p>}
     </article>)}</div>
     <div className="flex flex-wrap gap-3"><button className={button} disabled={!cursor || isFetching} onClick={() => setCursor(null)}>First page</button><button className={button} disabled={!data?.next_cursor || isFetching} onClick={() => setCursor(data?.next_cursor ?? null)}>Next page</button></div>
   </main>;

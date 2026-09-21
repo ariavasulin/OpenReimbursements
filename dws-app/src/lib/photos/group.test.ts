@@ -11,7 +11,6 @@ function makePhoto(overrides: Partial<PhotoRow> = {}): PhotoRow {
     job_id: "job-1",
     uploader_id: "user-1",
     kind: "image",
-    sheet_number: null,
     tags: [],
     captured_at: "2026-08-14T14:41:00.000Z",
     captured_at_source: "exif",
@@ -58,49 +57,6 @@ describe("groupPhotos by date", () => {
   it("labels unparseable dates as Unknown date", () => {
     const groups = groupPhotos([makePhoto({ captured_at: "garbage" })], "date");
     expect(groups[0].label).toBe("Unknown date");
-  });
-});
-
-describe("groupPhotos by sheet", () => {
-  it("orders numeric sheets high-to-low with No sheet last", () => {
-    const photos = [
-      makePhoto({ sheet_number: null }),
-      makePhoto({ sheet_number: "7" }),
-      makePhoto({ sheet_number: "12" }),
-      makePhoto({ sheet_number: "7" }),
-    ];
-    const groups = groupPhotos(photos, "sheet");
-    expect(groups.map((group) => group.label)).toEqual([
-      "Sheet 12",
-      "Sheet 7",
-      "No sheet",
-    ]);
-    expect(groups[1].photos).toHaveLength(2);
-  });
-
-  it("treats empty/whitespace sheet numbers as No sheet", () => {
-    const photos = [
-      makePhoto({ sheet_number: "  " }),
-      makePhoto({ sheet_number: "" }),
-      makePhoto({ sheet_number: "3" }),
-    ];
-    const groups = groupPhotos(photos, "sheet");
-    expect(groups.map((group) => group.label)).toEqual(["Sheet 3", "No sheet"]);
-    expect(groups[1].photos).toHaveLength(2);
-  });
-
-  it("puts non-numeric sheets after numeric ones, before No sheet", () => {
-    const photos = [
-      makePhoto({ sheet_number: null }),
-      makePhoto({ sheet_number: "A2" }),
-      makePhoto({ sheet_number: "5" }),
-    ];
-    const groups = groupPhotos(photos, "sheet");
-    expect(groups.map((group) => group.label)).toEqual([
-      "Sheet 5",
-      "Sheet A2",
-      "No sheet",
-    ]);
   });
 });
 

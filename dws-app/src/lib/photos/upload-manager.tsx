@@ -233,7 +233,6 @@ export function UploadManagerProvider({
               {
                 jobId: current.jobId,
                 uploaderId: session.user.id,
-                sheetNumber: current.sheetNumber,
                 tags: current.tags,
               },
               deps,

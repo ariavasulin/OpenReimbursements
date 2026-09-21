@@ -46,7 +46,7 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
   for (const script of ['migrate_photos', 'add_photos']) {
     const input = script === 'migrate_photos'
       ? { sources: [{ label: 'MCP folder', job_number: numbers[0] }] }
-      : { job_number: numbers[0], sheet_number: 'MCP sheet', tags: ['mcp-proof'] };
+      : { job_number: numbers[0], tags: ['mcp-proof'] };
     const output = await handoff(script, input);
     await page.goto(output.handoff_url);
     await expect(page).toHaveURL(/\/migrate\?batch=[a-f0-9-]+$/);
@@ -59,8 +59,8 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
     if (script === 'migrate_photos') {
       await page.getByRole('button', { name: 'Select folder', exact: true }).click();
     } else {
-      await expect(page.getByLabel('Sheet number')).toHaveValue('MCP sheet');
       await expect(page.getByLabel('Tags', { exact: true })).toHaveValue('mcp-proof');
+      await expect(page.getByLabel(/sheet/i)).toHaveCount(0);
       await page.getByLabel('Select photos', { exact: true }).setInputFiles({ name: 'mcp-added.png', mimeType: 'image/png', buffer: Buffer.concat([png, randomBytes(16)]) });
     }
     const destination = page.getByLabel(/^Destination job for/).last();
@@ -71,14 +71,14 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
     await expect(page.getByTestId('batch-status')).toContainText('completed');
     const binding = (await fixtures.sql.query('select script_name,consumed_by from public.dws_action_handoffs where migration_batch_id=$1', [batch])).rows[0];
     expect(binding).toEqual({ script_name: script, consumed_by: fixtures.employeeA.id });
-    const photos = (await fixtures.sql.query('select p.id,p.job_id,p.sheet_number,p.tags from public.photos p join public.migration_items i on i.photo_id=p.id join public.migration_sources s on s.id=i.source_id where s.batch_id=$1', [batch])).rows;
+    const photos = (await fixtures.sql.query('select p.id,p.job_id,p.tags from public.photos p join public.migration_items i on i.photo_id=p.id join public.migration_sources s on s.id=i.source_id where s.batch_id=$1', [batch])).rows;
     expect(photos).toHaveLength(1); expect(photos[0].job_id).toBe(jobs[0]);
-    if (script === 'add_photos') expect(photos[0]).toMatchObject({ sheet_number: 'MCP sheet', tags: ['mcp-proof'] });
+    if (script === 'add_photos') expect(photos[0]).toMatchObject({ tags: ['mcp-proof'] });
     evidence.push({ script, batch, binding, photos });
   }
 
-  // This photo belongs to a different employee: removal/restoration must use
-  // the MCP binding, not ordinary uploader permission.
+  // This photo belongs to a different employee. Any employee may act on it now,
+  // so what this proves is the MCP binding: each batch is tied to its hand-off script.
   const photo = randomUUID();
   const original = Buffer.concat([png, randomBytes(16)]);
   const path = `originals/${fixtures.employeeB.id}/${photo}/mcp-actions.png`;

@@ -75,6 +75,20 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
     }
   });
 
+  // photo-albums Decision 7, read from the live function sources rather than from migration text:
+  // app features are open to any employee, and the deployment tools are still administrator-only.
+  it('only the deployment tools still check for an administrator', async () => {
+    const guarded = await f.sql.query(`select p.proname from pg_proc p
+      where p.pronamespace='public'::regnamespace and (p.proname like 'photo\\_%' escape '\\' or p.proname='consume_dws_handoff')
+        and p.prosrc ~ $1 order by 1`, [`role\\s*=\\s*'admin'`]);
+    expect(guarded.rows.map(row => row.proname)).toEqual([
+      'photo_cutover_begin', 'photo_cutover_finish', 'photo_cutover_rollback', 'photo_cutover_validate_choice',
+      'photo_install_write_boundary',
+    ]);
+    const employee = await f.admin.rpc('photo_install_write_boundary', { p_actor: f.employeeA.id });
+    expect(employee.error?.message).toBe('forbidden');
+  });
+
   it('old unfiltered employee and administrator SELECT/RPC queries hide all trash metadata', async () => {
     for (const actor of [f.employeeA, f.employeeB, f.administrator]) {
       const direct = await actor.client.from('photos').select('*').eq('job_id', jobId);
@@ -161,12 +175,20 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
       expect(editTrash.error).toBeNull();
       expect(editTrash.data).toEqual([]);
     }
-    const pausedEdit = await f.employeeB.client.from('photos').update({ sheet_number: 'A-1' }).eq('id', activeId).select('id');
+    const pausedEdit = await f.employeeB.client.from('photos').update({ tags: ['edited-by-b'] }).eq('id', activeId).select('id');
     expect(pausedEdit.error?.message).toBe('photo_gate_closed');
     expect((await f.admin.from('photo_release_state').update({ photo_writes_enabled: true }).eq('singleton', true)).error).toBeNull();
-    const editable = await f.employeeB.client.from('photos').update({ sheet_number: 'A-1' }).eq('id', activeId).select('id');
+    const editable = await f.employeeB.client.from('photos').update({ tags: ['edited-by-b'] }).eq('id', activeId).select('id');
     expect(editable.error).toBeNull();
     expect(editable.data).toEqual([{ id: activeId }]);
+    // photo-albums AC-4: the re-created write boundary grants update(tags) only, and Sheet # is gone.
+    const updatable = await f.sql.query(`select column_name from information_schema.column_privileges
+      where table_schema='public' and table_name='photos' and grantee='authenticated' and privilege_type='UPDATE' order by 1`);
+    expect(updatable.rows).toEqual([{ column_name: 'tags' }]);
+    const sheetColumn = await f.sql.query(`select 1 from information_schema.columns
+      where table_schema='public' and table_name='photos' and column_name='sheet_number'`);
+    expect(sheetColumn.rows).toEqual([]);
+    expect((await f.sql.query("select 1 from pg_indexes where schemaname='public' and indexname='photos_sheet'")).rows).toEqual([]);
     for (const role of ['anon', 'authenticated']) {
       const client = await f.sql.connect();
       try {

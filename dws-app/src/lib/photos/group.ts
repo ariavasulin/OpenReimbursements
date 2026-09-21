@@ -2,18 +2,15 @@
 
 import type { PhotoRow } from "./types";
 
-export type GroupBy = "date" | "sheet" | "job";
+export type GroupBy = "date" | "job";
 
 export interface PhotoGroup {
   /** Stable identity for React keys and sorting. */
   key: string;
-  /** Section header text, e.g. "August 14, 2026" / "Sheet 12" / "#3612 · …". */
+  /** Section header text, e.g. "August 14, 2026" / "#3612 · …". */
   label: string;
   photos: PhotoRow[];
 }
-
-const NO_SHEET_KEY = "sheet:none";
-const SHEET_PREFIX = "sheet:";
 
 function append(
   map: Map<string, PhotoGroup>,
@@ -50,13 +47,6 @@ export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] 
           photo
         );
       }
-    } else if (groupBy === "sheet") {
-      const sheet = photo.sheet_number?.trim() || null;
-      if (sheet) {
-        append(map, `${SHEET_PREFIX}${sheet}`, `Sheet ${sheet}`, photo);
-      } else {
-        append(map, NO_SHEET_KEY, "No sheet", photo);
-      }
     } else {
       const label = photo.job
         ? `#${photo.job.job_number} · ${photo.job.name}`
@@ -65,25 +55,7 @@ export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] 
     }
   }
 
-  const groups = [...map.values()];
-
-  if (groupBy === "sheet") {
-    // Numeric sheets highest-first, then non-numeric A→Z, "No sheet" last.
-    groups.sort((a, b) => {
-      if (a.key === NO_SHEET_KEY) return 1;
-      if (b.key === NO_SHEET_KEY) return -1;
-      const aNum = Number(a.key.slice(SHEET_PREFIX.length));
-      const bNum = Number(b.key.slice(SHEET_PREFIX.length));
-      const aIsNum = Number.isFinite(aNum);
-      const bIsNum = Number.isFinite(bNum);
-      if (aIsNum && bIsNum) return bNum - aNum;
-      if (aIsNum) return -1;
-      if (bIsNum) return 1;
-      return a.label.localeCompare(b.label);
-    });
-  }
-
-  return groups;
+  return [...map.values()];
 }
 
 /**

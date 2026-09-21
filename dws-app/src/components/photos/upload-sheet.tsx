@@ -23,7 +23,7 @@ import { plural } from "@/lib/photos/format";
 import { nextPreviewIndex } from "@/lib/photos/batch";
 import { canDecodePreview } from "@/lib/photos/decode-limits";
 
-// One job, sheet, and tag set per batch, inside SheetShell (Drawer on mobile,
+// One job and tag set per batch, inside SheetShell (Drawer on mobile,
 // Dialog on desktop). The batch is copied into local state so files can be
 // removed before it is handed to the upload manager; from there the tray owns
 // the upload and its progress, and this sheet just closes.
@@ -165,7 +165,6 @@ export default function UploadSheet({
       files.map((file) => ({ file, sidecar: sidecars?.get(file) })),
       {
         jobId: meta.jobId,
-        sheetNumber: meta.sheetNumber.trim() || null,
         tags: appendTag(meta.tags, meta.tagInput),
         shutterAt: capturedAtOverrides,
       }

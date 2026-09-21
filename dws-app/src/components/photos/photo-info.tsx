@@ -17,7 +17,6 @@ interface PhotoInfoProps {
   photo: PhotoRow;
   /** "bar" = today's bottom gradient overlay; "panel" = 320px desktop column. */
   layout: "bar" | "panel";
-  canDelete: boolean;
   /** Opens the edit sheet (owned by the lightbox, so it stacks above it). */
   onEdit(): void;
 }
@@ -25,7 +24,6 @@ interface PhotoInfoProps {
 export default function PhotoInfo({
   photo,
   layout,
-  canDelete,
   onEdit,
 }: PhotoInfoProps) {
   const copyLink = async () => {
@@ -59,7 +57,7 @@ export default function PhotoInfo({
 
   const outerClass = bar
     ? "pointer-events-auto bg-gradient-to-t from-black/85 to-transparent px-4 pb-4 pt-10"
-    : // break-words: job names, sheet numbers and 64-char tags are unconstrained
+    : // break-words: job names and 64-char tags are unconstrained
       // text inside a fixed 320px column.
       "flex flex-col gap-4 break-words p-4";
   // `contents` so the panel's header and actions stay its flex children.
@@ -80,7 +78,7 @@ export default function PhotoInfo({
             <div className="text-sm font-semibold text-white">
               {photo.job ? jobLabel(photo.job) : "Photo"}
             </div>
-            {(photo.sheet_number || photo.tags.length > 0) && (
+            {photo.tags.length > 0 && (
               <div
                 className={
                   bar
@@ -88,12 +86,6 @@ export default function PhotoInfo({
                     : "mt-1 text-xs text-[#d0d0d0]"
                 }
               >
-                {photo.sheet_number && (
-                  <span className="font-semibold text-[#2680FC]">
-                    Sheet {photo.sheet_number}
-                  </span>
-                )}
-                {photo.sheet_number && photo.tags.length > 0 && " · "}
                 {photo.tags.join(" · ")}
               </div>
             )}
@@ -147,16 +139,14 @@ export default function PhotoInfo({
             >
               Copy link
             </button>
-            {canDelete && (
-              <Link
-                href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
-                className={cn(actionClass, "rounded-lg border border-[#4e4e4e] py-2 text-center text-xs font-medium text-red-300 hover:border-red-500", secondaryBg)}
-              >
-                Move to trash
-              </Link>
-            )}
+            <Link
+              href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
+              className={cn(actionClass, "rounded-lg border border-[#4e4e4e] py-2 text-center text-xs font-medium text-red-300 hover:border-red-500", secondaryBg)}
+            >
+              Move to trash
+            </Link>
         </div>
-        {canDelete && <p className="mt-2 text-xs text-[#bbb]">{trashDisclosure} Restore through Trash.</p>}
+        <p className="mt-2 text-xs text-[#bbb]">{trashDisclosure} Restore through Trash.</p>
       </div>
     </div>
   );

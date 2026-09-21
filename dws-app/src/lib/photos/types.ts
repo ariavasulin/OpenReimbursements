@@ -19,7 +19,6 @@ export interface PhotoRow {
   job_id: string;
   uploader_id: string;
   kind: PhotoKind;
-  sheet_number: string | null;
   tags: string[];
   /** Never null after finalize: EXIF capture time, or upload time fallback. */
   captured_at: string;

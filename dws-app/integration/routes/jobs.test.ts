@@ -23,8 +23,10 @@ import { PATCH as renameJob } from '@/app/api/photo-jobs/[id]/route';
 describe('hand-made project routes (photo-folders AC-2, AC-3, AC-5, AC-6)', () => {
   let f: Awaited<ReturnType<typeof createFixtures>>;
   const origin = 'https://photos.example.test';
+  // Upsert, not update: routes/authority.test.ts ends by deleting this row, and an
+  // update cannot bring it back, so this file failed whenever it ran after that one.
   const gate = async (open: boolean) =>
-    expect((await f.admin.from('photo_release_state').update({ photo_writes_enabled: open }).eq('singleton', true)).error).toBeNull();
+    expect((await f.admin.from('photo_release_state').upsert({ singleton: true, schema_generation: 1, photo_writes_enabled: open })).error).toBeNull();
   const request = (path: string, method: string, body: unknown, from = origin) => new Request(`${origin}${path}`, {
     method, headers: { 'content-type': 'application/json', origin: from }, body: JSON.stringify(body) });
   const create = (body: unknown, cookies = f.employeeA.cookies, from = origin) => {

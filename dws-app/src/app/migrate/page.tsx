@@ -40,7 +40,6 @@ export default function MigratePage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [userId, setUserId] = useState('');
-  const [sheet, setSheet] = useState('');
   const [tags, setTags] = useState('');
   const [progress, setProgress] = useState<Record<string, [number, number]>>({});
   const [, setSelectedVersion] = useState(0);
@@ -63,7 +62,6 @@ export default function MigratePage() {
     setMode(nextView.batch.script_name);
     if (nextSources && nextView.batch.script_name === 'add_photos') {
       const rules = nextSources[0]?.selection_rules;
-      setSheet(typeof rules?.sheet_number === 'string' ? rules.sheet_number : nextView.batch.requested_input?.sheet_number ?? '');
       setTags(Array.isArray(rules?.tags) ? (rules.tags as string[]).join(', ') : nextView.batch.requested_input?.tags?.join(', ') ?? '');
     }
     return nextView;
@@ -167,7 +165,7 @@ export default function MigratePage() {
         if (!local) throw new Error(`Reselect ${source.label} before reviewing its inventory.`);
         if (!source.job_id) throw new Error(`Choose a destination job for ${source.label}.`);
         await scanMigrationSource(request, { batchId: id, source, local, register: !view || view.batch.status === 'draft',
-          selectionRules: { sheet_number: sheet, tags: tags.split(',').map(tag => tag.trim()).filter(Boolean) },
+          selectionRules: { tags: tags.split(',').map(tag => tag.trim()).filter(Boolean) },
           signal: controller.signal,
           onChunk: count => setMessage(`Scanning ${source.label}: ${count.toLocaleString()} inventory chunks saved.`),
         });
@@ -184,7 +182,7 @@ export default function MigratePage() {
     return new MigrationEngine({ batchId: id, uploaderId: userId, sources,
       localSources: localSources.current, request, deps: buildBrowserUploadDeps(),
       prepare: (input, options) => uploadRequest<UploadAttempt>('prepare', input, options),
-      meta: { sheetNumber: sheet, tags: tags.split(',').map(tag => tag.trim()).filter(Boolean) },
+      meta: { tags: tags.split(',').map(tag => tag.trim()).filter(Boolean) },
       onChange: async completedItemId => {
         invalidatePhotoCaches(queryClient);
         setProgress(current => {
@@ -346,7 +344,6 @@ export default function MigratePage() {
     </div>
     <SheetShell title="Add photos" size="compact" open={compactOpen} onOpenChange={setCompactOpen} footer={<div className="flex flex-wrap justify-end gap-2 text-white"><button className={button} disabled={busy || !sources.length} onClick={() => void act(scan)}>Review files</button>{status === 'draft' && approveButton}</div>}>
       <div className="space-y-4 text-white">{fileInput}{sourceRows}
-        <label className="block text-sm">Sheet number<input aria-label="Sheet number" value={sheet} onChange={event => { setSheet(event.target.value); reviewedSources.current.clear(); }} className={`${field} mt-1`} disabled={!editable} /></label>
         <label className="block text-sm">Tags<input aria-label="Tags" value={tags} onChange={event => { setTags(event.target.value); reviewedSources.current.clear(); }} className={`${field} mt-1`} placeholder="Separate tags with commas" disabled={!editable} /></label>
         <div ref={compactReview} tabIndex={-1} className="outline-none" aria-label="Inventory review">{counts}</div>{error && <p className="text-sm text-red-300">{error}</p>}
       </div>

@@ -3,7 +3,7 @@ import * as Q from "./upload-queue";
 
 const f = (name: string, size = 10, lastModified = 1000) =>
   new File([new Uint8Array(size)], name, { lastModified });
-const meta = { jobId: "job-1", sheetNumber: null, tags: [] };
+const meta = { jobId: "job-1", tags: [] };
 let n = 0;
 const id = () => `id-${++n}`;
 const enq = (q: Q.Queue, paired: Q.PairedFile[]) =>

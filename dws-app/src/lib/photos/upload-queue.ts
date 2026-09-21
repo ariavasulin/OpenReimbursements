@@ -23,7 +23,6 @@ export type QueueStatus =
 export interface QueueItem {
   photoId: string;
   jobId: string;
-  sheetNumber: string | null;
   tags: string[];
   name: string;
   size: number;
@@ -84,7 +83,6 @@ export function enqueue(
     items.push({
       photoId,
       jobId: meta.jobId,
-      sheetNumber: meta.sheetNumber ?? null,
       tags: meta.tags ?? [],
       name: file.name,
       size: file.size,

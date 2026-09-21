@@ -16,7 +16,7 @@ schemas returned with this skill for the chosen workflow.
 
 Use `migrate_photos` for one or more local folders, including folders on an
 office drive. Use `add_photos` for a smaller file selection, up to 500 files per
-selection. Gather useful source labels, job numbers, sheet numbers, or tags
+selection. Gather useful source labels, job numbers, or tags
 when the employee knows them; the browser lets the employee review and edit
 those suggestions. Folder names may suggest jobs, but do not establish the
 destination.

@@ -10,7 +10,6 @@ import {
 } from "@tanstack/react-query";
 import { CaptureBar } from "@/components/photos/capture-bar";
 import { FilterChip, chipClass } from "@/components/photos/filter-bar";
-import GroupByToggle from "@/components/photos/group-by-toggle";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
@@ -24,7 +23,6 @@ import {
 import {
   accumulateSeenOptions,
   emptySeenOptions,
-  toSheetOptions,
   toUploaderOptions,
   type SeenOptions,
 } from "@/lib/photos/filter-options";
@@ -40,17 +38,15 @@ import RenameJob from "@/components/photos/rename-job";
 const PINNED_TAG = "professional";
 
 interface Filters {
-  sheet: string | null;
   uploader: { id: string; name: string } | null;
   tag: string | null;
 }
 
-const NO_FILTERS: Filters = { sheet: null, uploader: null, tag: null };
+const NO_FILTERS: Filters = { uploader: null, tag: null };
 
 export default function JobPhotosPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const queryClient = useQueryClient();
-  const [groupBy, setGroupBy] = useState<"date" | "sheet">("date");
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
 
@@ -76,13 +72,11 @@ export default function JobPhotosPage() {
     queryKey: [
       "photos",
       jobId,
-      filters.sheet,
       filters.uploader?.id ?? null,
       filters.tag,
     ],
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({ job: jobId });
-      if (filters.sheet) params.set("sheet", filters.sheet);
       if (filters.uploader) params.set("uploader", filters.uploader.id);
       if (filters.tag) params.set("tags", filters.tag);
       if (pageParam) params.set("cursor", pageParam);
@@ -101,14 +95,12 @@ export default function JobPhotosPage() {
     setSeen((previous) => accumulateSeenOptions(previous, photos));
   }, [photos]);
 
-  // Keyed on `seen`, which only changes when a page brings a new sheet or
-  // uploader — otherwise every scroll-appended page would re-partition and
-  // re-sort the whole accumulated set.
-  const sheetOptions = useMemo(() => toSheetOptions(seen), [seen]);
+  // Keyed on `seen`, which only changes when a page brings a new uploader —
+  // otherwise every scroll-appended page would re-sort the whole accumulated set.
   const uploaderOptions = useMemo(() => toUploaderOptions(seen), [seen]);
   const tagOptions = (jobTags ?? []).map((tag) => ({ value: tag, label: tag }));
 
-  const groups = useMemo(() => groupPhotos(photos, groupBy), [photos, groupBy]);
+  const groups = useMemo(() => groupPhotos(photos, "date"), [photos]);
   // The lightbox flips through the set as displayed: grouped order, images
   // with previews only (file tiles download instead).
   const openablePhotos = useMemo(() => openableInDisplayOrder(groups), [groups]);
@@ -143,7 +135,7 @@ export default function JobPhotosPage() {
     },
   });
 
-  const noFiltersActive = !filters.sheet && !filters.uploader && !filters.tag;
+  const noFiltersActive = !filters.uploader && !filters.tag;
 
   const refetchPhotos = () => invalidatePhotoCaches(queryClient);
 
@@ -185,17 +177,6 @@ export default function JobPhotosPage() {
             All
           </button>
           <FilterChip
-            label="Sheet"
-            active={filters.sheet ? `Sheet ${filters.sheet}` : null}
-            options={sheetOptions}
-            onSelect={(value) =>
-              setFilters((previous) => ({ ...previous, sheet: value }))
-            }
-            onClear={() =>
-              setFilters((previous) => ({ ...previous, sheet: null }))
-            }
-          />
-          <FilterChip
             label="Uploader"
             active={filters.uploader?.name ?? null}
             options={uploaderOptions}
@@ -222,11 +203,6 @@ export default function JobPhotosPage() {
             onClear={() => setFilters((previous) => ({ ...previous, tag: null }))}
           />
         </div>
-        <GroupByToggle
-          modes={["date", "sheet"] as const}
-          value={groupBy}
-          onChange={(mode) => setGroupBy(mode)}
-        />
       </div>
 
       {isLoading && <StatusLine>Loading photos...</StatusLine>}
@@ -247,7 +223,6 @@ export default function JobPhotosPage() {
 
       <PhotoGrid
         groups={groups}
-        groupBy={groupBy}
         onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
         pinnedTag={noFiltersActive ? PINNED_TAG : undefined}
         pinnedLabel="Professional Photography"
