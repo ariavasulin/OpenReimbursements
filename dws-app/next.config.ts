@@ -21,6 +21,17 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  // The public share page and its API (photo-albums plan, AC-22). Never cached, so turning a link
+  // off takes effect at once; never indexed; and the address, which IS the secret, is never sent on
+  // as a referrer. The API route sets the same headers itself; this covers the page as well.
+  async headers() {
+    const shared = [
+      { key: 'Cache-Control', value: 'no-store' },
+      { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+      { key: 'Referrer-Policy', value: 'no-referrer' },
+    ];
+    return [{ source: '/s/:path*', headers: shared }, { source: '/api/share/:path*', headers: shared }];
+  },
   typescript: {
     ignoreBuildErrors: true,
   },

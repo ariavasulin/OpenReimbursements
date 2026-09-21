@@ -75,8 +75,10 @@ type PhotoSelector =
   | { photos: PhotoReference[] }
   | { job_number: string; scope: "active" | "trash" };
 
-migrate_photos({ sources?: { label: string; job_number?: string }[] })
-add_photos({ job_number?: string; tags?: string[] })  // sheet_number removed 2026-09-20 (photo-albums Decision 6); the schema is strict, so sending it is invalid_input
+// Every field but `label` is a suggestion that pre-fills browser review; nothing is created before the employee confirms.
+// album_name and per-source tags added 2026-09-20 (photo-albums Decisions 9 and 10): each imported folder becomes an album, and a project is optional.
+migrate_photos({ sources?: { label: string; job_number?: string; new_project_name?: string; album_name?: string; tags?: string[] }[] })
+add_photos({ job_number?: string; new_project_name?: string; album_name?: string; tags?: string[] })  // sheet_number removed 2026-09-20 (photo-albums Decision 6); the schema is strict, so sending it is invalid_input
 move_photos({ selector: PhotoSelector; destination_job_number: string })
 remove_photos({ selector: PhotoSelector })
 restore_photos({ selector: PhotoSelector; destination_job_number?: string })
@@ -127,7 +129,8 @@ UUID identities, `timestamptz` UTC timestamps, `bigint` byte counts, lower-case 
 |---|---|
 | `dws_action_handoffs` | Unique `token_digest`; script and validated requested input; `expires_at`, `consumed_at`, `consumed_by`; exactly one `migration_batch_id` or `photo_action_batch_id` when consumed |
 | `migration_batches` | Creator, approval actor/time, status, timestamps; approved source/job rules are the permission scope |
-| `migration_sources` | One batch, one active destination job, source kind `directory` or `files`, label, current sealed scan ID/fingerprint; mapping changes require a new draft/confirmation |
+| `migration_sources` | One batch, an optional default project (since 2026-09-20 only a default for its folder rows — photo-albums Decision 10), source kind `directory` or `files`, label, current sealed scan ID/fingerprint; mapping changes require a new draft/confirmation |
+| `migration_folders` | Added 2026-09-20 (photo-albums Decisions 9 and 10). One row per folder that directly holds importable photos: path under the picked folder, album name, optional project, tags, and the album once created. Derived at seal, editable while the batch is a draft, frozen on approve. Each imported photo takes its row's project and tags and joins its row's album, which is created once, when the first photo lands |
 | `migration_inventory_chunks` | Unique `(source_id, scan_id, chunk_number)`, payload digest and aggregate counts; same-key same-payload replay succeeds, differing payload conflicts |
 | `migration_items` | Unique `(source_id, relative_path, revision)` and partial unique `(source_id, relative_path) where is_current`; source size/mtime/MIME, optional sidecar descriptor, digest, status/progress, stable upload attempt/photo UUID, canonical photo/job, error and renewable lease |
 | `photo_upload_attempts` | Ordinary-upload attempt UUID, actor, destination job (optional since 2026-09-20, with the albums the upload names; an upload must name a job, an album, or both — photo-albums Decisions 1 and 3), source signature/digest, stable photo UUID, deterministic Storage paths, status and lease generation/expiry; same-source retry reuses the attempt, changed source cannot overwrite it |
@@ -159,7 +162,7 @@ Definitive rejection: failed -> publishing on explicit eligible retry; unknown -
 
 ### Inventory and uploads scale by bounded work
 
-Select multiple directories in Chrome/Edge from the office machine; the server never receives a usable local absolute path. Each source maps to exactly one active job. Directory names suggest jobs but do not assign them. `add_photos` uses ordinary file selection and one source in the same durable engine. Its new compact picker accepts at most 500 files per selection and directs larger selections to the folder workflow before approval. This bounds retained File objects; it is separate from the 500-entry request limit and does not cap directory migration or change the existing phone upload sheet. Source metadata and XMP pairing are computed within source-relative directory + case-insensitive basename; ambiguous same-basename image pairs warn and do not attach arbitrarily.
+Select multiple directories in Chrome/Edge from the office machine; the server never receives a usable local absolute path. Since 2026-09-20 (photo-albums Decisions 9 and 10) a source no longer maps to exactly one job: every folder that directly holds photos becomes one album named from its path, and each folder row carries an optional project and tags, which a choice on a top-level folder sets for the folders inside it. Directory names suggest projects (a folder name holding an existing project number as a whole word) but nothing is assigned that review did not show. `add_photos` uses ordinary file selection and one source in the same durable engine. Its new compact picker accepts at most 500 files per selection and directs larger selections to the folder workflow before approval. This bounds retained File objects; it is separate from the 500-entry request limit and does not cap directory migration or change the existing phone upload sheet. Source metadata and XMP pairing are computed within source-relative directory + case-insensitive basename; ambiguous same-basename image pairs warn and do not attach arbitrarily.
 
 Supported images/videos and paired XMP are included. `.picasa.ini`, `.picasaoriginals/**`, hidden/cache data, unknown non-media files, and unmatched XMP are exclusions with reason counts. Inventory chunk requests are at most 500 entries **and** 1 MiB encoded JSON; split on whichever bound is reached first. Reject oversized requests before accumulating their full body. Seal each scan only when chunk continuity, digests, totals, and source mapping agree. Approval shows sources/jobs, count, total bytes, XMP counts, exclusions, and warnings; incomplete inventories cannot approve.
 

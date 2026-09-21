@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import { Pencil } from "lucide-react";
 import { PAGE_SUBTITLE_CLASS, PAGE_TITLE_CLASS } from "@/components/photos/page-layout";
 
-/** A quiet 44px header action (Rename, Delete album, and later Share). */
+/** A quiet 44px header action (Rename, Delete album, and Share). */
 export const headerActionClass =
   "flex min-h-11 items-center gap-2 rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] px-3 text-sm font-medium text-white hover:border-[#2680FC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC] disabled:opacity-50";
 
@@ -29,11 +29,7 @@ export default function CollectionHeader({
   renameLabel: string;
   /** Throws with a message to show under the field. */
   onRename(name: string): Promise<void>;
-  /**
-   * THE SHARE SLOT (photo-albums Phase 7). Empty today on both the album page
-   * and the project page; pass the Share button here and it renders first in
-   * the row of header actions, before Rename.
-   */
+  /** Sharing control before Rename. */
   share?: ReactNode;
   /** Buttons after Rename (the album page's Delete album). */
   actions?: ReactNode;

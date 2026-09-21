@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Upload } from "lucide-react";
+import ShareButton from "@/components/photos/share-button";
 import CollectionHeader from "@/components/photos/collection-header";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
 import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
@@ -43,7 +44,7 @@ export default function ProjectPage() {
             : " "
         }
         renameLabel="Project name"
-        // share={<ShareButton ... />}  <- the Share button goes here (photo-albums Phase 7)
+        share={job && <ShareButton project={{ id: job.id, name: job.name }} />}
         onRename={async (name) => {
           await renameJob(jobId, name);
           invalidatePhotoCaches(queryClient);

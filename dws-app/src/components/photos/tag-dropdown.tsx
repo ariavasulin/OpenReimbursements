@@ -10,6 +10,7 @@ import {
   tagMenu,
 } from "@/lib/photos/tags";
 import { useCloseOnBlur } from "@/hooks/use-close-on-blur";
+import { MAX_TAGS } from "@/lib/photos/apiShared";
 import { cn } from "@/lib/utils";
 
 // The one tag field, used by the upload pop-up, Edit details, and bulk Tag.
@@ -39,6 +40,12 @@ interface TagDropdownProps {
   disabled?: boolean;
   /** id for the text input, so a host label can point at it. */
   inputId?: string;
+  ariaLabel?: string;
+  /** Import rows save typed text when leaving the field. */
+  commitOnBlur?: boolean;
+  /** Import rows use a floating list to keep the next row in place. */
+  floating?: boolean;
+  showHint?: boolean;
   className?: string;
 }
 
@@ -50,6 +57,10 @@ export default function TagDropdown({
   choices,
   disabled,
   inputId,
+  ariaLabel,
+  commitOnBlur = false,
+  floating = false,
+  showHint = true,
   className,
 }: TagDropdownProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -60,11 +71,12 @@ export default function TagDropdown({
 
   const menu = useMemo(() => tagMenu(choices, tags, input), [choices, tags, input]);
   const rowCount = menu.options.length + (menu.add ? 1 : 0);
-  const listOpen = open && !disabled && rowCount > 0;
+  const full = tags.length >= MAX_TAGS;
+  const listOpen = open && !disabled && !full && rowCount > 0;
 
   const add = (raw: string) => {
     const next = appendResolvedTag(tags, raw, choices);
-    if (next !== tags) onChange(next);
+    if (!full && next !== tags) onChange(next);
     onInputChange("");
     setActiveIndex(0);
   };
@@ -75,7 +87,7 @@ export default function TagDropdown({
   };
 
   return (
-    <div className={className}>
+    <div className={cn("relative", className)}>
       <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-2.5 py-1.5 focus-within:border-[#2680FC]">
         {tags.map((tag) => (
           <span
@@ -97,6 +109,7 @@ export default function TagDropdown({
         <input
           ref={inputRef}
           id={inputId}
+          aria-label={ariaLabel}
           type="text"
           role="combobox"
           aria-expanded={listOpen}
@@ -113,7 +126,10 @@ export default function TagDropdown({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          onBlur={closeOnBlur}
+          onBlur={() => {
+            if (commitOnBlur && input.trim()) add(input);
+            closeOnBlur();
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" || event.key === ",") {
               event.preventDefault();
@@ -130,7 +146,7 @@ export default function TagDropdown({
             }
           }}
           placeholder={tags.length === 0 ? "Choose or type a tag" : "Add another"}
-          disabled={disabled}
+          disabled={disabled || full}
           className="min-h-9 min-w-[120px] flex-1 bg-transparent text-base text-white placeholder:text-[#b4b4b4] focus:outline-none"
         />
       </div>
@@ -142,7 +158,7 @@ export default function TagDropdown({
           aria-label="Tags"
           // Keeps the keyboard up and the field focused while a row is tapped.
           onMouseDown={(event) => event.preventDefault()}
-          className="mt-1 max-h-52 overflow-y-auto overscroll-contain rounded-lg border border-[#4e4e4e] bg-[#262626]"
+          className={cn("mt-1 max-h-52 overflow-y-auto overscroll-contain rounded-lg border border-[#4e4e4e] bg-[#262626]", floating && "absolute left-0 right-0 top-full z-20 shadow-lg")}
         >
           {menu.options.map((option, index) => (
             <li
@@ -186,7 +202,8 @@ export default function TagDropdown({
         </ul>
       )}
 
-      <p className="mt-1.5 text-sm text-[#b4b4b4]">{TAG_EXPLAINER}</p>
+      {showHint && <p className="mt-1.5 text-sm text-[#b4b4b4]">{TAG_EXPLAINER}</p>}
+      {full && <p className="mt-1.5 text-sm text-[#b4b4b4]">A photo can have up to {MAX_TAGS} tags.</p>}
     </div>
   );
 }

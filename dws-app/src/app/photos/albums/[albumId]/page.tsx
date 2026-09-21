@@ -16,6 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
 import EmptyState, { emptyPrimary, emptySecondary } from "@/components/photos/empty-state";
 import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
@@ -90,7 +91,7 @@ export default function AlbumPage() {
         fallbackName="Album"
         subtitle={album ? `Album · ${plural(album.photo_count, "photo")}` : " "}
         renameLabel="Album name"
-        // share={<ShareButton ... />}  <- the Share button goes here (photo-albums Phase 7)
+        share={album && <ShareButton album={{ id: album.id, name: album.name }} />}
         onRename={async (name) => {
           await renameAlbum(albumId, name);
           invalidatePhotoCaches(queryClient);
