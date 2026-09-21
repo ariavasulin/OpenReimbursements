@@ -5,6 +5,11 @@ Operational notes for the DWS Photos hub (uploads, confirmed changes, repair swe
 For hosted assistant configuration, shared-key rotation, photo handoffs, and
 confirmed issue submission recovery, see the [DWS MCP runbook](dws-mcp-runbook.md).
 
+Albums, optional projects, folder review, and sharing require the ordered
+[photo-albums rollout](../plans/active/photo-albums/plan.md#rollout): compatible
+migrations before merge, deploy, then the Sheet # column drop. Production
+activation remains operator work; sharing starts closed.
+
 ## Confirmed photo changes and trash
 
 Move a photo through its review/confirmation screen. Direct `PATCH job_id`
@@ -76,13 +81,15 @@ per folder — album name, project, tags — and may set a project and tags on a
 top-level folder to cover every folder inside it. Pressing Start with no edits is
 always valid. The rows live in `migration_folders`.
 
-- **Nothing is created before Start, and an album only once a photo lands in it.**
+- **No album is created before Start, and then only once a photo lands in it.**
   So a folder whose photos all fail, are skipped, or already sit in trash leaves no
   album, and closing the page, choosing the folder again, or retrying never makes a
   second album for the same folder (`migration_folders.album_id` is set once).
 - **A folder of copies becomes an album of the photos you already have.** Matching
-  bytes never make a second photo: the existing photo joins the folder's album and
-  keeps its project. The file list says "Already in DWS Photos".
+  bytes never make a second photo: the existing photo joins the folder's album. It
+  keeps an existing project; if it has no project, the reviewed choice can fill it.
+  Existing tags stay unchanged; use bulk Tag to change them. The file list says
+  "Already in DWS Photos".
 - **The choices freeze when the import starts.** To change a project or tags after
   that, use the bulk tools on the album, not the import page.
 - **A project is suggested, never assigned silently.** A folder whose name holds an
@@ -90,15 +97,20 @@ always valid. The rows live in `migration_folders`.
   with that project, as are the folders inside it; project numbers shorter than three
   characters are never suggested. An MCP `job_number` hint takes precedence. Review
   shows every suggestion before Start.
+- **Rescans preserve reviewed rows.** Newly found folders start with visible source
+  defaults and name suggestions, without inheriting an earlier edit to an ancestor
+  row. Applying a parent choice changes the current subtree; review new rows before
+  starting again.
 - **Folder import needs Chrome or Edge on a computer.** Phones, Safari, and Firefox
   cannot open folders; the page says so and offers "Add photos" (up to 500 files,
   which need a project or an album).
 
-Large imports: sealing a 100,000-file scan takes two to three seconds and does not
-slow down as the library grows. It once did — a statistics quirk made Postgres
-compare every scanned file with every existing photo (1.7 s became 11.5 s at only
-1,500 photos). The two trigger functions on that insert now refuse nested-loop
-joins (`set enable_nestloop=off` on `migration_reserve_uuids` and
+Large imports: the local regression sealed 100,000 entries with 1,500 live photos
+in 3.4 seconds, under its 8-second limit, even with a stale one-row planner estimate.
+This measures the former statistics cliff, not production throughput. Previously
+Postgres compared every scanned file with every existing photo (1.7 s became
+11.5 s at only 1,500 photos). The two trigger functions on that insert now refuse
+nested-loop joins (`set enable_nestloop=off` on `migration_reserve_uuids` and
 `photo_repair_guard_owner_ids`); do not remove that setting when editing them. The
 test "seals 100,000 entries inside the limit with 1,500 live photos the planner
 believes are one row" in `integration/db/migrations.test.ts` guards it.

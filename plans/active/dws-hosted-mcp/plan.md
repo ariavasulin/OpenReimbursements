@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-09-04
-updated: 2026-09-09
+updated: 2026-09-21
 ---
 
 # Hosted DWS MCP, photo migration, and issue reporting
@@ -11,6 +11,8 @@ This technical specification and implementation plan changes live photo authoriz
 **Agent brief.** Intent: deliver both `photos` and `report_issue` through two hosted MCP tools in the existing Next.js application. Source of truth: this plan, then the frozen [System Design](sources/system-design.md), [research](sources/research.md), and [ticket](sources/ticket.md). This plan replaces the remaining separate Program Design interview. The user subsequently requested a Claude review and incorporation of its findings; the [review dispositions](journal.md) record those changes. Locked decisions: direct browser-to-Supabase uploads, shared secret-bearing MCP URL, SMS identity for photo actions, full photo authority through a valid handoff, ordinary deletion (first uploader-or-admin; opened to any signed-in employee on 2026-09-20 by `plans/active/photo-albums/plan.md` Decision 7), global hashed content identity, and 30-day trash. Current phase: **issue-interview revision and local implementation verified; external office/activation checks outstanding**; preflight passed on 2026-09-07. Stop-and-ask triggers: a need to change those decisions, provision another runtime, remove a must-ship skill, automatically choose production canonical photos, or make trash private by changing the bucket model. Dependency/API adaptation, test failures, and ordinary code organization remain implementation-owned.
 
 The user-requested [planning contract](sources/planning-contract/AGENTS.md), [authoring reference](sources/planning-contract/refs/authoring.md), and [implementation discipline](sources/planning-contract/IMPLEMENTATION.md) are frozen alongside this plan for portability. Their demo-only tooling and cross-repository paths are reference context, not commands or missing prerequisites for OpenReimbursements; this plan supplies the applicable execution and verification entry points. Every build phase runs continuously to its exit criteria; there are no recurring phase-approval gates. Production mutations remain subject to the explicit cutover actions below.
+
+The [photo-albums extension](../photo-albums/plan.md) is locally implemented and verified on 2026-09-21: optional projects, albums, per-folder import review, bulk tools, and gated sharing. Its production rollout and this plan’s office/vendor activation obligations remain open. See its [verification record](../photo-albums/reviews/2026-09-21-verification.md).
 
 ## Why and scope
 

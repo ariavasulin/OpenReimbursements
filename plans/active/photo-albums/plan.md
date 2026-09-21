@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-09-20
-updated: 2026-09-20
+updated: 2026-09-21
 ---
 
 # Albums, optional projects, and sharing for DWS Photos
@@ -18,7 +18,7 @@ Source of truth: this plan; the request and client context in
 [`sources/ticket.md`](sources/ticket.md); the planning contract at
 `plans/active/dws-hosted-mcp/sources/planning-contract/`.
 Locked decisions: Decisions 1–14 below.
-Current phase: see the ticked Verify boxes; the orchestrator runs every phase through to the ship sequence without pausing (user instruction 2026-09-20). Production-side checks stay open until the ship.
+Current phase: **all local implementation and verification complete; PR review and operator rollout remain**. The user authorized pushing and opening one PR, with no merge or production work in this continuation (2026-09-21). Production-side checks stay open until the operator observes them.
 Stop-and-ask triggers: any role or permission rule beyond "signed-in employee";
 anything that would make the storage bucket private; nested albums; changing a public
 URL shape in § URLs after it ships; running the office's big folder import before
@@ -26,15 +26,15 @@ Phase 6 is live.
 
 ## Why
 
-Today a photo must belong to exactly one project (`photos.job_id` is `not null`) and
-nothing else can group photos. That cannot hold the client's real cases: a Christmas
+Before this change a photo had to belong to exactly one project
+(`photos.job_id` was `not null`), and nothing else could group photos. That cannot hold the client's real cases: a Christmas
 party has no project; a marketing collection spans many projects. The client comes
 from Mylio and organizes by folders, so "where did my folder go?" needs a plain answer.
 
 **Do nothing:** people invent fake projects ("Christmas Party") that pollute the
 project list, and the 100 GB import flattens every folder tree into one bucket per
-project. **Timing:** production holds 41 photos in one project, 0 tags, 0 Sheet #
-values, and the big import has not moved a file — the cheapest moment to change the
+project. **Planning snapshot (2026-09-20):** production held 41 photos in one
+project, 0 tags, 0 Sheet # values, and the big import had not moved a file — the cheapest moment to change the
 model. **Rejected framing:** "give him real nested folders" — see Alternatives.
 
 ## Words employees see
@@ -302,31 +302,25 @@ the build agents also screenshot and inspect their own screens while building.
   the new tables exist only locally (nothing touches production before the ship), so
   the review runs against a local app on a throwaway database seeded with realistic
   photos — where the reviewer can also complete every flow instead of stopping short.
-- **Sign-in:** the reviewer signs in through the real login page with the operator's
-  own phone number and reads the texted code with the operator's `imsg` CLI (user
-  ruling 2026-09-20, chosen over the orchestrator signing in and passing cookies).
-  Its brief limits `imsg` to reading the newest sign-in code: never send, never open
-  other conversations. The phone number is given in the brief, never written here.
-- **Reviewer:** `/peprkit:delegate design-engineer --target codex --tier xhigh
-  --permissions default --app-url <preview URL>`, which gives it a live browser it
-  clicks through and screenshots. `default` means the operator's own Codex settings;
-  the sandboxed profiles cannot reach the Messages database. Viewports: phone 390×844 and desktop 1440×1000, matching the browser
-  specs. It reports looks (spacing, hierarchy, consistency with the existing dark
-  theme) and sense (would a folder-thinker know what to do next) with a screenshot
-  per finding.
-- **Real data is in play.** The reviewer looks and opens pop-ups but does not
-  confirm changes to real photos, projects, or albums. Where a flow can only be
-  judged by completing it, it works on scratch items whose names start with
-  `UX Test`, and the orchestrator removes them afterwards.
+- **Sign-in:** Phase 2 used the operator's real phone and texted code on the preview.
+  The final local pass used the review runner's phone/code fixture through the real
+  login form at both sizes; it sent no text and injected no authenticated cookies.
+- **Reviewer:** Phase 2 used the delegated design reviewer. The final repair pass was
+  done by the primary agent itself, per the user's continuation instruction. It drove
+  Chromium at phone 390×844 and desktop 1440×1000, inspected screenshots, and fixed
+  the working tree. No further build or repair subagents were used in the continuation.
+- **Data:** Phase 2 was look-only on production-backed preview data. The final pass
+  completed uploads, album edits, tagging, moves, trash/restore, folder import, and
+  sharing on the disposable local seed. Its runner removed that stack afterwards;
+  production was not changed.
 - **The end-of-build pass repairs; it does not only report** (user instruction
-  2026-09-20). The reviewer runs with write access against a live, hot-reloading local
-  app (`review:stack -- --live`), and for each front-end problem it finds it changes the
-  code, reloads, and re-screenshots until the screen is right. It stays inside this
-  plan's contract — the three words, the dark theme and existing components, no new
-  features — and leaves its edits uncommitted. The orchestrator then checks that the
-  diff is real and scoped, re-runs every suite, and commits. Anything it judged out of
-  bounds comes back as a finding for the orchestrator to disposition. A run that comes
-  back with findings but no fixes is sent back to fix them.
+  2026-09-20). The primary agent ran with write access against the live, hot-reloading
+  local app (`review:stack -- --live`), fixed the front-end problems it found, and
+  re-screenshotted. The changes stay inside the three-word vocabulary, dark theme,
+  existing components, and planned feature scope. The final repair passed unit,
+  TypeScript, build, and full browser checks; database/route suites had passed on the
+  merged backend, which the repair did not change. The repairs were committed with
+  [the evidence report](reviews/2026-09-21-repair.md).
 - **Outcome:** each finding is dispositioned by the orchestrator — fixed in this
   phase, deferred to a named phase, or declined with a reason — and the list goes in
   the PR for the human to overrule. Reports are kept in `reviews/`; screenshots in the
@@ -373,8 +367,11 @@ still requires a signed-in employee.
   per link, and `sharing_enabled` for all of them at once; search-engine indexing →
   `noindex` and `no-store` headers; stale caching after turn-off → `no-store`.
 - **Accepted limit:** Decision 12 — saved image addresses outlive a turned-off link.
-- **Review gate:** PR 7 gets a security review (`/security-review`) of the public
-  route and `photo_share_read` before `sharing_enabled` is opened in production.
+- **Review gate:** the share-link portion of the combined PR needs a recorded security
+  review of the public route and `photo_share_read` before `sharing_enabled` opens in
+  production. The completed handoff security read and the integrated adversarial-test
+  evidence are recorded in [the verification report](reviews/2026-09-21-verification.md);
+  the operator still owns production activation.
 
 ## Acceptance criteria
 
@@ -447,7 +444,14 @@ and `DWS_BROWSER_ORIGIN` was updated.)
 
 Each phase also corrects the lines it makes false in `plans/active/dws-hosted-mcp/plan.md`
 and the two runbooks. Recipe:
-`grep -nE "sheet|one active (destination )?job|exactly one|Uploader or administrator|dws-receipts\.com" plans/active/dws-hosted-mcp/plan.md Docs/photos-runbook.md Docs/dws-mcp-runbook.md`.
+`rg -n "sheet|one active (destination )?job|exactly one|Uploader or administrator|dws-receipts\.com" plans/active/dws-hosted-mcp/plan.md Docs/photos-runbook.md Docs/dws-mcp-runbook.md`.
+
+The recipe was rerun on 2026-09-21. Current inputs, optional projects, folder
+mapping, and employee authority agree across the plan and runbooks. Remaining Sheet
+hits explain rejection/removal; “exactly one” hits describe identity/batch bindings;
+the old domains remain aliases or explicitly dated configuration history. The MCP
+runbook identifies the new canonical photo origin. Benchmark wording is limited to
+observed local runs, and duplicate/rescan behavior is stated in the photos runbook.
 
 ## Phase 1 — The photos address and the leftover XMP
 
@@ -565,12 +569,15 @@ the plan was silent; each is pinned by a test in `integration/db/albums.test.ts`
    accepts both shapes.
 
 ### Verify
+
+Observed 2026-09-21: database **134/134**, routes **116/116**, unit **632/632**, TypeScript clean, and final full browser **39/39**. Link-unit, photo-by-id route, and both-layout old/new deep-link browser cases pass. See [integration verification](reviews/2026-09-21-verification.md).
+
 - [x] [AC-6] `test:db`: finalize with neither → `invalid_input`; album only → `job_id is null` and one `album_photos` row. *(Observed 2026-09-20 by the orchestrator: `test:db` 99/99 — 71 existing + 28 new in `integration/db/albums.test.ts`; the migration replayed twice.)*
 - [x] [AC-7] `test:db`: the three project cases of the same-photo rule, each also adding the album. *(Observed 2026-09-20, same run.)*
 - [x] [AC-8] `test:db`: two albums, one photo; delete and restore an album; trash, restore, and purge a photo and check membership each time. *(Observed 2026-09-20, same run.)*
-- [ ] [AC-9, AC-10] `test:routes`: repeat add/remove; 501 ids; the 20-tag skip count; `Kitchen` → `kitchen`. *(Database halves observed 2026-09-20 in `test:db`: 500 ids idempotent, 501 refused, the 20-tag skip count, `Kitchen` stored as `kitchen`. The route halves land with the routes.)*
-- [ ] [AC-11] unit (`photo-link.test.ts`) and `test:routes` for both link shapes and both origins.
-- [ ] `test:db`, `test:routes`, `test:browser`, `tsc` green — existing upload, move, trash, and MCP hand-off suites unchanged in meaning.
+- [x] [AC-9, AC-10] `test:routes`: repeat add/remove; 501 ids; the 20-tag skip count; `Kitchen` → `kitchen`. *(Observed 2026-09-21: integrated routes 116/116 and database 134/134; `integration/routes/albums.test.ts` covers the route cases.)*
+- [x] [AC-11] unit (`photo-link.test.ts`) and `test:routes` for both link shapes and both origins.
+- [x] `test:db`, `test:routes`, `test:browser`, `tsc` green — existing upload, move, trash, and MCP hand-off suites unchanged in meaning.
 - [x] Every function the migration re-creates differs from its latest prior definition only by the lines its header names; every new write function is `security definer`, checks the actor and the writes gate, and is granted to `service_role` only; the two internal helpers are callable by no role. *(Observed 2026-09-20: mechanical diff and grant scan by the orchestrator; the helper and read-only-browser cases are also pinned by a test.)*
 
 ### Exit criteria
@@ -591,10 +598,13 @@ The browsing change people will notice. Defers tag dropdown and select-many (Pha
    project") and the photo's albums.
 
 ### Verify
-- [ ] [AC-12] `test:browser` at phone and desktop viewports: land on Photos, reach Albums and Projects, open a no-project photo.
-- [ ] [AC-13] `test:browser`: Upload is disabled with neither set; album-only upload lands in the album; pre-fill from a project page and from an album page; create an album inline.
-- [ ] [AC-8] `test:browser`: delete an album, restore it from Trash, photos still present.
-- [ ] `tsc` and build pass; existing browser suite green.
+
+Observed 2026-09-21: `albums-ui.spec.ts` passes AC-8/11/12/13 at both sizes; final full browser **39/39**, TypeScript clean, build **57/57**. [Live repair](reviews/2026-09-21-repair.md) also completed these flows, fixed popup sizing/targets, and checked 200% text.
+
+- [x] [AC-12] `test:browser` at phone and desktop viewports: land on Photos, reach Albums and Projects, open a no-project photo.
+- [x] [AC-13] `test:browser`: Upload is disabled with neither set; album-only upload lands in the album; pre-fill from a project page and from an album page; create an album inline.
+- [x] [AC-8] `test:browser`: delete an album, restore it from Trash, photos still present.
+- [x] `tsc` and build pass; existing browser suite green.
 
 ### Exit criteria
 On a phone and a laptop, a person can browse by date, album, or project and upload a
@@ -614,9 +624,12 @@ Christmas-party photo into a new album with no project.
    (lift its one-photo limit in the browser; the server already pages 100 at a time).
 
 ### Verify
-- [ ] [AC-14] unit: dropdown filtering, starter tags, case match; `test:browser`: add a new tag, then filter and group by it.
-- [ ] [AC-15] `test:browser`, phone (press-and-hold) and desktop (tick, shift-range, date-group tick): add 3 photos to an album; tag them; Set project → confirm page lists exactly those 3 → applied; set "No project"; Trash → confirm → gone; Remove from album.
-- [ ] [AC-9] selecting past 500 is refused in the bar with a plain message.
+
+Observed 2026-09-21: tag-unit cases and AC-14/15 browser cases pass at both sizes; the 500-selection browser case passes. Route tests additionally apply **500** move-to-no-project and trash targets, refuse **501**, and stop at a missing reference until explicit skip. The live pass completed all five bulk actions, desktop shift/date selection, and phone press-and-hold.
+
+- [x] [AC-14] unit: dropdown filtering, starter tags, case match; `test:browser`: add a new tag, then filter and group by it.
+- [x] [AC-15] `test:browser`, phone (press-and-hold) and desktop (tick, shift-range, date-group tick): add 3 photos to an album; tag them; Set project → confirm page lists exactly those 3 → applied; set "No project"; Trash → confirm → gone; Remove from album.
+- [x] [AC-9] selecting past 500 is refused in the bar with a plain message.
 
 ### Exit criteria
 The marketing case works end to end: select photos from two projects, add them to a
@@ -646,12 +659,15 @@ Must be live before the office's big import. Runs on the existing import engine.
    every photo delete scan that table.
 
 ### Verify
-- [ ] [AC-16] `test:db` + `test:browser` (the existing `migration.spec.ts` fixture tree): a 3-level tree imports with no edits; album names match paths; pause/resume, rescan, and retry make no duplicate album; an all-skipped folder leaves none.
-- [ ] [AC-7] `test:browser`: a "Marketing" folder of copies yields an album of the existing photos and no new photo rows.
-- [ ] [AC-17] unit: project suggestion (whole-word number match, inheritance from the nearest parent); `test:browser`: a top-level project and tag apply to sub-folders; the 5,000-row review scrolls and edits.
-- [ ] [AC-18, AC-19] `test:routes` + `mcp-handoffs.spec.ts`: loose files refuse neither; `album_name`/`tags` hints pre-fill; nothing exists before confirm.
-- [ ] [AC-20] `test:browser`: the entry opens `/migrate` with no token; a browser without `showDirectoryPicker` sees the message.
-- [ ] Step 5: `test:db` seals a 100,000-entry inventory inside its time limit with 1,500 live photos already present and no `analyze` run by the test.
+
+Observed 2026-09-21: `import-albums.spec.ts`, `migration.spec.ts`, and `mcp-handoffs.spec.ts` pass in the full **39/39** browser run; database **134/134**, routes **116/116**, and suggestion-unit tests pass. The stale-estimate 100,000-entry seal took **3,387ms < 8,000ms** with 1,500 live photos. Final 5,000-row browser review: last group **150ms**, tag all **470ms**. The [live pass](reviews/2026-09-21-repair.md) imported a nested tree and checked the unsupported-phone message.
+
+- [x] [AC-16] `test:db` + `test:browser` (the existing `migration.spec.ts` fixture tree): a 3-level tree imports with no edits; album names match paths; pause/resume, rescan, and retry make no duplicate album; an all-skipped folder leaves none.
+- [x] [AC-7] `test:browser`: a "Marketing" folder of copies yields an album of the existing photos and no new photo rows.
+- [x] [AC-17] unit: project suggestion (whole-word number match, inheritance from the nearest parent); `test:browser`: a top-level project and tag apply to sub-folders; the 5,000-row review scrolls and edits.
+- [x] [AC-18, AC-19] `test:routes` + `mcp-handoffs.spec.ts`: loose files refuse neither; `album_name`/`tags` hints pre-fill; nothing exists before confirm.
+- [x] [AC-20] `test:browser`: the entry opens `/migrate` with no token; a browser without `showDirectoryPicker` sees the message.
+- [x] Step 5: `test:db` seals a 100,000-entry inventory inside its time limit with 1,500 live photos already present and no `analyze` run by the test.
 
 ### Exit criteria
 Pointing the import at a folder tree and pressing Start produces one album per
@@ -674,16 +690,47 @@ The only surface reachable without a login, so it ships behind its own switch.
    (what the switch does, how to turn every link off at once).
 
 ### Verify
-- [ ] [AC-21] `test:browser`, signed out: the page shows name, count, photos, download; the response body contains no uploader name, tag, or XMP path.
-- [ ] [AC-22] `test:db` + `test:routes`: off → 404; re-enable → new token, old stays 404; unknown → 404; album A's token with a photo only in B → B's photo absent; trashed photo absent; gate closed → unavailable while `GET /api/photos` still works; both headers present.
-- [ ] [AC-23] `test:browser`: the pop-up shows the limit sentence.
-- [ ] [G1–G6] One end-to-end `test:browser` scenario proving the plan's goals together: import a folder tree holding a project folder, a "Christmas Party" folder, and a "Marketing" folder of copies → three albums, the party photos have no project, Marketing holds existing photos with no new rows → select across two projects, add to Marketing, tag `professional`, filter by it → share Marketing and open the link signed out.
-- [ ] Security review of PR 7 recorded in the PR, per § Security and privacy.
+
+Observed 2026-09-21: signed-out share browser cases and G1–G6 pass in the full **39/39** run; integrated database/route adversarial cases pass. G1–G6 uses the actual selection, album, tag, filter, and Share controls. The live pass shared **both** an album and a project at **both** sizes, downloaded in fresh signed-out contexts, then observed **404** after off. See [security and integration evidence](reviews/2026-09-21-verification.md).
+
+- [x] [AC-21] `test:browser`, signed out: the page shows name, count, photos, download; the response body contains no uploader name, tag, or XMP path.
+- [x] [AC-22] `test:db` + `test:routes`: off → 404; re-enable → new token, old stays 404; unknown → 404; album A's token with a photo only in B → B's photo absent; trashed photo absent; gate closed → unavailable while `GET /api/photos` still works; both headers present.
+- [x] [AC-23] `test:browser`: the pop-up shows the limit sentence.
+- [x] [G1–G6] One end-to-end `test:browser` scenario proving the plan's goals together: import a folder tree holding a project folder, a "Christmas Party" folder, and a "Marketing" folder of copies → three albums, the party photos have no project, Marketing holds existing photos with no new rows → select across two projects, add to Marketing, tag `professional`, filter by it → share Marketing and open the link signed out.
+- [x] Share-link security review recorded for the combined PR, per § Security and privacy. *(Completed read carried from the handoff as instructed, with integrated adversarial-test results in [the verification record](reviews/2026-09-21-verification.md) and the prepared PR description; no new independent review is claimed.)*
 - [ ] Production, gate still closed: `/s/<any>` is unavailable. After opening: one real album link opens in a private window; turning it off returns 404.
 
 ### Exit criteria
 An employee can send a client one link to an album, and one SQL statement can turn
 every link off.
+
+## Integration judgments — 2026-09-21
+
+- **500 applies to every bulk action.** The inherited 100-target move/trash limit was
+  fixed: explicit IDs materialize in pages of 100 and the draft request allows 64KiB.
+  Confirmation and unresolved-reference handling remain mandatory.
+- **Folder albums are lazy and stable.** The first successful new/duplicate photo
+  creates the album once under its folder-row lock. Failed/skipped folders leave none.
+  A root folder uses its picked label; a subfolder uses its relative path joined with
+  ` – `, without a root-label prefix.
+- **Existing copies keep their tags.** Import adds album membership and applies the
+  same-photo project rule; it does not retag an existing photo. Use bulk Tag afterwards.
+- **Suggestions are bounded.** Project numbers need at least three characters and an
+  unambiguous whole-word match; an MCP/source hint wins. New rescan rows use visible
+  source defaults plus suggestions, without inheriting previously edited ancestor
+  rows. Existing rows retain their choices; parent edits apply to the current subtree.
+- **Duplicate claim waits remain.** Two copies in one import can meet the existing
+  two-minute content claim. Recovery tests advance the retry timestamp only; the
+  claim/identity protocol is unchanged.
+- **One component and real UI coverage.** Import now uses the shared TagDropdown;
+  Share is wired to album and project headers; MCP text no longer falsely requires
+  uploader/admin authority. G1–G6's selection/tagging steps now use the UI.
+- **Repair dispositions:** popup height/Cancel, clear confirmation copy, unobscured
+  phone viewing, readable controls, long-name search, and 200% actions are fixed.
+  Existing app-wide reduced-motion TODO #14 and unrelated design-standard TODO #15
+  remain outside this pass. Details and evidence are in the
+  [repair](reviews/2026-09-21-repair.md) and
+  [integration/security](reviews/2026-09-21-verification.md) reports.
 
 ## Rollout
 
@@ -741,7 +788,9 @@ Neither blocks the build.
    inside the image files? Evidence: the office drive inspection still open in
    `dws-hosted-mcp/plan.md` Phase 7. If yes, mapping them to tags is a small
    follow-up: `readSidecarMeta` (`dws-app/src/lib/photos/sidecar.ts`) already parses
-   `.xmp` keywords during upload and discards them.
+   `.xmp` keywords, and the ordinary upload popup offers them as optional tag
+   suggestions. Automatic mapping for the office library is still unimplemented and
+   needs that sample; no keyword is silently applied.
 2. *needs-data* — How many folders, and how deep, is the real library? Same evidence.
    It tunes the review list, not the contract.
 
@@ -751,8 +800,8 @@ Neither blocks the build.
   `P-<n>` codes, and "the MCP never creates directly" all hold. Its sentence "a photo
   already belongs to exactly one job" is replaced by Decision 1.
 - `plans/active/dws-hosted-mcp/plan.md`: stays active for its open Phase 7 operator
-  items. This plan changes four of its statements — the `add_photos` input (`:79`),
-  sheet/tags editing (`:118`), one project per import source (`:162`), and
-  uploader-or-admin delete (`:106-114`) — corrected in the PR that makes each false.
+  items. This plan corrected its `add_photos` input,
+  Sheet #/tag editing, per-folder import mapping, and employee trash authority; the
+  2026-09-21 grep check found no contradictory current contract.
   Its non-goal "Picasa albums" holds: albums here come from folders, never from
   Picasa or Mylio metadata.

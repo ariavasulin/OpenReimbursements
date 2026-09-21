@@ -53,9 +53,9 @@ As of 2026-09-20, project `prj_88wyiltek8eTbBPLGzg4EsiFKOAR` uses root
 `https://design-workshops.app` and the connector host is
 `mcp.design-workshops.app`; that domain is registered through Vercel with Vercel
 nameservers, so assigning it to the project configured DNS and HTTPS. Both
-resolve over HTTPS. `photos.dws-receipts.com` remains the photo host, and the
-earlier `dws-receipts.com` domains stay assigned. `photos.design-workshops.app`
-is assigned as a second photo host; the application treats the
+resolve over HTTPS. `photos.design-workshops.app` is the canonical photo address;
+`photos.dws-receipts.com` remains a working alias, and the earlier
+`dws-receipts.com` domains stay assigned; the application treats the
 `NEXT_PUBLIC_PHOTOS_HOSTNAME` subdomain on either apex as the photo host, and
 scopes the auth cookie per apex, so a login does not carry across the two
 apexes. `mcp.dws-receipts.com` is
