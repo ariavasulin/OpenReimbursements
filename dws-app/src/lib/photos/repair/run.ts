@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { deletionPaths } from '../apiShared';
+import { removeConfirmed } from './remove';
 import { WorkBudget, DeadlineExceeded } from './deadline';
 import { mediaExecutor, type CountKey } from './executor';
 import { planSweep, ORPHAN_MS, type RepairRow, type Action } from './sweep';
@@ -24,16 +25,6 @@ export function emptyReport(): RepairReport {
 }
 const message = (e: unknown) => e instanceof Error ? e.message : String(e);
 
-/** A completed HTTP delete may contain only a subset of requested names (or
- * no names for already absent objects). Never treat its data array as proof:
- * verify this exact object is absent using Storage HEAD before dropping a row. */
-export async function removeConfirmed(admin: SupabaseClient, objectPath: string) {
-  const removed = await admin.storage.from('photos').remove([objectPath]);
-  if (removed.error) throw new Error(`remove ${objectPath}: ${removed.error.message}`);
-  if ((await admin.storage.from('photos').exists(objectPath)).data) {
-    throw new Error(`remove ${objectPath}: object remains after delete`);
-  }
-}
 
 /** Bounded keyset pages are work discovery only. SQL authorizes each deletion
  * against current owners and durably fences future owners before Storage I/O. */

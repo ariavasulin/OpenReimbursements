@@ -93,9 +93,28 @@ async function main() {
   }
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
+  // A project someone deleted in the app keeps its number while it is in Trash.
+  // The jobs_deleted_not_active check would fail the whole upsert on one of them,
+  // so leave those numbers alone and say so.
+  const { data: deleted, error: deletedErr } = await supabase
+    .from('jobs')
+    .select('job_number')
+    .not('deleted_at', 'is', null)
+    .is('purged_at', null)
+  if (deletedErr) {
+    console.error('Deleted-project check failed:', deletedErr.message)
+    process.exit(1)
+  }
+  const inTrash = new Set(deleted.map((row) => row.job_number))
+  const toUpsert = []
+  const skipped = []
+  for (const row of rows) (inTrash.has(row.job_number) ? skipped : toUpsert).push(row)
+  if (skipped.length) {
+    console.warn(`Skipped ${skipped.length} job(s) deleted in the app (restore or delete them forever first): ${skipped.map((row) => row.job_number).join(', ')}`)
+  }
   const { data, error } = await supabase
     .from('jobs')
-    .upsert(rows, { onConflict: 'job_number' })
+    .upsert(toUpsert, { onConflict: 'job_number' })
     .select('job_number')
   if (error) {
     console.error('Upsert failed:', error.message)

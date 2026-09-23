@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { WorkBudget, DeadlineExceeded } from './deadline';
-import { runRepair, removeConfirmed } from './run';
+import { runRepair } from './run';
+import { removeConfirmed } from './remove';
 import { planSweep, type RepairRow } from './sweep';
 
 const row = (id: string): RepairRow => ({ id, uploader_id: 'owner', kind: 'video', mime_type: 'video/mp4', original_path: `originals/owner/${id}/clip.mp4`, original_bytes: 12, thumb_path: null, created_at: '2020-01-01T00:00:00Z' });

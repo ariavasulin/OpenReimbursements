@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deletionPaths, escapeForIlike, escapeIlikeWildcards } from "./apiShared";
+import { cleanPhotoName, deletionPaths, escapeForIlike, escapeIlikeWildcards } from "./apiShared";
 
 // DELETE /api/photos/:id passes this straight to storage.remove.
 describe("deletionPaths", () => {
@@ -45,5 +45,17 @@ describe("ILIKE escaping", () => {
     expect(escapeForIlike("punch (list)")).toBe("punch  list");
     expect(escapeForIlike("a,b")).toBe("a b");
     expect(escapeForIlike("()")).toBe("");
+  });
+});
+
+describe('cleanPhotoName', () => {
+  it('collapses spaces, turns blank into null, and refuses slashes or overlong names', () => {
+    expect(cleanPhotoName('  Kitchen   before ')).toBe('Kitchen before');
+    expect(cleanPhotoName('   ')).toBeNull();
+    expect(cleanPhotoName(null)).toBeNull();
+    expect(cleanPhotoName('a/b')).toBe('invalid');
+    expect(cleanPhotoName('a\\b')).toBe('invalid');
+    expect(cleanPhotoName('x'.repeat(201))).toBe('invalid');
+    expect(cleanPhotoName('x'.repeat(200))).toBe('x'.repeat(200));
   });
 });

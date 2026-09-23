@@ -66,11 +66,12 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   useEffect(() => setSelecting(false), [pathname]);
 
   // For the drop overlay's label and the upload pop-up's pre-fill. Both are
-  // deduped by react-query with the open page's identical query.
-  const { data: jobsForLabel } = usePhotoJobs(
-    ready && isDesktop && activeJobId !== null
-  );
+  // deduped by react-query with the open page's identical query. The list
+  // holds active projects only, so a deleted project's page is never an
+  // upload target.
+  const { data: jobsForLabel } = usePhotoJobs(ready && activeJobId !== null);
   const activeJob = jobsForLabel?.find((job) => job.id === activeJobId);
+  const deadJob = activeJobId !== null && jobsForLabel !== undefined && !activeJob;
   const { data: activeAlbum } = usePhotoAlbum(
     activeAlbumId ?? "",
     ready && activeAlbumId !== null
@@ -79,12 +80,12 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   // What the page you are on would upload into: its project, its album, or —
   // on Photos — neither, so the pop-up asks.
   const uploadTarget = useMemo<UploadTarget | undefined>(() => {
-    if (activeJobId) return { jobId: activeJobId };
+    if (activeJob) return { jobId: activeJob.id };
     if (activeAlbumId && activeAlbum?.id === activeAlbumId) {
       return { album: { id: activeAlbum.id, name: activeAlbum.name } };
     }
     return undefined;
-  }, [activeJobId, activeAlbumId, activeAlbum]);
+  }, [activeJob, activeAlbumId, activeAlbum]);
 
   const value: PhotosShellValue = {
     openPicker: () => fileInputRef.current?.click(),
@@ -106,7 +107,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   }
 
   const showAddButton =
-    !isDesktop && !selecting && !NO_ADD_BUTTON.includes(pathname);
+    !isDesktop && !selecting && !deadJob && !NO_ADD_BUTTON.includes(pathname);
 
   return (
     <PhotosShellContext.Provider value={value}>

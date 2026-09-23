@@ -6,18 +6,9 @@ import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookImage, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
+import ConfirmDialog from "@/components/photos/confirm-dialog";
 import EmptyState, { emptyPrimary, emptySecondary } from "@/components/photos/empty-state";
 import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
@@ -129,36 +120,17 @@ export default function AlbumPage() {
         />
       )}
 
-      <AlertDialog open={confirmingDelete} onOpenChange={(open) => !deleting && setConfirmingDelete(open)}>
-        <AlertDialogContent className="border-[#4e4e4e] bg-[#2e2e2e] text-white">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="break-words text-lg">
-              Delete album “{album?.name}”? The photos stay in Photos.
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-base text-[#b4b4b4]">
-              Only the album goes away. You can restore it from Trash for 30 days.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="gap-2">
-            <AlertDialogCancel
-              disabled={deleting}
-              className="min-h-11 border-[#4e4e4e] bg-transparent text-base text-white hover:bg-[#3e3e3e] hover:text-white"
-            >
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              disabled={deleting}
-              onClick={(event) => {
-                event.preventDefault();
-                void remove();
-              }}
-              className="min-h-11 bg-red-600 text-base text-white hover:bg-red-700"
-            >
-              {deleting ? "Deleting..." : "Delete album"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title={`Delete album “${album?.name ?? "Album"}”? The photos stay in Photos.`}
+        confirmLabel="Delete album"
+        busyLabel="Deleting..."
+        busy={deleting}
+        onConfirm={() => void remove()}
+      >
+        <p>Only the album goes away. You can restore it from Trash for 30 days.</p>
+      </ConfirmDialog>
     </main>
   );
 }

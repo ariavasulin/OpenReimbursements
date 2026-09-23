@@ -24,7 +24,7 @@ export async function GET(request: Request) {
       const actor = await requirePhotoActor(request);
       const since = new Date(Date.now() - RESTORE_DAYS * 86_400_000).toISOString();
       const { data, error } = await actor.db.from('albums').select('id,name,deleted_at,deleted_by')
-        .gt('deleted_at', since).order('deleted_at', { ascending: false }).order('id').limit(MAX_DELETED_ALBUMS);
+        .gt('deleted_at', since).is('purged_at', null).order('deleted_at', { ascending: false }).order('id').limit(MAX_DELETED_ALBUMS);
       if (error) throwPhotoDatabaseError(error);
       return photoJson({ success: true, albums: (data ?? []).map(album => ({ ...album,
         restore_before: new Date(Date.parse(album.deleted_at) + RESTORE_DAYS * 86_400_000).toISOString() })) });

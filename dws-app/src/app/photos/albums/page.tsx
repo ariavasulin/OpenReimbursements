@@ -1,8 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { BookImage, Plus } from "lucide-react";
+import { useCollectionSelect } from "@/hooks/use-collection-select";
+import { useQueryClient } from "@tanstack/react-query";
+import { BookImage, CheckSquare, Plus } from "lucide-react";
 import CollectionCard from "@/components/photos/collection-card";
+import { headerActionClass } from "@/components/photos/collection-header";
+import CollectionSelectBar from "@/components/photos/collection-select-bar";
+import ConfirmDialog from "@/components/photos/confirm-dialog";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
 import { ALBUM_EXPLAINER } from "@/components/photos/new-album-sheet";
 import {
@@ -12,18 +17,27 @@ import {
 } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
+import RenameSheet from "@/components/photos/rename-sheet";
 import StatusLine from "@/components/photos/status-line";
-import { usePhotoAlbums } from "@/lib/photos/api";
+import { deleteAlbum, invalidatePhotoCaches, renameAlbum, usePhotoAlbums } from "@/lib/photos/api";
+import { plural } from "@/lib/photos/format";
 
 const ALBUMS_PER_PAGE = 60;
 
-/** Albums: bounded card pages, and "New album". */
+/** Albums: bounded card pages, "New album", and select to rename or delete. */
 export default function AlbumsPage() {
+  const queryClient = useQueryClient();
   const { openNewAlbum } = usePhotosShell();
   const { data: albums, isLoading, error } = usePhotoAlbums(true);
   const [requestedPage, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil((albums?.length ?? 0) / ALBUMS_PER_PAGE));
   const page = Math.min(requestedPage, pageCount - 1);
+  const select = useCollectionSelect(albums, {
+    noun: "album",
+    deleteOne: deleteAlbum,
+    deletedDescription: "Their photos are still in Photos. You can restore the albums from Trash for 30 days.",
+  });
+  const { chosen } = select;
 
   const newAlbumButton = (
     <button type="button" onClick={openNewAlbum} className={emptyPrimary}>
@@ -40,7 +54,15 @@ export default function AlbumsPage() {
           <h1 className={PAGE_TITLE_CLASS}>Albums</h1>
           <p className={PAGE_SUBTITLE_CLASS}>{ALBUM_EXPLAINER}</p>
         </div>
-        {albums && albums.length > 0 && newAlbumButton}
+        {albums && albums.length > 0 && select.selected === null && (
+          <div className="flex flex-wrap gap-2">
+            <button ref={select.selectButton} type="button" onClick={select.start} className={headerActionClass}>
+              <CheckSquare className="h-4 w-4" aria-hidden="true" />
+              Select
+            </button>
+            {newAlbumButton}
+          </div>
+        )}
       </div>
 
       {isLoading && <StatusLine>Loading albums...</StatusLine>}
@@ -69,6 +91,7 @@ export default function AlbumsPage() {
             photoCount={album.photo_count}
             thumbPaths={album.thumb_paths}
             emptyText="No photos yet"
+            selection={select.selected ? { selected: select.selected.has(album.id), onToggle: () => select.toggle(album.id) } : undefined}
           />
         ))}
       </div>
@@ -81,6 +104,49 @@ export default function AlbumsPage() {
             className="min-h-11 rounded border border-[#4e4e4e] px-4 disabled:opacity-40">Next</button>
         </nav>
       )}
+
+      {select.selected && (
+        <CollectionSelectBar
+          label="Selected albums"
+          count={chosen.length}
+          busy={select.busy}
+          onClose={select.stop}
+          onRename={() => select.setRenaming(true)}
+          onDelete={() => select.setConfirming(true)}
+        />
+      )}
+
+      {chosen.length === 1 && (
+        <RenameSheet
+          open={select.renaming}
+          onOpenChange={select.setRenaming}
+          title="Rename album"
+          nameLabel="Album name"
+          name={chosen[0].name}
+          onSave={async (name) => {
+            await renameAlbum(chosen[0].id, name);
+            invalidatePhotoCaches(queryClient);
+            select.stop();
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={select.confirming}
+        onOpenChange={select.setConfirming}
+        title={
+          chosen.length === 1
+            ? `Delete album “${chosen[0].name}”?`
+            : `Delete ${plural(chosen.length, "album")}?`
+        }
+        confirmLabel="Delete"
+        busyLabel="Deleting..."
+        busy={select.busy}
+        onConfirm={() => void select.remove()}
+      >
+        <p>Only the {chosen.length === 1 ? "album goes" : "albums go"} away. The photos stay in Photos.</p>
+        <p>You can restore from Trash for 30 days.</p>
+      </ConfirmDialog>
     </main>
   );
 }
