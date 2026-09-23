@@ -4,11 +4,12 @@ import { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { BookImage, BookMinus, Briefcase, Tag, Trash2, X } from "lucide-react";
+import { BookImage, BookMinus, Briefcase, Tag, TextCursorInput, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import AlbumField from "@/components/photos/album-field";
 import { PHOTOS_FLOATING_SLOT_ID, usePhotosShell } from "@/components/photos/photos-shell-context";
+import RenameSheet from "@/components/photos/rename-sheet";
 import SetProjectSheet from "@/components/photos/set-project-sheet";
 import SheetShell from "@/components/photos/sheet-shell";
 import TagDropdown, { useTagChoices } from "@/components/photos/tag-dropdown";
@@ -18,8 +19,10 @@ import {
   createActionBatch,
   invalidatePhotoCaches,
   removePhotosFromAlbum,
+  renamePhoto,
+  usePhotoDetail,
 } from "@/lib/photos/api";
-import { plural } from "@/lib/photos/format";
+import { photoName, plural } from "@/lib/photos/format";
 import { appendResolvedTag } from "@/lib/photos/tags";
 import type { PhotoAlbumRef } from "@/lib/photos/types";
 
@@ -58,7 +61,9 @@ export default function SelectionBar({
   const ids = [...selectedIds];
 
   const [slot, setSlot] = useState<HTMLElement | null>(null);
-  const [sheet, setSheet] = useState<"album" | "tag" | "project" | null>(null);
+  const [sheet, setSheet] = useState<"album" | "tag" | "project" | "rename" | null>(null);
+  // Rename needs the one selected photo's current name.
+  const { data: only } = usePhotoDetail(sheet === "rename" && count === 1 ? ids[0] : null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => setSlot(document.getElementById(PHOTOS_FLOATING_SLOT_ID)), []);
@@ -148,6 +153,12 @@ export default function SelectionBar({
             >
               {count} selected
             </span>
+            {count === 1 && (
+              <button type="button" className={actionClass} disabled={busy} onClick={() => setSheet("rename")}>
+                <TextCursorInput className="h-4 w-4" aria-hidden="true" />
+                Rename
+              </button>
+            )}
             <button type="button" className={actionClass} disabled={busy} onClick={() => setSheet("album")}>
               <BookImage className="h-4 w-4" aria-hidden="true" />
               Add to album
@@ -207,6 +218,18 @@ export default function SelectionBar({
         onOpenChange={(open) => setSheet(open ? "tag" : null)}
         photoIds={ids}
         onDone={done}
+      />
+      <RenameSheet
+        open={sheet === "rename" && only !== undefined}
+        onOpenChange={(open) => setSheet(open ? "rename" : null)}
+        title="Rename photo"
+        nameLabel="Photo name"
+        name={only ? photoName(only) ?? "" : ""}
+        onSave={async (name) => {
+          await renamePhoto(ids[0], name);
+          toast.success("Photo renamed");
+          done();
+        }}
       />
       <SetProjectSheet
         open={sheet === "project"}

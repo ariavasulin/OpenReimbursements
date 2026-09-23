@@ -60,6 +60,20 @@ that timestamp, even if permanent cleanup has not run. The public bucket is
 unchanged: someone with a known object URL can still fetch it during retention.
 Library listings, search, counts, tags, and deep links exclude all trash.
 
+**Delete forever.** Any signed-in employee can delete Trash items forever from
+`/photos/trash`: one photo, several selected photos, a deleted album, a deleted
+project (with all of its trashed photos), or **Empty trash** for everything.
+`POST /api/photos/trash/purge` marks the items (`photo_purge_request`); a marked
+photo leaves the Trash list at once and can no longer be restored. The route then
+removes its Storage files and row the same way the daily repair sweep does
+(`photo_purge_pending`, `photo_purge_authorize_delete`, `photo_purge_finish`), for
+up to about 45 seconds per call; the page calls again until nothing is left. This
+path needs only `photo_writes_enabled`, not `repair_enabled`. A photo whose files
+could not be removed stays marked; the next delete forever (or Empty trash)
+finishes it. An album or project deleted forever stays as a hidden row
+(`purged_at`), because import, upload, and share-link history still point at it;
+a project's number becomes `deleted:<id>`, so its real number is free again.
+
 A legacy duplicate in trash points to its canonical photo. Review the canonical
 target before restoring or moving it; restoration never creates another active
 copy. Uploading matching bytes keeps the item unresolved until that action
@@ -86,6 +100,15 @@ working. Deleted albums are listed on `/photos/trash` above the trashed photos,
 each with **Restore album** for 30 days. "Copy link" writes
 `/photos?photo=<id>`, which opens any active photo by id however old it is.
 
+A photo can be renamed from the viewer (**Rename**) or, with exactly one photo
+selected, from the selection bar. The name is `photos.display_name`
+(`photo_rename_photo`) and is also the download filename (the original extension
+is kept); `original_name` never changes, because MCP references and imports match
+on it. An empty name goes back to the uploaded filename. The Albums and Projects
+lists have **Select**: pick one to **Rename**, or any number to **Delete**. The
+Projects list also has **New project**, with an optional project number (blank
+gets a generated `P-<n>` code).
+
 Selecting many photos: **Add to album**, **Tag**, and **Remove from album** act at
 once on up to 500 photos (`MAX_BULK_PHOTOS`). **Set project** and **Trash** open
 the confirm page (`/photos/actions`) with exactly the selected photos, up to 500
@@ -102,6 +125,16 @@ rename one from its page. Both go through `photo_create_job` /
   never collide, and a typed `P-` code is refused.
 - Creating with a job number that already exists returns that job; nothing is
   duplicated. Rename changes the name only, never the job number.
+- Rename can also change the number (`photo_rename_job` with `p_job_number`).
+  A number another project holds is refused (`job_number_taken`); so is one held
+  by a project in Trash (`job_in_trash`). Renumbering an imported office job means
+  a later `scripts/import-jobs.mjs` run creates a new row under the old number.
+- **Deleting a project** (`photo_delete_job`) sends it and every active photo in
+  it to Trash together, with one shared timestamp. It stays hidden from project
+  lists and pickers (`is_active` false). **Restore project** within 30 days
+  (`photo_restore_job`) brings back the photos that left with it; photos trashed
+  on their own earlier stay in Trash. A photo restored on its own while its
+  project is deleted comes back with no project.
 - Hand-made rows have `synced_at` null and `created_by` set.
   `scripts/import-jobs.mjs` upserts on `job_number`, so an import row with the
   same real office number takes over a hand-made row in place, and may overwrite

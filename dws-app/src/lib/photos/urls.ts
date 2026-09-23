@@ -1,12 +1,14 @@
 // Public-URL helpers for the photos bucket (client-side).
 //
-// Download original uses Supabase's `?download=<original_name>` parameter —
+// Download original uses Supabase's `?download=<name>` parameter (the photo's
+// name, see downloadName) —
 // it sets Content-Disposition: attachment server-side, which is what makes
 // iPhones save the exact original with its real filename (a bare <a download>
 // attribute is ignored cross-origin, and every original lives on supabase.co,
 // not the app domain).
 
 import { supabase } from "@/lib/supabaseClient";
+import { downloadName } from "./format";
 import type { PhotoRow } from "./types";
 
 export function publicUrl(path: string): string {
@@ -17,7 +19,7 @@ export function downloadUrl(photo: PhotoRow): string {
   const { data } = supabase.storage
     .from("photos")
     .getPublicUrl(photo.original_path, {
-      download: photo.original_name || true,
+      download: downloadName(photo) || true,
     });
   return data.publicUrl;
 }

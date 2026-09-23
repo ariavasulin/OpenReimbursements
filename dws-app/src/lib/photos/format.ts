@@ -20,6 +20,23 @@ export function formatDuration(secs: number): string {
     : `${minutes}:${two(seconds)}`;
 }
 
+/** A photo's name as people see it: the name someone gave it, else the uploaded filename. */
+export function photoName(photo: { display_name?: string | null; original_name: string | null }): string | null {
+  return photo.display_name || photo.original_name || null;
+}
+
+/**
+ * The filename a download saves as: the photo's name, keeping the uploaded file's
+ * extension when the new name has none ("Kitchen before" -> "Kitchen before.jpg").
+ */
+export function downloadName(photo: { display_name?: string | null; original_name: string | null }): string | null {
+  if (!photo.display_name) return photo.original_name;
+  const ext = photo.original_name?.match(/\.[A-Za-z0-9]{1,8}$/)?.[0];
+  return ext && !photo.display_name.toLowerCase().endsWith(ext.toLowerCase())
+    ? `${photo.display_name}${ext}`
+    : photo.display_name;
+}
+
 /** What stands where a project name would be, for a photo that has none. */
 export const NO_PROJECT = "No project";
 

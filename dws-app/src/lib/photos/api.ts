@@ -83,7 +83,7 @@ export function usePhotoTags(enabled: boolean) {
 export function invalidatePhotoCaches(queryClient: QueryClient) {
   for (const key of [
     "photos", "photo-jobs", "photo-tags", "photo-search", "photo-trash",
-    "photo-albums", "photo-album", "photo-detail", "photo-albums-deleted",
+    "photo-albums", "photo-album", "photo-detail", "photo-albums-deleted", "photo-jobs-deleted",
   ]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
@@ -103,10 +103,45 @@ export function createJob(input: { name: string; job_number?: string }) {
   );
 }
 
-export function renameJob(id: string, name: string) {
+const jobUrl = (id: string) => `/api/photo-jobs/${encodeURIComponent(id)}`;
+
+/** Rename a project; a `jobNumber` also changes its number (409 when another project has it). */
+export function renameJob(id: string, name: string, jobNumber?: string) {
   return fetchJson<{ job: PhotoJobRef }>(
-    `/api/photo-jobs/${encodeURIComponent(id)}`, "Failed to rename the project", jsonInit("PATCH", { name })
+    jobUrl(id), "Failed to rename the project",
+    jsonInit("PATCH", { name, ...(jobNumber !== undefined ? { job_number: jobNumber } : {}) })
   );
+}
+
+/** The project and every photo in it go to Trash for 30 days. */
+export function deleteJob(id: string) {
+  return fetchJson<{ job: PhotoJobRef; trashed: number }>(jobUrl(id), "Failed to delete the project", { method: "DELETE" });
+}
+
+/** Back from Trash, with the photos that went there together with it. */
+export function restoreJob(id: string) {
+  return fetchJson<{ job: PhotoJobRef; restored: number }>(
+    jobUrl(id), "Failed to restore the project", jsonInit("PATCH", { action: "restore" })
+  );
+}
+
+/** A project deleted in the last 30 days, as the Trash page lists it. */
+export interface DeletedJob {
+  id: string;
+  job_number: string;
+  name: string;
+  deleted_at: string;
+  deleted_by: string | null;
+  /** Its photos still in Trash. */
+  photo_count: number;
+  restore_before: string;
+}
+
+export async function fetchDeletedJobs(): Promise<DeletedJob[]> {
+  const data = await fetchJson<{ jobs: DeletedJob[] }>(
+    "/api/photo-jobs?deleted=1", "Failed to load deleted projects", { cache: "no-store" }
+  );
+  return data.jobs;
 }
 
 // ---- Albums ---------------------------------------------------------------
@@ -210,6 +245,14 @@ export function removePhotosFromAlbum(albumId: string, photoIds: string[]) {
 
 // ---- Bulk tags, one photo, action batches ----------------------------------
 
+/** Rename one photo. A blank name goes back to the uploaded filename. */
+export function renamePhoto(id: string, name: string) {
+  return fetchJson<{ photo: PhotoRow }>(
+    `/api/photos/${encodeURIComponent(id)}`, "Failed to rename the photo",
+    jsonInit("PATCH", { display_name: name.trim() || null })
+  );
+}
+
 /** `skipped` counts photos the change would push past 20 tags; they are untouched. */
 export function bulkTagPhotos(photoIds: string[], change: { add?: string[]; remove?: string[] }) {
   return fetchJson<{ updated: number; skipped: number; missing: number }>(
@@ -255,4 +298,43 @@ export async function createActionBatch(
     })
   );
   return data.batch.id;
+}
+
+// ---- Delete forever ---------------------------------------------------------
+
+/** What to delete forever. Everything named must already be in Trash. */
+export type PurgeRequest =
+  | { everything: true }
+  | { photo_ids?: string[]; album_ids?: string[]; project_ids?: string[] };
+
+interface PurgeResponse {
+  marked: { photos: number; albums: number; projects: number };
+  purged: number;
+  remaining: number;
+  failed: number;
+}
+
+/**
+ * Delete forever, then keep calling until every marked photo's files are gone.
+ * `onProgress` gets the photos removed so far and the number still waiting.
+ * Resolves with the photos that could not be removed this time (0 on success);
+ * those stay marked and the next delete-forever finishes them.
+ */
+export async function purgeTrash(
+  request: PurgeRequest,
+  onProgress?: (removed: number, remaining: number) => void
+): Promise<{ marked: PurgeResponse["marked"]; stuck: number }> {
+  const call = (body: unknown) =>
+    fetchJson<PurgeResponse>("/api/photos/trash/purge", "Failed to delete forever", jsonInit("POST", body));
+  let result = await call(request);
+  const marked = result.marked;
+  let removed = result.purged;
+  onProgress?.(removed, result.remaining);
+  // Each call works for up to ~45 seconds. Stop when a call makes no progress.
+  while (result.remaining > 0 && result.purged > 0) {
+    result = await call({});
+    removed += result.purged;
+    onProgress?.(removed, result.remaining);
+  }
+  return { marked, stuck: result.remaining };
 }

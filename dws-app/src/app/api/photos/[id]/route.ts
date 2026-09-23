@@ -1,4 +1,4 @@
-import { cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
+import { cleanPhotoName, cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { PhotoApiError, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, photoRpc } from '@/lib/photos/server/http';
 import { photoId, readPhotoOwnership, requirePhotoReader } from '@/lib/photos/server/reads';
@@ -19,14 +19,26 @@ export async function GET(_request:Request,context:RouteContext){return photoRou
  return photoJson({success:true,photo:data});
 });}
 
-/** Metadata edits apply only to active rows. Ownership changes require confirmation. */
+/**
+ * Metadata edits apply only to active rows. Ownership changes require confirmation.
+ * `display_name` renames the photo as people see and download it (through
+ * photo_rename_photo); an empty name (or null) goes back to the uploaded
+ * filename, which never changes. Tags save on the employee's own session.
+ */
 export async function PATCH(request:Request,context:RouteContext){return photoRoute(async()=>{
  const actor=await requirePhotoActor(request,{mutation:true}),id=photoId((await context.params).id),body=await readPhotoJson(request);
- onlyKeys(body,['tags']);
- const updates:Record<string,unknown>={};
- if('tags' in body){if(!Array.isArray(body.tags)||body.tags.some(tag=>typeof tag!=='string')) throw new PhotoApiError('invalid_input');updates.tags=cleanTags(body.tags);}
- if(!Object.keys(updates).length) throw new PhotoApiError('invalid_input');
- const {data,error}=await actor.session.from('photos').update(updates).eq('id',id).is('deleted_at',null).select(PHOTO_COLUMNS).maybeSingle();
+ onlyKeys(body,['tags','display_name']);
+ if(!('tags' in body)&&!('display_name' in body)) throw new PhotoApiError('invalid_input');
+ if('tags' in body&&(!Array.isArray(body.tags)||body.tags.some(tag=>typeof tag!=='string'))) throw new PhotoApiError('invalid_input');
+ if('display_name' in body){
+  if(body.display_name!==null&&typeof body.display_name!=='string') throw new PhotoApiError('invalid_input');
+  const name=cleanPhotoName(body.display_name);if(name==='invalid') throw new PhotoApiError('invalid_input');
+  await photoRpc(actor,'photo_rename_photo',{p_actor:actor.actorId,p_photo:id,p_name:name});
+ }
+ const photos=actor.session.from('photos');
+ const {data,error}=Array.isArray(body.tags)
+  ? await photos.update({tags:cleanTags(body.tags)}).eq('id',id).is('deleted_at',null).select(PHOTO_COLUMNS).maybeSingle()
+  : await photos.select(PHOTO_COLUMNS).eq('id',id).is('deleted_at',null).maybeSingle();
  if(error) throwPhotoDatabaseError(error);if(!data) throw new PhotoApiError('not_found');
  return photoJson({success:true,photo:data});
 });}

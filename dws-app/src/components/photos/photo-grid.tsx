@@ -6,6 +6,7 @@ import {
   formatBytes,
   formatCaptureDay,
   formatDuration,
+  photoName,
   plural,
 } from "@/lib/photos/format";
 import { useDesktop } from "@/hooks/use-desktop";
@@ -81,7 +82,7 @@ function Tile({
 }) {
   const selected = selection?.selectedIds.has(photo.id) ?? false;
   const selecting = (selection?.selectedIds.size ?? 0) > 0;
-  const name = photo.original_name ?? photo.kind;
+  const name = photoName(photo) ?? photo.kind;
 
   // Press and hold (phone layout). The click that follows the hold must not
   // also toggle or open the photo, so the hold leaves a note for it.
@@ -192,7 +193,7 @@ function Tile({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={publicUrl(photo.thumb_path)}
-            alt={photo.original_name ?? ""}
+            alt={photoName(photo) ?? ""}
             loading="lazy"
             draggable={false}
             className={cn(
@@ -244,7 +245,7 @@ function Tile({
       {!selecting && (
         <a
           href={downloadUrl(photo)}
-          aria-label={`Download ${photo.original_name ?? "original"}`}
+          aria-label={`Download ${photoName(photo) ?? "original"}`}
           onClick={(event) => event.stopPropagation()}
           className="absolute bottom-1 right-1 flex min-h-11 min-w-11 items-center justify-center rounded-md bg-[#222222] p-1.5 text-white hover:bg-[#2680FC]"
         >

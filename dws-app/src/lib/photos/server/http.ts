@@ -7,6 +7,8 @@ const errors = {
   forbidden: [403, 'This action is not permitted.'],
   not_found: [404, 'The requested record was not found.'],
   conflict: [409, 'The record changed or has already been used.'],
+  job_number_taken: [409, 'Another project already uses that number.'],
+  job_in_trash: [409, 'A project with that number is in Trash. Restore it, or delete it forever first.'],
   new_folders_require_review: [409, 'New folders were found after this import was approved. Start a new import to review them. Photos already imported are kept.'],
   handoff_expired: [410, 'This handoff has expired.'],
   payload_too_large: [413, 'The request is too large.'],
@@ -94,6 +96,7 @@ export function throwPhotoDatabaseError(error: { code?: string; message?: string
   if (message === 'invalid_actor') throw new PhotoApiError('unauthenticated');
   if (message === 'handoff_expired') throw new PhotoApiError('handoff_expired');
   if (message === 'new_folders_require_review') throw new PhotoApiError('new_folders_require_review');
+  if (message === 'job_number_taken' || message === 'job_in_trash') throw new PhotoApiError(message);
   if (error.code === '42501' || message === 'forbidden' || message === 'wrong_consumer' || message === 'wrong_script') {
     throw new PhotoApiError('forbidden');
   }

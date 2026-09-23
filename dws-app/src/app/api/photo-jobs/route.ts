@@ -7,15 +7,40 @@ import type { PhotoJobSummaryRow } from '@/lib/photos/types';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { PhotoApiError, photoJson, photoRoute, photoRpc, readPhotoJson, throwPhotoDatabaseError } from '@/lib/photos/server/http';
 
+const RESTORE_DAYS = 30;
+/** Deleted projects shown at once. Far above what 30 days of deleting produces by hand. */
+const MAX_DELETED_JOBS = 200;
+
 // GET /api/photo-jobs?q= — job cards for the photos home screen and the
 // upload job dropdown: job number, name, photo count, up to 4 newest thumbs.
 // Ordered by most recent upload activity (jobs with photos first, newest
 // upload first; then job number descending).
 
+// GET /api/photo-jobs?deleted=1 — projects deleted in the last 30 days, newest
+// deletion first, for the Trash page, each with how many of its photos are in Trash.
 export async function GET(request: Request) {
   return photoRoute(async () => {
+    const params = new URL(request.url).searchParams;
+    if (params.has('deleted')) {
+      if (params.get('deleted') !== '1') throw new PhotoApiError('invalid_input');
+      const actor = await requirePhotoActor(request);
+      const since = new Date(Date.now() - RESTORE_DAYS * 86_400_000).toISOString();
+      const { data, error } = await actor.db.from('jobs').select('id,job_number,name,deleted_at,deleted_by')
+        .gt('deleted_at', since).is('purged_at', null)
+        .order('deleted_at', { ascending: false }).order('id').limit(MAX_DELETED_JOBS);
+      if (error) throwPhotoDatabaseError(error);
+      const jobs = await Promise.all((data ?? []).map(async job => {
+        const photos = await actor.db.from('photos').select('id', { count: 'exact', head: true })
+          .eq('job_id', job.id).not('deleted_at', 'is', null).gt('purge_after', new Date().toISOString())
+          .is('purge_claimed_at', null);
+        if (photos.error) throwPhotoDatabaseError(photos.error);
+        return { ...job, photo_count: photos.count ?? 0,
+          restore_before: new Date(Date.parse(job.deleted_at) + RESTORE_DAYS * 86_400_000).toISOString() };
+      }));
+      return photoJson({ success: true, jobs });
+    }
     const supabase = await requirePhotoReader();
-    const { q, limit, cursor } = readCollectionPage(new URL(request.url).searchParams, 'jobs');
+    const { q, limit, cursor } = readCollectionPage(params, 'jobs');
     const { data, error } = await supabase.rpc('get_photo_job_summaries_page', {
       search_query: escapeIlikeWildcards(q) || null, p_limit: limit,
       p_after_activity: cursor?.activity ?? null, p_after_number: cursor?.number ?? null,

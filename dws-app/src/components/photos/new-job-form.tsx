@@ -52,8 +52,9 @@ export default function NewJobForm({ jobs, initialName = "", onDone, onCancel }:
     <div className="mb-3.5 space-y-2 rounded-lg border border-[#4e4e4e] p-3">
       <input aria-label="Project name" autoFocus value={name} maxLength={120} disabled={busy}
         onChange={(event) => setName(event.target.value)} placeholder="Project name" className={input} />
-      <input aria-label="Job number (optional)" value={number} maxLength={32} disabled={busy}
-        onChange={(event) => setNumber(event.target.value)} placeholder="Job number (optional)" className={input} />
+      <input aria-label="Project number (optional)" value={number} maxLength={32} disabled={busy}
+        onChange={(event) => setNumber(event.target.value)} placeholder="Project number (optional)" className={input} />
+      {!number.trim() && <p className="text-xs text-[#b4b4b4]">Leave it empty and the app gives the project a code like P-12.</p>}
       {matches.length > 0 && (
         <div className="text-xs text-[#b4b4b4]">
           Already exists:

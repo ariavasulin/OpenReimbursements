@@ -4,7 +4,7 @@ import { PATH_COLUMNS } from './repair/known-paths';
 export const PHOTO_COLUMNS =
   'id, job_id, uploader_id, kind, tags, captured_at, ' +
   'captured_at_source, ' +
-  'original_path, original_bytes, mime_type, original_name, thumb_path, ' +
+  'original_path, original_bytes, mime_type, original_name, display_name, thumb_path, ' +
   'preview_path, playback_path, duration_secs, sidecar_path, sidecar_name, ' +
   'created_at, ' +
   'uploader:user_profiles!photos_uploader_id_fkey(full_name), job:jobs(id, job_number, name)';
@@ -48,6 +48,20 @@ export function cleanTags(input: unknown): string[] {
         .filter(Boolean)
     ),
   ].slice(0, MAX_TAGS);
+}
+
+/** A photo's shown name (photos.display_name): at most this many characters. */
+export const MAX_PHOTO_NAME_LENGTH = 200;
+
+/**
+ * A typed photo name as it is stored: inner spaces collapsed and trimmed; blank
+ * means "no name of its own" (null), so the uploaded filename shows again.
+ * `invalid` for a name too long or holding a slash, which the column refuses.
+ */
+export function cleanPhotoName(input: string | null): string | null | 'invalid' {
+  const name = (input ?? '').replace(/\s+/g, ' ').trim();
+  if (!name) return null;
+  return name.length > MAX_PHOTO_NAME_LENGTH || /[/\\]/.test(name) ? 'invalid' : name;
 }
 
 /** True for a lowercase hex SHA-256 digest — the only content_sha256 shape

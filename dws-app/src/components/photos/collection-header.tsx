@@ -17,6 +17,7 @@ export default function CollectionHeader({
   fallbackName,
   subtitle,
   renameLabel,
+  number,
   onRename,
   share,
   actions,
@@ -27,23 +28,28 @@ export default function CollectionHeader({
   subtitle: string;
   /** Accessible name of the rename field: "Album name" / "Project name". */
   renameLabel: string;
+  /** A project's number: Rename then edits it too, and passes it to onRename. */
+  number?: string;
   /** Throws with a message to show under the field. */
-  onRename(name: string): Promise<void>;
+  onRename(name: string, number?: string): Promise<void>;
   /** Sharing control before Rename. */
   share?: ReactNode;
   /** Buttons after Rename (the album page's Delete album). */
   actions?: ReactNode;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const [numberDraft, setNumberDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const unchanged =
+    draft !== null && draft.trim() === name && (number === undefined || numberDraft.trim() === number);
 
   const save = async () => {
     if (draft === null) return;
     setBusy(true);
     setError("");
     try {
-      await onRename(draft.trim());
+      await onRename(draft.trim(), number === undefined ? undefined : numberDraft.trim());
       setDraft(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Failed to rename");
@@ -62,7 +68,14 @@ export default function CollectionHeader({
         {name !== undefined && draft === null && (
           <div className="flex flex-wrap items-center gap-2">
             {share}
-            <button type="button" onClick={() => setDraft(name)} className={headerActionClass}>
+            <button
+              type="button"
+              onClick={() => {
+                setDraft(name);
+                setNumberDraft(number ?? "");
+              }}
+              className={headerActionClass}
+            >
               <Pencil className="h-4 w-4" aria-hidden="true" />
               Rename
             </button>
@@ -88,9 +101,20 @@ export default function CollectionHeader({
             onChange={(event) => setDraft(event.target.value)}
             className="min-h-11 min-w-0 flex-1 basis-56 rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 text-base text-white focus:border-[#2680FC] focus:outline-none"
           />
+          {number !== undefined && (
+            <input
+              aria-label="Project number"
+              placeholder="Project number"
+              value={numberDraft}
+              maxLength={32}
+              disabled={busy}
+              onChange={(event) => setNumberDraft(event.target.value)}
+              className="min-h-11 w-40 rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none"
+            />
+          )}
           <button
             type="submit"
-            disabled={busy || !draft.trim() || draft.trim() === name}
+            disabled={busy || !draft.trim() || (number !== undefined && !numberDraft.trim()) || unchanged}
             className="min-h-11 rounded-lg bg-[#2680FC] px-4 text-base font-medium text-white disabled:opacity-50"
           >
             Save

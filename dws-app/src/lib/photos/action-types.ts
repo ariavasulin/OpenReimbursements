@@ -4,7 +4,7 @@ export type PhotoAction = 'move' | 'trash' | 'restore';
 export type PhotoReference = { photo_id: string } | { photo_url: string } | { job_number: string; original_filename: string };
 export type PhotoSelector = { photos: PhotoReference[] } | { job_number: string; scope: 'active' | 'trash' };
 export interface ActionPhoto {
-  id: string; job_id: string | null; uploader_id: string; original_name: string | null;
+  id: string; job_id: string | null; uploader_id: string; original_name: string | null; display_name?: string | null;
   deleted_at: string | null; purge_after: string | null; duplicate_of: string | null;
   thumb_path: string | null; kind: PhotoKind; job: PhotoRow['job'];
 }

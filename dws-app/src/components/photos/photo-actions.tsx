@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { fetchJson, invalidatePhotoCaches, usePhotoJobs } from '@/lib/photos/api';
 import { actionRequest, actionButton as button, actionPrimary as primary, actionField as field, trashDisclosure } from '@/lib/photos/action-client';
 import ActionThumbnail from '@/components/photos/action-thumbnail';
-import { jobLabel, NO_PROJECT, plural } from '@/lib/photos/format';
+import { jobLabel, NO_PROJECT, photoName, plural } from '@/lib/photos/format';
 import { photoPath } from '@/lib/photos/photo-link';
 
 import type { PhotoAction as Action, ActionPhoto as Photo, PhotoActionItem as Item, UnresolvedPhotoReference as Unresolved, PhotoActionBatchResponse as View } from '@/lib/photos/action-types';
@@ -27,7 +27,7 @@ const danger = `${button} border-transparent bg-red-600 text-white hover:bg-red-
 const tall = 'min-h-11 text-base';
 
 const pageTitle = (action: Action) => action === 'trash' ? 'Move to trash' : action === 'restore' ? 'Restore from trash' : 'Set project';
-const label = (photo: Photo | null) => photo?.original_name || 'Photo';
+const label = (photo: Photo | null) => (photo && photoName(photo)) || 'Photo';
 const projectName = (job: Photo['job'], jobId: string | null) => job ? jobLabel(job) : jobId === null ? NO_PROJECT : 'a project';
 
 /** The one question: "Move 3 photos to <project>?" */

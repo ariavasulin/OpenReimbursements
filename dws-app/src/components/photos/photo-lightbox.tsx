@@ -17,6 +17,7 @@ import "yet-another-react-lightbox/plugins/counter.css";
 import "yet-another-react-lightbox/plugins/thumbnails.css";
 import { useDesktop } from "@/hooks/use-desktop";
 import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
+import { photoName } from "@/lib/photos/format";
 import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
 import PhotoInfo from "@/components/photos/photo-info";
 import SetProjectSheet from "@/components/photos/set-project-sheet";
@@ -208,7 +209,7 @@ export default function PhotoLightbox({
         if (item.kind !== "video") {
           return {
             src: previewUrl(item) ?? "",
-            alt: item.original_name ?? "",
+            alt: photoName(item) ?? "",
           };
         }
         // Playback streams from storage (which serves range requests)
@@ -219,7 +220,7 @@ export default function PhotoLightbox({
             type: "unplayable",
             poster: previewUrl(item) ?? "",
             download: downloadUrl(item),
-            name: item.original_name ?? "video",
+            name: photoName(item) ?? "video",
           };
         }
         return {

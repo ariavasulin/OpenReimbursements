@@ -4,12 +4,12 @@ import { photoId } from '@/lib/photos/server/reads';
 import { ACTION_PHOTO_COLUMNS } from '@/lib/photos/server/actions';
 import type { ActionPhoto } from '@/lib/photos/action-types';
 
-/** Intentional recovery view: retained, unexpired rows, bounded cursor pages. */
+/** Intentional recovery view: retained, unexpired rows not marked for deletion forever, bounded cursor pages. */
 export async function GET(request:Request){return photoRoute(async()=>{
  const actor=await requirePhotoActor(request),params=new URL(request.url).searchParams,limit=Number(params.get('limit')??100);
  if(!Number.isSafeInteger(limit)||limit<1||limit>100) throw new PhotoApiError('invalid_input');
  const now=new Date().toISOString();
- let query=actor.db.from('photos').select(ACTION_PHOTO_COLUMNS+',purge_claimed_at').not('deleted_at','is',null).gt('purge_after',now).order('id').limit(limit+1);
+ let query=actor.db.from('photos').select(ACTION_PHOTO_COLUMNS+',purge_claimed_at').not('deleted_at','is',null).gt('purge_after',now).is('purge_claimed_at',null).order('id').limit(limit+1);
  if(params.has('after')) query=query.gt('id',photoId(params.get('after')));
  if(params.has('job_id')) query=query.eq('job_id',photoId(params.get('job_id')));
  const {data,error}=await query;if(error) throwPhotoDatabaseError(error);
