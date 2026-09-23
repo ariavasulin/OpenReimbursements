@@ -68,7 +68,7 @@ describe('managing routes: rename, delete a project, delete forever', () => {
     const { id } = await photo(null);
     const renamed = await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: '  Kitchen   before ' }, id);
     expect(renamed).toMatchObject({ status: 200, body: { photo: { display_name: 'Kitchen before', original_name: 'route.jpg' } } });
-    expect((await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: 'a/b' }, id)).status).toBe(400);
+    expect(await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: 'a/b' }, id)).toMatchObject({ status: 400, body: { error: { code: 'photo_name_invalid' } } });
     expect((await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: '' }, id)).body.photo.display_name).toBeNull();
   });
 
@@ -78,6 +78,7 @@ describe('managing routes: rename, delete a project, delete forever', () => {
     expect(renamed).toMatchObject({ status: 200, body: { job: { name: 'Renamed', job_number: `${a.job_number}-2` } } });
     const taken = await call(patchJob, 'PATCH', `/api/photo-jobs/${a.id}`, { name: 'Renamed', job_number: b.job_number }, a.id);
     expect(taken).toMatchObject({ status: 409, body: { error: { code: 'job_number_taken', message: 'Another project already uses that number.' } } });
+    expect((await call(patchJob, 'PATCH', `/api/photo-jobs/${a.id}`, { name: 'Renamed', job_number: 'P-9' }, a.id)).body.error.code).toBe('job_number_reserved');
   });
 
   it('deletes a project to Trash with its photos, lists it, and restores both', async () => {
@@ -116,6 +117,30 @@ describe('managing routes: rename, delete a project, delete forever', () => {
     expect((await call(listJobs, 'GET', '/api/photo-jobs?deleted=1')).body.jobs.some((row: { id: string }) => row.id === project.id)).toBe(false);
     // Its number is free again.
     expect((await f.admin.rpc('photo_create_job', { p_actor: f.employeeA.id, p_name: 'Again', p_job_number: project.job_number })).data.status).toBe('created');
+  });
+
+  it('photos left marked by a cut-off request are counted in Trash and finished by an empty request', async () => {
+    const trashed = await photo(null, true);
+    // A request that marked the photo and then stopped before removing its files.
+    expect((await f.admin.rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [trashed.id] })).error).toBeNull();
+    const before = await call(listTrash, 'GET', '/api/photos/trash?limit=100');
+    expect(before.body.pending_purge).toBeGreaterThanOrEqual(1);
+    expect(before.body.photos.some((row: { id: string }) => row.id === trashed.id)).toBe(false);
+    const finished = await call(purge, 'POST', '/api/photos/trash/purge', {});
+    expect(finished).toMatchObject({ status: 200, body: { marked: { photos: 0 }, remaining: 0, failed: 0 } });
+    expect(await stored(trashed.original)).toBe(false);
+    expect((await call(listTrash, 'GET', '/api/photos/trash?limit=100')).body.pending_purge).toBe(0);
+  });
+
+  it('lists a project in Trash past its 30 days, with Delete forever still possible', async () => {
+    const project = await job();
+    await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id);
+    await f.sql.query("update public.jobs set deleted_at=deleted_at-interval '31 days' where id=$1", [project.id]);
+    const listed = (await call(listJobs, 'GET', '/api/photo-jobs?deleted=1')).body;
+    expect(listed.truncated).toBe(false);
+    const row = listed.jobs.find((item: { id: string }) => item.id === project.id);
+    expect(Date.parse(row.restore_before)).toBeLessThan(Date.now());
+    expect((await call(purge, 'POST', '/api/photos/trash/purge', { project_ids: [project.id] })).body.marked.projects).toBe(1);
   });
 
   it('refuses a bad purge body and a cross-site request', async () => {

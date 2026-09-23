@@ -5,7 +5,7 @@ import { photoId } from './reads';
 import { MAX_BULK_PHOTOS } from '../apiShared';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc, photoLinkIds } from './http';
 
-export const ACTION_PHOTO_COLUMNS = 'id,job_id,uploader_id,original_name,display_name,kind,thumb_path,deleted_at,purge_after,duplicate_of,job:jobs(id,job_number,name)';
+export const ACTION_PHOTO_COLUMNS = 'id,job_id,uploader_id,original_name,display_name,kind,thumb_path,deleted_at,purge_after,duplicate_of,job:jobs(id,job_number,name,deleted_at)';
 export function onlyKeys(value: Record<string, unknown>, keys: string[]) {
   if (Object.keys(value).some(key => !keys.includes(key))) throw new PhotoApiError('invalid_input');
 }

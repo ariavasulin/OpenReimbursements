@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Download, Link2, Pencil, TextCursorInput, Trash2 } from "lucide-react";
@@ -47,10 +47,11 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
   // The saved name shows at once; the grid row catches up when its list refetches.
   const [saved, setSaved] = useState<{ id: string; name: string | null } | null>(null);
   const name = saved?.id === photo.id ? saved.name : photoName(photo);
-  const [draft, setDraft] = useState<string | null>(null);
+  // A half-typed name belongs to its photo: paging to another one drops it.
+  const [edit, setEdit] = useState<{ id: string; text: string } | null>(null);
+  const draft = edit?.id === photo.id ? edit.text : null;
+  const setDraft = (text: string | null) => setEdit(text === null ? null : { id: photo.id, text });
   const [renaming, setRenaming] = useState(false);
-  // Paging to another photo in the viewer drops a half-typed name.
-  useEffect(() => setDraft(null), [photo.id]);
 
   const saveName = async () => {
     if (draft === null || renaming) return;
@@ -114,6 +115,13 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
                   maxLength={MAX_PHOTO_NAME_LENGTH}
                   disabled={renaming}
                   onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    // Escape cancels the rename; it must not also close the viewer.
+                    if (event.key === "Escape" && !renaming) {
+                      event.stopPropagation();
+                      setDraft(null);
+                    }
+                  }}
                   placeholder={photo.original_name ?? "Photo name"}
                   className="min-h-11 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 text-base font-normal text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none"
                 />
@@ -189,7 +197,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
             </div>
             {photo.uploader?.full_name && <div>Uploaded by {photo.uploader.full_name}</div>}
             {(photo.original_name || fileInfo) && (
-              <div className="break-all">
+              <div className="break-words">
                 {[
                   name !== photo.original_name && photo.original_name
                     ? `Uploaded as ${photo.original_name}`

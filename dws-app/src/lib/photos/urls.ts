@@ -1,7 +1,6 @@
 // Public-URL helpers for the photos bucket (client-side).
 //
-// Download original uses Supabase's `?download=<name>` parameter (the photo's
-// name, see downloadName) —
+// Download original uses Supabase's `?download=<downloadName(photo)>` parameter —
 // it sets Content-Disposition: attachment server-side, which is what makes
 // iPhones save the exact original with its real filename (a bare <a download>
 // attribute is ignored cross-origin, and every original lives on supabase.co,

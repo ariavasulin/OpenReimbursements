@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useCollectionSelect } from "@/hooks/use-collection-select";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, CheckSquare, Plus } from "lucide-react";
-import { toast } from "sonner";
 import CollectionCard from "@/components/photos/collection-card";
 import { headerActionClass } from "@/components/photos/collection-header";
 import CollectionSelectBar from "@/components/photos/collection-select-bar";
@@ -24,46 +25,18 @@ import { plural } from "@/lib/photos/format";
 
 /** Projects: every project as a card; New project; select to rename or delete. */
 export default function ProjectsPage() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const { data: jobs, isLoading, error } = usePhotoJobs(true);
   const [creating, setCreating] = useState(false);
-  const [selected, setSelected] = useState<Set<string> | null>(null);
-  const [renaming, setRenaming] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const chosen = (jobs ?? []).filter((job) => selected?.has(job.id));
+  const select = useCollectionSelect(jobs, {
+    noun: "project",
+    deleteOne: deleteJob,
+    deletedDescription: "You can restore them from Trash for 30 days.",
+  });
+  const { chosen } = select;
   const chosenPhotos = chosen.reduce((sum, job) => sum + job.photo_count, 0);
-  const toggle = (id: string) =>
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const remove = async () => {
-    setBusy(true);
-    let deleted = 0;
-    try {
-      for (const job of chosen) {
-        await deleteJob(job.id);
-        deleted++;
-      }
-      toast.success(`${plural(deleted, "project")} deleted`, {
-        description: "You can restore them from Trash for 30 days.",
-      });
-      setSelected(null);
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : "Failed to delete the project", {
-        description: deleted > 0 ? `${plural(deleted, "project")} deleted before this.` : undefined,
-      });
-    } finally {
-      invalidatePhotoCaches(queryClient);
-      setBusy(false);
-      setConfirming(false);
-    }
-  };
+  const them = chosen.length === 1 ? "it" : "them";
 
   const newProjectButton = (
     <button type="button" onClick={() => setCreating(true)} className={emptyPrimary}>
@@ -80,9 +53,9 @@ export default function ProjectsPage() {
           <h1 className={PAGE_TITLE_CLASS}>Projects</h1>
           <p className={PAGE_SUBTITLE_CLASS}>{PROJECT_EXPLAINER}</p>
         </div>
-        {jobs && jobs.length > 0 && selected === null && (
+        {jobs && jobs.length > 0 && select.selected === null && (
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setSelected(new Set())} className={headerActionClass}>
+            <button ref={select.selectButton} type="button" onClick={select.start} className={headerActionClass}>
               <CheckSquare className="h-4 w-4" aria-hidden="true" />
               Select
             </button>
@@ -95,10 +68,12 @@ export default function ProjectsPage() {
         <div className="mb-4 max-w-xl">
           <NewJobForm
             jobs={jobs ?? []}
+            refuseExisting
             onCancel={() => setCreating(false)}
             onDone={(job) => {
               setCreating(false);
-              toast.success(`Project #${job.job_number} · ${job.name} is ready`);
+              // A new project, or an existing one picked from "Already exists": open it.
+              router.push(`/photos/${job.id}`);
             }}
           />
         </div>
@@ -131,26 +106,26 @@ export default function ProjectsPage() {
             photoCount={job.photo_count}
             thumbPaths={job.thumb_paths}
             emptyText={job.location ? `${job.location} · No photos yet` : "No photos yet"}
-            selection={selected ? { selected: selected.has(job.id), onToggle: () => toggle(job.id) } : undefined}
+            selection={select.selected ? { selected: select.selected.has(job.id), onToggle: () => select.toggle(job.id) } : undefined}
           />
         ))}
       </div>
 
-      {selected && (
+      {select.selected && (
         <CollectionSelectBar
           label="Selected projects"
           count={chosen.length}
-          busy={busy}
-          onClose={() => setSelected(null)}
-          onRename={() => setRenaming(true)}
-          onDelete={() => setConfirming(true)}
+          busy={select.busy}
+          onClose={select.stop}
+          onRename={() => select.setRenaming(true)}
+          onDelete={() => select.setConfirming(true)}
         />
       )}
 
       {chosen.length === 1 && (
         <RenameSheet
-          open={renaming}
-          onOpenChange={setRenaming}
+          open={select.renaming}
+          onOpenChange={select.setRenaming}
           title="Rename project"
           nameLabel="Project name"
           name={chosen[0].name}
@@ -158,14 +133,14 @@ export default function ProjectsPage() {
           onSave={async (name, number) => {
             await renameJob(chosen[0].id, name, number);
             invalidatePhotoCaches(queryClient);
-            setSelected(null);
+            select.stop();
           }}
         />
       )}
 
       <ConfirmDialog
-        open={confirming}
-        onOpenChange={setConfirming}
+        open={select.confirming}
+        onOpenChange={select.setConfirming}
         title={
           chosen.length === 1
             ? `Delete project “${chosen[0].name}”?`
@@ -173,13 +148,13 @@ export default function ProjectsPage() {
         }
         confirmLabel="Delete"
         busyLabel="Deleting..."
-        busy={busy}
-        onConfirm={() => void remove()}
+        busy={select.busy}
+        onConfirm={() => void select.remove()}
       >
         <p>
           {chosenPhotos > 0
-            ? `${plural(chosenPhotos, "photo")} in ${chosen.length === 1 ? "it" : "them"} will go to Trash too.`
-            : "There are no photos in it."}
+            ? `${plural(chosenPhotos, "photo")} in ${them} will go to Trash too.`
+            : `There are no photos in ${them}.`}
         </p>
         <p>You can restore from Trash for 30 days.</p>
       </ConfirmDialog>

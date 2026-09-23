@@ -14,15 +14,21 @@ interface NewJobFormProps {
   /** Jobs to check the typed name and number against. */
   jobs: Pick<PhotoJobSummary, "id" | "job_number" | "name">[];
   initialName?: string;
-  /** The created job, or the existing one the employee chose instead. */
+  /**
+   * The created job, or the existing one the employee chose instead. A typed
+   * number that already belongs to a project returns that project here too,
+   * unless `refuseExisting` is set.
+   */
   onDone(job: PhotoJobRef | Pick<PhotoJobSummary, "id" | "job_number" | "name">): void;
+  /** Only a brand-new project will do: a taken number stays in the form as an error. */
+  refuseExisting?: boolean;
   onCancel(): void;
 }
 
 const input =
   "w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none md:text-sm";
 
-export default function NewJobForm({ jobs, initialName = "", onDone, onCancel }: NewJobFormProps) {
+export default function NewJobForm({ jobs, initialName = "", onDone, onCancel, refuseExisting = false }: NewJobFormProps) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(initialName);
   const [number, setNumber] = useState("");
@@ -40,6 +46,11 @@ export default function NewJobForm({ jobs, initialName = "", onDone, onCancel }:
     setError("");
     try {
       const result = await createJob({ name, ...(number.trim() ? { job_number: number } : {}) });
+      if (refuseExisting && result.status === "exists") {
+        setError(`#${result.job.job_number} already belongs to “${result.job.name}”. Choose another number, or open that project below.`);
+        setBusy(false);
+        return;
+      }
       invalidatePhotoCaches(queryClient);
       onDone(result.job);
     } catch (reason) {

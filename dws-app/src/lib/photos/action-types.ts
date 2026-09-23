@@ -6,7 +6,9 @@ export type PhotoSelector = { photos: PhotoReference[] } | { job_number: string;
 export interface ActionPhoto {
   id: string; job_id: string | null; uploader_id: string; original_name: string | null; display_name?: string | null;
   deleted_at: string | null; purge_after: string | null; duplicate_of: string | null;
-  thumb_path: string | null; kind: PhotoKind; job: PhotoRow['job'];
+  thumb_path: string | null; kind: PhotoKind;
+  /** deleted_at is set when the project itself is in Trash or gone. */
+  job: (NonNullable<PhotoRow['job']> & { deleted_at?: string | null }) | null;
 }
 export interface PhotoActionBatch {
   id: string; created_by: string; origin: 'ui' | 'ordinary' | 'mcp'; action: PhotoAction;
@@ -30,4 +32,8 @@ export interface PhotoActionBatchResponse {
   unresolved:UnresolvedPhotoReference[];
 }
 export interface TrashPhoto extends ActionPhoto {can_restore:boolean;canonical_photo:ActionPhoto|null;remedy:string|null}
-export interface TrashResponse {photos:TrashPhoto[];next_cursor:string|null}
+/** What a delete-forever request marked: photos (legacy copies included), albums, projects. */
+export type PurgeMarked = { photos: number; albums: number; projects: number };
+export interface TrashResponse {photos:TrashPhoto[];next_cursor:string|null;
+  /** Photos marked for deletion forever whose files are not yet removed; any purge call finishes them. */
+  pending_purge:number}

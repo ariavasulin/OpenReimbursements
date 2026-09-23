@@ -32,7 +32,7 @@ export default function CollectionCard({
 }) {
   const remainder = photoCount - thumbPaths.length;
   const cardClass =
-    "block w-full rounded-xl border bg-[#2a2a2a] p-3 text-left hover:border-[#2680FC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
+    "block w-full rounded-xl border bg-[#2a2a2a] p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
 
   const body: ReactNode = (
     <>
@@ -92,14 +92,14 @@ export default function CollectionCard({
         aria-pressed={selection.selected}
         aria-label={`Select ${name}`}
         onClick={selection.onToggle}
-        className={`${cardClass} ${selection.selected ? "border-[#2680FC]" : "border-[#3e3e3e]"}`}
+        className={`${cardClass} ${selection.selected ? "border-[#2680FC]" : "border-[#3e3e3e] hover:border-[#8e8e8e]"}`}
       >
         {body}
       </button>
     );
   }
   return (
-    <Link href={href} title={name} className={`${cardClass} border-[#3e3e3e]`}>
+    <Link href={href} title={name} className={`${cardClass} border-[#3e3e3e] hover:border-[#2680FC]`}>
       {body}
     </Link>
   );

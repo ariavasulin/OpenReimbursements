@@ -67,12 +67,29 @@ project (with all of its trashed photos), or **Empty trash** for everything.
 photo leaves the Trash list at once and can no longer be restored. The route then
 removes its Storage files and row the same way the daily repair sweep does
 (`photo_purge_pending`, `photo_purge_authorize_delete`, `photo_purge_finish`), for
-up to about 45 seconds per call; the page calls again until nothing is left. This
-path needs only `photo_writes_enabled`, not `repair_enabled`. A photo whose files
-could not be removed stays marked; the next delete forever (or Empty trash)
-finishes it. An album or project deleted forever stays as a hidden row
-(`purged_at`), because import, upload, and share-link history still point at it;
-a project's number becomes `deleted:<id>`, so its real number is free again.
+up to about 45 seconds per call; the page keeps calling while each call makes
+progress, so the tab must stay open for a large delete. This path needs only
+`photo_writes_enabled`, not `repair_enabled`. An album or project deleted forever
+stays as a hidden row (`purged_at`), because import, upload, and share-link
+history still point at it; a project's number becomes `deleted:<id>`, so its
+real number is free again.
+
+A photo whose files could not be removed, or whose request was cut off (a closed
+tab, a timeout), stays marked: out of Trash, not restorable, its files still in
+the bucket. Trash then shows "N photos are still being deleted forever" with
+**Finish deleting**, which posts `{}` and finishes only what is already marked
+(Empty trash would also delete everything else in Trash).
+Count marked photos with
+`select count(*) from public.photos where deleted_at is not null and purge_claimed_at is not null`.
+The only way to stop a running delete is to close `photo_writes_enabled`, which
+also stops every upload and edit.
+
+**Wiping the library.** Delete each project first: that sends every photo in it
+to Trash, with no selection limit. Then trash the photos left with no project,
+up to 500 selected at a time, and delete each album. Finally press **Empty
+trash** and keep the tab open until the toast says the trash is emptied. After
+Empty trash, the next `scripts/import-jobs.mjs` run recreates any deleted
+project that is still an open office job, because its number is free again.
 
 A legacy duplicate in trash points to its canonical photo. Review the canonical
 target before restoring or moving it; restoration never creates another active
@@ -105,9 +122,7 @@ selected, from the selection bar. The name is `photos.display_name`
 (`photo_rename_photo`) and is also the download filename (the original extension
 is kept); `original_name` never changes, because MCP references and imports match
 on it. An empty name goes back to the uploaded filename. The Albums and Projects
-lists have **Select**: pick one to **Rename**, or any number to **Delete**. The
-Projects list also has **New project**, with an optional project number (blank
-gets a generated `P-<n>` code).
+lists have **Select**: pick one to **Rename**, or any number to **Delete**.
 
 Selecting many photos: **Add to album**, **Tag**, and **Remove from album** act at
 once on up to 500 photos (`MAX_BULK_PHOTOS`). **Set project** and **Trash** open
@@ -116,29 +131,38 @@ in one batch. Review and apply requests process at most 100 photos per page;
 nothing changes until the employee confirms the complete selection.
 
 Until the office project database is bridged, any photo actor can create a
-project wherever a job is chosen (upload, move, and the `/migrate` page) and
-rename one from its page. Both go through `photo_create_job` /
+project wherever a job is chosen (upload, move, and the `/migrate` page) or with
+**New project** on the Projects list, and rename one from its page. Both go through `photo_create_job` /
 `photo_rename_job` behind the `photo_writes_enabled` gate.
 
 - A project created without an office job number receives a generated `P-<n>`
   code from `job_project_code_seq`. Office job numbers are digits, so the two
   never collide, and a typed `P-` code is refused.
 - Creating with a job number that already exists returns that job; nothing is
-  duplicated. Rename changes the name only, never the job number.
+  duplicated. Where a job is being picked (upload, move, `/migrate`) that job is
+  used; on the Projects page's **New project** it is an error, since only a new
+  project will do. A number held by a project in Trash is refused (`job_in_trash`).
 - Rename can also change the number (`photo_rename_job` with `p_job_number`).
   A number another project holds is refused (`job_number_taken`); so is one held
   by a project in Trash (`job_in_trash`). Renumbering an imported office job means
   a later `scripts/import-jobs.mjs` run creates a new row under the old number.
 - **Deleting a project** (`photo_delete_job`) sends it and every active photo in
-  it to Trash together, with one shared timestamp. It stays hidden from project
-  lists and pickers (`is_active` false). **Restore project** within 30 days
-  (`photo_restore_job`) brings back the photos that left with it; photos trashed
-  on their own earlier stay in Trash. A photo restored on its own while its
-  project is deleted comes back with no project.
+  it to Trash together, with one shared timestamp. Only an active project can be
+  deleted. It stays hidden from project lists and pickers (`is_active` false,
+  enforced by the `jobs_deleted_not_active` check), and the `photo_guard_live_job`
+  trigger refuses any live photo written into it, including an upload or move
+  that raced the delete. **Restore project** within 30 days (`photo_restore_job`)
+  brings back the photos that left with it; photos trashed on their own earlier
+  stay in Trash. A photo restored on its own while its project is deleted comes
+  back with no project. After 30 days the project stays listed in Trash, can no
+  longer be restored, and still holds its number until someone deletes it
+  forever.
 - Hand-made rows have `synced_at` null and `created_by` set.
   `scripts/import-jobs.mjs` upserts on `job_number`, so an import row with the
   same real office number takes over a hand-made row in place, and may overwrite
-  a renamed imported job's name. `P-` projects are never touched by the import.
+  a renamed imported job's name. `P-` projects are never touched by the import,
+  and neither is a number held by a project in Trash: the script skips and lists
+  those, since the `jobs_deleted_not_active` check would fail the whole upsert.
   How the future office sync should reconcile is undecided.
 
 ## Importing folders (`/migrate`)

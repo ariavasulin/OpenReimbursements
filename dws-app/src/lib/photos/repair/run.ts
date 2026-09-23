@@ -8,8 +8,6 @@ import { planSweep, ORPHAN_MS, type RepairRow, type Action } from './sweep';
 import { ENABLED } from './transcode';
 import type { PathRow } from './known-paths';
 
-export { removeConfirmed };
-
 const PAGE = 100;
 const MAX_PURGE = 500;
 const MAX_ERROR_SAMPLES = 50;

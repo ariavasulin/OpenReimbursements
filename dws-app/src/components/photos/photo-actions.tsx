@@ -6,9 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
 import { fetchJson, invalidatePhotoCaches, usePhotoJobs } from '@/lib/photos/api';
-import { actionRequest, actionButton as button, actionPrimary as primary, actionField as field, trashDisclosure } from '@/lib/photos/action-client';
+import { actionRequest, actionAlert, actionButton as button, actionPrimary as primary, actionField as field, trashDisclosure } from '@/lib/photos/action-client';
 import ActionThumbnail from '@/components/photos/action-thumbnail';
-import { jobLabel, NO_PROJECT, photoName, plural } from '@/lib/photos/format';
+import { jobLabel, NO_PROJECT, photoName, plural, projectName } from '@/lib/photos/format';
 import { photoPath } from '@/lib/photos/photo-link';
 
 import type { PhotoAction as Action, ActionPhoto as Photo, PhotoActionItem as Item, UnresolvedPhotoReference as Unresolved, PhotoActionBatchResponse as View } from '@/lib/photos/action-types';
@@ -28,7 +28,8 @@ const tall = 'min-h-11 text-base';
 
 const pageTitle = (action: Action) => action === 'trash' ? 'Move to trash' : action === 'restore' ? 'Restore from trash' : 'Set project';
 const label = (photo: Photo | null) => (photo && photoName(photo)) || 'Photo';
-const projectName = (job: Photo['job'], jobId: string | null) => job ? jobLabel(job) : jobId === null ? NO_PROJECT : 'a project';
+/** Where a restored photo lands: back in its project, or "No project" when that project was deleted. */
+const restoredTo = (photo: Photo) => photo.job?.deleted_at ? `${NO_PROJECT} (its project was deleted)` : projectName(photo.job, photo.job_id);
 
 /** The one question: "Move 3 photos to <project>?" */
 function question(action: Action, count: number, destination: string | null): string {
@@ -182,7 +183,7 @@ export default function PhotoActions() {
     : destinationJob ? jobLabel(destinationJob)
     : view.batch.destination_job_id ? 'the chosen project'
     : action === 'move' ? NO_PROJECT
-    : action === 'restore' && view.total === 1 && view.items[0]?.photo ? projectName(view.items[0].photo.job, view.items[0].photo.job_id)
+    : action === 'restore' && view.total === 1 && view.items[0]?.photo ? restoredTo(view.items[0].photo)
     : null;
   const backHref = action === 'restore' ? '/photos/trash' : '/photos';
   const problems = view?.items.filter(item => ['conflict', 'retryable_failed'].includes(item.status)).length ?? 0;
@@ -201,7 +202,7 @@ export default function PhotoActions() {
     </nav>
     <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold outline-none">{pageTitle(action)}</h1>
 
-    {error && <p role="alert" className="rounded-lg border border-red-900 bg-red-950/30 p-4 text-base text-red-300">{error}</p>}
+    {error && <p role="alert" className={actionAlert}>{error}</p>}
     <p role="status" className="text-base text-[#bbb] empty:hidden">{busy ? message || 'One moment…' : message}</p>
 
     {!view && !busy && !photoId && ready && !error && <section className="max-w-xl space-y-3 rounded-xl bg-[#2e2e2e] p-5 text-base">

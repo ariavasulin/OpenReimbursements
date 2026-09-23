@@ -45,6 +45,11 @@ export function jobLabel(job: { job_number: string; name: string }): string {
   return `#${job.job_number} · ${job.name}`;
 }
 
+/** A photo's project in words: its label, "No project", or "a project" when the job was not embedded. */
+export function projectName(job: { job_number: string; name: string } | null, jobId: string | null): string {
+  return job ? jobLabel(job) : jobId === null ? NO_PROJECT : "a project";
+}
+
 /** 1 -> "1 photo", 3 -> "3 photos". */
 export function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;

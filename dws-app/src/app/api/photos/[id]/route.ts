@@ -21,9 +21,8 @@ export async function GET(_request:Request,context:RouteContext){return photoRou
 
 /**
  * Metadata edits apply only to active rows. Ownership changes require confirmation.
- * `display_name` renames the photo as people see and download it (through
- * photo_rename_photo); an empty name (or null) goes back to the uploaded
- * filename, which never changes. Tags save on the employee's own session.
+ * `display_name` renames the photo as people see and download it; an empty name
+ * (or null) goes back to the uploaded filename, which never changes.
  */
 export async function PATCH(request:Request,context:RouteContext){return photoRoute(async()=>{
  const actor=await requirePhotoActor(request,{mutation:true}),id=photoId((await context.params).id),body=await readPhotoJson(request);
@@ -32,7 +31,7 @@ export async function PATCH(request:Request,context:RouteContext){return photoRo
  if('tags' in body&&(!Array.isArray(body.tags)||body.tags.some(tag=>typeof tag!=='string'))) throw new PhotoApiError('invalid_input');
  if('display_name' in body){
   if(body.display_name!==null&&typeof body.display_name!=='string') throw new PhotoApiError('invalid_input');
-  const name=cleanPhotoName(body.display_name);if(name==='invalid') throw new PhotoApiError('invalid_input');
+  const name=cleanPhotoName(body.display_name);if(name==='invalid') throw new PhotoApiError('photo_name_invalid');
   await photoRpc(actor,'photo_rename_photo',{p_actor:actor.actorId,p_photo:id,p_name:name});
  }
  const photos=actor.session.from('photos');

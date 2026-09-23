@@ -8,8 +8,9 @@ const inputClass =
   "min-h-11 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none";
 
 /**
- * Rename one album or project from its list. A project also shows its number,
- * which can be changed too; `onSave` throws with a message to show.
+ * Rename one album, project, or photo. A project also shows its number, which
+ * can be changed too; `onSave` throws with a message to show. A photo's name may
+ * be left empty (`allowEmpty`) to go back to its uploaded filename.
  */
 export default function RenameSheet({
   open,
@@ -19,6 +20,11 @@ export default function RenameSheet({
   name,
   number,
   onSave,
+  allowEmpty = false,
+  maxLength = 120,
+  hint,
+  loading = false,
+  loadError,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -28,6 +34,14 @@ export default function RenameSheet({
   /** Projects only: the current number. */
   number?: string;
   onSave(name: string, number?: string): Promise<void>;
+  allowEmpty?: boolean;
+  maxLength?: number;
+  /** A line under the name field. */
+  hint?: string;
+  /** The current name is still loading: the field waits. */
+  loading?: boolean;
+  /** The current name could not be loaded. */
+  loadError?: string;
 }) {
   const nameId = useId();
   const numberId = useId();
@@ -46,8 +60,11 @@ export default function RenameSheet({
 
   const changed =
     nameDraft.trim() !== name || (number !== undefined && numberDraft.trim() !== number);
+  const canSave =
+    !busy && !loading && !loadError && (allowEmpty || nameDraft.trim() !== "") &&
+    (number === undefined || numberDraft.trim() !== "") && changed;
   const save = async () => {
-    if (busy || !nameDraft.trim() || (number !== undefined && !numberDraft.trim()) || !changed) return;
+    if (!canSave) return;
     setBusy(true);
     setError("");
     try {
@@ -71,7 +88,7 @@ export default function RenameSheet({
       footer={
         <Button
           onClick={() => void save()}
-          disabled={busy || !nameDraft.trim() || (number !== undefined && !numberDraft.trim()) || !changed}
+          disabled={!canSave}
           className="h-auto min-h-11 w-full bg-[#2680FC] py-2.5 text-base text-white hover:bg-[#1a6fd8]"
           size="lg"
         >
@@ -90,8 +107,10 @@ export default function RenameSheet({
           <label htmlFor={nameId} className="mb-1.5 block text-base font-medium text-[#d0d0d0]">
             {nameLabel}
           </label>
-          <input id={nameId} autoFocus value={nameDraft} maxLength={120} disabled={busy}
+          <input id={nameId} autoFocus value={loading ? "" : nameDraft} maxLength={maxLength} disabled={busy || loading || Boolean(loadError)}
+            placeholder={loading ? "Loading..." : undefined}
             onChange={(event) => setName(event.target.value)} className={inputClass} />
+          {hint && <p className="mt-1.5 text-sm text-[#b4b4b4]">{hint}</p>}
         </div>
         {number !== undefined && (
           <div>
@@ -104,9 +123,9 @@ export default function RenameSheet({
         )}
         {/* A submit button lets Enter save from either field. */}
         <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
-        {error && (
+        {(loadError || error) && (
           <p role="alert" className="text-base text-red-300">
-            {error}
+            {loadError || error}
           </p>
         )}
       </form>

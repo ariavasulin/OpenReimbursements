@@ -37,7 +37,7 @@ describe('hand-made photo projects (photo-folders AC-2, AC-3, AC-5, AC-6)', () =
   it('rejects an empty or oversized name and a typed P- code', async () => {
     expect((await create('   ')).error?.message).toBe('invalid_input');
     expect((await create('x'.repeat(121))).error?.message).toBe('invalid_input');
-    expect((await create('Squatter', 'p-999')).error?.message).toBe('invalid_input');
+    expect((await create('Squatter', 'p-999')).error?.message).toBe('job_number_reserved');
   });
 
   it('renames any job without changing its number', async () => {

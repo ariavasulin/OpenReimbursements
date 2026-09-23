@@ -1,14 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
-import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
+import EmptyState, { emptyPrimary, emptySecondary } from "@/components/photos/empty-state";
 import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
@@ -21,6 +22,7 @@ const PINNED_TAG = "professional";
 /** One project. The URL is unchanged, so every link already sent keeps working. */
 export default function ProjectPage() {
   const { jobId } = useParams<{ jobId: string }>();
+  const linkedPhoto = useSearchParams().get("photo");
   const router = useRouter();
   const queryClient = useQueryClient();
   const { openPicker } = usePhotosShell();
@@ -48,6 +50,39 @@ export default function ProjectPage() {
       setConfirmingDelete(false);
     }
   };
+
+  // The list holds active projects only, so a deleted (or unknown) project's old
+  // link lands here: say so, and never offer an upload into it. An older
+  // /photos/<jobId>?photo=<id> link still opens its photo, wherever it is now.
+  const deadLink = jobs !== undefined && !job;
+  useEffect(() => {
+    if (deadLink && linkedPhoto) router.replace(`/photos?photo=${encodeURIComponent(linkedPhoto)}`);
+  }, [deadLink, linkedPhoto, router]);
+  if (deadLink) {
+    if (linkedPhoto) return <main className={PAGE_MAIN_CLASS} />;
+    return (
+      <main className={PAGE_MAIN_CLASS}>
+        <PhoneHeader back={{ href: "/photos/projects", label: "Projects" }} />
+        <EmptyState
+          icon={<Briefcase className="h-7 w-7" aria-hidden="true" />}
+          title="This project is not here"
+          actions={
+            <>
+              <Link href="/photos/projects" className={emptyPrimary}>
+                All projects
+              </Link>
+              <Link href="/photos/trash" className={emptySecondary}>
+                Open Trash
+              </Link>
+            </>
+          }
+        >
+          It may have been deleted. A deleted project can be restored from Trash for
+          30 days, together with its photos.
+        </EmptyState>
+      </main>
+    );
+  }
 
   return (
     <main className={PAGE_MAIN_CLASS}>

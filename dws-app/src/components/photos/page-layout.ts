@@ -1,9 +1,10 @@
 /**
- * The <main> every photos page shares. pb-32 at phone width leaves the last row
- * of photos clear of the floating "+" button and upload tray.
+ * The <main> every photos page shares. pb-40 at phone width leaves the last row
+ * of photos clear of the floating "+" button, the upload tray, and a selection
+ * bar that wraps to three lines.
  */
 export const PAGE_MAIN_CLASS =
-  "mx-auto w-full max-w-3xl px-4 pb-32 pt-4 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-10 desktop:pt-5";
+  "mx-auto w-full max-w-3xl px-4 pb-40 pt-4 lg:max-w-6xl lg:px-8 desktop:max-w-none desktop:px-8 desktop:pb-10 desktop:pt-5";
 
 /** The page's name: the one h1. */
 export const PAGE_TITLE_CLASS = "break-words text-xl font-semibold leading-snug text-white";

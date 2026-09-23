@@ -38,7 +38,10 @@ export default function CollectionSelectBar({
   }, [setSelecting]);
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onClose();
+      if (event.key !== "Escape" || busy) return;
+      // A sheet or dialog on top owns Escape: closing it must keep the selection.
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -62,7 +65,7 @@ export default function CollectionSelectBar({
           <X className="h-5 w-5" aria-hidden="true" />
         </button>
         <span aria-live="polite" className="mr-auto pr-2 text-base font-semibold text-white">
-          {count === 0 ? "Tap to select" : `${count} selected`}
+          {count === 0 ? "Choose items" : `${count} selected`}
         </span>
         <button type="button" className={actionClass} disabled={busy || count !== 1} onClick={onRename}>
           <Pencil className="h-4 w-4" aria-hidden="true" />

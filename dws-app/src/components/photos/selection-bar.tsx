@@ -22,6 +22,7 @@ import {
   renamePhoto,
   usePhotoDetail,
 } from "@/lib/photos/api";
+import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { photoName, plural } from "@/lib/photos/format";
 import { appendResolvedTag } from "@/lib/photos/tags";
 import type { PhotoAlbumRef } from "@/lib/photos/types";
@@ -63,7 +64,7 @@ export default function SelectionBar({
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [sheet, setSheet] = useState<"album" | "tag" | "project" | "rename" | null>(null);
   // Rename needs the one selected photo's current name.
-  const { data: only } = usePhotoDetail(sheet === "rename" && count === 1 ? ids[0] : null);
+  const { data: only, error: onlyError } = usePhotoDetail(sheet === "rename" && count === 1 ? ids[0] : null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => setSlot(document.getElementById(PHOTOS_FLOATING_SLOT_ID)), []);
@@ -220,11 +221,16 @@ export default function SelectionBar({
         onDone={done}
       />
       <RenameSheet
-        open={sheet === "rename" && only !== undefined}
+        open={sheet === "rename"}
         onOpenChange={(open) => setSheet(open ? "rename" : null)}
         title="Rename photo"
         nameLabel="Photo name"
         name={only ? photoName(only) ?? "" : ""}
+        allowEmpty
+        maxLength={MAX_PHOTO_NAME_LENGTH}
+        hint="Leave it empty to go back to the uploaded filename."
+        loading={!only && !onlyError}
+        loadError={onlyError ? "Could not load this photo's name. Close and try again." : undefined}
         onSave={async (name) => {
           await renamePhoto(ids[0], name);
           toast.success("Photo renamed");

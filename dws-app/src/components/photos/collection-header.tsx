@@ -34,7 +34,7 @@ export default function CollectionHeader({
   onRename(name: string, number?: string): Promise<void>;
   /** Sharing control before Rename. */
   share?: ReactNode;
-  /** Buttons after Rename (the album page's Delete album). */
+  /** Buttons after Rename, e.g. Delete album / Delete project. */
   actions?: ReactNode;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
