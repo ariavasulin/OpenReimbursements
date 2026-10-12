@@ -43,13 +43,16 @@ test.afterAll(async () => {
 async function authenticate(context: BrowserContext) {
   await context.addCookies(fixtures.employeeA.cookies.map(cookie => ({ ...cookie, url: process.env.DWS_BROWSER_BASE_URL!, sameSite: 'Lax' as const })));
 }
-/** A real image in Storage plus its row. `jobId: null` is a photo with no project. */
+/**
+ * A real image in Storage plus its row. `jobId: null` is a photo with no project. Named by hand after its
+ * file so tiles can be found by that name (a hand name survives moves).
+ */
 async function seed(name: string, options: { jobId?: string | null; tags?: string[]; capturedAt?: string } = {}) {
   const id = randomUUID(); const bytes = Buffer.concat([png, randomBytes(16)]);
   const path = `originals/${fixtures.employeeA.id}/${id}/${name}`;
   expect((await fixtures.admin.storage.from('photos').upload(path, bytes, { contentType: 'image/png' })).error).toBeNull();
-  await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,content_sha256,thumb_path,captured_at,tags)
-    values($1,$2,$3,'image',$4,$5,$6,'image/png',$7,$5,$8,$9)`,
+  await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,display_name,name_source,original_path,original_bytes,mime_type,content_sha256,thumb_path,captured_at,tags)
+    values($1,$2,$3,'image',$4,$4,'manual',$5,$6,'image/png',$7,$5,$8,$9)`,
     [id, options.jobId === undefined ? projects.north : options.jobId, fixtures.employeeA.id, name, path, bytes.length,
       createHash('sha256').update(bytes).digest('hex'), options.capturedAt ?? new Date().toISOString(), options.tags ?? []]);
   madePhotos.push(id);
@@ -64,8 +67,8 @@ async function album(name: string, photoIds: string[] = []) {
 }
 /** Rows only (file tiles, no Storage objects): cheap bulk for paging and the 500 limit. */
 async function fillers(count: number, albumId?: string) {
-  const rows = await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,captured_at)
-    select gen_random_uuid(),$1,$2,'file','filler-${run}-'||n||'.pdf','originals/filler-${run}/'||gen_random_uuid(),10,'application/pdf',now()+interval '1 day'
+  const rows = await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,display_name,name_source,original_path,original_bytes,mime_type,captured_at)
+    select gen_random_uuid(),$1,$2,'file','filler-${run}-'||n||'.pdf','filler-${run}-'||n||'.pdf','manual','originals/filler-${run}/'||gen_random_uuid(),10,'application/pdf',now()+interval '1 day'
     from generate_series(1,$3) n returning id`, [projects.south, fixtures.employeeA.id, count]);
   const ids = rows.rows.map(row => row.id as string);
   if (albumId) await fixtures.sql.query('insert into public.album_photos(album_id,photo_id,added_by) select $1,unnest($2::uuid[]),$3', [albumId, ids, fixtures.employeeA.id]);

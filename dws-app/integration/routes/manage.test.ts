@@ -64,12 +64,13 @@ describe('managing routes: rename, delete a project, delete forever', () => {
     if (f) { await f.admin.storage.from('photos').remove(made); await f.close(); }
   });
 
-  it('renames a photo, and an empty name goes back to the uploaded filename', async () => {
+  it('renames a photo, and an empty name goes back to the automatic name', async () => {
     const { id } = await photo(null);
     const renamed = await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: '  Kitchen   before ' }, id);
     expect(renamed).toMatchObject({ status: 200, body: { photo: { display_name: 'Kitchen before', original_name: 'route.jpg' } } });
     expect(await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: 'a/b' }, id)).toMatchObject({ status: 400, body: { error: { code: 'photo_name_invalid' } } });
-    expect((await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: '' }, id)).body.photo.display_name).toBeNull();
+    const reset = (await call(patchPhoto, 'PATCH', `/api/photos/${id}`, { display_name: '' }, id)).body.photo;
+    expect(reset).toMatchObject({ original_name: 'route.jpg', display_name: expect.stringMatching(/^\d{6} \d{6}( \(\d+\))?$/) });
   });
 
   it('renames a project and its number; a taken number is a clear 409', async () => {

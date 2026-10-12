@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
 
@@ -21,10 +23,10 @@ describe('managing photos, projects, albums, and Trash', () => {
   const number = () => randomUUID().slice(0, 8);
   const project = async (name = 'Manage fixture', jobNumber: string | null = number()) =>
     (await rpc('photo_create_job', { p_actor: f.employeeA.id, p_name: name, p_job_number: jobNumber })).job as { id: string; job_number: string };
-  async function photo(jobId: string | null, options: { trashed?: boolean; duplicateOf?: string; originalPath?: string } = {}) {
+  async function photo(jobId: string | null, options: { trashed?: boolean; duplicateOf?: string; originalPath?: string; capturedAt?: string } = {}) {
     const id = randomUUID(); const now = Date.now();
     const inserted = await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeB.id, kind: 'image',
-      captured_at: new Date(now).toISOString(), original_path: options.originalPath ?? `originals/${f.employeeB.id}/${id}/fixture.jpg`,
+      captured_at: options.capturedAt ?? new Date(now).toISOString(), original_path: options.originalPath ?? `originals/${f.employeeB.id}/${id}/fixture.jpg`,
       thumb_path: `derived/${f.employeeB.id}/${id}_thumb.webp`, duplicate_of: options.duplicateOf ?? null,
       legacy_content_sha256: options.duplicateOf ? 'a'.repeat(64) : null,
       ...(options.trashed ? { deleted_at: new Date(now).toISOString(), deleted_by: f.employeeB.id,
@@ -36,10 +38,10 @@ describe('managing photos, projects, albums, and Trash', () => {
     (await f.sql.query(`select * from public.${table} where id=$1`, [id])).rows[0];
   const album = async (name = 'Manage album') =>
     (await rpc('photo_create_album', { p_actor: f.employeeA.id, p_name: name })).album.id as string;
-  /** The real confirm flow, as the albums suite drives it. */
-  async function act(action: 'trash' | 'restore', photoId: string) {
-    const inserted = await f.admin.from('photo_action_batches').insert({ created_by: f.employeeA.id, origin: 'ordinary',
-      action, selector: { photos: [{ photo_id: photoId }] } }).select('id').single();
+  /** The real confirm flow, as the albums suite drives it; a move names its destination (null is No project). */
+  async function act(action: 'trash' | 'restore' | 'move', photoId: string, destination?: string | null) {
+    const inserted = await f.admin.from('photo_action_batches').insert({ created_by: f.employeeA.id, origin: action === 'move' ? 'ui' : 'ordinary',
+      action, selector: { photos: [{ photo_id: photoId }] }, ...(action === 'move' ? { destination_job_id: destination } : {}) }).select('id').single();
     expect(inserted.error).toBeNull();
     const batch = inserted.data!.id as string;
     await rpc('photo_materialize_action', { p_actor: f.employeeA.id, p_batch_id: batch, p_cursor: null, p_ids: [photoId], p_next_cursor: '1', p_complete: true });
@@ -57,16 +59,83 @@ describe('managing photos, projects, albums, and Trash', () => {
   }
 
   describe('photo names', () => {
-    it('any employee renames an active photo; blank goes back to the uploaded filename; sessions cannot write it', async () => {
+    it('any employee renames an active photo; blank goes back to the automatic name; sessions cannot write it', async () => {
       const id = await photo(null);
       expect(await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: '  Kitchen   before ' }))
         .toEqual({ id, display_name: 'Kitchen before' });
       expect(await refused('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: 'a/b' })).toBe('photo_name_invalid');
       expect(await refused('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: 'x'.repeat(201) })).toBe('photo_name_invalid');
-      expect((await rpc('photo_rename_photo', { p_actor: f.employeeB.id, p_photo: id, p_name: '   ' })).display_name).toBeNull();
+      expect((await rpc('photo_rename_photo', { p_actor: f.employeeB.id, p_photo: id, p_name: '   ' })).display_name).toMatch(/^\d{6} \d{6}( \(\d+\))?$/);
       expect(await refused('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: await photo(null, { trashed: true }), p_name: 'x' })).toBe('not_found');
       expect((await f.employeeA.client.from('photos').update({ display_name: 'Direct' }).eq('id', id)).error).not.toBeNull();
       expect((await f.employeeA.client.rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: 'Direct' })).error).not.toBeNull();
+    });
+  });
+
+  // 20261012182343_photo_auto_names.sql.
+  describe('automatic names', () => {
+    const named = (id: string) => row('photos', id);
+    /** The real upload path, ending in photo_finalize_upload, which inserts the row the trigger names. */
+    async function uploaded(jobId: string | null, albumIds: string[], capturedAt: string) {
+      const id = randomUUID(), photoId = randomUUID(), actor = f.employeeA.id, bytes = randomBytes(8);
+      const owner = { p_actor: actor, p_owner_kind: 'ordinary', p_owner_id: id };
+      const created = await rpc('photo_create_upload_attempt', { p_actor: actor, p_job_id: jobId, p_source_signature: `fixture:${id}:8`,
+        p_digest: createHash('sha256').update(bytes).digest('hex'), p_original_name: 'IMG_0042.HEIC', p_original_bytes: bytes.length,
+        p_mime_type: 'image/heic', p_attempt_id: id, p_photo_id: photoId, p_album_ids: albumIds });
+      expect((await f.employeeA.client.storage.from('photos').upload(created.original_path, bytes, { contentType: 'image/heic' })).error).toBeNull();
+      const lease = await rpc('photo_acquire_upload', owner);
+      const claimed = await rpc('photo_claim_content', { ...owner, p_generation: lease.lease_generation });
+      const outcome = await rpc('photo_finalize_upload', { ...owner, p_generation: lease.lease_generation, p_claim_generation: claimed.claim_generation,
+        p_photo: { kind: 'image', captured_at: capturedAt, captured_at_source: 'exif' } });
+      expect(outcome).toMatchObject({ status: 'created', photo_id: photoId });
+      return photoId;
+    }
+    it('AC-5: an upload is named by project number and Pacific capture time; the same second adds (2); no project drops the number', async () => {
+      const job = await project('Naming fixture', '3962');
+      const first = await uploaded(job.id, [], '2026-09-23T23:04:32Z');
+      expect(await named(first)).toMatchObject({ display_name: '3962 – 260923 160432', name_source: 'auto', original_name: 'IMG_0042.HEIC' });
+      // The rest only exercise the trigger, which a direct insert reaches too.
+      expect((await named(await photo(job.id, { capturedAt: '2026-09-23T23:04:32.400Z' }))).display_name).toBe('3962 – 260923 160432 (2)');
+      expect((await named(await photo(null, { capturedAt: '2026-09-23T23:04:32Z' }))).display_name).toBe('260923 160432');
+      // January is standard time: UTC-8, not the summer UTC-7.
+      expect((await named(await photo(job.id, { capturedAt: '2026-01-15T20:00:05Z' }))).display_name).toBe('3962 – 260115 120005');
+    });
+
+    it('takes the first free suffix, and a trashed photo holds no name', async () => {
+      const job = await project('Suffix fixture');
+      const at = '2026-03-03T18:00:00Z', base = `${job.job_number} – 260303 100000`;
+      const ids = [await photo(job.id, { capturedAt: at }), await photo(job.id, { capturedAt: at }), await photo(job.id, { capturedAt: at })];
+      expect(await Promise.all(ids.map(async id => (await named(id)).display_name))).toEqual([base, `${base} (2)`, `${base} (3)`]);
+      await f.sql.query("update public.photos set deleted_at=now(),deleted_by=uploader_id,purge_after=now()+interval '30 days' where id=$1", [ids[1]]);
+      expect((await named(await photo(job.id, { capturedAt: at }))).display_name).toBe(`${base} (2)`);
+      expect((await named(await photo(job.id, { capturedAt: at, trashed: true }))).display_name).toBe(`${base} (4)`);
+    });
+
+    it('AC-6: a move renames an automatic name and keeps a hand-given one; a blank rename returns to the automatic name', async () => {
+      const from = await project('Move from', '3962-move'), to = await project('Move to', '4100');
+      const at = '2026-09-23T23:04:32Z';
+      const auto = await photo(from.id, { capturedAt: at }), manual = await photo(from.id, { capturedAt: at });
+      expect((await named(auto)).display_name).toBe('3962-move – 260923 160432');
+      expect(await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: manual, p_name: 'Kitchen before' })).toEqual({ id: manual, display_name: 'Kitchen before' });
+      expect((await named(manual)).name_source).toBe('manual');
+      expect(await act('move', auto, to.id)).toMatchObject({ status: 'applied' }); expect(await act('move', manual, to.id)).toMatchObject({ status: 'applied' });
+      expect(await named(auto)).toMatchObject({ display_name: '4100 – 260923 160432', name_source: 'auto' });
+      expect(await named(manual)).toMatchObject({ display_name: 'Kitchen before', name_source: 'manual' });
+      // Back to automatic: the name is recomputed where the photo is now, and the other photo of that second already holds the plain name.
+      expect(await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: manual, p_name: '' })).toEqual({ id: manual, display_name: '4100 – 260923 160432 (2)' });
+      expect((await named(manual)).name_source).toBe('auto');
+      expect(await act('move', auto, null)).toMatchObject({ status: 'applied' });
+      expect((await named(auto)).display_name).toMatch(/^260923 160432( \(\d+\))?$/);
+    });
+
+    it('the backfill names unnamed rows, and re-running the migration changes nothing else', async () => {
+      const job = await project('Backfill fixture');
+      const id = await photo(job.id, { capturedAt: '2026-05-05T17:30:00Z' }), kept = await photo(job.id, { capturedAt: '2026-05-05T17:30:00Z' });
+      await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: kept, p_name: 'Hand named' });
+      await f.sql.query('update public.photos set display_name=null where id=$1', [id]);
+      await f.sql.query(await readFile(resolve(import.meta.dirname, '../../supabase/migrations/20261012182343_photo_auto_names.sql'), 'utf8'));
+      expect(await named(id)).toMatchObject({ display_name: `${job.job_number} – 260505 103000`, name_source: 'auto' });
+      expect(await named(kept)).toMatchObject({ display_name: 'Hand named', name_source: 'manual' });
     });
   });
 

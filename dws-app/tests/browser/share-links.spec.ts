@@ -143,7 +143,7 @@ test('G1-G6 end to end: folders become albums, a party has no project, copies jo
     join public.album_photos ap on ap.album_id=a.id join public.photos p on p.id=ap.photo_id where a.name = any($1::text[]) group by a.id,a.name order by a.name`, [targetNames])).rows as Array<{ id: string; name: string; photos: string[] }>;
   expect(albums.map(row => row.name)).toEqual([kitchen, stair, party, marketing].sort());
   // Marketing holds the photos that already exist (whichever copy arrived first is "the" photo): two photos, no new rows.
-  const imported = (await fixtures.sql.query(`select p.id,p.original_name,j.job_number from public.photos p left join public.jobs j on j.id=p.job_id
+  const imported = (await fixtures.sql.query(`select p.id,p.original_name,p.display_name,j.job_number from public.photos p left join public.jobs j on j.id=p.job_id
     where p.id in(select ap.photo_id from public.album_photos ap join public.albums a on a.id=ap.album_id where a.name = any($1::text[])) order by p.original_name`, [targetNames])).rows;
   expect(imported).toHaveLength(4); // kitchen, kitchen-wide, stair, party: the two copies made no photo of their own
   const marketingAlbum = albums.find(row => row.name === marketing)!;
@@ -162,7 +162,7 @@ test('G1-G6 end to end: folders become albums, a party has no project, copies jo
   await page.goto('/photos');
   const select = async () => {
     for (const row of chosen) {
-      const tick = page.getByRole('checkbox', { name: `Select ${row.original_name}`, exact: true }).last();
+      const tick = page.getByRole('checkbox', { name: `Select ${row.display_name}`, exact: true }).last();
       await tick.locator('..').hover();
       await tick.click();
     }
@@ -186,7 +186,7 @@ test('G1-G6 end to end: folders become albums, a party has no project, copies jo
   await page.getByRole('button', { name: 'Filter by tag', exact: true }).click();
   await page.getByRole('menuitem', { name: 'professional', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: /^Select (?!all of)/ })).toHaveCount(2);
-  for (const row of chosen) await expect(page.getByRole('checkbox', { name: `Select ${row.original_name}`, exact: true })).toBeAttached();
+  for (const row of chosen) await expect(page.getByRole('checkbox', { name: `Select ${row.display_name}`, exact: true })).toBeAttached();
   await shoot(page, info, 'e2e-marketing-filtered');
 
   // G6: share from the album's own header, then open in a fresh signed-out context.
@@ -201,7 +201,11 @@ test('G1-G6 end to end: folders become albums, a party has no project, copies jo
   await expect(client.getByTestId('shared-count')).toHaveText('3 photos');
   await expect(client.getByTestId('shared-grid').getByRole('button')).toHaveCount(3);
   const seen = await client.content();
-  for (const secret of [UPLOADER, 'professional', party, kitchen, '3612', '4170']) expect(seen, secret).not.toContain(secret);
+  for (const secret of [UPLOADER, 'professional', party, kitchen]) expect(seen, secret).not.toContain(secret);
+  // A project number may travel inside a photo's name, the filename a download is saved under (share-link
+  // contract point 4 as amended by 20261012182343_photo_auto_names.sql), but the page never shows one.
+  const shown = await client.locator('body').innerText();
+  for (const number of ['3612', '4170']) expect(shown, number).not.toContain(number);
   await shoot(client, info, 'e2e-client-opens-marketing');
   await clientContext.close();
 });

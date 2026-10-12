@@ -25,8 +25,8 @@ async function seed(name: string, options: { uploader?: string; bytes?: Buffer; 
   const path = `originals/${uploader}/${id}/${name}`;
   const upload = await fixtures.admin.storage.from('photos').upload(path, bytes, { contentType: 'image/png' });
   expect(upload.error).toBeNull();
-  await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,content_sha256,thumb_path,captured_at,deleted_at,deleted_by,purge_after)
-    values($1,$2,$3,'image',$4,$5,$6,'image/png',$7,$5,now(),case when $8 then now() end,case when $8 then $3::uuid end,case when $8 then now()+interval '30 days' end)`, [id, jobs[0], uploader, name, path, bytes.length, digest, options.trash ?? false]);
+  await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,display_name,name_source,original_path,original_bytes,mime_type,content_sha256,thumb_path,captured_at,deleted_at,deleted_by,purge_after)
+    values($1,$2,$3,'image',$4,$4,'manual',$5,$6,'image/png',$7,$5,now(),case when $8 then now() end,case when $8 then $3::uuid end,case when $8 then now()+interval '30 days' end)`, [id, jobs[0], uploader, name, path, bytes.length, digest, options.trash ?? false]);
   return { id, bytes, digest, path };
 }
 async function capture(page: Page, info: TestInfo, name: string) {

@@ -117,12 +117,26 @@ working. Deleted albums are listed on `/photos/trash` above the trashed photos,
 each with **Restore album** for 30 days. "Copy link" writes
 `/photos?photo=<id>`, which opens any active photo by id however old it is.
 
-A photo can be renamed from the viewer (**Rename**) or, with exactly one photo
-selected, from the selection bar. The name is `photos.display_name`
-(`photo_rename_photo`) and is also the download filename (the original extension
-is kept); `original_name` never changes, because MCP references and imports match
-on it. An empty name goes back to the uploaded filename. The Albums and Projects
-lists have **Select**: pick one to **Rename**, or any number to **Delete**.
+Every photo is named automatically: `<project number> – <YYMMDD> <HHMMSS>`, for
+example `3962 – 260923 160432` (an en dash between single spaces; the capture time
+read in Pacific time, `America/Los_Angeles`). A photo with no project is named
+`260923 160432`. When another active photo in the same project (or, without a
+project, another photo with no project) already holds the name, the first free of
+` (2)`, ` (3)` … is added; trashed photos do not count. The name is
+`photos.display_name`, filled by the `photo_auto_name` trigger (the format lives in
+the SQL function of the same name) when a photo is uploaded and again whenever its
+project changes, so moving a photo to project 4100 renames it `4100 – …`.
+Renumbering a project does not rename its photos.
+
+A photo can be renamed by hand from the viewer (**Rename**) or, with exactly one
+photo selected, from the selection bar (`photo_rename_photo`). A hand-given name
+sets `photos.name_source='manual'` and is kept on a move; an empty name goes back
+to `'auto'` and recomputes the automatic name. The name is the download filename,
+in the app and on share links, with the uploaded file's extension kept
+(`3962 – 260923 160432.HEIC`). `original_name` never changes, because MCP
+references and imports match on it; the viewer shows it under "About this file".
+Storage paths never change either. The Albums and Projects lists have **Select**:
+pick one to **Rename**, or any number to **Delete**.
 
 Selecting many photos: **Add to album**, **Tag**, and **Remove from album** act at
 once on up to 500 photos (`MAX_BULK_PHOTOS`). **Set project** and **Trash** open
@@ -217,8 +231,9 @@ An employee can share one album or one project with a link, from the **Share**
 button on it. Anyone who has the link can see that album's or project's name, a
 photo count, and its photos and videos, and download them, **without signing
 in**. It is the only page in the app that works without a login. A visitor never
-sees who took a photo, its tags, its XMP file, a project number, or any other
-album. Any signed-in employee may turn any link on or off.
+sees who took a photo, its tags, its XMP file, or any other album. A project number
+appears only at the start of an automatically named photo's name (the name a
+download is saved under). Any signed-in employee may turn any link on or off.
 
 **What the switch on one album or project does**
 

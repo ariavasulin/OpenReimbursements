@@ -28,8 +28,8 @@ export interface PhotoRow {
   original_bytes: number | null;
   mime_type: string | null;
   original_name: string | null;
-  /** The name someone gave the photo; null shows `original_name`. Optional so
-   * cached rows without the field stay assignable. See photoName(). */
+  /** The photo's name, automatic or hand-given; null shows `original_name`.
+   * Optional so cached rows without the field stay assignable. See photoName(). */
   display_name?: string | null;
   thumb_path: string | null;
   preview_path: string | null;

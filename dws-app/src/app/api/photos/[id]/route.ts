@@ -22,7 +22,7 @@ export async function GET(_request:Request,context:RouteContext){return photoRou
 /**
  * Metadata edits apply only to active rows. Ownership changes require confirmation.
  * `display_name` renames the photo as people see and download it; an empty name
- * (or null) goes back to the uploaded filename, which never changes.
+ * (or null) goes back to the automatic name; the uploaded filename never changes.
  */
 export async function PATCH(request:Request,context:RouteContext){return photoRoute(async()=>{
  const actor=await requirePhotoActor(request,{mutation:true}),id=photoId((await context.params).id),body=await readPhotoJson(request);

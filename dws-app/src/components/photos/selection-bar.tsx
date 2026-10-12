@@ -228,7 +228,7 @@ export default function SelectionBar({
         name={only ? photoName(only) ?? "" : ""}
         allowEmpty
         maxLength={MAX_PHOTO_NAME_LENGTH}
-        hint="Leave it empty to go back to the uploaded filename."
+        hint="Leave it empty to go back to the automatic name."
         loading={!only && !onlyError}
         loadError={onlyError ? "Could not load this photo's name. Close and try again." : undefined}
         onSave={async (name) => {

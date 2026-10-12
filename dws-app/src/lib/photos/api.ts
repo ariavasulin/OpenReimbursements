@@ -247,7 +247,7 @@ export function removePhotosFromAlbum(albumId: string, photoIds: string[]) {
 
 // ---- Bulk tags, one photo, action batches ----------------------------------
 
-/** Rename one photo. A blank name goes back to the uploaded filename. */
+/** Rename one photo. A blank name goes back to the automatic name. */
 export function renamePhoto(id: string, name: string) {
   return fetchJson<{ photo: PhotoRow }>(
     `/api/photos/${encodeURIComponent(id)}`, "Failed to rename the photo",

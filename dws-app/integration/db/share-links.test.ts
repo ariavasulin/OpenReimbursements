@@ -158,7 +158,7 @@ describe('share links (photo-albums AC-21, AC-22)', () => {
       expect(await read(token)).toBeNull();
     });
 
-    it('[4] the answer holds no uploader, tag, XMP, other album, or project number, and only images and videos', async () => {
+    it('[4] the answer holds no uploader, tag, XMP, other album, or project number (outside a photo\'s name), and only images and videos', async () => {
       const a = await album(`Private ${tag}`), other = await album(`Other album ${tag}`);
       const image = await photo({ albums: [a, other], jobId: job, name: 'kitchen.jpg' }), video = await photo({ albums: [a], kind: 'video', name: 'walkthrough.mp4' });
       const strayXmp = await photo({ albums: [a], kind: 'file', name: 'kitchen.xmp' });
@@ -167,8 +167,10 @@ describe('share links (photo-albums AC-21, AC-22)', () => {
       expect(ids(shared).sort()).toEqual([image, video].sort()); expect(shared!.count).toBe(2);
       expect(ids(shared)).not.toContain(strayXmp);
       for (const row of shared!.photos) expect(Object.keys(row).sort()).toEqual(
-        ['captured_at', 'duration_secs', 'id', 'kind', 'mime_type', 'original_name', 'original_path', 'playback_path', 'preview_path', 'thumb_path']);
-      const text = JSON.stringify(shared);
+        ['captured_at', 'display_name', 'duration_secs', 'id', 'kind', 'mime_type', 'original_name', 'original_path', 'playback_path', 'preview_path', 'thumb_path']);
+      // Point 4: a project number may appear only at the start of an automatic name.
+      expect(shared!.photos.find(row => row.id === image)!.display_name).toMatch(new RegExp(`^share-${tag} – \\d{6} \\d{6}$`));
+      const text = JSON.stringify({ ...shared, photos: shared!.photos.map(row => Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'display_name'))) });
       for (const secret of [UPLOADER_NAME, 'Priya', SECRET_TAG, '.xmp', 'sidecar', `Other album ${tag}`, `share-${tag}`, 'uploader', 'tags', 'job_id', 'token', 'created_by']) {
         expect(text.toLowerCase(), secret).not.toContain(secret.toLowerCase());
       }

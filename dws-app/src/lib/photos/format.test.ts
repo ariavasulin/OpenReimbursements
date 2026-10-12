@@ -14,4 +14,8 @@ describe('photo names', () => {
     expect(downloadName({ display_name: 'Kitchen', original_name: 'no-extension' })).toBe('Kitchen');
     expect(downloadName({ display_name: null, original_name: 'IMG_1.JPG' })).toBe('IMG_1.JPG');
   });
+
+  it('downloads an automatic name with the original extension', () => {
+    expect(downloadName({ display_name: '3962 – 260923 160432', original_name: 'IMG_4471.HEIC' })).toBe('3962 – 260923 160432.HEIC');
+  });
 });

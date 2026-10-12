@@ -20,14 +20,17 @@ export function formatDuration(secs: number): string {
     : `${minutes}:${two(seconds)}`;
 }
 
-/** A photo's name as people see it: the name someone gave it, else the uploaded filename. */
+/**
+ * A photo's name as people see it: its automatic name ("3962 – 260923 160432", set by the
+ * database) or the name someone gave it; the uploaded filename only for a row that has neither.
+ */
 export function photoName(photo: { display_name?: string | null; original_name: string | null }): string | null {
   return photo.display_name || photo.original_name || null;
 }
 
 /**
  * The filename a download saves as: the photo's name, keeping the uploaded file's
- * extension when the new name has none ("Kitchen before" -> "Kitchen before.jpg").
+ * extension when the name has none ("Kitchen before" -> "Kitchen before.jpg").
  */
 export function downloadName(photo: { display_name?: string | null; original_name: string | null }): string | null {
   if (!photo.display_name) return photo.original_name;

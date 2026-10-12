@@ -61,7 +61,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
       setSaved({ id: photo.id, name: photoName(updated) });
       setDraft(null);
       invalidatePhotoCaches(queryClient);
-      toast.success(draft.trim() ? "Photo renamed" : "Name set back to the uploaded filename");
+      toast.success(draft.trim() ? "Photo renamed" : "Name set back to the automatic name");
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "Failed to rename the photo");
     } finally {
@@ -122,11 +122,11 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
                       setDraft(null);
                     }
                   }}
-                  placeholder={photo.original_name ?? "Photo name"}
+                  placeholder="Automatic name"
                   className="min-h-11 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 text-base font-normal text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none"
                 />
                 <span className="text-sm font-normal text-[#b4b4b4]">
-                  Leave it empty to go back to the uploaded filename.
+                  Leave it empty to go back to the automatic name.
                 </span>
                 <div className="flex gap-2">
                   <button

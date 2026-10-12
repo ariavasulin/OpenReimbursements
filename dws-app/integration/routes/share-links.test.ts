@@ -78,8 +78,15 @@ describe('share link routes (photo-albums AC-21, AC-22)', () => {
       expect(Object.keys(row).sort()).toEqual(['captured_at', 'download_url', 'duration_secs', 'id', 'kind', 'name', 'preview_url', 'thumb_url', 'video_url']);
       expect(row.thumb_url).toContain('/storage/v1/object/public/photos/derived/'); expect(row.download_url).toContain('download=');
     }
-    // No uploader name, tag, XMP, other album, project, or link bookkeeping anywhere in the body.
-    const text = JSON.stringify(page).toLowerCase();
+    // A photo downloads under its name plus the original extension; an automatic name starts with its
+    // project number, the one place the contract lets a number appear.
+    const named = (await f.sql.query('select display_name from public.photos where id=$1', [two])).rows[0].display_name as string;
+    expect(named).toMatch(new RegExp(`^share-routes-${tag} – \\d{6} \\d{6}$`));
+    const shown = page.photos[0] as { name: string; download_url: string };
+    expect(shown.name).toBe(named);
+    expect(new URL(shown.download_url).searchParams.get('download')).toBe(`${named}.jpg`);
+    // No uploader name, tag, XMP, other album, project, or link bookkeeping anywhere else in the body.
+    const text = JSON.stringify({ ...page, photos: page.photos.map((row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'name' && key !== 'download_url'))) }).toLowerCase();
     for (const secret of [UPLOADER, 'quentin', SECRET_TAG, '.xmp', 'sidecar', 'uploader', 'tags', 'job', `share-routes-${tag}`, 'harbour house', 'token', 'created_by']) expect(text, secret).not.toContain(secret.toLowerCase());
   });
 
