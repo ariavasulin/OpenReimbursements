@@ -1,17 +1,20 @@
 "use client";
 
+import ChoiceChip from "@/components/photos/choice-chip";
 import type { GroupBy } from "@/lib/photos/group";
+import type { PhotoSort } from "@/lib/photos/api";
 
 const MODE_LABEL: Record<GroupBy, string> = {
   date: "Date",
   tag: "Tag",
+  uploader: "Uploader",
+  type: "File type",
   job: "Project",
 };
 
 /**
- * Segmented control picking how the grid groups, with its name in front of it:
- * two unlabeled words ("Date", "Tag") beside the filters read as two more
- * filters.
+ * How the grid groups, named in front of the choice: a bare "Date" or "Tag"
+ * beside the filters would read as two more filters.
  */
 export default function GroupByToggle<T extends GroupBy>({
   modes,
@@ -23,29 +26,27 @@ export default function GroupByToggle<T extends GroupBy>({
   onChange(mode: T): void;
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Group by"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1"
-    >
-      <span className="text-sm text-[#b4b4b4]">Group by</span>
-      <div className="flex overflow-hidden rounded-full border border-[#4e4e4e] bg-[#2e2e2e]">
-        {modes.map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            aria-pressed={value === mode}
-            onClick={() => onChange(mode)}
-            className={`min-h-11 px-5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2680FC] ${
-              value === mode
-                ? "bg-[#4a4a4a] font-semibold text-white"
-                : "text-[#b4b4b4] hover:text-white"
-            }`}
-          >
-            {MODE_LABEL[mode]}
-          </button>
-        ))}
-      </div>
-    </div>
+    <ChoiceChip
+      name="Group by"
+      options={modes.map((mode) => ({ value: mode, label: MODE_LABEL[mode] }))}
+      value={value}
+      onChange={onChange}
+    />
   );
+}
+
+const SORT_OPTIONS: readonly { value: PhotoSort; label: string }[] = [
+  { value: "desc", label: "Newest" },
+  { value: "asc", label: "Oldest" },
+];
+
+/** Newest or oldest capture first; the server pages in that order. */
+export function SortToggle({
+  value,
+  onChange,
+}: {
+  value: PhotoSort;
+  onChange(sort: PhotoSort): void;
+}) {
+  return <ChoiceChip name="Sort" options={SORT_OPTIONS} value={value} onChange={onChange} />;
 }

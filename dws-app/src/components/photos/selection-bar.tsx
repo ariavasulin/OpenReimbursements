@@ -39,6 +39,9 @@ interface SelectionBarProps {
   album?: PhotoAlbumRef;
   /** A tick was refused at the 500 limit. */
   limitMessage: string | null;
+  /** The one project every selected photo is in, so Tag suggests that
+   *  project's tags; null when they differ or have none (every tag). */
+  sharedJobId: string | null;
 }
 
 const actionClass =
@@ -54,6 +57,7 @@ export default function SelectionBar({
   onClear,
   album,
   limitMessage,
+  sharedJobId,
 }: SelectionBarProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -218,6 +222,7 @@ export default function SelectionBar({
         open={sheet === "tag"}
         onOpenChange={(open) => setSheet(open ? "tag" : null)}
         photoIds={ids}
+        jobId={sharedJobId}
         onDone={done}
       />
       <RenameSheet
@@ -325,9 +330,15 @@ function AddToAlbumSheet({ open, onOpenChange, photoIds, onDone }: BulkSheetProp
   );
 }
 
-function BulkTagSheet({ open, onOpenChange, photoIds, onDone }: BulkSheetProps) {
+function BulkTagSheet({
+  open,
+  onOpenChange,
+  photoIds,
+  jobId,
+  onDone,
+}: BulkSheetProps & { jobId: string | null }) {
   const inputId = useId();
-  const choices = useTagChoices(open);
+  const choices = useTagChoices(open, jobId);
   const [tags, setTags] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);

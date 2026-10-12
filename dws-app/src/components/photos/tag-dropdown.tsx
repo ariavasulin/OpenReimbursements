@@ -15,8 +15,9 @@ import { MAX_TAGS } from "@/lib/photos/apiShared";
 import { cn } from "@/lib/utils";
 
 // The one tag field, used by the upload pop-up, Edit details, and bulk Tag.
-// It opens to the tags already in use plus the three starter tags, narrows as
-// you type, and ends with `Add "<typed>"`. What is typed is matched, ignoring
+// It opens to the tags already in use — in the project at hand when there is
+// one, else everywhere — plus the three starter tags, narrows as you type, and
+// ends with `Add "<typed>"`. What is typed is matched, ignoring
 // case, against those choices before it is kept, so "Professional" becomes the
 // existing "professional" instead of a second spelling.
 //
@@ -24,9 +25,12 @@ import { cn } from "@/lib/utils";
 // field lives inside a Drawer on phones and a Dialog on desktop, and an inline
 // list behaves the same in both (no focus trap or outside-tap fights).
 
-/** Existing tags plus the starter tags, for the dropdown and for saving. */
-export function useTagChoices(enabled: boolean): string[] {
-  const { data: knownTags } = usePhotoTags(enabled);
+/**
+ * Existing tags plus the starter tags, for the dropdown and for saving: one
+ * project's tags when `jobId` is given, else every tag.
+ */
+export function useTagChoices(enabled: boolean, jobId?: string | null): string[] {
+  const { data: knownTags } = usePhotoTags(enabled, jobId);
   return useMemo(() => tagChoices(knownTags ?? []), [knownTags]);
 }
 

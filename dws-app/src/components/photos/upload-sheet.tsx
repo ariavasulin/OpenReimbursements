@@ -133,7 +133,8 @@ export default function UploadSheet({
     };
   }, [open, sidecars]);
 
-  const choices = useTagChoices(open);
+  // Suggestions follow the chosen project; with none (album only), every tag.
+  const choices = useTagChoices(open, meta.jobId);
 
   // Keywords the paired sidecars carry that the tag dropdown is not already
   // offering: shown as one-tap suggestions, never applied for the person.

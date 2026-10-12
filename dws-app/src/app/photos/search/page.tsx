@@ -86,7 +86,7 @@ export default function PhotoSearchPage() {
         <section aria-label="Photos">
           <PhotoBrowser
             scope={{ kind: "search", q }}
-            groupModes={["job", "date", "tag"] as const}
+            groupModes={["job", "date", "tag", "uploader", "type"] as const}
             summary={({ count, hasMore, projectCount }) => (
               <>
                 <h2 className={sectionHeading}>

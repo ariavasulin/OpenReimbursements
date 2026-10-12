@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { FilterChip, chipClass } from "@/components/photos/filter-bar";
-import GroupByToggle from "@/components/photos/group-by-toggle";
+import GroupByToggle, { SortToggle } from "@/components/photos/group-by-toggle";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
 import PhotoGrid from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
@@ -17,10 +17,11 @@ import {
 } from "@/hooks/use-photo-deep-link";
 import {
   fetchPhotosPage,
-  fetchTags,
   invalidatePhotoCaches,
   usePhotoDetail,
   usePhotoJobs,
+  usePhotoTags,
+  type PhotoSort,
 } from "@/lib/photos/api";
 import {
   accumulateSeenOptions,
@@ -36,10 +37,12 @@ import {
   type GroupBy,
 } from "@/lib/photos/group";
 import type { PhotoAlbumRef, PhotoRow } from "@/lib/photos/types";
+import { cn } from "@/lib/utils";
 
 // The one photo grid screen, shared by Photos (every photo), an album, a
-// project, and search results: filters, Group by, the grid with select-many and
-// its action bar, endless scrolling, and the viewer with its `?photo=` link.
+// project, and search results: filters, Group by, Sort, the grid with
+// select-many and its action bar, endless scrolling, and the viewer with its
+// `?photo=` link.
 
 export type BrowserScope =
   | { kind: "all" }
@@ -78,7 +81,7 @@ interface PhotoBrowserProps {
   pinnedLabel?: string;
 }
 
-const DEFAULT_MODES = ["date", "tag"] as const;
+const DEFAULT_MODES = ["date", "tag", "uploader", "type"] as const;
 
 function scopeParams(scope: BrowserScope): URLSearchParams {
   const params = new URLSearchParams();
@@ -108,6 +111,8 @@ export default function PhotoBrowser({
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [groupBy, setGroupBy] = useState<GroupBy>(groupModes[0]);
+  // Like Group by, kept only while the page is open.
+  const [sort, setSort] = useState<PhotoSort>("desc");
   const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
   const key = scopeKey(scope);
   const enabled = scope.kind !== "search" || scope.q.length > 0;
@@ -126,6 +131,7 @@ export default function PhotoBrowser({
     fetchNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
+    isPlaceholderData,
   } = useInfiniteQuery({
     // "photos" / "photo-search" are the prefixes invalidatePhotoCaches refreshes.
     queryKey: [
@@ -134,18 +140,25 @@ export default function PhotoBrowser({
       filters.project?.id ?? null,
       filters.uploader?.id ?? null,
       filters.tag,
+      sort,
     ],
     queryFn: ({ pageParam }) => {
       const params = scopeParams(scope);
       if (filters.project) params.set("job", filters.project.id);
       if (filters.uploader) params.set("uploader", filters.uploader.id);
       if (filters.tag) params.set("tags", filters.tag);
+      if (sort === "asc") params.set("sort", "asc");
       if (pageParam) params.set("cursor", pageParam);
       return fetchPhotosPage(params);
     },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled,
+    // A new sort or filter keeps the grid and toolbar on screen (dimmed) until
+    // its first page lands, so the chip just used keeps focus. Only within the
+    // same album, project, or search: another one starts blank.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === key ? keepPreviousData(previous) : undefined,
   });
 
   const photos = useMemo(
@@ -164,11 +177,7 @@ export default function PhotoBrowser({
   // offers the tags its loaded photos carry.
   const knownTagScope =
     scope.kind === "all" ? "" : scope.kind === "job" ? scope.jobId : null;
-  const { data: knownTags } = useQuery({
-    queryKey: ["photo-tags", knownTagScope],
-    queryFn: () => fetchTags(knownTagScope || undefined),
-    enabled: knownTagScope !== null,
-  });
+  const { data: knownTags } = usePhotoTags(knownTagScope !== null, knownTagScope);
   const tagOptions = useMemo(() => toTagOptions(seen, knownTags ?? []), [seen, knownTags]);
   const { data: jobs } = usePhotoJobs(scope.kind === "all");
   const projectOptions = useMemo(
@@ -187,6 +196,19 @@ export default function PhotoBrowser({
   // Changing a filter keeps it: that is how photos from two projects get picked
   // for one album — filter to the first, tick, filter to the second, tick.
   useEffect(clear, [key, clear]);
+
+  // Bulk Tag suggests one project's tags when every selected photo is in it.
+  const sharedJobId = useMemo(() => {
+    if (selectedIds.size === 0) return null;
+    const byId = new Map(photos.map((photo) => [photo.id, photo]));
+    let shared: string | null = null;
+    for (const id of selectedIds) {
+      const jobId = byId.get(id)?.job_id ?? null;
+      if (jobId === null || (shared !== null && shared !== jobId)) return null;
+      shared = jobId;
+    }
+    return shared;
+  }, [photos, selectedIds]);
 
   // The viewer flips through the set as displayed: grouped order, images and
   // videos with previews only (file tiles download instead). A photo opened
@@ -235,7 +257,9 @@ export default function PhotoBrowser({
   });
 
   const noFiltersActive = !filters.project && !filters.uploader && !filters.tag;
-  const loaded = enabled && !isLoading && !error;
+  // Known once any data is in hand, including the previous view's while a new
+  // sort or filter loads (isLoading is false then).
+  const loaded = enabled && data !== undefined && !error;
   const scopeIsEmpty = loaded && noFiltersActive && photos.length === 0;
   const projectCount = useMemo(
     () => new Set(photos.flatMap((photo) => photo.job_id ?? [])).size,
@@ -248,8 +272,9 @@ export default function PhotoBrowser({
 
       {/* Filters and grouping only appear when there is something to filter. */}
       {loaded && !scopeIsEmpty && (
-        <div className="mb-1 flex flex-col gap-2 desktop:flex-row desktop:flex-wrap desktop:items-center desktop:justify-between">
-          <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-2">
+        // One row wherever it fits; on a phone the View chips take a second row.
+        <div className="mb-1 flex flex-row flex-wrap items-center gap-2">
+          <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
               aria-pressed={noFiltersActive}
@@ -297,8 +322,19 @@ export default function PhotoBrowser({
               onClear={() => setFilters((previous) => ({ ...previous, uploader: null }))}
             />
           </div>
-          {photos.length > 0 && groupModes.length > 1 && (
-            <GroupByToggle modes={groupModes} value={groupBy} onChange={setGroupBy} />
+          {/* How the photos are laid out, not which ones. Wraps rather than
+              pushing the page sideways on a narrow screen or at large text. */}
+          {photos.length > 0 && (
+            <div
+              role="group"
+              aria-label="View"
+              className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2"
+            >
+              {groupModes.length > 1 && (
+                <GroupByToggle modes={groupModes} value={groupBy} onChange={setGroupBy} />
+              )}
+              <SortToggle value={sort} onChange={setSort} />
+            </div>
           )}
         </div>
       )}
@@ -326,20 +362,25 @@ export default function PhotoBrowser({
         </div>
       )}
 
-      <PhotoGrid
-        groups={groups}
-        groupBy={groupBy}
-        onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
-        selection={selection}
-        pinnedTag={noFiltersActive ? pinnedTag : undefined}
-        pinnedLabel={pinnedLabel}
-        onExpandPinned={() =>
-          pinnedTag && setFilters((previous) => ({ ...previous, tag: pinnedTag }))
-        }
-      />
+      <div
+        aria-busy={isPlaceholderData || undefined}
+        className={cn("transition-opacity", isPlaceholderData && "opacity-60")}
+      >
+        <PhotoGrid
+          groups={groups}
+          groupBy={groupBy}
+          onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
+          selection={selection}
+          pinnedTag={noFiltersActive ? pinnedTag : undefined}
+          pinnedLabel={pinnedLabel}
+          onExpandPinned={() =>
+            pinnedTag && setFilters((previous) => ({ ...previous, tag: pinnedTag }))
+          }
+        />
+      </div>
 
       <InfiniteSentinel
-        hasNextPage={hasNextPage}
+        hasNextPage={hasNextPage && !isPlaceholderData}
         isFetching={isFetchingNextPage}
         failed={isFetchNextPageError}
         onVisible={() => fetchNextPage()}
@@ -350,6 +391,7 @@ export default function PhotoBrowser({
         onClear={clear}
         album={scope.kind === "album" ? scope.album : undefined}
         limitMessage={limitMessage}
+        sharedJobId={sharedJobId}
       />
 
       <PhotoLightbox

@@ -10,6 +10,7 @@ import {
   plural,
 } from "@/lib/photos/format";
 import { useDesktop } from "@/hooks/use-desktop";
+import { fileTypeLabel } from "@/lib/photos/file-type";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
@@ -222,6 +223,8 @@ function Tile({
   }
 
   const size = formatBytes(photo.original_bytes);
+  // "Other" says nothing the file name does not.
+  const type = fileTypeLabel(photo);
   return (
     <div
       className={cn(frame, "border border-[#4e4e4e]")}
@@ -238,6 +241,9 @@ function Tile({
           <Video className="h-5 w-5 text-[#a0a0a0]" />
         ) : (
           <FileText className="h-5 w-5 text-[#a0a0a0]" />
+        )}
+        {type !== "Other" && (
+          <span className="text-[11px] font-semibold text-[#d0d0d0]">{type}</span>
         )}
         <span className="w-full truncate text-[11px] text-[#b4b4b4]">{name}</span>
         {size && <span className="text-[11px] text-[#8e8e8e]">{size}</span>}

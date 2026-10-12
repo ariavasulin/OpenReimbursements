@@ -83,4 +83,10 @@ describe("keysetOrFilter", () => {
       "receipt_date.lt.2026-08-01,and(receipt_date.eq.2026-08-01,created_at.lt.2026-08-01T12:00:00Z)"
     );
   });
+
+  it("builds 'strictly past this position' the other way for an ascending sort", () => {
+    expect(keysetOrFilter("captured_at", "2026-08-01T12:00:00Z", "id", "abc", "asc")).toBe(
+      "captured_at.gt.2026-08-01T12:00:00Z,and(captured_at.eq.2026-08-01T12:00:00Z,id.gt.abc)"
+    );
+  });
 });

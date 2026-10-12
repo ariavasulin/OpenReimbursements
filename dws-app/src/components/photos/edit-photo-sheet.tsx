@@ -32,7 +32,7 @@ export default function EditPhotoSheet({
 }: EditPhotoSheetProps) {
   const [meta, setMeta] = useState<PhotoMeta>(EMPTY_META);
   const [busy, setBusy] = useState(false);
-  const choices = useTagChoices(open);
+  const choices = useTagChoices(open, photo?.job_id);
 
   // Seed from the photo each time the sheet opens on one.
   const photoId = photo?.id;

@@ -28,6 +28,9 @@ export async function fetchJson<T>(
   return (await response.json()) as T;
 }
 
+/** GET /api/photos `sort`: newest capture first (`desc`, the default) or oldest. */
+export type { KeysetDirection as PhotoSort } from "@/lib/keysetCursor";
+
 /** One page of GET /api/photos (keyset-paginated). */
 export interface PhotosPage {
   photos: PhotoRow[];
@@ -71,11 +74,11 @@ export function usePhotoJobs(enabled: boolean, q = "") {
   });
 }
 
-/** Every tag in use, for tag suggestions. */
-export function usePhotoTags(enabled: boolean) {
+/** Tags in use, for tag suggestions: one project's when `jobId` is given, else every tag. */
+export function usePhotoTags(enabled: boolean, jobId?: string | null) {
   return useQuery({
-    queryKey: ["photo-tags"],
-    queryFn: () => fetchTags(),
+    queryKey: ["photo-tags", jobId || ""],
+    queryFn: () => fetchTags(jobId || undefined),
     enabled,
   });
 }

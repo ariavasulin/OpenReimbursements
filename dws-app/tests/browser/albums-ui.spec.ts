@@ -44,13 +44,14 @@ async function authenticate(context: BrowserContext) {
   await context.addCookies(fixtures.employeeA.cookies.map(cookie => ({ ...cookie, url: process.env.DWS_BROWSER_BASE_URL!, sameSite: 'Lax' as const })));
 }
 /** A real image in Storage plus its row. `jobId: null` is a photo with no project. */
-async function seed(name: string, options: { jobId?: string | null; tags?: string[]; capturedAt?: string } = {}) {
+async function seed(name: string, options: { jobId?: string | null; tags?: string[]; capturedAt?: string; uploaderId?: string } = {}) {
   const id = randomUUID(); const bytes = Buffer.concat([png, randomBytes(16)]);
-  const path = `originals/${fixtures.employeeA.id}/${id}/${name}`;
+  const uploader = options.uploaderId ?? fixtures.employeeA.id;
+  const path = `originals/${uploader}/${id}/${name}`;
   expect((await fixtures.admin.storage.from('photos').upload(path, bytes, { contentType: 'image/png' })).error).toBeNull();
   await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,content_sha256,thumb_path,captured_at,tags)
     values($1,$2,$3,'image',$4,$5,$6,'image/png',$7,$5,$8,$9)`,
-    [id, options.jobId === undefined ? projects.north : options.jobId, fixtures.employeeA.id, name, path, bytes.length,
+    [id, options.jobId === undefined ? projects.north : options.jobId, uploader, name, path, bytes.length,
       createHash('sha256').update(bytes).digest('hex'), options.capturedAt ?? new Date().toISOString(), options.tags ?? []]);
   madePhotos.push(id);
   return id;
@@ -78,8 +79,14 @@ const sections = (page: Page) => page.getByRole('navigation', { name: 'Sections'
 // the dated tile is the one that selects, and it always comes after.
 const tile = (page: Page, name: string) => page.getByRole('button', { name: new RegExp(`^${name.replace('.', '\\.')}`) }).last();
 const tick = (page: Page, name: string) => page.getByRole('checkbox', { name: `Select ${name}`, exact: true }).last();
-/** The selection bar. Scoped, because "Tag" is also a Group by button on the same screen. */
+/** The selection bar. Scoped, because "Tag" is also a Group by choice on the same screen. */
 const bar = (page: Page) => page.getByRole('region', { name: 'Selected photos' });
+/** Group by and Sort are chips that open a menu of choices. */
+async function choose(page: Page, setting: 'Group by' | 'Sort', choice: string) {
+  await page.getByRole('button', { name: new RegExp(`^${setting}: `) }).click();
+  await page.getByRole('menuitemradio', { name: choice, exact: true }).click();
+  await expect(page.getByRole('button', { name: `${setting}: ${choice}`, exact: true })).toBeVisible();
+}
 /** The viewer's facts: desktop keeps its side panel; a phone opens the labeled Details pop-up. */
 async function openDetails(page: Page, viewport: ViewportName) {
   if (viewport === 'phone') await page.getByRole('button', { name: 'Details', exact: true }).click();
@@ -94,6 +101,8 @@ async function pickFile(page: Page, name: string, bytes: Buffer) {
 async function select(page: Page, viewport: ViewportName, photoNames: string[]) {
   const [first, ...rest] = photoNames;
   if (viewport === 'phone') {
+    // The press is raw mouse input, which does not scroll: bring the photo into view first.
+    await tile(page, first).scrollIntoViewIfNeeded();
     const box = (await tile(page, first).boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
@@ -121,7 +130,8 @@ for (const viewport of VIEWPORTS) {
     await expect(tile(page, loose)).toBeVisible();
     await expect(page).toHaveURL(/\/photos$/);
     await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: 'Filter by project' })).toBeVisible();
-    await expect(page.getByRole('group', { name: 'Group by' })).toContainText('Group by');
+    await expect(page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Group by: Date', exact: true })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Sort: Newest', exact: true })).toBeVisible();
 
     await sections(page).getByRole('link', { name: 'Albums', exact: true }).click();
     await expect(page).toHaveURL(/\/photos\/albums$/);
@@ -328,12 +338,68 @@ for (const viewport of VIEWPORTS) {
       await page.getByRole('menuitem', { name: fresh, exact: true }).click();
       await expect(tile(page, name)).toBeVisible();
       await expect(tile(page, other)).toHaveCount(0);
-      await page.getByRole('group', { name: 'Group by' }).getByRole('button', { name: 'Tag', exact: true }).click();
+      await choose(page, 'Group by', 'Tag');
       await expect(page.getByRole('heading', { name: `${fresh} · 1 photo`, exact: true })).toBeVisible();
       await page.getByRole('button', { name: 'All', exact: true }).click();
       // Ungrouped from the filter: photos with no tag come last, under their own heading.
       await expect(page.getByRole('heading', { name: /^No tags · \d+ photos?$/ })).toBeVisible();
     }
+  });
+
+  test(`client-feedback AC-7: group by uploader shows one section per person with a working header tick on ${v}`, async ({ page, context }) => {
+    await page.setViewportSize(viewport); await authenticate(context);
+    const people = { a: `Uploader A ${v} ${run}`, b: `Uploader B ${v} ${run}` };
+    const before = (await fixtures.sql.query('select user_id,full_name from public.user_profiles where user_id=any($1::uuid[])', [[fixtures.employeeA.id, fixtures.employeeB.id]])).rows;
+    await fixtures.sql.query('update public.user_profiles set full_name=$1 where user_id=$2', [people.a, fixtures.employeeA.id]);
+    await fixtures.sql.query('update public.user_profiles set full_name=$1 where user_id=$2', [people.b, fixtures.employeeB.id]);
+    try {
+      const fromA = `by-a-${v}-${run}.png`, fromB = [`by-b1-${v}-${run}.png`, `by-b2-${v}-${run}.png`];
+      await Promise.all([seed(fromA), ...fromB.map(name => seed(name, { uploaderId: fixtures.employeeB.id }))]);
+
+      await page.goto('/photos');
+      await expect(tile(page, fromA)).toBeVisible();
+      await choose(page, 'Group by', 'Uploader');
+      await expect(page.getByRole('heading', { name: new RegExp(`^${people.a} · \\d+ photos?$`) })).toHaveCount(1);
+      // Only this test uploads as B (once per viewport), so B's section holds every photo B has.
+      const ofB = Number((await fixtures.sql.query('select count(*) from public.photos where uploader_id=$1 and deleted_at is null', [fixtures.employeeB.id])).rows[0].count);
+      await expect(page.getByRole('heading', { name: `${people.b} · ${ofB} photos`, exact: true })).toHaveCount(1);
+
+      // The header tick selects the whole section, as it does for a date.
+      await select(page, v, [fromB[0]]);
+      await page.getByRole('checkbox', { name: `Select all of ${people.b}`, exact: true }).click();
+      await expect(page.getByTestId('selection-count')).toHaveText(`${ofB} selected`);
+    } finally {
+      for (const row of before) await fixtures.sql.query('update public.user_profiles set full_name=$1 where user_id=$2', [row.full_name, row.user_id]);
+    }
+  });
+
+  test(`client-feedback AC-9: the Tag picker suggests the project's own tags, and every tag on Photos, on ${v}`, async ({ page, context }) => {
+    await page.setViewportSize(viewport); await authenticate(context);
+    const northTag = `north only ${v} ${run}`, southTag = `south only ${v} ${run}`;
+    const north = `scoped-north-${v}-${run}.png`, south = `scoped-south-${v}-${run}.png`;
+    await seed(north, { tags: [northTag] });
+    await seed(south, { jobId: projects.south, tags: [southTag] });
+    const openTagPicker = async (count: number) => {
+      await bar(page).getByRole('button', { name: 'Tag', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: `Tag ${count} photo${count === 1 ? '' : 's'}` });
+      await dialog.getByLabel('Tags to add', { exact: true }).click();
+      return dialog;
+    };
+
+    // Inside the north project: its own tag and the starters, never the south project's tag.
+    await page.goto(`/photos/${projects.north}`);
+    await select(page, v, [north]);
+    let dialog = await openTagPicker(1);
+    for (const tag of [northTag, 'professional', 'field dimension', 'shop drawing']) await expect(dialog.getByRole('option', { name: tag, exact: true })).toBeVisible();
+    await expect(dialog.getByRole('option', { name: southTag, exact: true })).toHaveCount(0);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
+    // On Photos, photos from two projects: every tag.
+    await page.goto('/photos');
+    await select(page, v, [north, south]);
+    dialog = await openTagPicker(2);
+    for (const tag of [northTag, southTag, 'professional']) await expect(dialog.getByRole('option', { name: tag, exact: true })).toBeVisible();
   });
 
   test(`AC-15: select three photos, then add to album, tag, set project, set no project, remove from album, and trash on ${v}`, async ({ page, context }) => {
