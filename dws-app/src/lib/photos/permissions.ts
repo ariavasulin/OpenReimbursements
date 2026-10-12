@@ -2,9 +2,9 @@
 // public.photo_can_trash and the photo-admin checks in
 // 20261012182335_photo_admin_and_trash_rule.sql. This copy lets the screens offer
 // only controls that will work, and the server uses it too: a trash list stops at
-// a photo it refuses (server/actions.ts), the single-photo DELETE refuses early,
-// and the ownership route answers can_trash with it. A change to the rule in SQL
-// must be made here too.
+// a photo it refuses and a project-wide trash is refused up front (server/actions.ts),
+// the single-photo DELETE refuses early, and the ownership route answers can_trash
+// with it. A change to the rule in SQL must be made here too.
 
 /** How long after uploading a photo its uploader may still trash it. */
 export const OWN_UPLOAD_TRASH_DAYS = 30;
@@ -29,6 +29,14 @@ export function canTrashPhoto(
   const uploaded = Date.parse(photo.created_at);
   return photo.uploader_id === actor.user_id && Number.isFinite(uploaded) &&
     uploaded > now - OWN_UPLOAD_TRASH_DAYS * 86_400_000;
+}
+
+/**
+ * The PostgREST filter matching photos this person may NOT trash: canTrashPhoto's
+ * complement, for a count over a whole project. Not for an admin, who may trash anything.
+ */
+export function trashRefusedFilter(actorUserId: string, now = Date.now()): string {
+  return `uploader_id.neq.${actorUserId},created_at.lte.${new Date(now - OWN_UPLOAD_TRASH_DAYS * 86_400_000).toISOString()}`;
 }
 
 /** May this person delete this album? An admin, or whoever made it. */

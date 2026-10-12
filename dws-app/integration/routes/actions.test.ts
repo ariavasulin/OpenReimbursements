@@ -14,6 +14,7 @@ import { POST as consume } from '@/app/api/photo-migrations/handoffs/consume/rou
 import { DELETE as remove, PATCH as edit } from '@/app/api/photos/[id]/route';
 import { GET as dedupe } from '@/app/api/photos/dedupe/route';
 import type { PhotoActionBatchResponse } from '@/lib/photos/action-types';
+import { TRASH_RULE_MESSAGE } from '@/lib/photos/permissions';
 
 describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
  let f:Awaited<ReturnType<typeof createFixtures>>;
@@ -71,6 +72,17 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   const skipped=await json(await call(materialize,own.batch.id,{choices:{0:null}}));expect(skipped.batch.materialization_complete).toBe(true);expect(skipped.total).toBe(0);
   expect((await f.admin.from('photo_action_batches').update({action:'trash'}).eq('id',d.batch.id)).error).not.toBeNull();
   expect((await json(await call(apply,d.batch.id,{photo_ids:[id]}))).outcomes[0].status).toBe('applied');
+ });
+ it('a project-wide trash is refused with the rule, before any page, when the project holds a photo the employee may not delete; a photo admin proceeds',async()=>{
+  const j=await job();await photo(j.id);await photo(j.id,{uploader_id:f.employeeB.id});
+  const d=await draft('trash',{job_number:j.number,scope:'active'});
+  const refused=await json(await call(materialize,d.batch.id,{}),403);
+  expect(refused.error.code).toBe('trash_rule');expect(refused.error.message).toContain(TRASH_RULE_MESSAGE);
+  expect((await json(await call(read,d.batch.id,undefined,f.employeeA,'GET'))).total).toBe(0);
+  // employeeB's project-wide hand-off is refused too: the project holds employeeA's photo.
+  const mcp=await handoff('trash',{job_number:j.number,scope:'active'});
+  expect((await json(await call(materialize,mcp,{},f.employeeB),403)).error.code).toBe('trash_rule');
+  const admin=await draft('trash',{job_number:j.number,scope:'active'},undefined,f.photoAdmin);expect((await seal(admin.batch.id,f.photoAdmin)).total).toBe(2);
  });
  it('matching another owner’s trash offers an ordinary restore; MCP restore moves canonical and resolves dedupe',async()=>{
   const from=await job(),to=await job(),digest=randomBytes(32).toString('hex'),id=await photo(from.id,{content_sha256:digest});

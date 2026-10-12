@@ -163,6 +163,6 @@ describe('managing routes: rename, delete a project, delete forever', () => {
     expect((await call(purge, 'POST', '/api/photos/trash/purge', { photo_ids: ['not-a-uuid'] }, '', f.photoAdmin)).status).toBe(400);
     const request = new Request(`${origin}/api/photos/trash/purge`, { method: 'POST',
       headers: { origin: 'https://evil.example', 'content-type': 'application/json' }, body: JSON.stringify({ everything: true }) });
-    expect((await withRequest(request, f.employeeA.cookies, () => purge(request))).status).toBe(403);
+    expect((await withRequest(request, f.photoAdmin.cookies, () => purge(request))).status).toBe(403);
   });
 });

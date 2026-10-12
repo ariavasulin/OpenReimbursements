@@ -94,11 +94,14 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
   // This photo belongs to a different employee. Anyone may move or restore it, so those
   // prove the MCP binding: each batch is tied to its hand-off script. This employee may
   // not trash it, so a photo admin trashes it for the restore below.
-  const photo = randomUUID();
-  const original = Buffer.concat([png, randomBytes(16)]);
-  const path = `originals/${fixtures.employeeB.id}/${photo}/mcp-actions.png`;
-  expect((await fixtures.admin.storage.from('photos').upload(path, original, { contentType: 'image/png' })).error).toBeNull();
-  await fixtures.sql.query("insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,content_sha256,captured_at) values($1,$2,$3,'image','mcp-actions.png',$4,$5,'image/png',$6,now())", [photo, jobs[0], fixtures.employeeB.id, path, original.length, createHash('sha256').update(original).digest('hex')]);
+  const seedPhoto = async (uploader: string, name: string) => {
+    const id = randomUUID(), bytes = Buffer.concat([png, randomBytes(16)]);
+    const path = `originals/${uploader}/${id}/${name}`;
+    expect((await fixtures.admin.storage.from('photos').upload(path, bytes, { contentType: 'image/png' })).error).toBeNull();
+    await fixtures.sql.query("insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,content_sha256,captured_at) values($1,$2,$3,'image',$4,$5,$6,'image/png',$7,now())", [id, jobs[0], uploader, name, path, bytes.length, createHash('sha256').update(bytes).digest('hex')]);
+    return id;
+  };
+  const photo = await seedPhoto(fixtures.employeeB.id, 'mcp-actions.png');
   for (const script of ['move_photos', 'remove_photos', 'restore_photos']) {
     const output = await handoff(script, { selector: { photos: [{ photo_id: photo }] }, ...(script === 'move_photos' ? { destination_job_number: numbers[1] } : {}) });
     await page.goto(output.handoff_url);
@@ -116,6 +119,15 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
       expect(binding).toEqual({ script_name: script, consumed_by: fixtures.employeeA.id });
       evidence.push({ script, batch, binding, refused: 'forbidden' });
       await fixtures.sql.query("update public.photos set deleted_at=now(),deleted_by=$2,purge_after=now()+interval '30 days' where id=$1", [photo, fixtures.photoAdmin.id]);
+      // The employee's own fresh upload may go: the same hand-off ends in Trash.
+      const own = await seedPhoto(fixtures.employeeA.id, 'mcp-own.png');
+      const allowed = await handoff(script, { selector: { photos: [{ photo_id: own }] } });
+      await page.goto(allowed.handoff_url);
+      await expect(page.getByTestId('action-count')).toHaveText('1 photo');
+      await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
+      await expect(page.getByTestId('action-status')).toHaveText('Done');
+      expect((await fixtures.sql.query('select deleted_at from public.photos where id=$1', [own])).rows[0].deleted_at).not.toBeNull();
+      evidence.push({ script, batch: new URL(page.url()).searchParams.get('batch'), photo: own, trashed: true });
       continue;
     }
     await expect(page.getByTestId('action-count')).toHaveText('1 photo');

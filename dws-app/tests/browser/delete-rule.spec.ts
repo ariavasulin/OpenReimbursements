@@ -54,6 +54,12 @@ async function select(page: Page, phone: boolean, names: string[]) {
     for (const name of rest) await tick(page, name).click();
   }
 }
+/** Load a page and wait until it knows who is signed in, so a missing control is a decision, not a page still loading. */
+async function open(page: Page, url: string) {
+  const actor = page.waitForResponse(response => response.url().endsWith('/api/photos/actor') && response.ok());
+  await page.goto(url);
+  await actor;
+}
 async function capture(page: Page, info: TestInfo, name: string) {
   await page.screenshot({ path: info.outputPath(`${name}.png`), fullPage: true,
     style: 'div:has(> button[aria-label="Open Tanstack query devtools"]) { visibility: hidden !important; }' });
@@ -117,18 +123,18 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await fixtures.sql.query("update public.photos set deleted_at=now(),deleted_by=uploader_id,purge_after=now()+interval '30 days' where id=$1", [id]);
 
     await signIn(context, fixtures.employeeA);
-    await page.goto('/photos/trash');
+    await open(page, '/photos/trash');
     const row = page.getByTestId('trash-photo').filter({ hasText: name });
     await expect(row.getByRole('link', { name: 'Restore', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Empty trash', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /Delete forever|Select all on this page/ })).toHaveCount(0);
     await expect(row.getByRole('checkbox')).toHaveCount(0);
     await capture(page, info, `${viewport.name}-trash-employee`);
-    await page.goto(`/photos/${job}`);
+    await open(page, `/photos/${job}`);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Delete rule admin-${viewport.name}`);
     await expect(page.getByRole('button', { name: 'Rename', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Delete project', exact: true })).toHaveCount(0);
-    await page.goto('/photos/projects');
+    await open(page, '/photos/projects');
     await page.getByRole('button', { name: 'Select', exact: true }).click();
     await expect(page.getByRole('region', { name: 'Selected projects' }).getByRole('button', { name: /Delete/ })).toHaveCount(0);
 

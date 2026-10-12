@@ -92,6 +92,7 @@ export function usePhotoActor() {
     queryKey: ["photo-actor"],
     queryFn: () => fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions"),
     staleTime: 30_000,
+    refetchOnWindowFocus: true,
   }).data;
 }
 

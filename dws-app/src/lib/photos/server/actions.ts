@@ -4,7 +4,7 @@ import { assertPhotoBatchActor, type PhotoActor } from './authority';
 import { photoId } from './reads';
 import { MAX_BULK_PHOTOS } from '../apiShared';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc, photoLinkIds } from './http';
-import { canTrashPhoto } from '../permissions';
+import { canTrashPhoto, trashRefusedFilter } from '../permissions';
 
 export const ACTION_PHOTO_COLUMNS = 'id,job_id,uploader_id,created_at,original_name,display_name,kind,thumb_path,deleted_at,purge_after,duplicate_of,job:jobs(id,job_number,name,deleted_at)';
 /** Who may trash this photo (permissions.ts), so a trash list can stop at a photo SQL would refuse and ask about it instead. */
@@ -151,10 +151,16 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
     const job=await actor.db.from('jobs').select('id').eq('job_number',selector.job_number).maybeSingle();
     if(job.error) throwPhotoDatabaseError(job.error);
     if(!job.data) throw new PhotoApiError('invalid_input');
-    let query=actor.db.from('photos').select('id').eq('job_id',job.data.id).order('id').limit(101);
-    query=selector.scope==='active'?query.is('deleted_at',null):query.not('deleted_at','is',null);
-    if(batch.materialization_cursor) query=query.gt('id',photoId(batch.materialization_cursor));
-    const {data,error}=await query;if(error) throwPhotoDatabaseError(error);
+    const scopeIs=selector.scope==='active'?'is':'not.is';
+    // A project-wide trash is all or nothing, so a non-admin is turned away with the rule before
+    // any page is added, instead of meeting SQL's bare refusal once a page is in.
+    if(batch.action==='trash'&&!actor.isPhotoAdmin) {
+      const refused=await actor.db.from('photos').select('id',{count:'exact',head:true}).eq('job_id',job.data.id).filter('deleted_at',scopeIs,null).or(trashRefusedFilter(actor.actorId));
+      if(refused.error) throwPhotoDatabaseError(refused.error);
+      if((refused.count??0)>0) throw new PhotoApiError('trash_rule');
+    }
+    const query=actor.db.from('photos').select('id').eq('job_id',job.data.id).filter('deleted_at',scopeIs,null).order('id').limit(101);
+    const {data,error}=await (batch.materialization_cursor?query.gt('id',photoId(batch.materialization_cursor)):query);if(error) throwPhotoDatabaseError(error);
     ids=(data??[]).slice(0,100).map(row=>row.id);next=ids.at(-1)??batch.materialization_cursor;complete=(data??[]).length<=100;
   }
   await photoRpc(actor,'photo_materialize_action',{p_actor:actor.actorId,p_batch_id:id,p_cursor:batch.materialization_cursor,p_ids:ids,p_next_cursor:next,p_complete:complete});

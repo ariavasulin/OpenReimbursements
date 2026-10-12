@@ -257,8 +257,7 @@ export function UserFormModal({
               <div className="space-y-1">
                 <Label htmlFor="photo_admin" className="text-white">Photo admin</Label>
                 <p className="text-xs text-gray-400">
-                  In DWS Photos: can delete any photo, delete forever, empty the Trash, and delete projects.
-                  {`Everyone else can only delete photos they uploaded in the last ${OWN_UPLOAD_TRASH_DAYS} days.`}
+                  {`In DWS Photos: can delete any photo, delete forever, empty the Trash, and delete projects. Everyone else can only delete photos they uploaded in the last ${OWN_UPLOAD_TRASH_DAYS} days.`}
                 </p>
               </div>
             </div>

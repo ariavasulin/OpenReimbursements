@@ -55,8 +55,8 @@ $$;
 -- that must change with it: see the header of src/lib/photos/permissions.ts.
 create or replace function public.photo_can_trash(p_actor uuid,p_photo public.photos)
 returns boolean language sql stable security definer set search_path=public,pg_temp as $$
-  select public.photo_actor_is_admin(p_actor)
-    or (p_photo.uploader_id=p_actor and p_photo.created_at>now()-interval '30 days');
+  select coalesce(public.photo_actor_is_admin(p_actor)
+    or (p_photo.uploader_id=p_actor and p_photo.created_at>now()-interval '30 days'),false);
 $$;
 
 -- photo_materialize_action, from 20260920234821_photo_open_trash_authority.sql.

@@ -87,7 +87,7 @@ export default function TrashPage() {
       setCursor(null);
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'Failed to delete forever', { id,
-        description: 'It may have stopped part-way. Anything already gone from Trash cannot be restored; “Finish deleting” at the top of Trash completes it.' });
+        description: 'If it stopped part-way, anything already gone from Trash cannot be restored, and “Finish deleting” at the top of Trash completes it.' });
     } finally {
       refresh();
       setPurging(false);

@@ -28,16 +28,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: usersError.message }, { status: 500 });
     }
 
-    // The photo-admin flag is not in the list RPC; read it for this page of users.
-    const ids = (users || []).map((u: { id: string }) => u.id);
+    // The photo-admin flag is not in the list RPC; the admins are few, so read them all.
     const [{ data: total, error: countError }, { data: flags, error: flagsError }] = await Promise.all([
       supabaseAdmin.rpc('get_auth_users_count', {
         search_query: search,
         include_deleted: includeDeleted,
       }),
-      ids.length
-        ? supabaseAdmin.from('user_profiles').select('user_id, photo_admin').in('user_id', ids)
-        : Promise.resolve({ data: [] as { user_id: string; photo_admin: boolean }[], error: null }),
+      supabaseAdmin.from('user_profiles').select('user_id').eq('photo_admin', true),
     ]);
 
     if (countError) {
@@ -46,7 +43,7 @@ export async function GET(request: Request) {
     if (flagsError) {
       return NextResponse.json({ error: flagsError.message }, { status: 500 });
     }
-    const photoAdmins = new Set((flags || []).filter(row => row.photo_admin).map(row => row.user_id));
+    const photoAdmins = new Set((flags || []).map(row => row.user_id));
 
     const mappedUsers: AdminUser[] = (users || []).map((u: {
       id: string;
