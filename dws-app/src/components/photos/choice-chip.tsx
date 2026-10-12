@@ -68,7 +68,6 @@ export default function ChoiceChip<T extends string>({
       <DropdownMenuContent
         align="start"
         collisionPadding={16}
-        aria-label={name}
         onPointerDown={() => {
           byPointer.current = true;
         }}

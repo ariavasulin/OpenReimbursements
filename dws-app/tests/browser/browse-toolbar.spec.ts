@@ -9,6 +9,8 @@ let png: Buffer;
 const run = randomUUID().slice(0, 6);
 const project = randomUUID();
 const tag = `toolbar ${run}`;
+// The raw file carries its own tag, so Tag + Uploader can combine to an empty view.
+const rawTag = `raw ${run}`;
 const madePhotos: string[] = [];
 let namesBefore: { user_id: string; full_name: string | null }[] = [];
 
@@ -20,7 +22,8 @@ test.beforeAll(async () => {
   namesBefore = (await fixtures.sql.query('select user_id,full_name from public.user_profiles where user_id=any($1::uuid[])', [[fixtures.employeeA.id, fixtures.employeeB.id]])).rows;
   await fixtures.sql.query('update public.user_profiles set full_name=$1 where user_id=$2', ['Yana Ronin', fixtures.employeeA.id]);
   await fixtures.sql.query('update public.user_profiles set full_name=$1 where user_id=$2', ['Luis Ortega', fixtures.employeeB.id]);
-  await fixtures.sql.query('insert into public.jobs(id,job_number,name) values($1,$2,$3)', [project, `TB-${run}`, `Toolbar ${run}`]);
+  // A long name, so an active Project filter has a label that must truncate.
+  await fixtures.sql.query('insert into public.jobs(id,job_number,name) values($1,$2,$3)', [project, `TB-${run}`, `Harborview Tower Level 12 Office Fit-Out – Reception, Boardroom and Partitions ${run}`]);
   // Two images a day apart, and one camera raw file with no preview (a file tile).
   for (const [index, day] of ['2032-03-01', '2032-03-02'].entries()) {
     const id = randomUUID(); const bytes = Buffer.concat([png, randomBytes(16)]);
@@ -33,7 +36,7 @@ test.beforeAll(async () => {
   }
   const raw = await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,captured_at,tags)
     values(gen_random_uuid(),$1,$2,'image',$3,'originals/toolbar-'||gen_random_uuid(),10,'image/x-canon-cr2','2032-03-03T18:00:00Z',$4) returning id`,
-    [project, fixtures.employeeB.id, `IMG_${run}.CR2`, [tag]]);
+    [project, fixtures.employeeB.id, `IMG_${run}.CR2`, [rawTag]]);
   madePhotos.push(raw.rows[0].id);
 });
 test.afterAll(async () => {
@@ -84,6 +87,43 @@ test('at 320 px no Group by or Sort choice makes the page scroll sideways', asyn
       expect(box.x + box.width, setting).toBeLessThanOrEqual(320);
     }
   }
+});
+
+test('at 320 px a long active Project filter truncates instead of pushing the page sideways', async ({ page, context }) => {
+  await page.setViewportSize({ width: 320, height: 640 }); await authenticate(context);
+  await page.goto('/photos');
+  const filters = page.getByRole('group', { name: 'Filters' });
+  await filters.getByRole('button', { name: 'Filter by project', exact: true }).click();
+  await page.getByRole('menuitem', { name: new RegExp(run) }).click();
+  const projectChip = filters.getByRole('button', { name: new RegExp(`^Project: .*${run}$`) });
+  await expect(projectChip).toBeVisible();
+  const box = (await projectChip.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(320);
+  await expectNoSidewaysScroll(page, 'Photos at 320 with a long Project filter');
+});
+
+test('an empty filtered view is not shown as the next filter\'s answer while that filter loads', async ({ page, context }) => {
+  await authenticate(context);
+  await page.goto(`/photos/${project}`);
+  const filters = page.getByRole('group', { name: 'Filters' });
+  // Luis's only photo here is the raw file, which lacks `tag`.
+  await filters.getByRole('button', { name: 'Filter by tag', exact: true }).click();
+  await page.getByRole('menuitem', { name: tag, exact: true }).click();
+  await filters.getByRole('button', { name: 'Filter by uploader', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Luis Ortega', exact: true }).click();
+  const noMatch = page.getByText('No photos match these filters.');
+  await expect(noMatch).toBeVisible();
+  // The next uploader's answer is held: the empty view must not stand in for it.
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(url => url.pathname === '/api/photos', async route => { await held; await route.continue(); });
+  await filters.getByRole('button', { name: 'Uploader: Luis Ortega', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Yana Ronin', exact: true }).click();
+  await expect(filters.getByRole('button', { name: 'Uploader: Yana Ronin', exact: true })).toBeVisible();
+  await expect(noMatch).toHaveCount(0);
+  release();
+  await expect(page.getByRole('heading', { level: 2 }).filter({ hasText: /^March [12], 2032$/ })).toHaveCount(2);
+  await expect(noMatch).toHaveCount(0);
 });
 
 test('at 390 px the four filter chips share one row and the View chips take the second', async ({ page, context }) => {

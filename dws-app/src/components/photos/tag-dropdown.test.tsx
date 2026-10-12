@@ -36,11 +36,11 @@ afterEach(async () => {
 
 const answer = (tags: string[]) => new Response(JSON.stringify({ success: true, tags }), { status: 200 });
 
-it('asks for one project\'s tags when a project is known', async () => {
+it('asks for one project\'s tags to offer, and every tag to match spellings against, when a project is known', async () => {
   fetchMock.mockImplementation(async () => answer(['punch list']));
   await render('3962-job');
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(fetchMock.mock.calls[0][0]).toBe('/api/photo-tags?job=3962-job');
+  await act(async () => { await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2)); });
+  expect(fetchMock.mock.calls.map(call => call[0]).sort()).toEqual(['/api/photo-tags', '/api/photo-tags?job=3962-job']);
 });
 
 it('asks for every tag with no project', async () => {

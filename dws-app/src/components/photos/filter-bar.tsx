@@ -20,7 +20,7 @@ export const chipClass = (active: boolean) =>
 
 /** The open menu under a chip, and its rows. */
 export const menuClass = "border-[#4e4e4e] bg-[#2e2e2e] p-1 text-white";
-export const menuItemClass = "min-h-11 px-3 text-base focus:bg-[#3e3e3e] focus:text-white";
+export const menuItemClass = "min-h-11 px-3 text-base focus:bg-[#2680FC] focus:text-white";
 
 /**
  * One dropdown filter chip. It renders nothing when there is nothing to choose

@@ -197,9 +197,11 @@ export default function PhotoBrowser({
   // for one album — filter to the first, tick, filter to the second, tick.
   useEffect(clear, [key, clear]);
 
-  // Bulk Tag suggests one project's tags when every selected photo is in it.
+  // Bulk Tag suggests one project's tags when every selected photo is in it;
+  // on a project page that is the page's project, whatever pages are loaded.
   const sharedJobId = useMemo(() => {
     if (selectedIds.size === 0) return null;
+    if (scope.kind === "job") return scope.jobId;
     const byId = new Map(photos.map((photo) => [photo.id, photo]));
     let shared: string | null = null;
     for (const id of selectedIds) {
@@ -208,7 +210,7 @@ export default function PhotoBrowser({
       shared = jobId;
     }
     return shared;
-  }, [photos, selectedIds]);
+  }, [photos, selectedIds, scope]);
 
   // The viewer flips through the set as displayed: grouped order, images and
   // videos with previews only (file tiles download instead). A photo opened
@@ -258,9 +260,11 @@ export default function PhotoBrowser({
 
   const noFiltersActive = !filters.project && !filters.uploader && !filters.tag;
   // Known once any data is in hand, including the previous view's while a new
-  // sort or filter loads (isLoading is false then).
+  // sort or filter loads (isLoading is false then). Only a settled answer may
+  // say the view is empty: a dimmed previous view is not the new one's answer.
   const loaded = enabled && data !== undefined && !error;
-  const scopeIsEmpty = loaded && noFiltersActive && photos.length === 0;
+  const settled = loaded && !isPlaceholderData;
+  const scopeIsEmpty = settled && noFiltersActive && photos.length === 0;
   const projectCount = useMemo(
     () => new Set(photos.flatMap((photo) => photo.job_id ?? [])).size,
     [photos]
@@ -270,11 +274,12 @@ export default function PhotoBrowser({
     <>
       {loaded && summary?.({ count: photos.length, hasMore: hasNextPage, projectCount })}
 
-      {/* Filters and grouping only appear when there is something to filter. */}
-      {loaded && !scopeIsEmpty && (
+      {/* Filters and grouping only appear when there is something to filter;
+          they stay through a failed first page so All or Newest is reachable. */}
+      {(loaded || error !== null) && !scopeIsEmpty && (
         // One row wherever it fits; on a phone the View chips take a second row.
         <div className="mb-1 flex flex-row flex-wrap items-center gap-2">
-          <div role="group" aria-label="Filters" className="flex flex-wrap items-center gap-1.5">
+          <div role="group" aria-label="Filters" className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
             <button
               type="button"
               aria-pressed={noFiltersActive}
@@ -324,7 +329,7 @@ export default function PhotoBrowser({
           </div>
           {/* How the photos are laid out, not which ones. Wraps rather than
               pushing the page sideways on a narrow screen or at large text. */}
-          {photos.length > 0 && (
+          {(photos.length > 0 || error !== null) && (
             <div
               role="group"
               aria-label="View"
@@ -349,7 +354,7 @@ export default function PhotoBrowser({
       )}
 
       {scopeIsEmpty && empty}
-      {loaded && !noFiltersActive && photos.length === 0 && (
+      {settled && !noFiltersActive && photos.length === 0 && (
         <div className="py-10 text-center">
           <p className="text-base text-[#d0d0d0]">No photos match these filters.</p>
           <button

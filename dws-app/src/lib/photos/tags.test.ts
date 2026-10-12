@@ -90,6 +90,16 @@ describe("the tag dropdown", () => {
     expect(tagMenu(choices, ["punch list"], "Punch List")).toEqual({ options: [], add: null });
   });
 
+  it("resolves the Add row against every tag's spelling, even one the scoped list does not offer", () => {
+    // Project B offers no "roof"; project A carries one. Typing "Roof" in B stores A's spelling.
+    const scoped = tagChoices(["kitchen"]);
+    const every = tagChoices(["kitchen", "roof"]);
+    expect(tagMenu(scoped, [], "Roof", every)).toEqual({ options: [], add: "roof" });
+    expect(tagMenu(scoped, ["roof"], "ROOF", every)).toEqual({ options: [], add: null });
+    expect(appendResolvedTag([], "Roof", every)).toEqual(["roof"]);
+    expect(tagMenu(scoped, [], "Roof")).toEqual({ options: [], add: "Roof" });
+  });
+
   it("stores the existing or starter spelling for what was typed", () => {
     expect(resolveTag(" Kitchen ", choices)).toBe("kitchen");
     // A starter tag matches before any photo carries it.

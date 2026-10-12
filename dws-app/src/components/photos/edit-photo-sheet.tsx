@@ -56,7 +56,7 @@ export default function EditPhotoSheet({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tags: appendResolvedTag(meta.tags, meta.tagInput, choices),
+          tags: appendResolvedTag(meta.tags, meta.tagInput, choices.spellings),
         }),
       });
       toast.success("Photo updated");

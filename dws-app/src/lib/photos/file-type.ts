@@ -1,7 +1,8 @@
 // The file type a person sees: one word per photo, used for grouping and the
-// tile badge. Read from the original file name's extension first (through the
-// upload's own extension table, see classify.ts), then the stored MIME type,
-// then the row's kind; anything unrecognized is "Other". Pure — no DOM.
+// tile badge. A video row is "Video"; otherwise the original file name's
+// extension decides (through the upload's own extension table, see
+// classify.ts), then the stored MIME type; anything unrecognized is "Other".
+// Pure — no DOM.
 
 import { extensionOf, mimeForExtension } from "./classify";
 import type { PhotoRow } from "./types";

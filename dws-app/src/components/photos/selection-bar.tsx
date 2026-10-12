@@ -350,7 +350,7 @@ function BulkTagSheet({
     }
   }, [open]);
 
-  const pending = appendResolvedTag(tags, input, choices);
+  const pending = appendResolvedTag(tags, input, choices.spellings);
 
   const save = async () => {
     if (pending.length === 0 || busy) return;
