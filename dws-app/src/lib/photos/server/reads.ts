@@ -34,7 +34,7 @@ export async function requirePhotoReader() {
 /** Intentional ownership read includes retained trash; paths remain server-side. */
 export async function readPhotoOwnership(actor: PhotoActor, id: string) {
   const { data, error } = await actor.db.from('photos')
-    .select('id,job_id,uploader_id,deleted_at,purge_after,duplicate_of,original_path,thumb_path,preview_path,sidecar_path,playback_path')
+    .select('id,job_id,uploader_id,created_at,deleted_at,purge_after,duplicate_of,original_path,thumb_path,preview_path,sidecar_path,playback_path')
     .eq('id', photoId(id)).maybeSingle();
   if (error) throwPhotoDatabaseError(error);
   if (!data) throw new PhotoApiError('not_found');

@@ -7,20 +7,20 @@ describe('confirmed action transactions (AC-7, AC-8, AC-9)',()=>{
  beforeAll(async()=>{f=await createFixtures();expect((await f.admin.from('photo_release_state').update({photo_writes_enabled:true,mcp_enabled:true}).eq('singleton',true)).error).toBeNull()});
  afterAll(async()=>{await f?.close()});
  async function job(){const id=randomUUID();expect((await f.admin.from('jobs').insert({id,job_number:`db-actions-${id}`,name:'Action database fixture'})).error).toBeNull();return id}
- async function photo(jobId:string){const id=randomUUID();expect((await f.admin.from('photos').insert({id,job_id:jobId,uploader_id:f.employeeA.id,kind:'image',captured_at:new Date().toISOString(),original_path:`originals/${f.employeeA.id}/${id}/fixture.jpg`})).error).toBeNull();return id}
+ async function photo(jobId:string,uploader=f.employeeA.id){const id=randomUUID();expect((await f.admin.from('photos').insert({id,job_id:jobId,uploader_id:uploader,kind:'image',captured_at:new Date().toISOString(),original_path:`originals/${uploader}/${id}/fixture.jpg`})).error).toBeNull();return id}
  async function batch(actor:string,action:string,id:string,destination?:string,origin=action==='move'?'ui':'ordinary'){
   const inserted=await f.admin.from('photo_action_batches').insert({created_by:actor,origin,action,selector:{photos:[{photo_id:id}]},destination_job_id:destination??null}).select('id').single();expect(inserted.error).toBeNull();return inserted.data!.id as string;
  }
  async function materialize(actor:string,batch:string,id:string){return f.admin.rpc('photo_materialize_action',{p_actor:actor,p_batch_id:batch,p_cursor:null,p_ids:[id],p_next_cursor:'1',p_complete:true})}
  async function confirm(actor:string,batch:string,id:string){expect((await materialize(actor,batch,id)).error).toBeNull();expect((await f.admin.rpc('photo_approve_action',{p_actor:actor,p_batch_id:batch})).error).toBeNull()}
  const execute=(actor:string,batch:string,id:string)=>f.admin.rpc('photo_execute_action',{p_actor:actor,p_batch_id:batch,p_photo_ids:[id]});
- it('lets any employee trash and restore a colleague’s photo, recording them, and independently proves MCP bound removal',async()=>{
+ it('an employee trashes their own upload, a photo admin a colleague’s, anyone restores, and MCP removal is bound to its consumer',async()=>{
   const j=await job();
-  for(const actor of [f.employeeA,f.administrator]){const id=await photo(j),b=await batch(actor.id,'trash',id);await confirm(actor.id,b,id);const result=await execute(actor.id,b,id);expect(result.error).toBeNull();expect(result.data[0].status).toBe('applied')}
-  // photo-albums AC-5: employeeA uploaded every fixture photo; employeeB is an ordinary employee.
+  // employeeA uploaded every fixture photo below unless another uploader is named.
+  for(const actor of [f.employeeA,f.photoAdmin]){const id=await photo(j),b=await batch(actor.id,'trash',id);await confirm(actor.id,b,id);const result=await execute(actor.id,b,id);expect(result.error).toBeNull();expect(result.data[0].status).toBe('applied')}
   const theirs=await photo(j),row=async()=>(await f.admin.from('photos').select('uploader_id,deleted_at,deleted_by,purge_after').eq('id',theirs).single()).data!;
-  const trash=await batch(f.employeeB.id,'trash',theirs);await confirm(f.employeeB.id,trash,theirs);expect((await execute(f.employeeB.id,trash,theirs)).data[0].status).toBe('applied');
-  expect(await row()).toMatchObject({uploader_id:f.employeeA.id,deleted_by:f.employeeB.id});expect((await row()).deleted_at).not.toBeNull();
+  const trash=await batch(f.photoAdmin.id,'trash',theirs);await confirm(f.photoAdmin.id,trash,theirs);expect((await execute(f.photoAdmin.id,trash,theirs)).data[0].status).toBe('applied');
+  expect(await row()).toMatchObject({uploader_id:f.employeeA.id,deleted_by:f.photoAdmin.id});expect((await row()).deleted_at).not.toBeNull();
   const restore=await batch(f.employeeB.id,'restore',theirs);await confirm(f.employeeB.id,restore,theirs);expect((await execute(f.employeeB.id,restore,theirs)).data[0].status).toBe('applied');
   expect(await row()).toEqual({uploader_id:f.employeeA.id,deleted_at:null,deleted_by:null,purge_after:null});
   // What still guards these functions: the batch belongs to its creator, the actor must be live, and the gate must be open.
@@ -30,10 +30,10 @@ describe('confirmed action transactions (AC-7, AC-8, AC-9)',()=>{
   expect((await f.admin.from('photo_release_state').update({photo_writes_enabled:false}).eq('singleton',true)).error).toBeNull();
   expect((await materialize(f.employeeB.id,guarded,theirs)).error?.message).toBe('photo_gate_closed');
   expect((await f.admin.from('photo_release_state').update({photo_writes_enabled:true}).eq('singleton',true)).error).toBeNull();
-  const id=await photo(j);
-  const digest=randomBytes(32).toString('hex');expect((await f.admin.from('dws_action_handoffs').insert({token_digest:digest,script_name:'remove_photos',requested_input:{selector:{photos:[{photo_id:id}]}},expires_at:new Date(Date.now()+60_000).toISOString()})).error).toBeNull();
+  const own=await photo(j,f.employeeB.id);
+  const digest=randomBytes(32).toString('hex');expect((await f.admin.from('dws_action_handoffs').insert({token_digest:digest,script_name:'remove_photos',requested_input:{selector:{photos:[{photo_id:own}]}},expires_at:new Date(Date.now()+60_000).toISOString()})).error).toBeNull();
   const consumed=await f.admin.rpc('consume_dws_handoff',{p_actor:f.employeeB.id,p_token_digest:digest,p_script:'remove_photos'});expect(consumed.error).toBeNull();const mcp=consumed.data.photo_action_batch_id;
-  await confirm(f.employeeB.id,mcp,id);expect((await execute(f.employeeB.id,mcp,id)).data[0].status).toBe('applied');
+  await confirm(f.employeeB.id,mcp,own);expect((await execute(f.employeeB.id,mcp,own)).data[0].status).toBe('applied');
   expect((await f.admin.from('photo_action_batches').insert({created_by:f.employeeB.id,origin:'ui',action:'trash'})).error?.code).toBe('23514');
  });
  it('serializes competing confirmed moves with one conflict and preserves the winning item replay',async()=>{
@@ -45,11 +45,11 @@ describe('confirmed action transactions (AC-7, AC-8, AC-9)',()=>{
   expect((await execute(winner.actor,winner.batch,id)).data[0].status).toBe('applied');expect((await f.admin.from('photos').select('job_id').eq('id',id).single()).data?.job_id).toBe(winner.job);
  });
  it('recognizes the same result from another confirmation without extending trash retention',async()=>{
-  const j=await job(),id=await photo(j),a=await batch(f.employeeA.id,'trash',id),b=await batch(f.administrator.id,'trash',id);
-  await confirm(f.employeeA.id,a,id);await confirm(f.administrator.id,b,id);
+  const j=await job(),id=await photo(j),a=await batch(f.employeeA.id,'trash',id),b=await batch(f.photoAdmin.id,'trash',id);
+  await confirm(f.employeeA.id,a,id);await confirm(f.photoAdmin.id,b,id);
   expect((await execute(f.employeeA.id,a,id)).data[0].status).toBe('applied');
   const first=(await f.admin.from('photos').select('deleted_at,purge_after,deleted_by').eq('id',id).single()).data;
-  expect((await execute(f.administrator.id,b,id)).data[0].status).toBe('applied');
+  expect((await execute(f.photoAdmin.id,b,id)).data[0].status).toBe('applied');
   expect((await f.admin.from('photos').select('deleted_at,purge_after,deleted_by').eq('id',id).single()).data).toEqual(first);
   expect((await f.admin.from('photo_action_batches').update({materialization_complete:false}).eq('id',a)).error?.message).toBe('conflict');
  });

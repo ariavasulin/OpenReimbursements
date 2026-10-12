@@ -2,7 +2,7 @@ import { cleanPhotoName, cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared
 import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { PhotoApiError, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, photoRpc } from '@/lib/photos/server/http';
 import { photoId, readPhotoOwnership, requirePhotoReader } from '@/lib/photos/server/reads';
-import { createAction, materializeAction, onlyKeys } from '@/lib/photos/server/actions';
+import { createAction, materializeAction, mayTrash, onlyKeys } from '@/lib/photos/server/actions';
 interface RouteContext { params:Promise<{id:string}> }
 
 /**
@@ -22,7 +22,7 @@ export async function GET(_request:Request,context:RouteContext){return photoRou
 /**
  * Metadata edits apply only to active rows. Ownership changes require confirmation.
  * `display_name` renames the photo as people see and download it; an empty name
- * (or null) goes back to the uploaded filename, which never changes.
+ * (or null) goes back to the automatic name; the uploaded filename never changes.
  */
 export async function PATCH(request:Request,context:RouteContext){return photoRoute(async()=>{
  const actor=await requirePhotoActor(request,{mutation:true}),id=photoId((await context.params).id),body=await readPhotoJson(request);
@@ -42,11 +42,13 @@ export async function PATCH(request:Request,context:RouteContext){return photoRo
  return photoJson({success:true,photo:data});
 });}
 
-/** Compatibility single-target confirmation, open to any signed-in employee; no Storage objects are removed here. */
+/** Compatibility single-target confirmation: a photo admin, or the uploader within 30 days of the upload. No Storage objects are removed here. */
 export async function DELETE(request:Request,context:RouteContext){return photoRoute(async()=>{
  const actor=await requirePhotoActor(request,{mutation:true}),id=photoId((await context.params).id),photo=await readPhotoOwnership(actor,id);
  // Replay preserves the original deletion instant and its fixed retention deadline.
  if(photo.deleted_at) return photoJson({success:true,photo_id:id,deleted_at:photo.deleted_at,purge_after:photo.purge_after});
+ // Refused before a draft exists; SQL checks the same rule again on every step.
+ if(!mayTrash(actor,photo)) throw new PhotoApiError('forbidden');
  const origin=new URL(request.url).origin;
  const created=await createAction(actor,{action:'trash',selector:{photos:[{photo_id:id}]}},origin);
  await materializeAction(actor,created.batch.id,origin,{});

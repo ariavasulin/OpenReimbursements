@@ -10,6 +10,7 @@ import {
   plural,
 } from "@/lib/photos/format";
 import { useDesktop } from "@/hooks/use-desktop";
+import { fileTypeLabel } from "@/lib/photos/file-type";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
@@ -68,6 +69,9 @@ function Tick({ checked, className }: { checked: boolean; className?: string }) 
     </span>
   );
 }
+
+/** A small corner label on a tile: a video's duration, a file's type. */
+const tilePillClass = "absolute rounded bg-black/65 px-[5px] py-px text-[11px] font-medium text-white";
 
 function Tile({
   photo,
@@ -208,7 +212,7 @@ function Tile({
             </span>
           )}
           {photo.kind === "video" && (
-            <span className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded bg-black/65 px-[5px] py-px text-[11px] font-medium text-white">
+            <span className={cn(tilePillClass, "bottom-1 right-1 flex items-center gap-0.5")}>
               <Play className="h-2.5 w-2.5 fill-current" />
               {photo.duration_secs != null
                 ? formatDuration(photo.duration_secs)
@@ -222,6 +226,8 @@ function Tile({
   }
 
   const size = formatBytes(photo.original_bytes);
+  // "Other" says nothing the file name does not.
+  const type = fileTypeLabel(photo);
   return (
     <div
       className={cn(frame, "border border-[#4e4e4e]")}
@@ -239,9 +245,11 @@ function Tile({
         ) : (
           <FileText className="h-5 w-5 text-[#a0a0a0]" />
         )}
-        <span className="w-full truncate text-[11px] text-[#b4b4b4]">{name}</span>
+        <span className="line-clamp-2 w-full break-all text-[11px] text-[#b4b4b4]">{name}</span>
         {size && <span className="text-[11px] text-[#8e8e8e]">{size}</span>}
       </div>
+      {/* In a corner so the name line keeps clear of the download link on a phone tile. */}
+      {type !== "Other" && <span className={cn(tilePillClass, "right-1 top-1")}>{type}</span>}
       {!selecting && (
         <a
           href={downloadUrl(photo)}

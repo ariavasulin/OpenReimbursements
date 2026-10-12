@@ -10,11 +10,15 @@ const actionClass =
 
 /**
  * The bar under a list of albums or projects in select mode, styled like the
- * photo selection bar: the count, Rename (exactly one selected), and Delete.
+ * photo selection bar: the count, Rename (exactly one selected), and Delete —
+ * shown only when this person may delete some of the selection, and saying so
+ * when that is not all of it.
  */
 export default function CollectionSelectBar({
   label,
   count,
+  deletable,
+  offerDelete = true,
   busy,
   onRename,
   onDelete,
@@ -23,6 +27,10 @@ export default function CollectionSelectBar({
   /** "Selected albums" / "Selected projects", for screen readers. */
   label: string;
   count: number;
+  /** How many of the selected ones this person may delete. */
+  deletable: number;
+  /** False when this person may delete none of this kind (projects, for anyone but a photo admin). */
+  offerDelete?: boolean;
   busy: boolean;
   onRename(): void;
   onDelete(): void;
@@ -71,10 +79,12 @@ export default function CollectionSelectBar({
           <Pencil className="h-4 w-4" aria-hidden="true" />
           Rename
         </button>
-        <button type="button" className={`${actionClass} text-red-200`} disabled={busy || count === 0} onClick={onDelete}>
-          <Trash2 className="h-4 w-4" aria-hidden="true" />
-          Delete
-        </button>
+        {offerDelete && (count === 0 || deletable > 0) && (
+          <button type="button" className={`${actionClass} text-red-200`} disabled={busy || deletable === 0} onClick={onDelete}>
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            {deletable === count ? "Delete" : `Delete the ${deletable} you can delete`}
+          </button>
+        )}
       </div>
     </div>,
     slot

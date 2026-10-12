@@ -31,8 +31,8 @@ async function seed(name: string, jobId: string | null, tag: string) {
   const id = randomUUID(); const bytes = Buffer.concat([png, randomBytes(16)]);
   const path = `originals/${fixtures.employeeA.id}/${id}/${name}`;
   expect((await fixtures.admin.storage.from('photos').upload(path, bytes, { contentType: 'image/png' })).error).toBeNull();
-  await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,original_path,original_bytes,mime_type,content_sha256,thumb_path,captured_at,tags)
-    values($1,$2,$3,'image',$4,$5,$6,'image/png',$7,$5,now(),$8)`,
+  await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,display_name,name_source,original_path,original_bytes,mime_type,content_sha256,thumb_path,captured_at,tags)
+    values($1,$2,$3,'image',$4,$4,'manual',$5,$6,'image/png',$7,$5,now(),$8)`,
     [id, jobId, fixtures.employeeA.id, name, path, bytes.length, createHash('sha256').update(bytes).digest('hex'), [tag]]);
   made.push(id);
   return id;

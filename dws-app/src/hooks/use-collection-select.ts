@@ -12,11 +12,13 @@ import { toggleSelection } from "@/lib/photos/selection";
  */
 export function useCollectionSelect<T extends { id: string }>(
   items: T[] | undefined,
-  { noun, deleteOne, deletedDescription }: {
+  { noun, deleteOne, deletedDescription, canDelete = () => true }: {
     /** "album" / "project", for the toasts. */
     noun: string;
     deleteOne(id: string): Promise<unknown>;
     deletedDescription: string;
+    /** Whether this person may delete the item (permissions.ts); Delete acts on these only. */
+    canDelete?(item: T): boolean;
   }
 ) {
   const queryClient = useQueryClient();
@@ -33,13 +35,14 @@ export function useCollectionSelect<T extends { id: string }>(
   }, [selected]);
 
   const chosen = (items ?? []).filter((item) => selected?.has(item.id));
+  const deletable = chosen.filter(canDelete);
   const toggle = (id: string) =>
     setSelected((current) => toggleSelection(current ?? new Set(), id).selected);
 
-  /** Deletes every chosen item; a failure keeps select mode on the ones left. */
+  /** Deletes every chosen item this person may delete; a failure keeps select mode on the ones left. */
   const remove = async () => {
     setBusy(true);
-    const results = await Promise.allSettled(chosen.map((item) => deleteOne(item.id)));
+    const results = await Promise.allSettled(deletable.map((item) => deleteOne(item.id)));
     const deleted = results.filter((result) => result.status === "fulfilled").length;
     const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failure) {
@@ -60,6 +63,7 @@ export function useCollectionSelect<T extends { id: string }>(
     start: () => setSelected(new Set()),
     stop: () => setSelected(null),
     chosen,
+    deletable,
     toggle,
     busy,
     renaming,

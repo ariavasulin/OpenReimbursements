@@ -55,7 +55,7 @@ export const MAX_PHOTO_NAME_LENGTH = 200;
 
 /**
  * A typed photo name as it is stored: inner spaces collapsed and trimmed; blank
- * means "no name of its own" (null), so the uploaded filename shows again.
+ * means "no name of its own" (null), so the automatic name comes back.
  * `invalid` for a name too long or holding a slash, which the column refuses.
  */
 export function cleanPhotoName(input: string | null): string | null | 'invalid' {

@@ -32,7 +32,7 @@ export default function EditPhotoSheet({
 }: EditPhotoSheetProps) {
   const [meta, setMeta] = useState<PhotoMeta>(EMPTY_META);
   const [busy, setBusy] = useState(false);
-  const choices = useTagChoices(open);
+  const choices = useTagChoices(open, photo?.job_id);
 
   // Seed from the photo each time the sheet opens on one.
   const photoId = photo?.id;
@@ -56,7 +56,7 @@ export default function EditPhotoSheet({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tags: appendResolvedTag(meta.tags, meta.tagInput, choices),
+          tags: appendResolvedTag(meta.tags, meta.tagInput, choices.spellings),
         }),
       });
       toast.success("Photo updated");

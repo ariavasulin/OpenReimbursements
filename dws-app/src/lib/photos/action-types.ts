@@ -5,6 +5,8 @@ export type PhotoReference = { photo_id: string } | { photo_url: string } | { jo
 export type PhotoSelector = { photos: PhotoReference[] } | { job_number: string; scope: 'active' | 'trash' };
 export interface ActionPhoto {
   id: string; job_id: string | null; uploader_id: string; original_name: string | null; display_name?: string | null;
+  /** Upload time: with uploader_id, decides who may trash it (permissions.ts). */
+  created_at: string;
   deleted_at: string | null; purge_after: string | null; duplicate_of: string | null;
   thumb_path: string | null; kind: PhotoKind;
   /** deleted_at is set when the project itself is in Trash or gone. */
@@ -25,7 +27,9 @@ export interface PhotoActionItem {
   photo:ActionPhoto|null;
 }
 export interface UnresolvedPhotoReference {
-  reference_index:number; reference:PhotoReference; reason:'not_found'|'ambiguous'; candidates:ActionPhoto[]; total:number;
+  reference_index:number; reference:PhotoReference;
+  /** forbidden: one match, but this person may not trash it (permissions.ts). */
+  reason:'not_found'|'ambiguous'|'forbidden'; candidates:ActionPhoto[]; total:number;
 }
 export interface PhotoActionBatchResponse {
   batch:PhotoActionBatch; items:PhotoActionItem[]; total:number; can_mutate:boolean;

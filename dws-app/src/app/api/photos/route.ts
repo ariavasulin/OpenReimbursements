@@ -20,15 +20,17 @@ import {
   isIsoTimestamp,
   keysetOrFilter,
   parseLimit,
+  type KeysetDirection,
 } from '@/lib/keysetCursor';
 
-// GET  /api/photos?job=&album=&tags=&uploader=&q=&cursor=&limit=
-//      Active photos, newest capture first, keyset-paginated on
-//      (captured_at, id). With no filter it lists every photo (the Photos
-//      screen). `job` is a project id, or `none` for photos with no project;
-//      `album` is an album id. Filters combine. `q` searches across job
-//      number/name, uploader name, and tag membership (ILIKE — no search
-//      infrastructure at DWS scale).
+// GET  /api/photos?job=&album=&tags=&uploader=&q=&sort=&cursor=&limit=
+//      Active photos, keyset-paginated on (captured_at, id): newest capture
+//      first, or oldest first with `sort=asc`; a cursor continues in the
+//      direction of the request that carries it. With no filter it lists
+//      every photo (the Photos screen). `job` is a project id, or `none` for
+//      photos with no project; `album` is an album id. Filters combine. `q`
+//      searches across job number/name, uploader name, and tag membership
+//      (ILIKE — no search infrastructure at DWS scale).
 // POST /api/photos — finalize an upload: insert the row for files the browser
 //      already put in storage. The row existing is what makes a photo "in".
 
@@ -120,6 +122,7 @@ export async function GET(request: Request) {
     .map((tag) => tag.trim())
     .filter(Boolean);
   const q = params.get('q')?.trim() || null;
+  const sortParam = params.get('sort') || null;
 
   if (job && !isUuid(job)) {
     return NextResponse.json({ error: 'Invalid job id' }, { status: 400 });
@@ -130,6 +133,11 @@ export async function GET(request: Request) {
   if (uploader && !isUuid(uploader)) {
     return NextResponse.json({ error: 'Invalid uploader id' }, { status: 400 });
   }
+  if (sortParam !== null && sortParam !== 'asc' && sortParam !== 'desc') {
+    return NextResponse.json({ error: 'Invalid sort' }, { status: 400 });
+  }
+  const direction: KeysetDirection = sortParam === 'asc' ? 'asc' : 'desc';
+  const ascending = direction === 'asc';
 
   const limit = parseLimit(params.get('limit'), PHOTOS_PAGE_SIZE, MAX_LIMIT);
   if (limit === null) {
@@ -143,8 +151,8 @@ export async function GET(request: Request) {
     .from('photos')
     .select(album ? `${PHOTO_COLUMNS}, albums!inner(id)` : PHOTO_COLUMNS)
     .is('deleted_at', null)
-    .order('captured_at', { ascending: false })
-    .order('id', { ascending: false })
+    .order('captured_at', { ascending })
+    .order('id', { ascending })
     .limit(limit + 1);
 
   if (job) query = query.eq('job_id', job);
@@ -179,7 +187,7 @@ export async function GET(request: Request) {
     }
     // Separate or() calls are ANDed by PostgREST, so this composes with q.
     query = query.or(
-      keysetOrFilter('captured_at', cursor.capturedAt, 'id', cursor.id)
+      keysetOrFilter('captured_at', cursor.capturedAt, 'id', cursor.id, direction)
     );
   }
 

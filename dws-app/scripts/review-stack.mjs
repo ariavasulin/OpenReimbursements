@@ -324,6 +324,8 @@ function planPhotos(photos, { projectOptional }) {
     photo.uploader = index % 2 === 0 ? 'reviewer' : 'colleague';
     photo.tags = index % 3 === 1 ? TAG_SETS[Math.floor(index / 3) % TAG_SETS.length] : [];
   });
+  // One tag only the first project uses, so per-project tag suggestions are visible.
+  for (const photo of sorted.filter(entry => entry.project === 0).slice(0, 2)) photo.tags = [...photo.tags, 'veneer'];
   return sorted;
 }
 
@@ -381,6 +383,15 @@ async function seed(sql, admin, people, seedDir) {
     }
   }
   const seeded = photos.filter(photo => !photo.skipped);
+  // ---- One camera raw file with no preview: shows as a file tile with its RAW badge ----
+  const raw = { id: seedUuid('photo:raw-file'), name: 'IMG_9001.CR2', bytes: Buffer.from('review-stack raw placeholder') };
+  const rawPath = `originals/${people.colleague}/${raw.id}/${raw.name}`;
+  await put(rawPath, raw.bytes, 'image/x-canon-cr2');
+  await insertRow(sql, 'photos', photoColumns, {
+    id: raw.id, job_id: projectIds[0], uploader_id: people.colleague, kind: 'image', tags: [], captured_at: new Date(newest - 86_400_000).toISOString(),
+    captured_at_source: 'upload', original_path: rawPath, original_bytes: raw.bytes.length, mime_type: 'image/x-canon-cr2', original_name: raw.name,
+    content_sha256: createHash('sha256').update(raw.bytes).digest('hex'), created_at: new Date(newest).toISOString(),
+  });
   // ---- One photo in trash ----
   const trashed = seeded.find(photo => photo.project === 0 && !photo.tags.length) ?? seeded.find(photo => !photo.party);
   if (trashed && ['deleted_at', 'deleted_by', 'purge_after'].every(name => photoColumns.has(name))) {

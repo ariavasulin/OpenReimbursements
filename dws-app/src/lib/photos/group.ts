@@ -1,12 +1,16 @@
-// Input is newest-first.
+// Input is in the grid's sort order (newest or oldest first); groups and the
+// photos inside them keep it unless a mode says otherwise.
 
+import { FILE_TYPE_LABELS, fileTypeLabel } from "./file-type";
 import { NO_PROJECT } from "./format";
 import type { PhotoRow } from "./types";
 
-export type GroupBy = "date" | "job" | "tag";
+export type GroupBy = "date" | "job" | "tag" | "uploader" | "type";
 
 /** Header of the group for photos that carry no tag at all; always the last group. */
 export const NO_TAGS = "No tags";
+/** Header of the group for photos whose uploader has no name on file; always last. */
+export const UNKNOWN_UPLOADER = "Unknown";
 
 export interface PhotoGroup {
   /** Stable identity for React keys and sorting. */
@@ -30,10 +34,13 @@ function append(
   group.photos.push(photo);
 }
 
+const byLabel = (a: PhotoGroup, b: PhotoGroup) =>
+  a.label.localeCompare(b.label, "en", { sensitivity: "base" });
+
 /**
  * By tag: a photo shows under EACH of its tags, so the same photo can sit in
  * several groups. Tags run A to Z ignoring case; "No tags" is always last.
- * Inside a group the photos keep the input order (newest first).
+ * Inside a group the photos keep the input order.
  */
 function groupByTag(photos: PhotoRow[]): PhotoGroup[] {
   const map = new Map<string, PhotoGroup>();
@@ -42,17 +49,47 @@ function groupByTag(photos: PhotoRow[]): PhotoGroup[] {
     if (photo.tags.length === 0) untagged.push(photo);
     for (const tag of photo.tags) append(map, `tag:${tag}`, tag, photo);
   }
-  const groups = [...map.values()].sort((a, b) =>
-    a.label.localeCompare(b.label, "en", { sensitivity: "base" })
-  );
+  const groups = [...map.values()].sort(byLabel);
   if (untagged.length > 0) {
     groups.push({ key: "tag:none", label: NO_TAGS, photos: untagged });
   }
   return groups;
 }
 
+/**
+ * By uploader: one group per person, keyed by their id (two people with the
+ * same name stay apart), A to Z ignoring case like tags. Uploaders with no
+ * name on file share one "Unknown" group, last.
+ */
+function groupByUploader(photos: PhotoRow[]): PhotoGroup[] {
+  const map = new Map<string, PhotoGroup>();
+  const unknown: PhotoRow[] = [];
+  for (const photo of photos) {
+    const name = photo.uploader?.full_name?.trim();
+    if (name) append(map, `uploader:${photo.uploader_id}`, name, photo);
+    else unknown.push(photo);
+  }
+  const groups = [...map.values()].sort(byLabel);
+  if (unknown.length > 0) {
+    groups.push({ key: "uploader:unknown", label: UNKNOWN_UPLOADER, photos: unknown });
+  }
+  return groups;
+}
+
+/** By file type, in `FILE_TYPE_LABELS` order, so the list reads the same on every page. */
+function groupByType(photos: PhotoRow[]): PhotoGroup[] {
+  const map = new Map<string, PhotoGroup>();
+  for (const photo of photos) {
+    const label = fileTypeLabel(photo);
+    append(map, `type:${label}`, label, photo);
+  }
+  return FILE_TYPE_LABELS.flatMap((label) => map.get(`type:${label}`) ?? []);
+}
+
 export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] {
   if (groupBy === "tag") return groupByTag(photos);
+  if (groupBy === "uploader") return groupByUploader(photos);
+  if (groupBy === "type") return groupByType(photos);
 
   // Map keeps insertion order, so groups come out in first-seen order.
   const map = new Map<string, PhotoGroup>();

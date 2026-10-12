@@ -36,6 +36,11 @@ const EXT: Record<string, { kind: PickKind; mime: string }> = {
   xmp: { kind: "sidecar", mime: "application/rdf+xml" },
 };
 
+/** The canonical MIME type uploads store for a known extension; undefined otherwise. */
+export function mimeForExtension(ext: string): string | undefined {
+  return EXT[ext]?.mime;
+}
+
 export function extensionOf(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";

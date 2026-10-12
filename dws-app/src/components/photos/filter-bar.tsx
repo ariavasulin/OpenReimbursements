@@ -8,14 +8,19 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { FilterOption } from "@/lib/photos/filter-options";
+import { cn } from "@/lib/utils";
 
 /** 44px tall: these are everyday controls for people on phones in the field. */
 export const chipClass = (active: boolean) =>
-  `flex min-h-11 items-center rounded-full border px-4 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC] focus-visible:ring-offset-2 focus-visible:ring-offset-[#222222] ${
+  `flex min-h-11 items-center rounded-full border px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC] focus-visible:ring-offset-2 focus-visible:ring-offset-[#222222] ${
     active
       ? "border-[#2680FC] bg-[#2680FC] font-medium text-white"
       : "border-[#4e4e4e] bg-[#2e2e2e] text-[#d0d0d0] hover:border-[#6e6e6e]"
   }`;
+
+/** The open menu under a chip, and its rows. */
+export const menuClass = "border-[#4e4e4e] bg-[#2e2e2e] p-1 text-white";
+export const menuItemClass = "min-h-11 px-3 text-base focus:bg-[#2680FC] focus:text-white";
 
 /**
  * One dropdown filter chip. It renders nothing when there is nothing to choose
@@ -40,7 +45,7 @@ export function FilterChip({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          // Spelled out: "Tag" alone is also a Group by button on the same screen.
+          // Spelled out: "Tag" alone is also a Group by choice on the same screen.
           aria-label={active ? `${label}: ${active}` : `Filter by ${label.toLowerCase()}`}
           className={`max-w-full gap-1.5 ${chipClass(Boolean(active))}`}
         >
@@ -50,12 +55,13 @@ export function FilterChip({
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
-        className="max-h-[60dvh] max-w-[min(22rem,calc(100vw-2rem))] overflow-y-auto border-[#4e4e4e] bg-[#2e2e2e] p-1 text-white"
+        collisionPadding={16}
+        className={cn("max-h-[60dvh] max-w-[min(22rem,calc(100vw-2rem))] overflow-y-auto", menuClass)}
       >
         {active && (
           <DropdownMenuItem
             onClick={onClear}
-            className="min-h-11 px-3 text-base text-[#8bbaff] focus:bg-[#3e3e3e] focus:text-white"
+            className={cn(menuItemClass, "text-[#8bbaff]")}
           >
             Show every {label.toLowerCase()}
           </DropdownMenuItem>
@@ -64,7 +70,7 @@ export function FilterChip({
           <DropdownMenuItem
             key={option.value}
             onClick={() => onSelect(option.value)}
-            className="min-h-11 whitespace-normal break-words px-3 text-base focus:bg-[#3e3e3e] focus:text-white"
+            className={cn(menuItemClass, "whitespace-normal break-words")}
           >
             {option.label}
           </DropdownMenuItem>

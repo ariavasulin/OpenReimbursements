@@ -1,6 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
+import type { PhotoKind } from '../../src/lib/photos/types';
 
 // 20260923120000_photo_manage_and_purge.sql and its follow-up 20260923180000: rename a photo, renumber a project,
 // delete and restore a project, and delete Trash forever. Every scenario owns its rows.
@@ -21,10 +24,10 @@ describe('managing photos, projects, albums, and Trash', () => {
   const number = () => randomUUID().slice(0, 8);
   const project = async (name = 'Manage fixture', jobNumber: string | null = number()) =>
     (await rpc('photo_create_job', { p_actor: f.employeeA.id, p_name: name, p_job_number: jobNumber })).job as { id: string; job_number: string };
-  async function photo(jobId: string | null, options: { trashed?: boolean; duplicateOf?: string; originalPath?: string } = {}) {
+  async function photo(jobId: string | null, options: { trashed?: boolean; duplicateOf?: string; originalPath?: string; capturedAt?: string; kind?: PhotoKind } = {}) {
     const id = randomUUID(); const now = Date.now();
-    const inserted = await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeB.id, kind: 'image',
-      captured_at: new Date(now).toISOString(), original_path: options.originalPath ?? `originals/${f.employeeB.id}/${id}/fixture.jpg`,
+    const inserted = await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeB.id, kind: options.kind ?? 'image',
+      captured_at: options.capturedAt ?? new Date(now).toISOString(), original_path: options.originalPath ?? `originals/${f.employeeB.id}/${id}/fixture.jpg`,
       thumb_path: `derived/${f.employeeB.id}/${id}_thumb.webp`, duplicate_of: options.duplicateOf ?? null,
       legacy_content_sha256: options.duplicateOf ? 'a'.repeat(64) : null,
       ...(options.trashed ? { deleted_at: new Date(now).toISOString(), deleted_by: f.employeeB.id,
@@ -36,37 +39,122 @@ describe('managing photos, projects, albums, and Trash', () => {
     (await f.sql.query(`select * from public.${table} where id=$1`, [id])).rows[0];
   const album = async (name = 'Manage album') =>
     (await rpc('photo_create_album', { p_actor: f.employeeA.id, p_name: name })).album.id as string;
-  /** The real confirm flow, as the albums suite drives it. */
-  async function act(action: 'trash' | 'restore', photoId: string) {
-    const inserted = await f.admin.from('photo_action_batches').insert({ created_by: f.employeeA.id, origin: 'ordinary',
-      action, selector: { photos: [{ photo_id: photoId }] } }).select('id').single();
+  /** The real confirm flow, as the albums suite drives it; a move names its destination (null is No project).
+   *  A trash runs as the photo admin: the fixture photos are employee B's, which employee A may not trash. */
+  async function act(action: 'trash' | 'restore' | 'move', photoId: string, destination?: string | null) {
+    const actor = action === 'trash' ? f.photoAdmin.id : f.employeeA.id;
+    const inserted = await f.admin.from('photo_action_batches').insert({ created_by: actor, origin: action === 'move' ? 'ui' : 'ordinary',
+      action, selector: { photos: [{ photo_id: photoId }] }, ...(action === 'move' ? { destination_job_id: destination } : {}) }).select('id').single();
     expect(inserted.error).toBeNull();
     const batch = inserted.data!.id as string;
-    await rpc('photo_materialize_action', { p_actor: f.employeeA.id, p_batch_id: batch, p_cursor: null, p_ids: [photoId], p_next_cursor: '1', p_complete: true });
-    await rpc('photo_approve_action', { p_actor: f.employeeA.id, p_batch_id: batch });
-    return (await rpc('photo_execute_action', { p_actor: f.employeeA.id, p_batch_id: batch, p_photo_ids: [photoId] }))[0] as { status: string };
+    await rpc('photo_materialize_action', { p_actor: actor, p_batch_id: batch, p_cursor: null, p_ids: [photoId], p_next_cursor: '1', p_complete: true });
+    await rpc('photo_approve_action', { p_actor: actor, p_batch_id: batch });
+    return (await rpc('photo_execute_action', { p_actor: actor, p_batch_id: batch, p_photo_ids: [photoId] }))[0] as { status: string };
   }
   /** Drive the three purge steps as the route does, with no Storage objects to remove. */
   async function drain() {
     let purged = 0;
-    for (const pending of await rpc('photo_purge_pending', { p_actor: f.employeeA.id, p_limit: 500 }) as Array<{ id: string; paths: string[] }>) {
-      for (const path of pending.paths) await rpc('photo_purge_authorize_delete', { p_actor: f.employeeA.id, p_path: path, p_photo_id: pending.id });
-      if (await rpc('photo_purge_finish', { p_actor: f.employeeA.id, p_photo_id: pending.id })) purged++;
+    for (const pending of await rpc('photo_purge_pending', { p_actor: f.photoAdmin.id, p_limit: 500 }) as Array<{ id: string; paths: string[] }>) {
+      for (const path of pending.paths) await rpc('photo_purge_authorize_delete', { p_actor: f.photoAdmin.id, p_path: path, p_photo_id: pending.id });
+      if (await rpc('photo_purge_finish', { p_actor: f.photoAdmin.id, p_photo_id: pending.id })) purged++;
     }
     return purged;
   }
 
   describe('photo names', () => {
-    it('any employee renames an active photo; blank goes back to the uploaded filename; sessions cannot write it', async () => {
+    it('any employee renames an active photo; blank goes back to the automatic name; sessions cannot write it', async () => {
       const id = await photo(null);
       expect(await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: '  Kitchen   before ' }))
         .toEqual({ id, display_name: 'Kitchen before' });
       expect(await refused('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: 'a/b' })).toBe('photo_name_invalid');
       expect(await refused('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: 'x'.repeat(201) })).toBe('photo_name_invalid');
-      expect((await rpc('photo_rename_photo', { p_actor: f.employeeB.id, p_photo: id, p_name: '   ' })).display_name).toBeNull();
+      expect((await rpc('photo_rename_photo', { p_actor: f.employeeB.id, p_photo: id, p_name: '   ' })).display_name).toMatch(/^\d{6} \d{6}( \(\d+\))?$/);
       expect(await refused('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: await photo(null, { trashed: true }), p_name: 'x' })).toBe('not_found');
       expect((await f.employeeA.client.from('photos').update({ display_name: 'Direct' }).eq('id', id)).error).not.toBeNull();
       expect((await f.employeeA.client.rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: id, p_name: 'Direct' })).error).not.toBeNull();
+    });
+  });
+
+  // 20261012182343_photo_auto_names.sql.
+  describe('automatic names', () => {
+    const named = (id: string) => row('photos', id);
+    /** The real upload path, ending in photo_finalize_upload, which inserts the row the trigger names. */
+    async function uploaded(jobId: string | null, albumIds: string[], capturedAt: string) {
+      const id = randomUUID(), photoId = randomUUID(), actor = f.employeeA.id, bytes = randomBytes(8);
+      const owner = { p_actor: actor, p_owner_kind: 'ordinary', p_owner_id: id };
+      const created = await rpc('photo_create_upload_attempt', { p_actor: actor, p_job_id: jobId, p_source_signature: `fixture:${id}:8`,
+        p_digest: createHash('sha256').update(bytes).digest('hex'), p_original_name: 'IMG_0042.HEIC', p_original_bytes: bytes.length,
+        p_mime_type: 'image/heic', p_attempt_id: id, p_photo_id: photoId, p_album_ids: albumIds });
+      expect((await f.employeeA.client.storage.from('photos').upload(created.original_path, bytes, { contentType: 'image/heic' })).error).toBeNull();
+      const lease = await rpc('photo_acquire_upload', owner);
+      const claimed = await rpc('photo_claim_content', { ...owner, p_generation: lease.lease_generation });
+      const outcome = await rpc('photo_finalize_upload', { ...owner, p_generation: lease.lease_generation, p_claim_generation: claimed.claim_generation,
+        p_photo: { kind: 'image', captured_at: capturedAt, captured_at_source: 'exif' } });
+      expect(outcome).toMatchObject({ status: 'created', photo_id: photoId });
+      return photoId;
+    }
+    it('AC-5: an upload is named by project number and Pacific capture time; the same second adds (2); no project drops the number', async () => {
+      const job = await project('Naming fixture', '3962');
+      const first = await uploaded(job.id, [], '2026-09-23T23:04:32Z');
+      expect(await named(first)).toMatchObject({ display_name: '3962 – 260923 160432', name_source: 'auto', original_name: 'IMG_0042.HEIC' });
+      // The rest only exercise the trigger, which a direct insert reaches too.
+      expect((await named(await photo(job.id, { capturedAt: '2026-09-23T23:04:32.400Z' }))).display_name).toBe('3962 – 260923 160432 (2)');
+      expect((await named(await photo(null, { capturedAt: '2026-09-23T23:04:32Z' }))).display_name).toBe('260923 160432');
+      // January is standard time: UTC-8, not the summer UTC-7.
+      expect((await named(await photo(job.id, { capturedAt: '2026-01-15T20:00:05Z' }))).display_name).toBe('3962 – 260115 120005');
+    });
+
+    it('takes the first free suffix, and a trashed photo holds no name', async () => {
+      const job = await project('Suffix fixture');
+      const at = '2026-03-03T18:00:00Z', base = `${job.job_number} – 260303 100000`;
+      const ids = [await photo(job.id, { capturedAt: at }), await photo(job.id, { capturedAt: at }), await photo(job.id, { capturedAt: at })];
+      expect(await Promise.all(ids.map(async id => (await named(id)).display_name))).toEqual([base, `${base} (2)`, `${base} (3)`]);
+      await f.sql.query("update public.photos set deleted_at=now(),deleted_by=uploader_id,purge_after=now()+interval '30 days' where id=$1", [ids[1]]);
+      expect((await named(await photo(job.id, { capturedAt: at }))).display_name).toBe(`${base} (2)`);
+      expect((await named(await photo(job.id, { capturedAt: at, trashed: true }))).display_name).toBe(`${base} (4)`);
+    });
+
+    it('AC-6: a move renames an automatic name and keeps a hand-given one; a blank rename returns to the automatic name', async () => {
+      const from = await project('Move from', '3962-move'), to = await project('Move to', '4100');
+      const at = '2026-09-23T23:04:32Z';
+      const auto = await photo(from.id, { capturedAt: at }), manual = await photo(from.id, { capturedAt: at });
+      expect((await named(auto)).display_name).toBe('3962-move – 260923 160432');
+      expect(await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: manual, p_name: 'Kitchen before' })).toEqual({ id: manual, display_name: 'Kitchen before' });
+      expect((await named(manual)).name_source).toBe('manual');
+      expect(await act('move', auto, to.id)).toMatchObject({ status: 'applied' }); expect(await act('move', manual, to.id)).toMatchObject({ status: 'applied' });
+      expect(await named(auto)).toMatchObject({ display_name: '4100 – 260923 160432', name_source: 'auto' });
+      expect(await named(manual)).toMatchObject({ display_name: 'Kitchen before', name_source: 'manual' });
+      // Back to automatic: the name is recomputed where the photo is now, and the other photo of that second already holds the plain name.
+      expect(await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: manual, p_name: '' })).toEqual({ id: manual, display_name: '4100 – 260923 160432 (2)' });
+      expect((await named(manual)).name_source).toBe('auto');
+      expect(await act('move', auto, null)).toMatchObject({ status: 'applied' });
+      expect((await named(auto)).display_name).toMatch(/^260923 160432( \(\d+\))?$/);
+    });
+
+    it('a restore takes the next free name if its own was taken meanwhile; a plain file keeps its uploaded filename', async () => {
+      const job = await project('Restore fixture');
+      const at = '2026-04-04T18:00:00Z', base = `${job.job_number} – 260404 110000`;
+      await photo(job.id, { capturedAt: at });
+      const second = await photo(job.id, { capturedAt: at });
+      expect((await named(second)).display_name).toBe(`${base} (2)`);
+      expect(await act('trash', second)).toMatchObject({ status: 'applied' });
+      expect((await named(await photo(job.id, { capturedAt: at }))).display_name).toBe(`${base} (2)`);
+      expect(await act('restore', second)).toMatchObject({ status: 'applied' });
+      expect((await named(second)).display_name).toBe(`${base} (3)`);
+      const doc = await photo(job.id, { capturedAt: at, kind: 'file' });
+      expect((await named(doc)).display_name).toBeNull();
+      await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: doc, p_name: '' });
+      expect(await named(doc)).toMatchObject({ display_name: null, name_source: 'auto' });
+    });
+
+    it('the backfill names unnamed rows, and re-running the migration changes nothing else', async () => {
+      const job = await project('Backfill fixture');
+      const id = await photo(job.id, { capturedAt: '2026-05-05T17:30:00Z' }), kept = await photo(job.id, { capturedAt: '2026-05-05T17:30:00Z' });
+      await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: kept, p_name: 'Hand named' });
+      await f.sql.query('update public.photos set display_name=null where id=$1', [id]);
+      await f.sql.query(await readFile(resolve(import.meta.dirname, '../../supabase/migrations/20261012182343_photo_auto_names.sql'), 'utf8'));
+      expect(await named(id)).toMatchObject({ display_name: `${job.job_number} – 260505 103000`, name_source: 'auto' });
+      expect(await named(kept)).toMatchObject({ display_name: 'Hand named', name_source: 'manual' });
     });
   });
 
@@ -96,14 +184,14 @@ describe('managing photos, projects, albums, and Trash', () => {
       const job = await project();
       const [a, b] = [await photo(job.id), await photo(job.id)];
       const earlier = await photo(job.id, { trashed: true });
-      const deleted = await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
+      const deleted = await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
       expect(deleted).toMatchObject({ trashed: 2, job: { id: job.id, is_active: false } });
       expect((await row('photos', a)).deleted_at).toEqual((await row('jobs', job.id)).deleted_at);
       // Hidden from the project list, refused for uploads and renames, and repeat-safe.
       const listed = (await f.employeeA.client.rpc('get_photo_job_summaries', { search_query: job.job_number })).data as Array<{ id: string }>;
       expect(listed.some(listedJob => listedJob.id === job.id)).toBe(false);
       expect(await refused('photo_rename_job', { p_actor: f.employeeA.id, p_job_id: job.id, p_name: 'x' })).toBe('not_found');
-      expect((await rpc('photo_delete_job', { p_actor: f.employeeB.id, p_job: job.id })).trashed).toBe(0);
+      expect((await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id })).trashed).toBe(0);
       // The number is still held while the project is in Trash.
       expect(await refused('photo_create_job', { p_actor: f.employeeA.id, p_name: 'Same number', p_job_number: job.job_number })).toBe('job_in_trash');
 
@@ -116,29 +204,29 @@ describe('managing photos, projects, albums, and Trash', () => {
     it('a photo restored on its own while its project is deleted comes back with no project', async () => {
       const job = await project();
       const id = await photo(job.id);
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
       expect((await act('restore', id)).status).toBe('applied');
       expect(await row('photos', id)).toMatchObject({ deleted_at: null, job_id: null });
     });
 
     it('cannot restore after 30 days', async () => {
       const job = await project();
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
       await f.sql.query("update public.jobs set deleted_at=now()-interval '31 days' where id=$1", [job.id]);
       expect(await refused('photo_restore_job', { p_actor: f.employeeA.id, p_job: job.id })).toBe('conflict');
-      expect(await refused('photo_delete_job', { p_actor: f.employeeA.id, p_job: randomUUID() })).toBe('not_found');
+      expect(await refused('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: randomUUID() })).toBe('not_found');
     });
 
     it('only an active project can be deleted, so a restore never reopens an inactive office job', async () => {
       const job = await project();
       await f.sql.query('update public.jobs set is_active=false where id=$1', [job.id]);
-      expect(await refused('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id })).toBe('not_found');
+      expect(await refused('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id })).toBe('not_found');
       expect((await row('jobs', job.id)).is_active).toBe(false);
     });
 
     it('an office import cannot reopen a project in Trash', async () => {
       const job = await project();
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
       // What scripts/import-jobs.mjs sends for an open office job.
       const upsert = await f.admin.from('jobs').upsert([{ job_number: job.job_number, name: 'Imported', is_active: true, synced_at: new Date().toISOString() }], { onConflict: 'job_number' });
       expect(upsert.error?.message).toMatch(/jobs_deleted_not_active/);
@@ -147,7 +235,7 @@ describe('managing photos, projects, albums, and Trash', () => {
 
     it('no live photo enters a deleted project, even one that raced the delete', async () => {
       const job = await project();
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
       const direct = await f.admin.from('photos').insert({ id: randomUUID(), job_id: job.id, uploader_id: f.employeeB.id, kind: 'image',
         captured_at: new Date().toISOString(), original_path: `originals/${f.employeeB.id}/${randomUUID()}/late.jpg` });
       expect(direct.error?.message).toBe('conflict');
@@ -160,7 +248,7 @@ describe('managing photos, projects, albums, and Trash', () => {
       const writer = await f.sql.connect();
       try {
         await deleter.query('begin');
-        await deleter.query('select public.photo_delete_job($1,$2)', [f.employeeA.id, racing.id]);
+        await deleter.query('select public.photo_delete_job($1,$2)', [f.photoAdmin.id, racing.id]);
         const late = randomUUID();
         const pid = (await writer.query('select pg_backend_pid() as pid')).rows[0].pid;
         const insert = writer.query(`insert into public.photos(id,job_id,uploader_id,kind,original_path,captured_at)
@@ -179,14 +267,14 @@ describe('managing photos, projects, albums, and Trash', () => {
       const job = await project();
       const earlier = await photo(job.id, { trashed: true });
       await photo(job.id);
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
       const listed = (await rpc('photo_deleted_jobs', { p_limit: 1000 }) as Array<{ id: string; photo_count: number }>).find(d => d.id === job.id);
       expect(listed?.photo_count).toBe(1);
       await f.sql.query("update public.jobs set deleted_at=deleted_at-interval '40 days' where id=$1", [job.id]);
       await f.sql.query("update public.photos set deleted_at=deleted_at-interval '40 days',purge_after=purge_after-interval '40 days' where job_id=$1 and id<>$2", [job.id, earlier]);
       expect((await rpc('photo_deleted_jobs', { p_limit: 1000 }) as Array<{ id: string }>).some(d => d.id === job.id)).toBe(true);
       expect(await refused('photo_restore_job', { p_actor: f.employeeA.id, p_job: job.id })).toBe('conflict');
-      expect((await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_job_ids: [job.id] })).projects).toBe(1);
+      expect((await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_job_ids: [job.id] })).projects).toBe(1);
       expect((await rpc('photo_deleted_jobs', { p_limit: 1000 }) as Array<{ id: string }>).some(d => d.id === job.id)).toBe(false);
     });
   });
@@ -195,7 +283,7 @@ describe('managing photos, projects, albums, and Trash', () => {
     it('removes named trashed photos only; an active photo is untouched', async () => {
       const job = await project();
       const [trashed, active] = [await photo(job.id, { trashed: true }), await photo(job.id)];
-      expect(await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [trashed, active] })).toEqual({ photos: 1, albums: 0, projects: 0 });
+      expect(await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_photo_ids: [trashed, active] })).toEqual({ photos: 1, albums: 0, projects: 0 });
       // Marked: gone from the Trash list at once, and no longer restorable.
       expect((await row('photos', trashed)).purge_claimed_at).not.toBeNull();
       expect(await drain()).toBeGreaterThanOrEqual(1);
@@ -207,8 +295,8 @@ describe('managing photos, projects, albums, and Trash', () => {
     it('a deleted project goes with all its trashed photos, and its number is free again', async () => {
       const job = await project();
       const [a, earlier] = [await photo(job.id), await photo(job.id, { trashed: true })];
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
-      expect(await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_job_ids: [job.id] })).toEqual({ photos: 2, albums: 0, projects: 1 });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
+      expect(await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_job_ids: [job.id] })).toEqual({ photos: 2, albums: 0, projects: 1 });
       await drain();
       for (const id of [a, earlier]) expect(await row('photos', id)).toBeUndefined();
       expect(await row('jobs', job.id)).toMatchObject({ job_number: `deleted:${job.id}`, is_active: false });
@@ -221,7 +309,7 @@ describe('managing photos, projects, albums, and Trash', () => {
       const member = await photo(null);
       await rpc('photo_album_add', { p_actor: f.employeeA.id, p_album: gone, p_photo_ids: [member] });
       await rpc('photo_delete_album', { p_actor: f.employeeA.id, p_album: gone });
-      expect(await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_job_ids: [job.id], p_album_ids: [live, gone] }))
+      expect(await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_job_ids: [job.id], p_album_ids: [live, gone] }))
         .toEqual({ photos: 0, albums: 1, projects: 0 });
       expect((await row('albums', gone)).purged_at).not.toBeNull();
       expect((await row('albums', live)).purged_at).toBeNull();
@@ -233,8 +321,8 @@ describe('managing photos, projects, albums, and Trash', () => {
     it('a legacy copy is removed before the photo it points at', async () => {
       const original = await photo(null, { trashed: true });
       const copy = await photo(null, { trashed: true, duplicateOf: original });
-      expect((await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [original] })).photos).toBe(2);
-      const first = await rpc('photo_purge_pending', { p_actor: f.employeeA.id, p_limit: 500 }) as Array<{ id: string }>;
+      expect((await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_photo_ids: [original] })).photos).toBe(2);
+      const first = await rpc('photo_purge_pending', { p_actor: f.photoAdmin.id, p_limit: 500 }) as Array<{ id: string }>;
       expect(first.map(pending => pending.id)).toContain(copy);
       expect(first.map(pending => pending.id)).not.toContain(original);
       await drain(); await drain();
@@ -245,16 +333,16 @@ describe('managing photos, projects, albums, and Trash', () => {
       const a = await photo(null, { trashed: true });
       const b = await photo(null, { trashed: true, duplicateOf: a });
       const c = await photo(null, { trashed: true, duplicateOf: b });
-      expect((await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [a] })).photos).toBe(3);
+      expect((await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_photo_ids: [a] })).photos).toBe(3);
       for (let round = 0; round < 3; round++) await drain();
       for (const id of [a, b, c]) expect(await row('photos', id)).toBeUndefined();
     });
 
     it('pending skips the ids a request already failed on, so they cannot hide the rest', async () => {
       const [x, y] = [await photo(null, { trashed: true }), await photo(null, { trashed: true })];
-      await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [x, y] });
-      const all = (await rpc('photo_purge_pending', { p_actor: f.employeeA.id, p_limit: 500 }) as Array<{ id: string }>).map(r => r.id);
-      const skipped = (await rpc('photo_purge_pending', { p_actor: f.employeeA.id, p_limit: 500, p_exclude: [x] }) as Array<{ id: string }>).map(r => r.id);
+      await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_photo_ids: [x, y] });
+      const all = (await rpc('photo_purge_pending', { p_actor: f.photoAdmin.id, p_limit: 500 }) as Array<{ id: string }>).map(r => r.id);
+      const skipped = (await rpc('photo_purge_pending', { p_actor: f.photoAdmin.id, p_limit: 500, p_exclude: [x] }) as Array<{ id: string }>).map(r => r.id);
       expect(all).toEqual(expect.arrayContaining([x, y]));
       expect(skipped).toContain(y);
       expect(skipped).not.toContain(x);
@@ -265,8 +353,8 @@ describe('managing photos, projects, albums, and Trash', () => {
       const shared = `originals/${f.employeeB.id}/${randomUUID()}/shared.jpg`;
       const live = await photo(null, { originalPath: shared });
       const trashed = await photo(null, { trashed: true, originalPath: shared });
-      await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [trashed] });
-      expect(await rpc('photo_purge_authorize_delete', { p_actor: f.employeeA.id, p_path: shared, p_photo_id: trashed })).toBe(false);
+      await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_photo_ids: [trashed] });
+      expect(await rpc('photo_purge_authorize_delete', { p_actor: f.photoAdmin.id, p_path: shared, p_photo_id: trashed })).toBe(false);
       expect((await f.sql.query('select 1 from public.photo_repair_deleted_paths where path=$1', [shared])).rowCount).toBe(0);
       await drain();
       expect(await row('photos', trashed)).toBeUndefined();
@@ -276,8 +364,8 @@ describe('managing photos, projects, albums, and Trash', () => {
     it('a marked photo can no longer be restored, alone or with its project', async () => {
       const job = await project();
       const id = await photo(job.id);
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
-      await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [id] });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
+      await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_photo_ids: [id] });
       expect(await act('restore', id)).toMatchObject({ code: 'conflict' });
       expect((await rpc('photo_restore_job', { p_actor: f.employeeA.id, p_job: job.id })).restored).toBe(0);
       expect((await row('photos', id)).deleted_at).not.toBeNull();
@@ -285,12 +373,12 @@ describe('managing photos, projects, albums, and Trash', () => {
     });
 
     it('refuses an empty request, a closed write gate, and a session role', async () => {
-      expect(await refused('photo_purge_request', { p_actor: f.employeeA.id })).toBe('invalid_input');
-      expect((await f.employeeA.client.rpc('photo_purge_request', { p_actor: f.employeeA.id, p_everything: true })).error).not.toBeNull();
+      expect(await refused('photo_purge_request', { p_actor: f.photoAdmin.id })).toBe('invalid_input');
+      expect((await f.employeeA.client.rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_everything: true })).error).not.toBeNull();
       await f.sql.query('update public.photo_release_state set photo_writes_enabled=false');
       try {
-        expect(await refused('photo_purge_request', { p_actor: f.employeeA.id, p_everything: true })).toBe('photo_gate_closed');
-        expect(await refused('photo_delete_job', { p_actor: f.employeeA.id, p_job: randomUUID() })).toBe('photo_gate_closed');
+        expect(await refused('photo_purge_request', { p_actor: f.photoAdmin.id, p_everything: true })).toBe('photo_gate_closed');
+        expect(await refused('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: randomUUID() })).toBe('photo_gate_closed');
       } finally {
         await f.sql.query('update public.photo_release_state set photo_writes_enabled=true');
       }
@@ -300,9 +388,9 @@ describe('managing photos, projects, albums, and Trash', () => {
       const job = await project(); const deletedAlbum = await album();
       const loose = await photo(null, { trashed: true });
       const inProject = await photo(job.id);
-      await rpc('photo_delete_job', { p_actor: f.employeeA.id, p_job: job.id });
+      await rpc('photo_delete_job', { p_actor: f.photoAdmin.id, p_job: job.id });
       await rpc('photo_delete_album', { p_actor: f.employeeA.id, p_album: deletedAlbum });
-      const marked = await rpc('photo_purge_request', { p_actor: f.employeeA.id, p_everything: true });
+      const marked = await rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_everything: true });
       expect(marked.photos).toBeGreaterThanOrEqual(2);
       expect(marked.albums).toBeGreaterThanOrEqual(1);
       expect(marked.projects).toBeGreaterThanOrEqual(1);

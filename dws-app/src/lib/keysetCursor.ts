@@ -43,21 +43,27 @@ export function isIsoTimestamp(value: string): boolean {
   );
 }
 
+/** Which way a keyset walks: `desc` is newest first, `asc` oldest first. */
+export type KeysetDirection = "asc" | "desc";
+
 /**
- * PostgREST `or()` filter for "strictly past this keyset position" under a
- * descending sort: the sort key is smaller, or it ties and the tiebreaker is
- * smaller. Callers must have validated both values — they are interpolated
- * into the filter string.
+ * PostgREST `or()` filter for "strictly past this keyset position" in the
+ * walk's direction: the sort key is further along (smaller for `desc`, larger
+ * for `asc`), or it ties and the tiebreaker is. Both columns must be ordered
+ * the same way. Callers must have validated both values — they are
+ * interpolated into the filter string.
  */
 export function keysetOrFilter(
   sortField: string,
   sortValue: string,
   tiebreakField: string,
-  tiebreakValue: string
+  tiebreakValue: string,
+  direction: KeysetDirection = "desc"
 ): string {
+  const past = direction === "asc" ? "gt" : "lt";
   return (
-    `${sortField}.lt.${sortValue},` +
-    `and(${sortField}.eq.${sortValue},${tiebreakField}.lt.${tiebreakValue})`
+    `${sortField}.${past}.${sortValue},` +
+    `and(${sortField}.eq.${sortValue},${tiebreakField}.${past}.${tiebreakValue})`
   );
 }
 

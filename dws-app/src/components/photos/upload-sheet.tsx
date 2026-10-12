@@ -11,7 +11,7 @@ import PhotoMetaFields, {
 import BatchPreview from "@/components/photos/batch-preview";
 import { useUploadManager } from "@/lib/photos/upload-manager";
 import { useTagChoices } from "@/components/photos/tag-dropdown";
-import { addTagToMeta, appendResolvedTag } from "@/lib/photos/tags";
+import { addTagToMeta, appendResolvedTag, resolveTag } from "@/lib/photos/tags";
 import type { UploadTarget } from "@/hooks/use-capture-batch";
 import { readSidecarMeta } from "@/lib/photos/sidecar";
 import { plural } from "@/lib/photos/format";
@@ -133,14 +133,17 @@ export default function UploadSheet({
     };
   }, [open, sidecars]);
 
-  const choices = useTagChoices(open);
+  // Suggestions follow the chosen project; with none (album only), every tag.
+  const choices = useTagChoices(open, meta.jobId);
 
   // Keywords the paired sidecars carry that the tag dropdown is not already
-  // offering: shown as one-tap suggestions, never applied for the person.
+  // offering: shown as one-tap suggestions, never applied for the person. Each
+  // is shown and saved in its existing spelling, like a typed tag.
   const sidecarSuggestions = useMemo(() => {
-    const offered = new Set(choices.map((tag) => tag.toLowerCase()));
+    const offered = new Set(choices.choices.map((tag) => tag.toLowerCase()));
     const query = meta.tagInput.trim().toLowerCase();
-    return [...new Set(files.flatMap((file) => keywordsByFile.get(file) ?? []))]
+    const keywords = files.flatMap((file) => keywordsByFile.get(file) ?? []);
+    return [...new Set(keywords.map((tag) => resolveTag(tag, choices.spellings)))]
       .filter(
         (tag) =>
           !meta.tags.includes(tag) &&
@@ -162,7 +165,7 @@ export default function UploadSheet({
       {
         jobId: meta.jobId || null,
         albumIds: meta.albums.map((album) => album.id),
-        tags: appendResolvedTag(meta.tags, meta.tagInput, choices),
+        tags: appendResolvedTag(meta.tags, meta.tagInput, choices.spellings),
         shutterAt: capturedAtOverrides,
       }
     );

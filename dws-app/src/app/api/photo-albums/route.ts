@@ -12,7 +12,7 @@ const RESTORE_DAYS = 30;
 const MAX_DELETED_ALBUMS = 500;
 
 // GET /api/photo-albums?q= — album cards: name, active-photo count, up to 4
-//     newest thumbnails. Most recently added-to first. Mirrors GET /api/photo-jobs.
+//     newest thumbnails, and who made it. Most recently added-to first. Mirrors GET /api/photo-jobs.
 // GET /api/photo-albums?deleted=1 — albums deleted in the last 30 days, newest
 //     deletion first, for the Trash page. Employees cannot read deleted albums
 //     through their own session, so this one goes through the verified actor.
@@ -37,7 +37,12 @@ export async function GET(request: Request) {
     });
     if (error) throwPhotoDatabaseError(error);
     const page = data as CollectionPage<PhotoAlbumSummaryRow>;
-    return photoJson({ success: true, albums: page.rows.map(mapAlbumSummary),
+    // Who made each album, so the list offers Delete only where it will work.
+    const ids = page.rows.map(row => row.id);
+    const makers = ids.length ? await session.from('albums').select('id,created_by').in('id', ids) : { data: [], error: null };
+    if (makers.error) throwPhotoDatabaseError(makers.error);
+    const madeBy = new Map((makers.data ?? []).map(row => [row.id, row.created_by as string]));
+    return photoJson({ success: true, albums: page.rows.map(row => mapAlbumSummary({ ...row, created_by: madeBy.get(row.id) ?? null })),
       nextCursor: collectionNextCursor('albums', q, page.next_cursor) });
   });
 }

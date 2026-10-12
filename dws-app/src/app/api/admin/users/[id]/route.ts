@@ -22,7 +22,7 @@ export async function GET(request: Request, { params }: RouteParams) {
 
     const { data: userProfile, error: userProfileError } = await supabaseAdmin
       .from('user_profiles')
-      .select('role, full_name, preferred_name, employee_id_internal, deleted_at')
+      .select('role, full_name, preferred_name, employee_id_internal, deleted_at, photo_admin')
       .eq('user_id', userId)
       .single();
 
@@ -41,6 +41,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       preferred_name: userProfile?.preferred_name || undefined,
       employee_id_internal: userProfile?.employee_id_internal || undefined,
       deleted_at: userProfile?.deleted_at || null,
+      photo_admin: userProfile?.photo_admin === true,
     };
 
     return NextResponse.json({ user });
@@ -59,7 +60,11 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
   try {
     const body = await request.json();
-    const { phone, full_name, preferred_name, employee_id_internal, role } = body;
+    const { phone, full_name, preferred_name, employee_id_internal, role, photo_admin } = body;
+
+    if (photo_admin !== undefined && typeof photo_admin !== 'boolean') {
+      return NextResponse.json({ error: 'photo_admin must be true or false' }, { status: 400 });
+    }
 
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.getUserById(userId);
 
@@ -110,6 +115,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       }
       profileUpdates.role = role;
     }
+    // DWS Photos admin. Live on the user's next request: requirePhotoActor reads it every time.
+    if (photo_admin !== undefined) profileUpdates.photo_admin = photo_admin;
 
     if (Object.keys(profileUpdates).length > 0) {
       profileUpdates.updated_at = new Date().toISOString();
@@ -135,7 +142,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     const { data: updatedAuthData } = await supabaseAdmin.auth.admin.getUserById(userId);
     const { data: updatedProfile } = await supabaseAdmin
       .from('user_profiles')
-      .select('role, full_name, preferred_name, employee_id_internal, deleted_at')
+      .select('role, full_name, preferred_name, employee_id_internal, deleted_at, photo_admin')
       .eq('user_id', userId)
       .single();
 
@@ -150,6 +157,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       preferred_name: updatedProfile?.preferred_name || undefined,
       employee_id_internal: updatedProfile?.employee_id_internal || undefined,
       deleted_at: updatedProfile?.deleted_at || null,
+      photo_admin: updatedProfile?.photo_admin === true,
     };
 
     return NextResponse.json({
