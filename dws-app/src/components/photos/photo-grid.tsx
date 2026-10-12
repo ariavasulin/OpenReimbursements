@@ -239,7 +239,7 @@ function Tile({
         ) : (
           <FileText className="h-5 w-5 text-[#a0a0a0]" />
         )}
-        <span className="w-full truncate text-[11px] text-[#b4b4b4]">{name}</span>
+        <span className="line-clamp-2 w-full break-all text-[11px] text-[#b4b4b4]">{name}</span>
         {size && <span className="text-[11px] text-[#8e8e8e]">{size}</span>}
       </div>
       {!selecting && (

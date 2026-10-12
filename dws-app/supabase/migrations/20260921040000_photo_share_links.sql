@@ -21,8 +21,9 @@
 --      or name, another album, a project number, or the link's own bookkeeping. Only images and
 --      videos are listed, so a stray XMP stored as a file can never appear.
 --      AMENDED by 20261012182343_photo_auto_names.sql: each photo also carries its display name,
---      and an automatic name starts with its project number ("3962 – 260923 160432"). A project
---      number may appear inside a photo's name and nowhere else.
+--      hand-given or automatic, which a visitor sees and downloads under. An automatic name
+--      starts with its project number ("3962 – 260923 160432"); a project number may appear
+--      inside a photo's name and nowhere else.
 --   5. The token table grants nothing to `anon` or `authenticated`. The token is stored as-is
 --      (Decision 12: so the link can be shown again), which is why no browser role may read it.
 -- No new function checks a role: any signed-in employee may share (Decision 7).

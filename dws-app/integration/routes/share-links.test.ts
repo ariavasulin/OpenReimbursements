@@ -85,8 +85,10 @@ describe('share link routes (photo-albums AC-21, AC-22)', () => {
     const shown = page.photos[0] as { name: string; download_url: string };
     expect(shown.name).toBe(named);
     expect(new URL(shown.download_url).searchParams.get('download')).toBe(`${named}.jpg`);
-    // No uploader name, tag, XMP, other album, project, or link bookkeeping anywhere else in the body.
-    const text = JSON.stringify({ ...page, photos: page.photos.map((row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'name' && key !== 'download_url'))) }).toLowerCase();
+    // No uploader name, tag, XMP, other album, project, or link bookkeeping anywhere in the body; the
+    // project number is allowed only where the name carries it.
+    const text = JSON.stringify({ ...page, photos: page.photos.map((row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).map(([key, value]) =>
+      [key, (key === 'name' || key === 'download_url') && typeof value === 'string' ? value.replaceAll(`share-routes-${tag}`, '') : value]))) }).toLowerCase();
     for (const secret of [UPLOADER, 'quentin', SECRET_TAG, '.xmp', 'sidecar', 'uploader', 'tags', 'job', `share-routes-${tag}`, 'harbour house', 'token', 'created_by']) expect(text, secret).not.toContain(secret.toLowerCase());
   });
 

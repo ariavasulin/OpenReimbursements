@@ -233,7 +233,7 @@ export default function SelectionBar({
         loadError={onlyError ? "Could not load this photo's name. Close and try again." : undefined}
         onSave={async (name) => {
           await renamePhoto(ids[0], name);
-          toast.success("Photo renamed");
+          toast.success(name.trim() ? "Photo renamed" : "Name set back to the automatic name");
           done();
         }}
       />

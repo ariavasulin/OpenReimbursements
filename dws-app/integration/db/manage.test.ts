@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
+import type { PhotoKind } from '../../src/lib/photos/types';
 
 // 20260923120000_photo_manage_and_purge.sql and its follow-up 20260923180000: rename a photo, renumber a project,
 // delete and restore a project, and delete Trash forever. Every scenario owns its rows.
@@ -23,9 +24,9 @@ describe('managing photos, projects, albums, and Trash', () => {
   const number = () => randomUUID().slice(0, 8);
   const project = async (name = 'Manage fixture', jobNumber: string | null = number()) =>
     (await rpc('photo_create_job', { p_actor: f.employeeA.id, p_name: name, p_job_number: jobNumber })).job as { id: string; job_number: string };
-  async function photo(jobId: string | null, options: { trashed?: boolean; duplicateOf?: string; originalPath?: string; capturedAt?: string } = {}) {
+  async function photo(jobId: string | null, options: { trashed?: boolean; duplicateOf?: string; originalPath?: string; capturedAt?: string; kind?: PhotoKind } = {}) {
     const id = randomUUID(); const now = Date.now();
-    const inserted = await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeB.id, kind: 'image',
+    const inserted = await f.admin.from('photos').insert({ id, job_id: jobId, uploader_id: f.employeeB.id, kind: options.kind ?? 'image',
       captured_at: options.capturedAt ?? new Date(now).toISOString(), original_path: options.originalPath ?? `originals/${f.employeeB.id}/${id}/fixture.jpg`,
       thumb_path: `derived/${f.employeeB.id}/${id}_thumb.webp`, duplicate_of: options.duplicateOf ?? null,
       legacy_content_sha256: options.duplicateOf ? 'a'.repeat(64) : null,
@@ -126,6 +127,22 @@ describe('managing photos, projects, albums, and Trash', () => {
       expect((await named(manual)).name_source).toBe('auto');
       expect(await act('move', auto, null)).toMatchObject({ status: 'applied' });
       expect((await named(auto)).display_name).toMatch(/^260923 160432( \(\d+\))?$/);
+    });
+
+    it('a restore takes the next free name if its own was taken meanwhile; a plain file keeps its uploaded filename', async () => {
+      const job = await project('Restore fixture');
+      const at = '2026-04-04T18:00:00Z', base = `${job.job_number} – 260404 110000`;
+      await photo(job.id, { capturedAt: at });
+      const second = await photo(job.id, { capturedAt: at });
+      expect((await named(second)).display_name).toBe(`${base} (2)`);
+      expect(await act('trash', second)).toMatchObject({ status: 'applied' });
+      expect((await named(await photo(job.id, { capturedAt: at }))).display_name).toBe(`${base} (2)`);
+      expect(await act('restore', second)).toMatchObject({ status: 'applied' });
+      expect((await named(second)).display_name).toBe(`${base} (3)`);
+      const doc = await photo(job.id, { capturedAt: at, kind: 'file' });
+      expect((await named(doc)).display_name).toBeNull();
+      await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: doc, p_name: '' });
+      expect(await named(doc)).toMatchObject({ display_name: null, name_source: 'auto' });
     });
 
     it('the backfill names unnamed rows, and re-running the migration changes nothing else', async () => {

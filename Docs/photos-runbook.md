@@ -122,11 +122,13 @@ example `3962 – 260923 160432` (an en dash between single spaces; the capture 
 read in Pacific time, `America/Los_Angeles`). A photo with no project is named
 `260923 160432`. When another active photo in the same project (or, without a
 project, another photo with no project) already holds the name, the first free of
-` (2)`, ` (3)` … is added; trashed photos do not count. The name is
+` (2)`, ` (3)` … is added; trashed photos do not count, and a photo restored from
+Trash is named again, so it takes the first name free at that moment. The name is
 `photos.display_name`, filled by the `photo_auto_name` trigger (the format lives in
 the SQL function of the same name) when a photo is uploaded and again whenever its
 project changes, so moving a photo to project 4100 renames it `4100 – …`.
-Renumbering a project does not rename its photos.
+Renumbering a project does not rename its photos. Plain files (documents, not
+photos or videos) keep their uploaded filename.
 
 A photo can be renamed by hand from the viewer (**Rename**) or, with exactly one
 photo selected, from the selection bar (`photo_rename_photo`). A hand-given name
@@ -231,9 +233,10 @@ An employee can share one album or one project with a link, from the **Share**
 button on it. Anyone who has the link can see that album's or project's name, a
 photo count, and its photos and videos, and download them, **without signing
 in**. It is the only page in the app that works without a login. A visitor never
-sees who took a photo, its tags, its XMP file, or any other album. A project number
-appears only at the start of an automatically named photo's name (the name a
-download is saved under). Any signed-in employee may turn any link on or off.
+sees who took a photo, its tags, its XMP file, or any other album. A visitor sees
+each photo's name, hand-given or automatic, and downloads under it; a project
+number appears only at the start of an automatic name. Any signed-in employee may
+turn any link on or off.
 
 **What the switch on one album or project does**
 

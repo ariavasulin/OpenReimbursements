@@ -31,13 +31,17 @@ export function photoName(photo: { display_name?: string | null; original_name: 
 /**
  * The filename a download saves as: the photo's name, keeping the uploaded file's
  * extension when the name has none ("Kitchen before" -> "Kitchen before.jpg").
+ * `#`, `&`, `?` and `+` become `-`: storage-js passes the `download=` parameter
+ * through encodeURI, which leaves them alone, and they would cut the filename short.
  */
 export function downloadName(photo: { display_name?: string | null; original_name: string | null }): string | null {
-  if (!photo.display_name) return photo.original_name;
+  const safe = (text: string) => text.replace(/[#&?+]/g, "-");
+  if (!photo.display_name) return photo.original_name ? safe(photo.original_name) : null;
   const ext = photo.original_name?.match(/\.[A-Za-z0-9]{1,8}$/)?.[0];
-  return ext && !photo.display_name.toLowerCase().endsWith(ext.toLowerCase())
+  const name = ext && !photo.display_name.toLowerCase().endsWith(ext.toLowerCase())
     ? `${photo.display_name}${ext}`
     : photo.display_name;
+  return safe(name);
 }
 
 /** What stands where a project name would be, for a photo that has none. */

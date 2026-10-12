@@ -58,39 +58,42 @@ begin
   return candidate;
 end $$;
 
--- Names a photo on insert, and again when its project changes, unless it was named by hand.
--- NEW, internal.
+-- Names a photo on insert, when its project changes, and when it comes back from Trash (its
+-- name may have been taken while it was there), unless it was named by hand. A plain file
+-- (kind 'file', a document) keeps its uploaded filename. NEW, internal.
 create or replace function public.photo_auto_name_on_write()
 returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
 begin
-  if new.name_source<>'auto' then return new; end if;
-  if tg_op='UPDATE' and new.job_id is not distinct from old.job_id then return new; end if;
+  if new.name_source<>'auto' or new.kind='file' then return new; end if;
+  if tg_op='UPDATE' and new.job_id is not distinct from old.job_id
+    and not (old.deleted_at is not null and new.deleted_at is null) then return new; end if;
   new.display_name:=public.photo_auto_name(new.job_id,new.captured_at,new.id);
   return new;
 end $$;
 drop trigger if exists photo_auto_name on public.photos;
-create trigger photo_auto_name before insert or update of job_id on public.photos
+create trigger photo_auto_name before insert or update of job_id,deleted_at on public.photos
   for each row execute function public.photo_auto_name_on_write();
 
 -- Backfill. Active photos first, oldest capture first, so the earliest shot of a second keeps
 -- the plain name; trashed photos are named too, in case they are restored. Only rows still
 -- without a name, so a re-run does nothing.
 do $$ declare r record; begin
-  for r in select id from public.photos where name_source='auto' and display_name is null
+  for r in select id from public.photos where name_source='auto' and display_name is null and kind<>'file'
     order by deleted_at is not null,captured_at,created_at,id loop
     update public.photos p set display_name=public.photo_auto_name(p.job_id,p.captured_at,p.id) where p.id=r.id;
   end loop;
 end $$;
 
 -- photo_rename_photo, from 20260923180000. CHANGED: the update sets name_source; a blank name
--- returns to the automatic name (recomputed) instead of clearing it. UNCHANGED: every other line.
+-- returns to the automatic name (recomputed; a plain file keeps none) instead of clearing it.
+-- UNCHANGED: every other line.
 create or replace function public.photo_rename_photo(p_actor uuid,p_photo uuid,p_name text)
 returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
 declare n text := nullif(btrim(regexp_replace(coalesce(p_name,''),'\s+',' ','g')),''); p public.photos;
 begin
   perform public.photo_require_gate('writes'); perform public.photo_require_actor(p_actor);
   if char_length(n)>200 or n ~ '[/\\]' then raise exception 'photo_name_invalid'; end if;
-  update public.photos set display_name=coalesce(n,public.photo_auto_name(job_id,captured_at,id)),
+  update public.photos set display_name=case when n is null and kind='file' then null else coalesce(n,public.photo_auto_name(job_id,captured_at,id)) end,
     name_source=case when n is null then 'auto' else 'manual' end
     where id=p_photo and deleted_at is null returning * into p;
   if not found then raise exception 'not_found'; end if;
