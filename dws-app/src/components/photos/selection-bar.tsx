@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -20,17 +20,20 @@ import {
   invalidatePhotoCaches,
   removePhotosFromAlbum,
   renamePhoto,
+  usePhotoActor,
   usePhotoDetail,
 } from "@/lib/photos/api";
 import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { photoName, plural } from "@/lib/photos/format";
 import { appendResolvedTag } from "@/lib/photos/tags";
-import type { PhotoAlbumRef } from "@/lib/photos/types";
+import { canTrashPhoto, isPhotoAdmin } from "@/lib/photos/permissions";
+import type { PhotoAlbumRef, PhotoRow } from "@/lib/photos/types";
 
 // The bar that appears once photos are selected: the count and what can be done
 // with them. Add to album, Tag, and Remove from album act at once (they only
 // add or take away a label, and are easy to undo). Set project and Trash open
-// the confirm page with exactly the selected photos.
+// the confirm page with exactly the selected photos — for Trash, the ones this
+// person may delete, so the button never promises what the server will refuse.
 
 interface SelectionBarProps {
   selectedIds: ReadonlySet<string>;
@@ -39,6 +42,11 @@ interface SelectionBarProps {
   album?: PhotoAlbumRef;
   /** A tick was refused at the 500 limit. */
   limitMessage: string | null;
+  /** The loaded photos, so Trash can count which selected ones this person may delete. */
+  photos: readonly Pick<PhotoRow, "id" | "uploader_id" | "created_at">[];
+  /** The one project every selected photo is in, so Tag suggests that
+   *  project's tags; null when they differ or have none (every tag). */
+  sharedJobId: string | null;
 }
 
 const actionClass =
@@ -54,12 +62,23 @@ export default function SelectionBar({
   onClear,
   album,
   limitMessage,
+  photos,
+  sharedJobId,
 }: SelectionBarProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { setSelecting } = usePhotosShell();
+  const actor = usePhotoActor();
   const count = selectedIds.size;
   const ids = [...selectedIds];
+  // A selected photo that is not loaded counts as not deletable; SQL decides either way.
+  const trashable = useMemo(() => {
+    const byId = new Map(photos.map((photo) => [photo.id, photo]));
+    return [...selectedIds].filter((id) => {
+      const photo = byId.get(id);
+      return isPhotoAdmin(actor) || (photo !== undefined && canTrashPhoto(actor, photo));
+    });
+  }, [actor, photos, selectedIds]);
 
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [sheet, setSheet] = useState<"album" | "tag" | "project" | "rename" | null>(null);
@@ -93,7 +112,7 @@ export default function SelectionBar({
     if (busy) return;
     setBusy(true);
     try {
-      const batchId = await createActionBatch({ action: "trash", photoIds: ids });
+      const batchId = await createActionBatch({ action: "trash", photoIds: trashable });
       onClear();
       router.push(`/photos/actions?batch=${encodeURIComponent(batchId)}`);
     } catch (reason) {
@@ -185,15 +204,18 @@ export default function SelectionBar({
                 Remove from album
               </button>
             )}
-            <button
-              type="button"
-              className={`${actionClass} text-red-200`}
-              disabled={busy}
-              onClick={() => void trash()}
-            >
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-              Trash
-            </button>
+            {trashable.length > 0 && (
+              <button
+                type="button"
+                data-testid="selection-trash"
+                className={`${actionClass} text-red-200`}
+                disabled={busy}
+                onClick={() => void trash()}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                {trashable.length === count ? "Trash" : `Trash the ${trashable.length} you can delete`}
+              </button>
+            )}
           </div>
           {message && (
             <p
@@ -218,6 +240,7 @@ export default function SelectionBar({
         open={sheet === "tag"}
         onOpenChange={(open) => setSheet(open ? "tag" : null)}
         photoIds={ids}
+        jobId={sharedJobId}
         onDone={done}
       />
       <RenameSheet
@@ -228,12 +251,12 @@ export default function SelectionBar({
         name={only ? photoName(only) ?? "" : ""}
         allowEmpty
         maxLength={MAX_PHOTO_NAME_LENGTH}
-        hint="Leave it empty to go back to the uploaded filename."
+        hint="Leave it empty to go back to the automatic name."
         loading={!only && !onlyError}
         loadError={onlyError ? "Could not load this photo's name. Close and try again." : undefined}
         onSave={async (name) => {
           await renamePhoto(ids[0], name);
-          toast.success("Photo renamed");
+          toast.success(name.trim() ? "Photo renamed" : "Name set back to the automatic name");
           done();
         }}
       />
@@ -325,9 +348,15 @@ function AddToAlbumSheet({ open, onOpenChange, photoIds, onDone }: BulkSheetProp
   );
 }
 
-function BulkTagSheet({ open, onOpenChange, photoIds, onDone }: BulkSheetProps) {
+function BulkTagSheet({
+  open,
+  onOpenChange,
+  photoIds,
+  jobId,
+  onDone,
+}: BulkSheetProps & { jobId: string | null }) {
   const inputId = useId();
-  const choices = useTagChoices(open);
+  const choices = useTagChoices(open, jobId);
   const [tags, setTags] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -339,7 +368,7 @@ function BulkTagSheet({ open, onOpenChange, photoIds, onDone }: BulkSheetProps) 
     }
   }, [open]);
 
-  const pending = appendResolvedTag(tags, input, choices);
+  const pending = appendResolvedTag(tags, input, choices.spellings);
 
   const save = async () => {
     if (pending.length === 0 || busy) return;

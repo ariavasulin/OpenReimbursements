@@ -60,20 +60,27 @@ export function resolveTag(typed: string, choices: string[]): string {
 export interface TagMenu {
   /** Choices not already picked that contain the typed text, ignoring case. */
   options: string[];
-  /** The text for the last row, `Add "<typed>"`; null when it is blank, already
-   *  picked, or is one of the choices (ignoring case) — then that choice is listed. */
+  /** The text for the last row, `Add "<typed>"`, in the spelling that will be
+   *  stored (see TagChoices); null when it is blank, already picked, or is one
+   *  of the choices (ignoring case) — then that choice is listed. */
   add: string | null;
 }
 
-export function tagMenu(choices: string[], chosen: string[], input: string): TagMenu {
+export function tagMenu(
+  choices: string[],
+  chosen: string[],
+  input: string,
+  spellings: string[] = choices
+): TagMenu {
   const typed = input.trim();
   const query = typed.toLowerCase();
   const isChosen = (tag: string) => chosen.some((have) => sameTag(have, tag));
   const options = choices.filter(
     (choice) => !isChosen(choice) && choice.toLowerCase().includes(query)
   );
-  const known = choices.some((choice) => sameTag(choice, typed));
-  return { options, add: typed && !known && !isChosen(typed) ? typed : null };
+  const add = resolveTag(typed, spellings);
+  const known = choices.some((choice) => sameTag(choice, add));
+  return { options, add: add && !known && !isChosen(add) ? add : null };
 }
 
 /**

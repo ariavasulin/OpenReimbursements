@@ -10,7 +10,7 @@ const inputClass =
 /**
  * Rename one album, project, or photo. A project also shows its number, which
  * can be changed too; `onSave` throws with a message to show. A photo's name may
- * be left empty (`allowEmpty`) to go back to its uploaded filename.
+ * be left empty (`allowEmpty`) to go back to its automatic name.
  */
 export default function RenameSheet({
   open,

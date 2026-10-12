@@ -7,6 +7,8 @@ const verifiedActor = Symbol('verified photo actor');
 export interface PhotoActor {
   readonly [verifiedActor]: true;
   readonly actorId: string;
+  /** user_profiles.photo_admin, read on every request so a change is live at once. */
+  readonly isPhotoAdmin: boolean;
   readonly session: Awaited<ReturnType<typeof createSupabaseServerClient>>;
   readonly db: typeof import('@/lib/supabaseAdminClient').supabaseAdmin;
 }
@@ -22,19 +24,26 @@ export async function requirePhotoActor(
   const session = await createSupabaseServerClient();
   const { data, error } = await session.auth.getUser();
   if (error || !data.user || data.user.is_anonymous) throw new PhotoApiError('unauthenticated');
-  const profile = await session.from('user_profiles').select('role,deleted_at')
+  const profile = await session.from('user_profiles').select('role,deleted_at,photo_admin')
     .eq('user_id', data.user.id).maybeSingle();
   if (profile.error) throwPhotoDatabaseError(profile.error);
   if (!profile.data || profile.data.deleted_at || !['employee', 'admin'].includes(profile.data.role)) {
     throw new PhotoApiError('forbidden');
   }
   const { supabaseAdmin: db } = await import('@/lib/supabaseAdminClient');
-  const actor: PhotoActor = { [verifiedActor]: true, actorId: data.user.id, session, db };
+  const actor: PhotoActor = {
+    [verifiedActor]: true, actorId: data.user.id, isPhotoAdmin: profile.data.photo_admin === true, session, db,
+  };
   // Also fences a still-valid cookie after an Auth ban or account deactivation.
   const activeActor = await db.rpc('photo_require_actor', { p_actor: actor.actorId });
   if (activeActor.error) throwPhotoDatabaseError(activeActor.error);
   await requirePhotoGates(actor, options.mcp ? ['photo_writes_enabled', 'mcp_enabled'] : ['photo_writes_enabled']);
   return actor;
+}
+
+/** Delete forever, Empty trash, project Delete. SQL checks the same flag; this saves the round trip. */
+export function requirePhotoAdmin(actor: PhotoActor): void {
+  if (!actor.isPhotoAdmin) throw new PhotoApiError('forbidden');
 }
 
 export async function requirePhotoGates(actor: PhotoActor, gates: PhotoGate[]): Promise<void> {

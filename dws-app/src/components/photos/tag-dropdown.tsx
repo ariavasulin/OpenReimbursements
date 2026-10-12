@@ -15,19 +15,34 @@ import { MAX_TAGS } from "@/lib/photos/apiShared";
 import { cn } from "@/lib/utils";
 
 // The one tag field, used by the upload pop-up, Edit details, and bulk Tag.
-// It opens to the tags already in use plus the three starter tags, narrows as
-// you type, and ends with `Add "<typed>"`. What is typed is matched, ignoring
-// case, against those choices before it is kept, so "Professional" becomes the
-// existing "professional" instead of a second spelling.
+// It opens to the tags already in use — in the project at hand when there is
+// one, else everywhere — plus the three starter tags, narrows as you type, and
+// ends with `Add "<typed>"`. What is typed is matched, ignoring case, against
+// every tag in use (not only the project's) before it is kept, so "Professional"
+// becomes the existing "professional" instead of a second spelling.
 //
 // The list renders inline under the field rather than in a floating layer: the
 // field lives inside a Drawer on phones and a Dialog on desktop, and an inline
 // list behaves the same in both (no focus trap or outside-tap fights).
 
-/** Existing tags plus the starter tags, for the dropdown and for saving. */
-export function useTagChoices(enabled: boolean): string[] {
-  const { data: knownTags } = usePhotoTags(enabled);
-  return useMemo(() => tagChoices(knownTags ?? []), [knownTags]);
+export interface TagChoices {
+  /** What the dropdown offers: one project's tags plus the starters when
+   *  `jobId` is given, else every tag plus the starters. */
+  choices: string[];
+  /** What typed text is matched against before it is stored: every tag plus
+   *  the starters, so a project never saves a second spelling of a tag another
+   *  project already carries. The same list as `choices` with no project. */
+  spellings: string[];
+}
+
+export function useTagChoices(enabled: boolean, jobId?: string | null): TagChoices {
+  const { data: scopedTags } = usePhotoTags(enabled, jobId);
+  const { data: everyTag } = usePhotoTags(enabled && Boolean(jobId), null);
+  return useMemo(() => {
+    const choices = tagChoices(scopedTags ?? []);
+    // Until every tag has arrived, the project's own are the spellings known.
+    return { choices, spellings: jobId && everyTag ? tagChoices(everyTag) : choices };
+  }, [scopedTags, everyTag, jobId]);
 }
 
 interface TagDropdownProps {
@@ -36,8 +51,8 @@ interface TagDropdownProps {
   /** The half-typed text. The host owns it so Save can keep it as one more tag. */
   input: string;
   onInputChange(value: string): void;
-  /** From useTagChoices. */
-  choices: string[];
+  /** From useTagChoices; a plain list offers and matches against the same tags. */
+  choices: string[] | TagChoices;
   disabled?: boolean;
   /** id for the text input, so a host label can point at it. */
   inputId?: string;
@@ -55,7 +70,7 @@ export default function TagDropdown({
   onChange,
   input,
   onInputChange,
-  choices,
+  choices: offered,
   disabled,
   inputId,
   ariaLabel,
@@ -64,20 +79,23 @@ export default function TagDropdown({
   showHint = true,
   className,
 }: TagDropdownProps) {
+  const { choices, spellings } = Array.isArray(offered)
+    ? { choices: offered, spellings: offered }
+    : offered;
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const closeOnBlur = useCloseOnBlur(inputRef, () => setOpen(false));
 
-  const menu = useMemo(() => tagMenu(choices, tags, input), [choices, tags, input]);
+  const menu = useMemo(() => tagMenu(choices, tags, input, spellings), [choices, tags, input, spellings]);
   const rowCount = menu.options.length + (menu.add ? 1 : 0);
   const full = tags.length >= MAX_TAGS;
   const listOpen = open && !disabled && !full && rowCount > 0;
   useSuggestionEscape(inputRef, listOpen, () => setOpen(false));
 
   const add = (raw: string) => {
-    const next = appendResolvedTag(tags, raw, choices);
+    const next = appendResolvedTag(tags, raw, spellings);
     if (!full && next !== tags) onChange(next);
     onInputChange("");
     setActiveIndex(0);

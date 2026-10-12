@@ -217,7 +217,7 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
   });
 
   describe('albums: create, list, rename, delete, restore (Decisions 2, 7, 8)', () => {
-    it('any employee creates, renames, deletes and restores any album; deleted albums leave the list and appear under ?deleted=1', async () => {
+    it('any employee creates, renames and restores any album; deleted albums leave the list and appear under ?deleted=1', async () => {
       const unique = randomUUID().slice(0, 8);
       const created = await json(await call(createAlbum, '/api/photo-albums', { method: 'POST', body: { name: `  Marketing   ${unique} ` } }), 201);
       madeAlbums.push(created.album.id);
@@ -231,13 +231,13 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
       const cards = await json(await call(listAlbums, `/api/photo-albums?q=${unique}`, { actor: f.employeeB }));
       expect(cards.albums).toHaveLength(2);
       expect(cards.albums.find((card: { id: string }) => card.id === id)).toEqual({ id, name: `Marketing ${unique}`, photo_count: 1,
-        thumb_paths: [`derived/${f.employeeA.id}/${inAlbum}_thumb.webp`], created_at: created.album.created_at });
+        thumb_paths: [`derived/${f.employeeA.id}/${inAlbum}_thumb.webp`], created_at: created.album.created_at, created_by: f.employeeA.id });
 
-      // Employee B renames and deletes employee A's album.
+      // Employee B renames employee A's album; a photo admin deletes it.
       const renamed = await json(await call(patchAlbum, `/api/photo-albums/${id}`, { method: 'PATCH', body: { name: `Renamed ${unique}` }, id, actor: f.employeeB }));
       expect(renamed.album).toMatchObject({ id, name: `Renamed ${unique}`, created_by: f.employeeA.id });
-      const deleted = await json(await call(deleteAlbum, `/api/photo-albums/${id}`, { method: 'DELETE', id, actor: f.employeeB }));
-      expect(deleted.album).toMatchObject({ id, deleted_by: f.employeeB.id });
+      const deleted = await json(await call(deleteAlbum, `/api/photo-albums/${id}`, { method: 'DELETE', id, actor: f.photoAdmin }));
+      expect(deleted.album).toMatchObject({ id, deleted_by: f.photoAdmin.id });
       expect(deleted.album.deleted_at).not.toBeNull();
       // A repeat does not restart the 30 days.
       expect((await json(await call(deleteAlbum, `/api/photo-albums/${id}`, { method: 'DELETE', id }))).album.deleted_at).toBe(deleted.album.deleted_at);
@@ -252,10 +252,10 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
 
       const trash = await json(await call(listAlbums, '/api/photo-albums?deleted=1', { actor: f.administrator }));
       const row = trash.albums.find((entry: { id: string }) => entry.id === id);
-      expect(row).toEqual({ id, name: `Renamed ${unique}`, deleted_at: deleted.album.deleted_at, deleted_by: f.employeeB.id,
+      expect(row).toEqual({ id, name: `Renamed ${unique}`, deleted_at: deleted.album.deleted_at, deleted_by: f.photoAdmin.id,
         restore_before: new Date(Date.parse(deleted.album.deleted_at) + 30 * 86_400_000).toISOString() });
 
-      const restored = await json(await call(patchAlbum, `/api/photo-albums/${id}`, { method: 'PATCH', body: { action: 'restore' }, id, actor: f.employeeA }));
+      const restored = await json(await call(patchAlbum, `/api/photo-albums/${id}`, { method: 'PATCH', body: { action: 'restore' }, id, actor: f.employeeB }));
       expect(restored.album).toMatchObject({ id, deleted_at: null, deleted_by: null });
       expect(ids(await list(`?album=${id}`))).toEqual([inAlbum]); // it came back whole
       expect((await json(await call(listAlbums, '/api/photo-albums?deleted=1'))).albums.map((entry: { id: string }) => entry.id)).not.toContain(id);
@@ -451,9 +451,39 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
       expect(ids(await list(`?album=${other}&job=none&q=${unique}`))).toEqual([loose]);
       expect(ids(await list(`?album=${randomUUID()}`))).toEqual([]);
 
-      for (const bad of ['?album=not-a-uuid', '?job=nothing', '?job=None']) {
+      for (const bad of ['?album=not-a-uuid', '?job=nothing', '?job=None', '?sort=newest', '?sort=ASC']) {
         expect((await call(listPhotos, `/api/photos${bad}`)).status, bad).toBe(400);
       }
+    });
+
+    it('sort=asc lists oldest first and pages forward without repeating or skipping, the exact reverse of sort=desc', async () => {
+      const project = await job('Sort project');
+      // Two pairs share a capture second, so the id tiebreak decides inside each pair.
+      const made = await Promise.all(['01', '02', '02', '03', '04', '04', '05'].map(day =>
+        photo({ jobId: project, capturedAt: `2030-05-${day}T00:00:00.000Z` })));
+      const walk = async (sort: string) => {
+        const rows: Array<{ id: string; captured_at: string }> = [];
+        let cursor: string | null = null; let pages = 0;
+        do {
+          const body = await list(`?job=${project}&sort=${sort}&limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+          rows.push(...body.photos); cursor = body.nextCursor; pages += 1;
+        } while (cursor && pages < 10);
+        return { rows, pages };
+      };
+      const key = (row: { id: string; captured_at: string }) => [Date.parse(row.captured_at), row.id] as const;
+      const after = (a: readonly [number, string], b: readonly [number, string]) => a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]);
+
+      const oldest = await walk('asc');
+      expect(oldest.pages).toBe(4);
+      expect(new Set(oldest.rows.map(row => row.id))).toEqual(new Set(made));
+      expect(oldest.rows).toHaveLength(made.length);
+      for (let index = 1; index < oldest.rows.length; index += 1) {
+        expect(after(key(oldest.rows[index]), key(oldest.rows[index - 1])), `row ${index}`).toBe(true);
+      }
+      const newest = await walk('desc');
+      expect(newest.rows.map(row => row.id)).toEqual(oldest.rows.map(row => row.id).reverse());
+      expect(ids(await list(`?job=${project}`))).toEqual(newest.rows.map(row => row.id));
+      expect(oldest.rows[0].id).toBe(made[0]);
     });
   });
 

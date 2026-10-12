@@ -128,3 +128,47 @@ describe("groupPhotos by tag", () => {
     expect(openable.map((photo) => photo.id)).toEqual([both.id, other.id]);
   });
 });
+
+describe("groupPhotos by uploader", () => {
+  it("makes one group per uploader, A to Z ignoring case, with Unknown last and input order inside", () => {
+    const yanaNew = makePhoto({ uploader_id: "u-yana", uploader: { full_name: "yana Ronin" }, captured_at: "2026-08-14T18:00:00.000Z" });
+    const luis = makePhoto({ uploader_id: "u-luis", uploader: { full_name: "Luis Ortega" } });
+    const ghost = makePhoto({ uploader_id: "u-ghost", uploader: null });
+    const blank = makePhoto({ uploader_id: "u-blank", uploader: { full_name: "  " } });
+    const yanaOld = makePhoto({ uploader_id: "u-yana", uploader: { full_name: "yana Ronin" }, captured_at: "2026-08-01T18:00:00.000Z" });
+    const groups = groupPhotos([ghost, yanaNew, luis, blank, yanaOld], "uploader");
+    expect(groups.map((group) => [group.key, group.label, group.photos.map((photo) => photo.id)])).toEqual([
+      ["uploader:u-luis", "Luis Ortega", [luis.id]],
+      ["uploader:u-yana", "yana Ronin", [yanaNew.id, yanaOld.id]],
+      ["uploader:unknown", "Unknown", [ghost.id, blank.id]],
+    ]);
+  });
+
+  it("keeps two people who share a name apart", () => {
+    const groups = groupPhotos(
+      [makePhoto({ uploader_id: "a", uploader: { full_name: "Sam" } }), makePhoto({ uploader_id: "b", uploader: { full_name: "Sam" } })],
+      "uploader"
+    );
+    expect(groups.map((group) => group.key)).toEqual(["uploader:a", "uploader:b"]);
+  });
+});
+
+describe("groupPhotos by file type", () => {
+  it("labels JPEG, HEIC, PNG, RAW, Video, Other, in that order, leaving out empty ones, with counts", () => {
+    const other = makePhoto({ kind: "file", original_name: "notes.pdf", mime_type: "application/pdf" });
+    const video = makePhoto({ kind: "video", original_name: "walk.MOV", mime_type: "video/quicktime" });
+    const raw = makePhoto({ original_name: "IMG_1.CR2", mime_type: "image/x-canon-cr2" });
+    const jpegA = makePhoto({ original_name: "a.jpg" });
+    const png = makePhoto({ original_name: "b.png", mime_type: "image/png" });
+    const jpegB = makePhoto({ original_name: "c.JPEG" });
+    const groups = groupPhotos([other, video, raw, jpegA, png, jpegB], "type");
+    expect(groups.map((group) => [group.key, group.label, group.photos.length])).toEqual([
+      ["type:JPEG", "JPEG", 2],
+      ["type:PNG", "PNG", 1],
+      ["type:RAW", "RAW", 1],
+      ["type:Video", "Video", 1],
+      ["type:Other", "Other", 1],
+    ]);
+    expect(groups[0].photos.map((photo) => photo.id)).toEqual([jpegA.id, jpegB.id]);
+  });
+});

@@ -8,5 +8,6 @@ export function mapAlbumSummary(row: PhotoAlbumSummaryRow): PhotoAlbumSummary {
     photo_count: Number(row.photo_count),
     thumb_paths: row.thumbs ?? [],
     created_at: row.created_at,
+    created_by: row.created_by ?? null,
   };
 }

@@ -45,6 +45,8 @@ export interface AdminUser {
   preferred_name?: string;
   employee_id_internal?: string;
   deleted_at?: string | null;
+  /** DWS Photos admin: may delete any photo, delete forever, empty the Trash, and delete projects. Separate from role. */
+  photo_admin?: boolean;
 }
 
 export interface BulkUpdateResponse {

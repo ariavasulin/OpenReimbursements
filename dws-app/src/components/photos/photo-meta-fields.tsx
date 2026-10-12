@@ -3,7 +3,7 @@
 import { useId } from "react";
 import AlbumField from "@/components/photos/album-field";
 import JobField from "@/components/photos/job-combobox";
-import TagDropdown from "@/components/photos/tag-dropdown";
+import TagDropdown, { type TagChoices } from "@/components/photos/tag-dropdown";
 import { usePhotoJobs } from "@/lib/photos/api";
 import type { PhotoMeta } from "@/lib/photos/tags";
 
@@ -25,7 +25,7 @@ interface PhotoMetaFieldsProps {
   /** Functional, so two edits in one event (add tag + clear input) compose. */
   onChange(update: (prev: PhotoMeta) => PhotoMeta): void;
   /** From useTagChoices: existing tags plus the starter tags. */
-  tagChoices: string[];
+  tagChoices: TagChoices;
   /** Whether to fetch projects and albums (pass the pop-up's `open`). */
   enabled?: boolean;
   disabled?: boolean;

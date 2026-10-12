@@ -14,7 +14,8 @@ import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
-import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoJobs } from "@/lib/photos/api";
+import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoActor, usePhotoJobs } from "@/lib/photos/api";
+import { isPhotoAdmin } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
 const PINNED_TAG = "professional";
@@ -28,6 +29,8 @@ export default function ProjectPage() {
   const { openPicker } = usePhotosShell();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Deleting a project trashes every photo in it: photo admins only.
+  const canDelete = isPhotoAdmin(usePhotoActor());
 
   // Always enabled: the shell holds the session guard, so this page only
   // renders once the session is ready.
@@ -109,10 +112,12 @@ export default function ProjectPage() {
           invalidatePhotoCaches(queryClient);
         }}
         actions={
-          <button type="button" onClick={() => setConfirmingDelete(true)} className={headerActionClass}>
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-            Delete project
-          </button>
+          canDelete && (
+            <button type="button" onClick={() => setConfirmingDelete(true)} className={headerActionClass}>
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Delete project
+            </button>
+          )
         }
       />
 

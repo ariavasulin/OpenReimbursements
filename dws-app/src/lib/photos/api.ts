@@ -1,5 +1,6 @@
 import { collectPages, COLLECTION_PAGE_SIZE } from "./collectionPagination";
 import type { PurgeMarked } from "./action-types";
+import type { PhotoPermissions } from "./permissions";
 import {
   keepPreviousData,
   useQuery,
@@ -27,6 +28,9 @@ export async function fetchJson<T>(
   }
   return (await response.json()) as T;
 }
+
+/** GET /api/photos `sort`: newest capture first (`desc`, the default) or oldest. */
+export type { KeysetDirection as PhotoSort } from "@/lib/keysetCursor";
 
 /** One page of GET /api/photos (keyset-paginated). */
 export interface PhotosPage {
@@ -71,13 +75,28 @@ export function usePhotoJobs(enabled: boolean, q = "") {
   });
 }
 
-/** Every tag in use, for tag suggestions. */
-export function usePhotoTags(enabled: boolean) {
+/** Tags in use, for tag suggestions: one project's when `jobId` is given, else every tag. */
+export function usePhotoTags(enabled: boolean, jobId?: string | null) {
   return useQuery({
-    queryKey: ["photo-tags"],
-    queryFn: () => fetchTags(),
+    queryKey: ["photo-tags", jobId || ""],
+    queryFn: () => fetchTags(jobId || undefined),
     enabled,
   });
+}
+
+/**
+ * The signed-in employee's photo permissions (GET /api/photos/actor), for
+ * showing Trash, Delete forever, Empty trash, and project or album Delete only
+ * where they will work. Undefined while loading: callers show nothing they
+ * cannot yet promise. The server checks every write regardless.
+ */
+export function usePhotoActor() {
+  return useQuery({
+    queryKey: ["photo-actor"],
+    queryFn: () => fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions"),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  }).data;
 }
 
 /** After an upload, edit, or delete: every photo-derived query refetches. */
@@ -176,6 +195,8 @@ export interface PhotoAlbumHeader {
   name: string;
   photo_count: number;
   created_at: string;
+  /** Who made it: they and photo admins may delete it. */
+  created_by: string;
 }
 
 export function usePhotoAlbum(albumId: string, enabled = true) {
@@ -247,7 +268,7 @@ export function removePhotosFromAlbum(albumId: string, photoIds: string[]) {
 
 // ---- Bulk tags, one photo, action batches ----------------------------------
 
-/** Rename one photo. A blank name goes back to the uploaded filename. */
+/** Rename one photo. A blank name goes back to the automatic name. */
 export function renamePhoto(id: string, name: string) {
   return fetchJson<{ photo: PhotoRow }>(
     `/api/photos/${encodeURIComponent(id)}`, "Failed to rename the photo",

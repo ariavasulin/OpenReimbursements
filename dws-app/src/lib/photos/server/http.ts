@@ -1,10 +1,12 @@
 import 'server-only';
 import type { PhotoActor } from './authority';
+import { TRASH_RULE_MESSAGE } from '../permissions';
 
 const errors = {
   invalid_input: [400, 'Invalid request.'],
   unauthenticated: [401, 'Sign in to continue.'],
   forbidden: [403, 'This action is not permitted.'],
+  trash_rule: [403, `This project has photos you cannot delete. ${TRASH_RULE_MESSAGE} Ask a photo admin, or name the photos you want removed.`],
   not_found: [404, 'The requested record was not found.'],
   conflict: [409, 'The record changed or has already been used.'],
   job_number_taken: [409, 'Another project already uses that number.'],

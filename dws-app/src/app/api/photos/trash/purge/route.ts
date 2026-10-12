@@ -1,4 +1,4 @@
-import { requirePhotoActor } from '@/lib/photos/server/authority';
+import { requirePhotoActor, requirePhotoAdmin } from '@/lib/photos/server/authority';
 import { onlyKeys } from '@/lib/photos/server/actions';
 import { PhotoApiError, photoJson, photoRoute, photoRpc, readPhotoJson } from '@/lib/photos/server/http';
 import { purgeMarkedPhotos } from '@/lib/photos/server/purge';
@@ -17,7 +17,7 @@ const ids = (value: unknown): string[] => {
 };
 
 /**
- * POST /api/photos/trash/purge — delete from Trash forever. Any signed-in employee.
+ * POST /api/photos/trash/purge — delete from Trash forever. Photo admins only (403 otherwise).
  *   { photo_ids?, album_ids?, project_ids? }  the named items (they must be in Trash;
  *        a project takes every one of its trashed photos with it)
  *   { everything: true }                      empty the whole Trash
@@ -30,6 +30,7 @@ export async function POST(request: Request) {
   return photoRoute(async () => {
     const started = Date.now();
     const actor = await requirePhotoActor(request, { mutation: true });
+    requirePhotoAdmin(actor);
     const body = await readPhotoJson(request, BULK_BODY_BYTES);
     onlyKeys(body, ['photo_ids', 'album_ids', 'project_ids', 'everything']);
     if (body.everything !== undefined && body.everything !== true) throw new PhotoApiError('invalid_input');

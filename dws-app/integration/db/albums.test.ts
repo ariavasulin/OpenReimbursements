@@ -285,9 +285,9 @@ describe('optional project, albums, and bulk tagging (photo-albums AC-6 to AC-10
     it('deleting an album removes no photo; any employee can restore it within 30 days, and not after', async () => {
       const id = await photo(); const target = await album('Deleted then restored');
       await rpc('photo_album_add', { p_actor: f.employeeA.id, p_album: target, p_photo_ids: [id] });
-      // Decision 7: employee B deletes the album employee A made.
-      const deleted = (await rpc('photo_delete_album', { p_actor: f.employeeB.id, p_album: target })).album;
-      expect(deleted).toMatchObject({ id: target, deleted_by: f.employeeB.id }); expect(deleted.deleted_at).not.toBeNull();
+      // A photo admin deletes the album employee A made.
+      const deleted = (await rpc('photo_delete_album', { p_actor: f.photoAdmin.id, p_album: target })).album;
+      expect(deleted).toMatchObject({ id: target, deleted_by: f.photoAdmin.id }); expect(deleted.deleted_at).not.toBeNull();
       expect((await f.sql.query('select deleted_at from public.photos where id=$1', [id])).rows).toEqual([{ deleted_at: null }]);
       expect(await members(id)).toEqual([target]); // kept, so a restore brings the album back whole
       expect(await summary(f.employeeA.client, target)).toBeUndefined();
@@ -328,7 +328,7 @@ describe('optional project, albums, and bulk tagging (photo-albums AC-6 to AC-10
       expect((await visibleMembers(target)).sort()).toEqual([id, keep].sort());
 
       // Purge through the real repair functions, once the 30 days have passed.
-      expect((await act(f.employeeA.id, 'trash', id)).status).toBe('applied');
+      expect((await act(f.employeeB.id, 'trash', id)).status).toBe('applied');
       await f.sql.query(`update public.photos set deleted_at=t.at-interval '31 days',purge_after=t.at-interval '1 day'
         from (select date_trunc('milliseconds',statement_timestamp()) as at) t where id=$1`, [id]);
       await f.sql.query("update public.photo_repair_progress set lease_expires_at=clock_timestamp()-interval '1 second'");
@@ -472,13 +472,13 @@ describe('optional project, albums, and bulk tagging (photo-albums AC-6 to AC-10
     it('a project given after the photo was listed is still a conflict, not a silent success', async () => {
       // Listed for trash while it had no project...
       const id = await photo({ jobId: null });
-      const listed = await draftAction(f.employeeA.id, 'trash', id);
-      await rpc('photo_approve_action', { p_actor: f.employeeA.id, p_batch_id: listed });
+      const listed = await draftAction(f.employeeB.id, 'trash', id);
+      await rpc('photo_approve_action', { p_actor: f.employeeB.id, p_batch_id: listed });
       // ...then someone else files it under a project and trashes it.
-      expect((await act(f.employeeB.id, 'move', id, await job())).status).toBe('applied');
-      expect((await act(f.employeeB.id, 'trash', id)).status).toBe('applied');
+      expect((await act(f.photoAdmin.id, 'move', id, await job())).status).toBe('applied');
+      expect((await act(f.photoAdmin.id, 'trash', id)).status).toBe('applied');
       // With `=` this comparison was unknown for an empty project and the item was marked applied.
-      expect((await rpc('photo_execute_action', { p_actor: f.employeeA.id, p_batch_id: listed, p_photo_ids: [id] }))[0].status).toBe('conflict');
+      expect((await rpc('photo_execute_action', { p_actor: f.employeeB.id, p_batch_id: listed, p_photo_ids: [id] }))[0].status).toBe('conflict');
     });
   });
 

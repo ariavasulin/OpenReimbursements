@@ -20,7 +20,8 @@ import {
 import PhoneHeader from "@/components/photos/phone-header";
 import RenameSheet from "@/components/photos/rename-sheet";
 import StatusLine from "@/components/photos/status-line";
-import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoJobs } from "@/lib/photos/api";
+import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoActor, usePhotoJobs } from "@/lib/photos/api";
+import { isPhotoAdmin } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
 /** Projects: every project as a card; New project; select to rename or delete. */
@@ -29,14 +30,17 @@ export default function ProjectsPage() {
   const queryClient = useQueryClient();
   const { data: jobs, isLoading, error } = usePhotoJobs(true);
   const [creating, setCreating] = useState(false);
+  // Deleting a project trashes every photo in it: photo admins only.
+  const admin = isPhotoAdmin(usePhotoActor());
   const select = useCollectionSelect(jobs, {
     noun: "project",
     deleteOne: deleteJob,
     deletedDescription: "You can restore them from Trash for 30 days.",
+    canDelete: () => admin,
   });
-  const { chosen } = select;
-  const chosenPhotos = chosen.reduce((sum, job) => sum + job.photo_count, 0);
-  const them = chosen.length === 1 ? "it" : "them";
+  const { chosen, deletable } = select;
+  const chosenPhotos = deletable.reduce((sum, job) => sum + job.photo_count, 0);
+  const them = deletable.length === 1 ? "it" : "them";
 
   const newProjectButton = (
     <button type="button" onClick={() => setCreating(true)} className={emptyPrimary}>
@@ -115,6 +119,8 @@ export default function ProjectsPage() {
         <CollectionSelectBar
           label="Selected projects"
           count={chosen.length}
+          deletable={deletable.length}
+          offerDelete={admin}
           busy={select.busy}
           onClose={select.stop}
           onRename={() => select.setRenaming(true)}
@@ -142,9 +148,9 @@ export default function ProjectsPage() {
         open={select.confirming}
         onOpenChange={select.setConfirming}
         title={
-          chosen.length === 1
-            ? `Delete project “${chosen[0].name}”?`
-            : `Delete ${plural(chosen.length, "project")}?`
+          deletable.length === 1
+            ? `Delete project “${deletable[0].name}”?`
+            : `Delete ${plural(deletable.length, "project")}?`
         }
         confirmLabel="Delete"
         busyLabel="Deleting..."

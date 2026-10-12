@@ -1,4 +1,4 @@
-import { requirePhotoActor } from '@/lib/photos/server/authority';
+import { requirePhotoActor, requirePhotoAdmin } from '@/lib/photos/server/authority';
 import { onlyKeys } from '@/lib/photos/server/actions';
 import { PhotoApiError, photoJson, photoRoute, photoRpc, readPhotoJson } from '@/lib/photos/server/http';
 import { photoId } from '@/lib/photos/server/reads';
@@ -30,9 +30,11 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 // DELETE /api/photo-jobs/[id] — delete a project: it and every photo in it go to
 // Trash for 30 days. Repeating it is safe and does not restart the 30 days.
+// Photo admins only (403 otherwise).
 export async function DELETE(request: Request, context: RouteContext) {
   return photoRoute(async () => {
     const actor = await requirePhotoActor(request, { mutation: true });
+    requirePhotoAdmin(actor);
     const id = photoId((await context.params).id);
     return photoJson(await photoRpc(actor, 'photo_delete_job', { p_actor: actor.actorId, p_job: id }));
   });

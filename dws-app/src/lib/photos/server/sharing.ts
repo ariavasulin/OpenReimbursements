@@ -1,6 +1,7 @@
 import 'server-only';
 import type { PhotoActor } from './authority';
 import { browserOrigin } from './browser-origin';
+import { downloadName, photoName } from '../format';
 import { PhotoApiError, photoRpc } from './http';
 import { photoId } from './reads';
 
@@ -49,7 +50,7 @@ export interface SharedPhoto {
   thumb_url: string | null; preview_url: string | null; video_url: string | null; download_url: string;
 }
 export interface SharedPage { kind: 'album' | 'project'; name: string; count: number; photos: SharedPhoto[]; next: string | null }
-type SharedRow = { id: string; kind: 'image' | 'video'; captured_at: string; original_name: string | null; mime_type: string | null; duration_secs: number | null;
+type SharedRow = { id: string; kind: 'image' | 'video'; captured_at: string; original_name: string | null; display_name: string | null; mime_type: string | null; duration_secs: number | null;
   original_path: string; thumb_path: string | null; preview_path: string | null; playback_path: string | null };
 
 export const SHARE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -82,10 +83,10 @@ export async function readSharedPage(token: unknown, cursor: unknown): Promise<S
       kind: data.kind, name: data.name, count: Number(data.count),
       // Built field by field: nothing the database might add later can pass through by accident.
       photos: (data.photos as SharedRow[]).map(row => ({
-        id: row.id, kind: row.kind, captured_at: row.captured_at, name: row.original_name ?? 'photo', duration_secs: row.duration_secs,
+        id: row.id, kind: row.kind, captured_at: row.captured_at, name: photoName(row) ?? 'photo', duration_secs: row.duration_secs,
         thumb_url: address(row.thumb_path), preview_url: address(row.preview_path ?? row.thumb_path),
         video_url: row.kind === 'video' ? address(row.playback_path ?? row.original_path) : null,
-        download_url: storage.getPublicUrl(row.original_path, { download: row.original_name || true }).data.publicUrl,
+        download_url: storage.getPublicUrl(row.original_path, { download: downloadName(row) || true }).data.publicUrl,
       })),
       next: data.next_after ? Buffer.from(JSON.stringify(data.next_after), 'utf8').toString('base64url') : null,
     };

@@ -75,8 +75,8 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
     }
   });
 
-  // photo-albums Decision 7, read from the live function sources rather than from migration text:
-  // app features are open to any employee, and the deployment tools are still administrator-only.
+  // Read from the live function sources rather than from migration text: no app feature checks the
+  // Receipts administrator role, and the deployment tools are still administrator-only.
   it('only the deployment tools still check for an administrator', async () => {
     const guarded = await f.sql.query(`select p.proname from pg_proc p
       where p.pronamespace='public'::regnamespace and (p.proname like 'photo\\_%' escape '\\' or p.proname='consume_dws_handoff')
@@ -87,6 +87,26 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
     ]);
     const employee = await f.admin.rpc('photo_install_write_boundary', { p_actor: f.employeeA.id });
     expect(employee.error?.message).toBe('forbidden');
+  });
+
+  // Who may delete reads user_profiles.photo_admin, never the Receipts role.
+  it('the delete rule reads photo_admin, in exactly the delete and purge functions', async () => {
+    const rule = await f.sql.query(`select p.proname from pg_proc p
+      where p.pronamespace='public'::regnamespace and p.proname like 'photo\\_%' escape '\\'
+        and p.prosrc ~ 'photo_actor_is_admin|photo_can_trash' order by 1`);
+    expect(rule.rows.map(row => row.proname)).toEqual([
+      'photo_apply_action', 'photo_approve_action', 'photo_can_trash', 'photo_delete_album', 'photo_delete_job',
+      'photo_materialize_action', 'photo_purge_authorize_delete', 'photo_purge_finish', 'photo_purge_pending', 'photo_purge_request',
+    ]);
+    const flag = await f.sql.query(`select p.proname from pg_proc p
+      where p.pronamespace='public'::regnamespace and p.prosrc ~ 'photo_admin' and p.prosrc !~ 'photo_actor_is_admin' order by 1`);
+    expect(flag.rows.map(row => row.proname)).toEqual(['photo_actor_is_admin']);
+    // Internal helpers: no client and not even the service role calls them directly.
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      const helpers = await f.sql.query(`select bool_or(has_function_privilege($1, p.oid, 'EXECUTE')) as allowed from pg_proc p
+        where p.pronamespace='public'::regnamespace and p.proname in ('photo_actor_is_admin','photo_can_trash')`, [role]);
+      expect(helpers.rows[0].allowed, role).toBe(false);
+    }
   });
 
   it('old unfiltered employee and administrator SELECT/RPC queries hide all trash metadata', async () => {

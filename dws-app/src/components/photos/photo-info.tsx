@@ -5,10 +5,11 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Download, Link2, Pencil, TextCursorInput, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { invalidatePhotoCaches, renamePhoto, usePhotoDetail } from "@/lib/photos/api";
+import { invalidatePhotoCaches, renamePhoto, usePhotoActor, usePhotoDetail } from "@/lib/photos/api";
 import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { buildPhotoLink } from "@/lib/photos/photo-link";
 import { trashDisclosure } from "@/lib/photos/action-client";
+import { canTrashPhoto, TRASH_RULE_MESSAGE } from "@/lib/photos/permissions";
 import {
   formatCapturedAt,
   formatFileInfo,
@@ -44,6 +45,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
   // The grid's rows do not carry albums; the one-photo read does.
   const { data: detail, isLoading: albumsLoading } = usePhotoDetail(photo.id);
   const albums = detail?.albums ?? [];
+  const actor = usePhotoActor();
   // The saved name shows at once; the grid row catches up when its list refetches.
   const [saved, setSaved] = useState<{ id: string; name: string | null } | null>(null);
   const name = saved?.id === photo.id ? saved.name : photoName(photo);
@@ -61,7 +63,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
       setSaved({ id: photo.id, name: photoName(updated) });
       setDraft(null);
       invalidatePhotoCaches(queryClient);
-      toast.success(draft.trim() ? "Photo renamed" : "Name set back to the uploaded filename");
+      toast.success(draft.trim() ? "Photo renamed" : "Name set back to the automatic name");
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "Failed to rename the photo");
     } finally {
@@ -122,11 +124,11 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
                       setDraft(null);
                     }
                   }}
-                  placeholder={photo.original_name ?? "Photo name"}
+                  placeholder="Automatic name"
                   className="min-h-11 w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 text-base font-normal text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none"
                 />
                 <span className="text-sm font-normal text-[#b4b4b4]">
-                  Leave it empty to go back to the uploaded filename.
+                  Leave it empty to go back to the automatic name.
                 </span>
                 <div className="flex gap-2">
                   <button
@@ -244,18 +246,26 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
         </button>
       </div>
 
-      {/* The recovery facts sit with the one action they are about. */}
-      <div className="border-t border-[#4e4e4e] pt-4">
-        <Link
-          href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
-          onClick={onNavigate}
-          className={cn(action, "text-red-200 hover:border-red-400")}
-        >
-          <Trash2 className="h-5 w-5 shrink-0 text-red-300" aria-hidden="true" />
-          Move to trash
-        </Link>
-        <p className="mt-2 text-base leading-relaxed text-[#b4b4b4]">{trashDisclosure}</p>
-      </div>
+      {/* The recovery facts sit with the one action they are about. Offered only to
+          whoever may use it; anyone else is told why there is no button. Nothing
+          shows until the permissions have loaded. */}
+      {actor && (canTrashPhoto(actor, photo) ? (
+        <div className="border-t border-[#4e4e4e] pt-4">
+          <Link
+            href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
+            onClick={onNavigate}
+            className={cn(action, "text-red-200 hover:border-red-400")}
+          >
+            <Trash2 className="h-5 w-5 shrink-0 text-red-300" aria-hidden="true" />
+            Move to trash
+          </Link>
+          <p className="mt-2 text-base leading-relaxed text-[#b4b4b4]">{trashDisclosure}</p>
+        </div>
+      ) : (
+        <p data-testid="trash-rule" className="border-t border-[#4e4e4e] pt-4 text-sm leading-relaxed text-[#a8a8a8]">
+          {TRASH_RULE_MESSAGE}
+        </p>
+      ))}
     </div>
   );
 }

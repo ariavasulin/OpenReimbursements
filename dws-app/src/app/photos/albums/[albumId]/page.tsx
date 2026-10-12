@@ -18,8 +18,10 @@ import {
   deleteAlbum,
   invalidatePhotoCaches,
   renameAlbum,
+  usePhotoActor,
   usePhotoAlbum,
 } from "@/lib/photos/api";
+import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
 /** One album: its name (rename in place), count, delete, and its photos. */
@@ -31,6 +33,8 @@ export default function AlbumPage() {
   const { data: album, error, isLoading } = usePhotoAlbum(albumId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const actor = usePhotoActor();
+  const canDelete = album !== undefined && canDeleteAlbum(actor, album);
 
   const remove = async () => {
     if (!album) return;
@@ -88,14 +92,16 @@ export default function AlbumPage() {
           invalidatePhotoCaches(queryClient);
         }}
         actions={
-          <button
-            type="button"
-            onClick={() => setConfirmingDelete(true)}
-            className={headerActionClass}
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-            Delete album
-          </button>
+          canDelete && (
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              className={headerActionClass}
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              Delete album
+            </button>
+          )
         }
       />
 

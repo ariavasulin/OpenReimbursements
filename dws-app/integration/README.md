@@ -15,9 +15,12 @@ identity marker are checked before SQL replay or fixture creation. There is no
 linked-project or remote-target option.
 
 `createFixtures()` in `fixtures.ts` returns service-role `admin`, `anon`, and
-`employeeA`, `employeeB`, `administrator` actors (each with `id`, authenticated
-`client`, `cookies`, and a `cookie` request-header string), plus a `sql` pg Pool
-and `close()`. Actors use real local SMS OTP verification with deterministic test
+`employeeA`, `employeeB`, `administrator`, `photoAdmin` actors (each with `id`,
+authenticated `client`, `cookies`, and a `cookie` request-header string), plus a
+`sql` pg Pool and `close()`. `administrator` has the Receipts `role='admin'` and is
+not a photo admin; `photoAdmin` is an employee with `user_profiles.photo_admin`
+set. Every call resets those flags, so a scenario that changes one must not assume
+it carries to another file. Actors use real local SMS OTP verification with deterministic test
 numbers; no production auth bypass exists. Test scenarios own their rows and
 must not assume earlier files ran. SQL transactions that must share a connection
 use `sql.connect()` and release that client afterward.

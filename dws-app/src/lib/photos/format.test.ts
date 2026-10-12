@@ -14,4 +14,14 @@ describe('photo names', () => {
     expect(downloadName({ display_name: 'Kitchen', original_name: 'no-extension' })).toBe('Kitchen');
     expect(downloadName({ display_name: null, original_name: 'IMG_1.JPG' })).toBe('IMG_1.JPG');
   });
+
+  it('downloads an automatic name with the original extension', () => {
+    expect(downloadName({ display_name: '3962 – 260923 160432', original_name: 'IMG_4471.HEIC' })).toBe('3962 – 260923 160432.HEIC');
+  });
+
+  it('keeps URL-reserved characters out of the download filename', () => {
+    expect(downloadName({ display_name: '#3962 – 260923 160432', original_name: 'IMG_1.jpg' })).toBe('-3962 – 260923 160432.jpg');
+    expect(downloadName({ display_name: 'A&B?+C', original_name: 'IMG_1.jpg' })).toBe('A-B--C.jpg');
+    expect(downloadName({ display_name: null, original_name: 'a&b.jpg' })).toBe('a-b.jpg');
+  });
 });
