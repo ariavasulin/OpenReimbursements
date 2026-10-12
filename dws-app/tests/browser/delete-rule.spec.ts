@@ -46,6 +46,8 @@ const bar = (page: Page) => page.getByRole('region', { name: 'Selected photos' }
 async function select(page: Page, phone: boolean, names: string[]) {
   const [first, ...rest] = names;
   if (phone) {
+    // The press is raw mouse input, which does not scroll: bring the photo into view first.
+    await tile(page, first).scrollIntoViewIfNeeded();
     const box = (await tile(page, first).boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
@@ -110,7 +112,8 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
 
     // The viewer: a colleague's photo has no Move to trash, and says why.
     await page.goto(`/photos/${job}?photo=${ids[theirs[0]]}`);
-    if (phone) await page.getByRole('button', { name: 'Details', exact: true }).click();
+    // A phone's Details pop-up; desktop's Details panel (off by default, so one press turns it on).
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(page.getByTestId('trash-rule')).toHaveText(TRASH_RULE_MESSAGE);
     await expect(page.getByRole('link', { name: 'Move to trash', exact: true })).toHaveCount(0);
     await capture(page, info, `${viewport.name}-viewer-explains`);

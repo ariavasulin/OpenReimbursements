@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabaseClient";
 import type { UploadDeps } from "./upload";
 import { createResumableUpload } from "./upload-tus";
-import type { UploadAttempt, AcquireUploadOutcome, ClaimUploadOutcome, CanonicalUploadOutcome, OriginalUploadState, CancelUploadInput, CancelUploadOutcome } from "./upload-contract";
+import type { UploadAttempt, AcquireUploadOutcome, ClaimUploadOutcome, CanonicalUploadOutcome, OriginalUploadState, CancelUploadInput, CancelUploadOutcome, FormatTwin } from "./upload-contract";
 import { extractCapturedAt } from "./exif";
 import { sha256 } from "./hash";
 import { createUploadRequest } from "./upload-http";
@@ -32,6 +32,9 @@ export function buildBrowserUploadDeps(): UploadDeps {
     releaseLease: (input) => uploadRequest("release", input),
     finalize: (input, options) => uploadRequest<CanonicalUploadOutcome>("finalize", input, options),
     attachSidecar: (input, options) => uploadRequest<CanonicalUploadOutcome>("sidecar", input, options),
+    findFormatTwin: async ({ job_id, base, captured_at, content_sha256 }, options) =>
+      (await uploadRequest<{ photo: FormatTwin | null }>("twin",
+        { job: job_id, base, captured_at, sha: content_sha256 }, options)).photo,
   };
 }
 

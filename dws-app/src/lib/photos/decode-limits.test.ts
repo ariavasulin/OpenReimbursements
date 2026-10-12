@@ -7,7 +7,7 @@ describe("selection and upload decode budget", () => {
     expect(canDecodePreview({ name: "large.jpg", size: DERIVATIVES_MAX_BYTES + 1 })).toBe(false);
     expect(canDecodePreview({ name: "large.mp4", size: 101 * 1024 * 1024 })).toBe(false);
   });
-  it.each(["tif", "tiff", "dng", "cr2", "nef", "arw"])("skips %s decoding regardless of compressed file size", (ext) => {
+  it.each(["tif", "tiff", "dng", "cr2", "cr3", "nef", "arw"])("skips %s decoding regardless of compressed file size", (ext) => {
     expect(canDecodePreview({ name: `raw.${ext.toUpperCase()}`, size: 1024 })).toBe(false);
   });
 });

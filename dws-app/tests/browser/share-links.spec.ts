@@ -183,8 +183,9 @@ test('G1-G6 end to end: folders become albums, a party has no project, copies jo
   await dialog.getByRole('button', { name: 'Add tag', exact: true }).click();
   await expect(page.getByTestId('selection-count')).toHaveCount(0);
   await page.goto(`/photos/albums/${marketingAlbum.id}`);
-  await page.getByRole('button', { name: 'Filter by tag', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'professional', exact: true }).click();
+  await page.getByRole('button', { name: 'Filter by tags', exact: true }).click();
+  await page.getByRole('menuitemcheckbox', { name: 'professional', exact: true }).click();
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('checkbox', { name: /^Select (?!all of)/ })).toHaveCount(2);
   for (const row of chosen) await expect(page.getByRole('checkbox', { name: `Select ${row.display_name}`, exact: true })).toBeAttached();
   await shoot(page, info, 'e2e-marketing-filtered');

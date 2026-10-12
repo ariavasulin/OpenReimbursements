@@ -25,6 +25,7 @@ const STATUS_COLORS: Record<UploadItem["status"], { text: string; bar: string }>
     job_conflict: { text: "text-amber-400", bar: "bg-amber-400" },
     restore_required: { text: "text-amber-400", bar: "bg-amber-400" },
     waiting_claim: { text: "text-amber-400", bar: "bg-amber-400" },
+    format_twin: { text: "text-amber-400", bar: "bg-amber-400" },
     retrying_sidecar: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
     interrupted: { text: "text-amber-400", bar: "bg-amber-400" },
     cancelling: { text: "text-[#b4b4b4]", bar: "bg-[#2680FC]" },
@@ -48,6 +49,9 @@ function statusLabel(item: UploadItem): string {
       return "Restore required";
     case "waiting_claim":
       return "Another upload is running";
+    case "format_twin":
+      // The row's message line names the photo it looks like.
+      return "Not uploaded";
     case "retrying_sidecar":
       return "Retrying XMP...";
     case "interrupted":

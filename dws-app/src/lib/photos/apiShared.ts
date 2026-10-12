@@ -31,8 +31,18 @@ export function escapeForIlike(raw: string): string {
   return escapeIlikeWildcards(raw).replace(/[,()]/g, ' ').trim();
 }
 
-/** Most photos one bulk call (album add/remove, bulk tag) may name. SQL enforces the same number. */
+/** Most photos one bulk call (album add/remove, bulk tag, purge) may name. SQL enforces the same number. */
 export const MAX_BULK_PHOTOS = 500;
+
+/**
+ * Most photos one selection may hold: what GET /api/photos/ids returns at most,
+ * and what one action batch (move, trash) may name. Bulk calls above take
+ * MAX_BULK_PHOTOS at a time, so the client sends a selection in chunks.
+ */
+export const MAX_SELECTION_PHOTOS = 5000;
+
+/** Most photos an album may hold and still be arranged by hand (Decision 9). SQL enforces the same number. */
+export const MAX_ARRANGE_PHOTOS = 2000;
 
 export const MAX_TAGS = 20;
 export const MAX_TAG_LENGTH = 64;

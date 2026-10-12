@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { BookImage, Trash2, Upload } from "lucide-react";
+import { ArrowDownUp, BookImage, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import AlbumArrange from "@/components/photos/album-arrange";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
@@ -13,19 +14,44 @@ import EmptyState, { emptyPrimary, emptySecondary } from "@/components/photos/em
 import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
+import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import {
   deleteAlbum,
   invalidatePhotoCaches,
   renameAlbum,
+  restoreAlbumOrder,
+  setAlbumDateOrder,
   usePhotoActor,
   usePhotoAlbum,
+  type PhotoAlbumHeader,
+  type PhotoSort,
 } from "@/lib/photos/api";
+import { MAX_ARRANGE_PHOTOS } from "@/lib/photos/apiShared";
 import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
+/** Drop `sort` from the address bar, so the grid shows the album's own order again. */
+function showAlbumOrder() {
+  const { pathname, search, hash } = window.location;
+  const params = new URLSearchParams(search);
+  if (!params.has("sort")) return;
+  params.delete("sort");
+  const query = params.toString();
+  window.history.replaceState(null, "", `${pathname}${query ? `?${query}` : ""}${hash}`);
+}
+
 /** One album: its name (rename in place), count, delete, and its photos. */
 export default function AlbumPage() {
+  // The header's Play button starts the viewer's slideshow (slideshow-link.tsx).
+  return (
+    <SlideshowLink>
+      <AlbumPageContent />
+    </SlideshowLink>
+  );
+}
+
+function AlbumPageContent() {
   const { albumId } = useParams<{ albumId: string }>();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -33,8 +59,60 @@ export default function AlbumPage() {
   const { data: album, error, isLoading } = usePhotoAlbum(albumId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [arranging, setArranging] = useState(false);
   const actor = usePhotoActor();
   const canDelete = album !== undefined && canDeleteAlbum(actor, album);
+  const viewSort = useSearchParams().get("sort");
+
+  /** The album's mode as this page now knows it, ahead of the refetch. */
+  const setMode = (mode: PhotoAlbumHeader["sort_mode"]) => {
+    queryClient.setQueryData<PhotoAlbumHeader>(["photo-album", albumId], (current) =>
+      current && { ...current, sort_mode: mode, has_custom_order: current.has_custom_order || mode === "custom" }
+    );
+    invalidatePhotoCaches(queryClient);
+  };
+
+  const restoreCustom = async (name: string) => {
+    try {
+      await restoreAlbumOrder(albumId);
+      setMode("custom");
+      showAlbumOrder();
+      toast.success(`“${name}” shows its arranged order again, for everyone`);
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "Failed to change the order");
+    }
+  };
+
+  // Decision 9: an album has one order everyone sees, the share link included,
+  // so Sort on an album page switches that order rather than this view's alone.
+  const pickSort = async (sort: PhotoSort) => {
+    if (!album) return;
+    if (sort === "custom" && album.sort_mode !== "custom") {
+      await restoreCustom(album.name);
+    } else if (sort !== "custom" && album.sort_mode === "custom") {
+      try {
+        await setAlbumDateOrder(albumId);
+        setMode("date");
+        toast.success(`“${album.name}” now shows photos by date, for everyone`, {
+          description: "Its arranged order is kept: choose Sort › Custom to bring it back.",
+          action: { label: "Undo", onClick: () => void restoreCustom(album.name) },
+        });
+      } catch (reason) {
+        toast.error(reason instanceof Error ? reason.message : "Failed to change the order");
+      }
+    }
+  };
+
+  const startArranging = () => {
+    if (!album) return;
+    if (album.photo_count > MAX_ARRANGE_PHOTOS) {
+      toast.error(`Only albums of up to ${plural(MAX_ARRANGE_PHOTOS, "photo")} can be arranged by hand`, {
+        description: `This album has ${plural(album.photo_count, "photo")}.`,
+      });
+      return;
+    }
+    setArranging(true);
+  };
 
   const remove = async () => {
     if (!album) return;
@@ -78,6 +156,25 @@ export default function AlbumPage() {
     );
   }
 
+  if (album && arranging) {
+    return (
+      <main className={PAGE_MAIN_CLASS}>
+        <PhoneHeader back={{ href: "/photos/albums", label: "Albums" }} />
+        <AlbumArrange
+          album={album}
+          startSort={album.has_custom_order ? "custom" : viewSort === "asc" ? "asc" : "desc"}
+          onClose={(saved) => {
+            setArranging(false);
+            if (!saved) return;
+            setMode("custom");
+            showAlbumOrder();
+            toast.success("Order saved", { description: "Everyone sees this order, including the share link." });
+          }}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className={PAGE_MAIN_CLASS}>
       <PhoneHeader back={{ href: "/photos/albums", label: "Albums" }} />
@@ -86,28 +183,48 @@ export default function AlbumPage() {
         fallbackName="Album"
         subtitle={album ? `Album · ${plural(album.photo_count, "photo")}` : " "}
         renameLabel="Album name"
-        share={album && <ShareButton album={{ id: album.id, name: album.name }} />}
+        share={
+          album && (
+            <>
+              <PlayButton />
+              <ShareButton album={{ id: album.id, name: album.name }} />
+            </>
+          )
+        }
         onRename={async (name) => {
           await renameAlbum(albumId, name);
           invalidatePhotoCaches(queryClient);
         }}
         actions={
-          canDelete && (
-            <button
-              type="button"
-              onClick={() => setConfirmingDelete(true)}
-              className={headerActionClass}
-            >
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-              Delete album
-            </button>
-          )
+          <>
+            {album && album.photo_count > 1 && (
+              <button type="button" onClick={startArranging} className={headerActionClass}>
+                <ArrowDownUp className="h-4 w-4" aria-hidden="true" />
+                Arrange
+              </button>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                className={headerActionClass}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                Delete album
+              </button>
+            )}
+          </>
         }
       />
 
       {album && (
         <PhotoBrowser
           scope={{ kind: "album", album: { id: album.id, name: album.name } }}
+          albumOrder={{
+            defaultSort: album.sort_mode === "custom" ? "custom" : "desc",
+            customOffered: album.has_custom_order,
+            onSortPicked: (sort) => void pickSort(sort),
+          }}
           empty={
             <EmptyState
               icon={<BookImage className="h-7 w-7" aria-hidden="true" />}

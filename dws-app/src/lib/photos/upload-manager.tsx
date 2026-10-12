@@ -34,7 +34,7 @@ const MANIFEST_KEY = "photos.upload-manifest";
 
 type Action =
   | { type: "enqueue"; files: Q.PairedFile[]; meta: BatchMeta; now: number }
-  | { type: "start" | "retry" | "remove"; photoId: string }
+  | { type: "start" | "retry" | "keep" | "remove"; photoId: string }
   | { type: "progress"; photoId: string; sentBytes: number }
   | { type: "fail"; photoId: string; error: string }
   | { type: "beginRemoval"; photoId: string }
@@ -68,6 +68,8 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
       });
     case "retry":
       return Q.retry(q, a.photoId);
+    case "keep":
+      return Q.keep(q, a.photoId);
     case "remove":
       return Q.remove(q, a.photoId);
     case "beginRemoval":
@@ -90,6 +92,8 @@ interface Manager {
   active: boolean;
   enqueue(files: Q.PairedFile[], meta: BatchMeta): void;
   retry(photoId: string): void;
+  /** Upload a held format twin anyway. */
+  keep(photoId: string): void;
   retrySidecar(photoId: string, sidecar: File): void;
   remove(photoId: string): void;
   /** Adopts re-picked files into interrupted entries; returns the files that
@@ -249,6 +253,7 @@ export function UploadManagerProvider({
                 expectedSidecarName: current.sidecarName,
                 signal: controller.signal,
                 identity: current.uploadIdentity,
+                keepFormatTwin: current.keepFormatTwin,
                 onIdentity: (identity) => dispatchCurrent({ type: "identity", photoId: id, identity }),
               }
             );
@@ -321,6 +326,7 @@ export function UploadManagerProvider({
     enqueue: (files, meta) =>
       dispatch({ type: "enqueue", files, meta, now: Date.now() }),
     retry: (photoId) => dispatch({ type: "retry", photoId }),
+    keep: (photoId) => dispatch({ type: "keep", photoId }),
     retrySidecar: (photoId, sidecar) => {
       const item = queueRef.current.items.find((candidate) => candidate.photoId === photoId);
       if (!item?.sidecarRetry || !item.uploadIdentity || sidecarUploads.current.has(photoId) || (item.retryAt ?? 0) > Date.now()) return;

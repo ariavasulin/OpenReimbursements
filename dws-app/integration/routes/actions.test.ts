@@ -145,7 +145,7 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   expect((await json(await call(read,d.batch.id,undefined,f.employeeA,'GET','?offset=200&limit=100'))).items).toHaveLength(5);
   await json(await call(approve,d.batch.id,{}));
  });
- it('confirms exactly 500 selected IDs in bounded pages, refuses 501, and applies no-project and trash only to that selection', async () => {
+ it('confirms exactly 500 selected IDs in bounded pages and applies no-project and trash only to that selection', async () => {
   const j = await job();
   const rows = Array.from({length: 501}, () => {
    const id = randomUUID();
@@ -154,7 +154,7 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   expect((await f.admin.from('photos').insert(rows)).error).toBeNull();
   const ids = rows.slice(0, 500).map(row => row.id);
   try {
-   await json(await call(create, '', {action:'trash', selector:selected(rows.map(row => row.id))}), 400);
+   // The batch's own limit is the 5,000-photo selection now (photo-filters.test.ts); 500 here is just a size that pages.
    for (const action of ['move', 'trash']) {
     const d = await json(await call(create, '', {action, selector:selected(ids), ...(action === 'move' ? {destination_job_id:null} : {})}));
     for (let page = 1; page <= 5; page++) {

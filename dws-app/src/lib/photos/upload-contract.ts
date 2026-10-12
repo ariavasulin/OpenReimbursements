@@ -54,3 +54,13 @@ export interface FinalizeUploadInput extends UploadClaimInput {
   duration_secs: number | null; sidecar_path: string | null; sidecar_name: string | null;
   content_sha256: string; warnings: string[];
 }
+/** Two capture times this close are the same shot (GET /api/photos/twin). */
+export const FORMAT_TWIN_WINDOW_MS = 1_000;
+/** GET /api/photos/twin: the same shot already in the project in another format. */
+export interface FormatTwin {
+  id: string; job_id: string; original_name: string;
+  display_name: string | null; captured_at: string;
+}
+export interface FormatTwinQuery {
+  job_id: string; base: string; captured_at: string; content_sha256: string;
+}

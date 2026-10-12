@@ -20,7 +20,7 @@ import { directorySource, filesSource, type DirectoryHandle, type LocalSource } 
 import { folderOf, isInsideFolder, type MigrationFolder } from '@/lib/photos/migration/folders';
 import { scanMigrationSource } from '@/lib/photos/migration/scan';
 import {
-  createMigrationRequest, loadMigrationBatch, loadMigrationFolders, isPausedMigrationItem, migrationBatchName, migrationBatchStatusLabel,
+  createMigrationRequest, formatTwinLabel, loadMigrationBatch, loadMigrationFolders, isPausedMigrationItem, migrationBatchName, migrationBatchStatusLabel,
   migrationExclusionLabel, migrationItemStatusLabel, retryDue,
   type BatchView, type ItemPage, type MigrationBatch, type MigrationItem, type MigrationSource, type MigrationSourceHint,
 } from '@/lib/photos/migration/client';
@@ -63,6 +63,9 @@ export default function MigratePage() {
   const [looseAlbum, setLooseAlbum] = useState<AlbumValue>({ kind: 'none' });
   const [looseTags, setLooseTags] = useState<string[]>([]);
   const [progress, setProgress] = useState<Record<string, [number, number]>>({});
+  // "Keep other formats": off, a file that looks like another format of a photo already in its
+  // project (IMG_1234.CR2 beside IMG_1234.JPG) is left out and listed; on, both are imported.
+  const [keepFormats, setKeepFormats] = useState(false);
   const [, setConnectedVersion] = useState(0);
   const localSources = useRef(new Map<string, LocalSource>());
   const readThisVisit = useRef(new Set<string>());
@@ -269,7 +272,7 @@ export default function MigratePage() {
   const makeEngine = (id: string, savedFolders = folders) => {
     const uploadRequest = createUploadRequest({ refreshAuth });
     return new MigrationEngine({ batchId: id, uploaderId: userId, sources, folders: savedFolders,
-      localSources: localSources.current, request, deps: buildBrowserUploadDeps(),
+      localSources: localSources.current, request, deps: buildBrowserUploadDeps(), keepFormatTwins: keepFormats,
       prepare: (input, options) => uploadRequest<UploadAttempt>('prepare', input, options),
       onChange: async completedItemId => {
         invalidatePhotoCaches(queryClient);
@@ -444,6 +447,19 @@ export default function MigratePage() {
               <strong className={status === 'completed' ? 'text-green-400' : status === 'cancelled' || needsAttention ? 'text-amber-300' : 'text-[#8bbaff]'}>{migrationBatchStatusLabel(status, needsAttention)}</strong></p>
           </div>
           {summary}
+          {owner && !terminal && (
+            <div className="flex items-start justify-between gap-4">
+              <label htmlFor="keep-formats" className="text-base">
+                <span className="block font-medium">Keep other formats</span>
+                <span className={`${hint} mt-1 block`}>When a photo is already in its project in another format, like IMG_1234.CR2 beside IMG_1234.JPG, import it too. Off: it is left out and listed below.</span>
+              </label>
+              <button id="keep-formats" type="button" role="switch" aria-checked={keepFormats} disabled={running} onClick={() => setKeepFormats(on => !on)}
+                className={`relative mt-1 inline-flex h-11 w-[4.5rem] shrink-0 items-center rounded-full border border-[#555] transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2680FC] ${keepFormats ? 'bg-[#2680FC]' : 'bg-[#3a3a3a]'}`}>
+                <span className="sr-only">{keepFormats ? 'On' : 'Off'}</span>
+                <span aria-hidden className={`inline-block h-9 w-9 rounded-full bg-white transition-transform ${keepFormats ? 'translate-x-[2.1rem]' : 'translate-x-1'}`} />
+              </button>
+            </div>
+          )}
           <div className="flex flex-wrap gap-3">
             {status === 'draft' && startButton}
             {owner && !running && ['approved', 'running', 'interrupted'].includes(status) && <button className={primaryButton} disabled={busy || !allRead} onClick={() => void start(false).catch(report)}>Resume</button>}
@@ -471,17 +487,18 @@ export default function MigratePage() {
             <tbody>{items.items.map(item => {
               const paused = isPausedMigrationItem(item, status); const row = folderFor(item);
               const bad = item.status.includes('failed') || item.status === 'job_conflict' || item.status === 'restore_required';
+              const leftOutTwin = formatTwinLabel(item);
               return <tr key={item.id} data-testid="migration-item" data-status={item.status} className="border-b border-[#3d3d3d] align-top">
                 <td className="max-w-xs break-all p-3">{item.relative_path}<div className="mt-1 text-[#c4c4c4]">{sources.find(source => source.id === item.source_id)?.label}{item.revision > 1 ? ' · changed since it was first read' : ''}</div></td>
                 <td className="whitespace-nowrap p-3">{size(item.original_bytes)}</td>
-                <td className="p-3"><span className={paused ? 'text-[#c4c4c4]' : bad ? 'text-red-300' : item.status === 'completed' ? 'text-green-400' : 'text-[#c4c4c4]'}>{paused ? 'Paused' : migrationItemStatusLabel(item.status)}</span>
+                <td className="p-3"><span className={paused ? 'text-[#c4c4c4]' : bad ? 'text-red-300' : item.status === 'completed' ? 'text-green-400' : 'text-[#c4c4c4]'}>{paused ? 'Paused' : leftOutTwin ?? migrationItemStatusLabel(item.status)}</span>
                   {item.status === 'skipped_duplicate' && row && (row.album_name || row.albums) && <div className="mt-1 text-[#c4c4c4]">The photo you already have was added to the album.</div>}
                   {progress[item.id] && <div className="mt-1">{size(progress[item.id][0])} of {size(progress[item.id][1])}</div>}
-                  {(item.error?.message ?? item.error?.code ?? item.error_code) && <div className="mt-1 text-red-300">{item.error?.message ?? item.error?.code ?? item.error_code}</div>}
+                  {!leftOutTwin && (item.error?.message ?? item.error?.code ?? item.error_code) && <div className="mt-1 text-red-300">{item.error?.message ?? item.error?.code ?? item.error_code}</div>}
                   {item.status === 'job_conflict' && <p className="mt-2 text-[#c4c4c4]">You already have this photo, in a different project. It was added to the album and kept its project. To move it, review the move in a new tab, then press Check again here.</p>}
                   {item.status === 'restore_required' && <p className="mt-2 text-[#c4c4c4]">You already have this photo, in the trash. Restore it in a new tab, then press Check again here. No second copy is made.</p>}
                   {!running && item.lease_expires_at && Date.parse(item.lease_expires_at) > Date.now() && <div className="mt-1 text-amber-300">Another page may be importing this. Pause, or try again after {new Date(item.lease_expires_at).toLocaleTimeString()}.</div>}
-                  {(item.warnings ?? (item.result?.warnings as string[] | undefined) ?? []).map((warning, index) => <div key={index} className="mt-1 text-amber-300">{migrationExclusionLabel(warning) === 'Other files' ? warning : migrationExclusionLabel(warning)}</div>)}
+                  {!leftOutTwin && (item.warnings ?? (item.result?.warnings as string[] | undefined) ?? []).map((warning, index) => <div key={index} className="mt-1 text-amber-300">{migrationExclusionLabel(warning) === 'Other files' ? warning : migrationExclusionLabel(warning)}</div>)}
                   {!retryDue(item) && <div className="text-amber-300">Try again after {new Date(item.retry_after ?? Number(item.result?.retryAt)).toLocaleString()}</div>}
                 </td>
                 <td className="p-3">{owner && !running && !paused && ['retryable_failed', 'waiting_claim', 'job_conflict', 'restore_required'].includes(item.status) && <div className="flex flex-wrap gap-2">

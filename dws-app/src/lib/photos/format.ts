@@ -57,9 +57,14 @@ export function projectName(job: { job_number: string; name: string } | null, jo
   return job ? jobLabel(job) : jobId === null ? NO_PROJECT : "a project";
 }
 
-/** 1 -> "1 photo", 3 -> "3 photos". */
+/** 1200 -> "1,200": every count a person reads. */
+export function formatCount(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/** 1 -> "1 photo", 3 -> "3 photos", 1200 -> "1,200 photos". */
 export function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+  return `${formatCount(n)} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 // Module-level formatters: a job page renders 100+ tiles, and constructing an

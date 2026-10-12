@@ -170,8 +170,8 @@ test('upload and edit pop-ups have no Sheet # field and still save; trash is off
   const bytes = Buffer.concat([png, randomBytes(16)]);
   const digest = createHash('sha256').update(bytes).digest('hex');
   await page.goto(`/photos/${jobs[1]}`);
-  // The filter row is up (a chip with nothing to offer, like Uploader for nameless fixture people, is left out).
-  await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: 'All', exact: true })).toBeVisible();
+  // The toolbar is up.
+  await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: 'Filter', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sheet', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'sheet', exact: true })).toHaveCount(0);
 

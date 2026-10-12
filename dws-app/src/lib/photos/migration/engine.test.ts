@@ -4,7 +4,7 @@ import { retryDue, type MigrationItem, type MigrationRequest } from './client';
 import { uploadOne, type UploadDeps } from '../upload';
 import { UploadRequestError } from '../upload-http';
 
-vi.mock('../upload', () => ({ uploadOne: vi.fn() }));
+vi.mock('../upload', async importOriginal => ({ ...await importOriginal<typeof import('../upload')>(), uploadOne: vi.fn() }));
 const file = new File(['photo'], 'site.jpg', { type: 'image/jpeg', lastModified: 12 });
 const item = (id: string, extra: Partial<MigrationItem> = {}): MigrationItem => ({
   id, source_id: 'source', relative_path: 'site.jpg', original_name: file.name, original_bytes: file.size,
@@ -35,7 +35,7 @@ describe('foreground migration scheduler', () => {
       await new Promise(resolve => setTimeout(resolve, 2));
       active--; return { status: 'done', warnings: [] };
     });
-    const { engine, options } = setup([item('done', { status: 'completed' }), ...Array.from({ length: 8 }, (_, i) => item(String(i)))]);
+    const { engine, options } = setup([item('done', { status: 'completed' }), ...Array.from({ length: 8 }, (_, i) => item(String(i), { relative_path: `site-${i}.jpg` }))]);
     await engine.run();
     expect(peak).toBe(2); expect(uploadOne).toHaveBeenCalledTimes(8);
     expect(options.localSources.get('source')!.getFile).toHaveBeenCalledTimes(8);
@@ -75,7 +75,7 @@ describe('foreground migration scheduler', () => {
       if (queueId === 'attempt-b') await waitingB;
       return { status: 'done', warnings: [] };
     });
-    const { engine, options } = setup([item('a'), item('b')]);
+    const { engine, options } = setup([item('a', { relative_path: 'a.jpg' }), item('b', { relative_path: 'b.jpg' })]);
     const work = engine.run();
     await vi.waitFor(() => expect(options.onChange).toHaveBeenCalledWith('a'));
     expect(options.onChange).not.toHaveBeenCalledWith('b');
@@ -123,6 +123,41 @@ describe('foreground migration scheduler', () => {
     await expect(engine.run()).rejects.toMatchObject({ name: 'MigrationLeaseUnavailable' });
     expect(request).toHaveBeenCalledWith('items/a', expect.objectContaining({ lease_generation: 0 }), expect.anything());
     expect(request.mock.calls.some(([, body]) => (body as { action?: string })?.action === 'complete')).toBe(false);
+  });
+
+  // plan Decision 11: in a folder import a format twin is left out unless the batch keeps other formats.
+  it('leaves a format twin out with its reason, and passes the Keep other formats switch to the uploader', async () => {
+    const twin = { id: 'jpg', job_id: 'job', original_name: 'IMG_1234.JPG', display_name: null, captured_at: '2026-01-01T00:00:00Z' };
+    vi.mocked(uploadOne).mockResolvedValue({ status: 'format_twin', twin, error: 'Looks like another format of IMG_1234.JPG', warnings: [] });
+    const { engine, request } = setup([item('raw', { relative_path: 'IMG_1234.CR2', lease_generation: 3 })]);
+    await engine.run();
+    expect(vi.mocked(uploadOne).mock.calls[0][5]).toMatchObject({ keepFormatTwin: undefined });
+    const writes = request.mock.calls.filter(([path]) => path === 'items/raw').map(([, body]) => body);
+    expect(writes).toEqual([
+      { action: 'outcome', error_code: 'format_twin', warnings: ['Looks like another format of IMG_1234.JPG'], lease_generation: 3 },
+      { action: 'skip' },
+    ]);
+
+    vi.mocked(uploadOne).mockReset().mockResolvedValue({ status: 'done', warnings: [] });
+    const kept = setup([item('raw', { relative_path: 'IMG_1234.CR2' })]);
+    kept.options.keepFormatTwins = true;
+    await new MigrationEngine(kept.options).run();
+    expect(vi.mocked(uploadOne).mock.calls[0][5]).toMatchObject({ keepFormatTwin: true });
+    expect(kept.request.mock.calls.some(([path]) => path === 'items/raw')).toBe(false);
+  });
+
+  it('never runs two formats of one shot side by side, so the second can be checked against the first', async () => {
+    const running = new Set<string>(); const together: string[][] = [];
+    vi.mocked(uploadOne).mockImplementation(async (_file, queueId) => {
+      running.add(queueId); together.push([...running].sort());
+      await new Promise(resolve => setTimeout(resolve, 2));
+      running.delete(queueId); return { status: 'done', warnings: [] };
+    });
+    const { engine } = setup([item('cr2', { relative_path: 'Site/IMG_1.CR2' }), item('jpg', { relative_path: 'Site/img_1.jpg' }),
+      item('other', { relative_path: 'Site/IMG_2.jpg' })]);
+    await engine.run();
+    expect(together.some(ids => ids.includes('attempt-cr2') && ids.includes('attempt-jpg'))).toBe(false);
+    expect(together).toContainEqual(['attempt-jpg', 'attempt-other']);
   });
 
   it('does not call complete while conflicts or deferred retries remain', async () => {

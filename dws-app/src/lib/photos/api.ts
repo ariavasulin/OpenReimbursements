@@ -1,4 +1,6 @@
 import { collectPages, COLLECTION_PAGE_SIZE } from "./collectionPagination";
+import type { KeysetDirection } from "@/lib/keysetCursor";
+import { MAX_ARRANGE_PHOTOS } from "./apiShared";
 import type { PurgeMarked } from "./action-types";
 import type { PhotoPermissions } from "./permissions";
 import {
@@ -29,8 +31,11 @@ export async function fetchJson<T>(
   return (await response.json()) as T;
 }
 
-/** GET /api/photos `sort`: newest capture first (`desc`, the default) or oldest. */
-export type { KeysetDirection as PhotoSort } from "@/lib/keysetCursor";
+/**
+ * GET /api/photos `sort`: newest capture first (`desc`, the default), oldest,
+ * or, with `album`, the album's arranged order (`custom`).
+ */
+export type PhotoSort = KeysetDirection | "custom";
 
 /** One page of GET /api/photos (keyset-paginated). */
 export interface PhotosPage {
@@ -40,6 +45,21 @@ export interface PhotosPage {
 
 export function fetchPhotosPage(params: URLSearchParams): Promise<PhotosPage> {
   return fetchJson<PhotosPage>(`/api/photos?${params}`, "Failed to load photos");
+}
+
+/**
+ * GET /api/photos/ids: every photo the same parameters list (no cursor), in
+ * the grid's order, at most MAX_SELECTION_PHOTOS of them. `truncated` when
+ * `total` matched more than `ids` holds.
+ */
+export interface PhotoIdsAnswer {
+  ids: string[];
+  total: number;
+  truncated: boolean;
+}
+
+export function fetchPhotoIds(params: URLSearchParams): Promise<PhotoIdsAnswer> {
+  return fetchJson<PhotoIdsAnswer>(`/api/photos/ids?${params}`, "Could not select those photos");
 }
 
 export async function fetchJobs(q = "", signal?: AbortSignal): Promise<PhotoJobSummary[]> {
@@ -197,6 +217,10 @@ export interface PhotoAlbumHeader {
   created_at: string;
   /** Who made it: they and photo admins may delete it. */
   created_by: string;
+  /** `custom` while the album shows its arranged order, for everyone. */
+  sort_mode: "date" | "custom";
+  /** An arranged order is saved (kept when the album goes back to date order). */
+  has_custom_order: boolean;
 }
 
 export function usePhotoAlbum(albumId: string, enabled = true) {
@@ -247,6 +271,33 @@ export function renameAlbum(id: string, name: string) {
 
 export function restoreAlbum(id: string) {
   return fetchJson<{ album: PhotoAlbum }>(albumUrl(id), "Failed to restore the album", jsonInit("PATCH", { action: "restore" }));
+}
+
+/** Save the album's whole order (every active photo, each once): it then shows that order to everyone. */
+export function saveAlbumOrder(id: string, photoIds: string[]) {
+  return fetchJson<{ sort_mode: "custom" }>(
+    `${albumUrl(id)}/order`, "Failed to save the order", jsonInit("PATCH", { photo_ids: photoIds })
+  );
+}
+
+/** Put the album back in date order for everyone; its arranged order is kept. */
+export function setAlbumDateOrder(id: string) {
+  return fetchJson<{ sort_mode: "date" }>(
+    `${albumUrl(id)}/order`, "Failed to change the order", jsonInit("PATCH", { sort_mode: "date" })
+  );
+}
+
+/**
+ * Show the album's saved arranged order again: read it (photos added since go
+ * last) and save it as the order. Throws when the album is too big to arrange.
+ */
+export async function restoreAlbumOrder(id: string) {
+  const params = new URLSearchParams({ album: id, sort: "custom" });
+  const { ids, total } = await fetchPhotoIds(params);
+  if (total > MAX_ARRANGE_PHOTOS || ids.length !== total) {
+    throw new Error(`Only albums of up to ${MAX_ARRANGE_PHOTOS.toLocaleString("en-US")} photos can be arranged.`);
+  }
+  return saveAlbumOrder(id, ids);
 }
 
 export function deleteAlbum(id: string) {

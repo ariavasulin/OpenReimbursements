@@ -6,21 +6,26 @@ import { photoId, requirePhotoReader } from '@/lib/photos/server/reads';
 interface RouteContext { params: Promise<{ id: string }> }
 
 // GET /api/photo-albums/[id] — one live album for its page: { album: { id, name,
-// photo_count, created_at, created_by } }. Read through the employee's own
-// session, like the album list: a deleted or unknown album is hidden by its row
-// rule and answers 404, and the membership rows of trashed photos are hidden too,
-// so the count is of active photos only.
+// photo_count, created_at, created_by, sort_mode, has_custom_order } }. Read
+// through the employee's own session, like the album list: a deleted or unknown
+// album is hidden by its row rule and answers 404, and the membership rows of
+// trashed photos are hidden too, so the count is of active photos only.
+// sort_mode is 'custom' while the album shows its arranged order, else 'date';
+// has_custom_order says an arranged order is saved (kept after a switch to date).
 export async function GET(_request: Request, context: RouteContext) {
   return photoRoute(async () => {
     const session = await requirePhotoReader(), id = photoId((await context.params).id);
-    const [album, members] = await Promise.all([
-      session.from('albums').select('id,name,created_at,created_by').eq('id', id).is('deleted_at', null).maybeSingle(),
+    const [album, members, arranged] = await Promise.all([
+      session.from('albums').select('id,name,created_at,created_by,sort_mode').eq('id', id).is('deleted_at', null).maybeSingle(),
       session.from('album_photos').select('photo_id', { count: 'exact', head: true }).eq('album_id', id),
+      session.from('album_photos').select('photo_id').eq('album_id', id).not('position', 'is', null).limit(1),
     ]);
     if (album.error) throwPhotoDatabaseError(album.error);
     if (members.error) throwPhotoDatabaseError(members.error);
+    if (arranged.error) throwPhotoDatabaseError(arranged.error);
     if (!album.data) throw new PhotoApiError('not_found');
-    return photoJson({ success: true, album: { ...album.data, photo_count: members.count ?? 0 } });
+    return photoJson({ success: true, album: { ...album.data, photo_count: members.count ?? 0,
+      has_custom_order: (arranged.data ?? []).length > 0 } });
   });
 }
 

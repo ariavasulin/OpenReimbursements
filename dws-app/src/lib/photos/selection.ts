@@ -1,10 +1,11 @@
 // Pure select-many rules for the photo grid. Ids, never positions: grouped by
 // tag the same photo sits in several groups, and pages keep arriving.
 
-import { MAX_BULK_PHOTOS } from "./apiShared";
+import { MAX_SELECTION_PHOTOS } from "./apiShared";
+import { formatCount } from "./format";
 
-/** Most photos one selection may hold — the bulk routes' own limit. */
-export const MAX_SELECTION = MAX_BULK_PHOTOS;
+/** Most photos one selection may hold — what "Select all" fetches and one action batch takes. */
+export const MAX_SELECTION = MAX_SELECTION_PHOTOS;
 
 /**
  * Shift-click: every photo from the anchor to the target in display order,
@@ -77,5 +78,10 @@ export function toggleGroupSelection(
 
 /** The plain sentence the bar shows when a tick was refused. */
 export function selectionLimitMessage(limit = MAX_SELECTION): string {
-  return `You can select up to ${limit} photos at a time. Finish with these first, then select more.`;
+  return `You can select up to ${formatCount(limit)} photos at a time. Finish with these first, then select more.`;
+}
+
+/** The sentence the bar shows when "Select all" (or a group tick) matched more than one selection holds. */
+export function selectionCappedMessage(total: number, limit = MAX_SELECTION): string {
+  return `Selected the first ${formatCount(limit)} of ${formatCount(total)}, the most one selection can hold. Finish with these first, then select the rest.`;
 }

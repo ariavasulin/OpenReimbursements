@@ -58,8 +58,8 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     // The viewer names it "No project", and Copy link works without a project in the path.
     // At desktop the tile's name also carries its hover caption (date and uploader), so match the start.
     await page.getByRole('button', { name: new RegExp(`^loose-${viewport.name}\\.png`) }).click();
-    // Desktop keeps its side panel; on a phone the facts are behind the labeled Details button.
-    if (viewport.name === 'phone') await page.getByRole('button', { name: 'Details', exact: true }).click();
+    // The facts are behind the Details button: a pop-up on a phone, the side panel's "i" toggle on desktop.
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(page.getByTestId('photo-project')).toHaveText('No project');
     const copy = page.getByRole('button', { name: 'Copy link', exact: true });
     await expect(copy).toBeEnabled();

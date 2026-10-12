@@ -41,6 +41,16 @@ describe("upload HTTP requests", () => {
     });
   });
 
+  it("reads the format-twin check as a GET with its input as the query", async () => {
+    const { request, fetch } = setup();
+    const signal = new AbortController().signal;
+    await request("twin", { job: "j1", base: "IMG 1&2", captured_at: "2026-09-07T12:00:00.000Z" }, { signal });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/photos/twin?job=j1&base=IMG+1%262&captured_at=2026-09-07T12%3A00%3A00.000Z",
+      { method: "GET", credentials: "same-origin", cache: "no-store", signal },
+    );
+  });
+
   it.each(["../admin", "https://external.example", "", "toString"])("rejects unknown operation %j without a request", async (operation) => {
     const { request, fetch } = setup();
     await expect(request(operation, {})).rejects.toMatchObject({ code: "invalid_input", retryable: false });

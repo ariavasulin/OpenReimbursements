@@ -4,7 +4,7 @@
 
 import { classifyFile } from "./classify";
 import type { BatchMeta, UploadIdentity } from "./upload";
-import type { CancelUploadInput, CancelUploadOutcome } from "./upload-contract";
+import type { CancelUploadInput, CancelUploadOutcome, FormatTwin } from "./upload-contract";
 
 export type QueueStatus =
   | "queued"
@@ -15,6 +15,8 @@ export type QueueStatus =
   | "job_conflict"
   | "restore_required"
   | "waiting_claim"
+  /** Held, not uploaded: the project already has this shot in another format. */
+  | "format_twin"
   | "retrying_sidecar"
   | "cancelling"
   | "cancel_pending"
@@ -47,6 +49,10 @@ export interface QueueItem {
   shutterAt?: string;
   /** Paired .xmp filename (the sidecar File rides in Queue.files). */
   sidecarName?: string;
+  /** With status format_twin: the photo this file looks like another format of. */
+  twin?: FormatTwin;
+  /** The uploader pressed Keep: upload even though it looks like a format twin. */
+  keepFormatTwin?: boolean;
 }
 
 /** An uploadable file with its .xmp, if one was paired to it at pick time. */
@@ -118,8 +124,12 @@ export const fail = (q: Queue, id: string, error: string) =>
 export const recordOutcome = (
   q: Queue, id: string,
   outcome: Pick<QueueItem, "status"> & Partial<Pick<QueueItem,
-    "error" | "canonicalPhotoId" | "canonicalJobId" | "warnings" | "sidecarRetry" | "retryAt">>,
+    "error" | "canonicalPhotoId" | "canonicalJobId" | "warnings" | "sidecarRetry" | "retryAt" | "twin">>,
 ) => isRemoving(q.items.find((item) => item.photoId === id)) ? q : patch(q, id, { retryAt: undefined, ...outcome });
+/** Keep a held format twin: queue it again, this time to upload. */
+export const keep = (q: Queue, id: string) =>
+  q.items.find((item) => item.photoId === id)?.status !== "format_twin" ? q :
+    patch(q, id, { status: q.files.has(id) ? "queued" : "interrupted", keepFormatTwin: true, twin: undefined, error: undefined });
 export const rememberIdentity = (q: Queue, id: string, uploadIdentity: UploadIdentity) =>
   patch(q, id, { uploadIdentity });
 /** Retry keeps the photoId so TUS resumes and finalize stays idempotent. */
@@ -195,6 +205,7 @@ export function toManifest(q: Queue, now: number): Persisted[] {
           i.status === "job_conflict" ||
           i.status === "restore_required" ||
           i.status === "waiting_claim" ||
+          i.status === "format_twin" ||
           i.status === "retrying_sidecar" ||
           (i.status === "done" && i.sidecarRetry) ||
           i.status === "interrupted") &&

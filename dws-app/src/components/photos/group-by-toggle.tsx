@@ -39,14 +39,30 @@ const SORT_OPTIONS: readonly { value: PhotoSort; label: string }[] = [
   { value: "desc", label: "Newest" },
   { value: "asc", label: "Oldest" },
 ];
+const WITH_CUSTOM: readonly { value: PhotoSort; label: string }[] = [
+  ...SORT_OPTIONS,
+  { value: "custom", label: "Custom" },
+];
 
-/** Newest or oldest capture first; the server pages in that order. */
+/**
+ * Newest or oldest capture first, or (`custom`, offered on an album that has
+ * been arranged) the album's own order; the server pages in that order.
+ */
 export function SortToggle({
   value,
   onChange,
+  custom = false,
 }: {
   value: PhotoSort;
   onChange(sort: PhotoSort): void;
+  custom?: boolean;
 }) {
-  return <ChoiceChip name="Sort" options={SORT_OPTIONS} value={value} onChange={onChange} />;
+  return (
+    <ChoiceChip
+      name="Sort"
+      options={custom ? WITH_CUSTOM : SORT_OPTIONS}
+      value={value}
+      onChange={onChange}
+    />
+  );
 }

@@ -143,3 +143,26 @@ body[data-scroll-locked] {
 body:not([data-scroll-locked]) {
   pointer-events: auto !important;
 }
+
+/* Photo viewer (photo-lightbox.tsx): a tap on the photo hides every control,
+   the next tap brings them back. Overlaid controls fade, and `visibility`
+   takes them out of reach of the pointer and Tab while hidden; the thumbnail
+   strip leaves the layout so the photo can take its room. */
+.yarl__toolbar,
+.yarl__navigation_prev,
+.yarl__navigation_next,
+.yarl__counter {
+  transition:
+    opacity 200ms ease,
+    visibility 200ms ease;
+}
+.yarl__immersive .yarl__toolbar,
+.yarl__immersive .yarl__navigation_prev,
+.yarl__immersive .yarl__navigation_next,
+.yarl__immersive .yarl__counter {
+  opacity: 0;
+  visibility: hidden;
+}
+.yarl__immersive .yarl__thumbnails_container {
+  display: none;
+}

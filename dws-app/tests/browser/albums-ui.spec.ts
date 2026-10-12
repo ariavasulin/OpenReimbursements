@@ -9,7 +9,9 @@ import { createFixtures } from '../../integration/fixtures';
 //   AC-12                 Photos · Albums · Projects on phone and desktop; "No project" breaks nothing
 //   AC-13                 the upload pop-up: project-or-album rule, pre-fill, album created inline
 //   AC-14                 the tag dropdown; filter and group by tag on Photos, album, and project pages
-//   AC-15 / AC-9          select-many with all five actions; past 500 is refused in the bar
+//   AC-15 / AC-9          select-many with all five actions; past 5,000 is refused in the bar
+// plans/active/dws-photos-client-feedback/plan.md:
+//   AC-13 / AC-14         Select all and the group tick take photos not loaded yet; bulk calls go in slices
 // Every test owns its rows. This file sorts first, and a later file (the 100,000-entry import)
 // needs a small library, so afterAll removes every photo and album made here.
 let fixtures: Awaited<ReturnType<typeof createFixtures>>;
@@ -66,18 +68,41 @@ async function album(name: string, photoIds: string[] = []) {
   madeAlbums.push(id);
   return id;
 }
-/** Rows only (file tiles, no Storage objects): cheap bulk for paging and the 500 limit. */
-async function fillers(count: number, albumId?: string) {
-  const rows = await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,display_name,name_source,original_path,original_bytes,mime_type,captured_at)
-    select gen_random_uuid(),$1,$2,'file','filler-${run}-'||n||'.pdf','filler-${run}-'||n||'.pdf','manual','originals/filler-${run}/'||gen_random_uuid(),10,'application/pdf',now()+interval '1 day'
-    from generate_series(1,$3) n returning id`, [projects.south, fixtures.employeeA.id, count]);
-  const ids = rows.rows.map(row => row.id as string);
+/**
+ * Rows only (file tiles, no Storage objects): cheap bulk for paging and the selection limit. 1,000 rows
+ * per statement: the naming trigger's per-row lock runs out of lock memory on a much bigger one.
+ * Every filler is captured at one instant, a day ahead, so they share one date group.
+ */
+async function fillers(count: number, albumId?: string, jobId = projects.south) {
+  const ids: string[] = [];
+  const capturedAt = new Date(Date.now() + 86_400_000).toISOString();
+  for (let start = 1; start <= count; start += 1000) {
+    const rows = await fixtures.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_name,display_name,name_source,original_path,original_bytes,mime_type,captured_at)
+      select gen_random_uuid(),$1,$2,'file','filler-${run}-'||n||'.pdf','filler-${run}-'||n||'.pdf','manual','originals/filler-${run}/'||gen_random_uuid(),10,'application/pdf',$5::timestamptz
+      from generate_series($3::int,$4::int) n returning id`, [jobId, fixtures.employeeA.id, start, Math.min(count, start + 999), capturedAt]);
+    ids.push(...rows.rows.map(row => row.id as string));
+  }
   if (albumId) await fixtures.sql.query('insert into public.album_photos(album_id,photo_id,added_by) select $1,unnest($2::uuid[]),$3', [albumId, ids, fixtures.employeeA.id]);
   return ids;
 }
 const removeFillers = () => fixtures.sql.query('delete from public.photos where original_name like $1', [`filler-${run}-%`]);
 
 const sections = (page: Page) => page.getByRole('navigation', { name: 'Sections' });
+/** Filter the grid by one tag: the Tags chip on desktop, the Filter pop-up on a phone. */
+async function filterByTag(page: Page, v: ViewportName, tag: string) {
+  const filters = page.getByRole('group', { name: 'Filters' });
+  if (v === 'desktop') {
+    await filters.getByRole('button', { name: 'Filter by tags', exact: true }).click();
+    await page.getByRole('menuitemcheckbox', { name: tag, exact: true }).click();
+    await page.keyboard.press('Escape');
+  } else {
+    await filters.getByRole('button', { name: 'Filter', exact: true }).click();
+    const sheet = page.getByRole('dialog', { name: 'Filter' });
+    await sheet.getByRole('group', { name: 'Tags' }).getByRole('button', { name: tag, exact: true }).click();
+    await sheet.getByRole('button', { name: 'Done', exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+  }
+}
 // .last(): a project page repeats its `professional` photos in a pinned row above the dated groups;
 // the dated tile is the one that selects, and it always comes after.
 const tile = (page: Page, name: string) => page.getByRole('button', { name: new RegExp(`^${name.replace('.', '\\.')}`) }).last();
@@ -90,9 +115,16 @@ async function choose(page: Page, setting: 'Group by' | 'Sort', choice: string) 
   await page.getByRole('menuitemradio', { name: choice, exact: true }).click();
   await expect(page.getByRole('button', { name: `${setting}: ${choice}`, exact: true })).toBeVisible();
 }
-/** The viewer's facts: desktop keeps its side panel; a phone opens the labeled Details pop-up. */
+/**
+ * The viewer's facts: a phone opens the labeled Details pop-up; desktop turns on its Details panel
+ * (the "i" toggle: off by default, then remembered for the tab, so only press it while it is off).
+ */
 async function openDetails(page: Page, viewport: ViewportName) {
-  if (viewport === 'phone') await page.getByRole('button', { name: 'Details', exact: true }).click();
+  const details = page.getByRole('button', { name: 'Details', exact: true });
+  if (viewport === 'phone') { await details.click(); return; }
+  await expect(details).toBeVisible();
+  if (await details.getAttribute('aria-pressed') !== 'true') await details.click();
+  await expect(page.getByRole('complementary', { name: 'Details' })).toBeVisible();
 }
 async function pickFile(page: Page, name: string, bytes: Buffer) {
   await page.locator('input[type=file][multiple]').first().setInputFiles({ name, mimeType: 'image/png', buffer: bytes });
@@ -132,7 +164,7 @@ for (const viewport of VIEWPORTS) {
     await expect(page.getByRole('heading', { level: 1, name: 'Photos', exact: true })).toBeVisible();
     await expect(tile(page, loose)).toBeVisible();
     await expect(page).toHaveURL(/\/photos$/);
-    await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: 'Filter by project' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: v === 'desktop' ? 'Filter by project' : 'Filter', exact: true })).toBeVisible();
     await expect(page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Group by: Date', exact: true })).toBeVisible();
     await expect(page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Sort: Newest', exact: true })).toBeVisible();
 
@@ -337,13 +369,12 @@ for (const viewport of VIEWPORTS) {
     for (const path of [`/photos/${projects.north}`, `/photos/albums/${albumId}`, '/photos']) {
       await page.goto(path);
       await expect(tile(page, other)).toBeVisible();
-      await page.getByRole('button', { name: 'Filter by tag', exact: true }).click();
-      await page.getByRole('menuitem', { name: fresh, exact: true }).click();
+      await filterByTag(page, v, fresh);
       await expect(tile(page, name)).toBeVisible();
       await expect(tile(page, other)).toHaveCount(0);
       await choose(page, 'Group by', 'Tag');
       await expect(page.getByRole('heading', { name: `${fresh} · 1 photo`, exact: true })).toBeVisible();
-      await page.getByRole('button', { name: 'All', exact: true }).click();
+      await page.getByRole('group', { name: 'Active filters' }).getByRole('button', { name: 'Clear', exact: true }).click();
       // Ungrouped from the filter: photos with no tag come last, under their own heading.
       await expect(page.getByRole('heading', { name: /^No tags · \d+ photos?$/ })).toBeVisible();
     }
@@ -562,44 +593,98 @@ test('phone viewer: the photo is unobscured until the labeled Details pop-up is 
   await expect(page.locator('.yarl__slide_image').first()).toBeVisible();
 });
 
-test('AC-9: selecting past 500 is refused in the bar with a plain message; all actions accept the selected 500', async ({ page, context }) => {
-  test.setTimeout(300_000);
+test('AC-9 / client-feedback AC-14: Select all stops at 5,000 of 6,000 and says so, a tick past 5,000 is refused, and Add to album takes all 5,000 in slices of 500', async ({ page, context }) => {
+  test.setTimeout(420_000);
   await page.setViewportSize({ width: 1440, height: 1000 }); await authenticate(context);
   const big = await album(`Big ${run}`); const second = await album(`Second ${run}`);
-  await fillers(501, big);
+  await fillers(6000, big);
   try {
     await page.goto(`/photos/albums/${big}`);
     const ticks = page.getByRole('checkbox', { name: new RegExp(`^Select filler-${run}-`) });
-    await expect(ticks.first()).toBeAttached();
-    // Scroll until every page (100 at a time) has loaded.
-    await expect.poll(async () => {
-      await page.locator('#photos-scrollport').evaluate(node => node.scrollTo(0, node.scrollHeight));
-      return ticks.count();
-    }, { timeout: 120_000, intervals: [500] }).toBe(501);
-    await page.locator('#photos-scrollport').evaluate(node => node.scrollTo(0, 0));
-    const heading = page.locator('main h2').first();
-    await heading.hover();
-    await page.getByRole('checkbox', { name: /^Select all of / }).first().click();
-    await expect(page.getByTestId('selection-count')).toHaveText('500 selected');
-    await expect(page.getByTestId('selection-message')).toHaveText('You can select up to 500 photos at a time. Finish with these first, then select more.');
-    // One more tick is refused the same way; un-ticking still works.
+    await ticks.first().click();
+    await expect(page.getByTestId('selection-count')).toHaveText('1 selected');
+    // A real 6,000-row seed: GET /api/photos/ids answers 5,000 ids, truncated.
+    const selectAll = page.getByTestId('selection-select-all');
+    await expect(selectAll).toHaveText('Select all 5,000 (of 6,000)');
+    await selectAll.click();
+    await expect(page.getByTestId('selection-count')).toHaveText('5,000 selected');
+    await expect(page.getByTestId('selection-message')).toHaveText('Selected the first 5,000 of 6,000, the most one selection can hold. Finish with these first, then select the rest.');
+    await expect(selectAll).toHaveCount(0);
+
+    // Oldest first puts the 1,000 left out on top: one more tick is refused in plain words.
+    await choose(page, 'Sort', 'Oldest');
     const unselected = page.getByRole('checkbox', { name: new RegExp(`^Select filler-${run}-`), checked: false });
-    await expect(unselected).toHaveCount(1);
-    await unselected.click();
-    await expect(page.getByTestId('selection-count')).toHaveText('500 selected');
+    await unselected.first().click();
+    await expect(page.getByTestId('selection-count')).toHaveText('5,000 selected');
+    await expect(page.getByTestId('selection-message')).toHaveText('You can select up to 5,000 photos at a time. Finish with these first, then select more.');
 
     await bar(page).getByRole('button', { name: 'Set project', exact: true }).click();
     const projectDialog = page.getByRole('dialog');
     await expect(projectDialog).toBeVisible();
     await projectDialog.getByRole('button', { name: 'Close', exact: true }).click();
 
-    // The immediate actions take all 500 in one call.
+    // Add to album sends the 5,000 in ten requests of 500, under one progress toast.
+    const adds: number[] = [];
+    page.on('request', request => {
+      if (request.method() === 'POST' && request.url().endsWith(`/api/photo-albums/${second}/photos`)) adds.push(request.postDataJSON().photo_ids.length);
+    });
     await bar(page).getByRole('button', { name: 'Add to album', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Add 500 photos to an album' });
+    const dialog = page.getByRole('dialog', { name: 'Add 5,000 photos to an album' });
     await dialog.getByLabel('Album', { exact: true }).fill(`Second ${run}`);
     await dialog.getByRole('option', { name: new RegExp(`^Second ${run}`) }).click();
     await dialog.getByRole('button', { name: 'Add to album', exact: true }).click();
-    await expect(page.getByText(`Added 500 photos to “Second ${run}”`, { exact: true })).toBeVisible();
-    expect((await fixtures.sql.query('select count(*)::int as n from public.album_photos where album_id=$1', [second])).rows[0].n).toBe(500);
+    await expect(page.getByText(`Added 5,000 photos to “Second ${run}”`, { exact: true })).toBeVisible({ timeout: 120_000 });
+    expect(adds).toEqual(Array(10).fill(500));
+    expect((await fixtures.sql.query('select count(*)::int as n from public.album_photos where album_id=$1', [second])).rows[0].n).toBe(5000);
   } finally { await removeFillers(); }
+});
+
+test('client-feedback AC-13: a date tick and Select all take all 1,200 photos of a project, Tag goes in three requests, and Trash confirms all 1,200', async ({ page, context }) => {
+  test.setTimeout(300_000);
+  await page.setViewportSize({ width: 1440, height: 1000 }); await authenticate(context);
+  const big = randomUUID();
+  await fixtures.sql.query('insert into public.jobs(id,job_number,name) values($1,$2,$3)', [big, `AB-${run}`, `Albums Big ${run}`]);
+  const ids = await fillers(1200, undefined, big);
+  try {
+    await page.goto(`/photos/${big}`);
+    const ticks = page.getByRole('checkbox', { name: new RegExp(`^Select filler-${run}-`) });
+    await expect(ticks.first()).toBeAttached();
+    // Every filler shares one day, and only the first page of it is loaded.
+    expect(await ticks.count()).toBeLessThan(1200);
+    await page.locator('main h2').first().hover();
+    await page.getByRole('checkbox', { name: /^Select all of / }).first().click();
+    await expect(page.getByTestId('selection-count')).toHaveText('1,200 selected');
+    await expect(page.getByTestId('selection-select-all')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+
+    await ticks.first().click();
+    await expect(page.getByTestId('selection-select-all')).toHaveText('Select all 1,200');
+    await page.getByTestId('selection-select-all').click();
+    await expect(page.getByTestId('selection-count')).toHaveText('1,200 selected');
+
+    const tagged = `bulk ${run}`;
+    const tagRequests: number[] = [];
+    page.on('request', request => {
+      if (request.method() === 'POST' && request.url().endsWith('/api/photos/tags')) tagRequests.push(request.postDataJSON().photo_ids.length);
+    });
+    await bar(page).getByRole('button', { name: 'Tag', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Tag 1,200 photos' });
+    await dialog.getByLabel('Tags to add').fill(tagged);
+    await dialog.getByRole('button', { name: 'Add tag', exact: true }).click();
+    await expect(page.getByText(`Tagged 1,200 photos ${tagged}`, { exact: true })).toBeVisible({ timeout: 60_000 });
+    expect(tagRequests).toEqual([500, 500, 200]);
+    expect((await fixtures.sql.query('select count(*)::int as n from public.photos where id=any($1::uuid[]) and $2=any(tags)', [ids, tagged])).rows[0].n).toBe(1200);
+
+    await ticks.first().click();
+    await page.getByTestId('selection-select-all').click();
+    await expect(page.getByTestId('selection-count')).toHaveText('1,200 selected');
+    await bar(page).getByRole('button', { name: 'Trash', exact: true }).click();
+    await expect(page).toHaveURL(/\/photos\/actions\?batch=/);
+    await expect(page.getByTestId('action-question')).toHaveText('Move 1,200 photos to trash?', { timeout: 120_000 });
+  } finally {
+    await removeFillers();
+    // The Trash step left an action batch whose items name this project.
+    await fixtures.sql.query('delete from public.photo_action_items where expected_job_id=$1', [big]);
+    await fixtures.sql.query('delete from public.jobs where id=$1', [big]);
+  }
 });
