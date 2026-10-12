@@ -1,5 +1,6 @@
 import { collectPages, COLLECTION_PAGE_SIZE } from "./collectionPagination";
 import type { PurgeMarked } from "./action-types";
+import type { PhotoPermissions } from "./permissions";
 import {
   keepPreviousData,
   useQuery,
@@ -78,6 +79,20 @@ export function usePhotoTags(enabled: boolean) {
     queryFn: () => fetchTags(),
     enabled,
   });
+}
+
+/**
+ * The signed-in employee's photo permissions (GET /api/photos/actor), for
+ * showing Trash, Delete forever, Empty trash, and project or album Delete only
+ * where they will work. Undefined while loading: callers show nothing they
+ * cannot yet promise. The server checks every write regardless.
+ */
+export function usePhotoActor() {
+  return useQuery({
+    queryKey: ["photo-actor"],
+    queryFn: () => fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions"),
+    staleTime: 30_000,
+  }).data;
 }
 
 /** After an upload, edit, or delete: every photo-derived query refetches. */
@@ -176,6 +191,8 @@ export interface PhotoAlbumHeader {
   name: string;
   photo_count: number;
   created_at: string;
+  /** Who made it: they and photo admins may delete it. */
+  created_by: string;
 }
 
 export function usePhotoAlbum(albumId: string, enabled = true) {

@@ -87,7 +87,12 @@ file URLs remain accessible during retention. Restoration may include a
 confirmed move to another job. If a legacy duplicate points to a canonical
 photo, review that photo instead of promising a second active copy.
 
-Any signed-in employee can move, trash, and restore any photo. A handoff remains
+Any signed-in employee can move and restore any photo. Trashing is narrower: an
+employee can trash only photos they uploaded in the last 30 days; a photo admin
+can trash any photo. On the confirmation page, any other photo in a
+`remove_photos` list is flagged as one the employee cannot delete and must leave out.
+When asked to remove photos someone else uploaded, say so up front and suggest
+asking a photo admin. A handoff remains
 bound to its signed-in consumer, action, and confirmed targets; another employee
 cannot run that batch. Both handoffs and in-app actions require confirmation.
 

@@ -350,6 +350,7 @@ export default function PhotoBrowser({
         onClear={clear}
         album={scope.kind === "album" ? scope.album : undefined}
         limitMessage={limitMessage}
+        photos={photos}
       />
 
       <PhotoLightbox

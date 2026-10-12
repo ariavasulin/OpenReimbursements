@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -16,6 +17,7 @@ import {
 import { Loader2 } from "lucide-react"
 import { isValidUSPhoneNumber } from "@/lib/phone"
 import type { AdminUser } from "@/lib/types"
+import { OWN_UPLOAD_TRASH_DAYS } from "@/lib/photos/permissions"
 
 interface UserFormModalProps {
   open: boolean
@@ -31,6 +33,7 @@ interface FormData {
   preferred_name: string
   employee_id_internal: string
   role: "employee" | "admin"
+  photo_admin: boolean
 }
 
 export function UserFormModal({
@@ -46,6 +49,7 @@ export function UserFormModal({
     preferred_name: "",
     employee_id_internal: "",
     role: "employee",
+    photo_admin: false,
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,6 +64,7 @@ export function UserFormModal({
           preferred_name: user.preferred_name || "",
           employee_id_internal: user.employee_id_internal || "",
           role: user.role || "employee",
+          photo_admin: user.photo_admin === true,
         })
       } else {
         setFormData({
@@ -68,6 +73,7 @@ export function UserFormModal({
           preferred_name: "",
           employee_id_internal: "",
           role: "employee",
+          photo_admin: false,
         })
       }
       setError(null)
@@ -97,10 +103,11 @@ export function UserFormModal({
 
       const method = mode === "create" ? "POST" : "PATCH"
 
-      const body: Record<string, string | undefined> = {
+      const body: Record<string, string | boolean | undefined> = {
         phone: formData.phone,
         full_name: formData.full_name,
         role: formData.role,
+        photo_admin: formData.photo_admin,
       }
 
       if (formData.preferred_name.trim()) {
@@ -131,7 +138,7 @@ export function UserFormModal({
     }
   }
 
-  const handleChange = (field: keyof FormData, value: string) => {
+  const handleChange = (field: Exclude<keyof FormData, "photo_admin">, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
   }
 
@@ -236,6 +243,24 @@ export function UserFormModal({
                   <SelectItem value="admin">Admin</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* DWS Photos only; separate from the Receipts role above. */}
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="photo_admin"
+                checked={formData.photo_admin}
+                onCheckedChange={(checked) => setFormData(prev => ({ ...prev, photo_admin: checked === true }))}
+                disabled={isSubmitting}
+                className="mt-0.5 h-5 w-5 border-white data-[state=checked]:border-[#2680FC] data-[state=checked]:bg-[#2680FC] data-[state=checked]:text-white"
+              />
+              <div className="space-y-1">
+                <Label htmlFor="photo_admin" className="text-white">Photo admin</Label>
+                <p className="text-xs text-gray-400">
+                  In DWS Photos: can delete any photo, delete forever, empty the Trash, and delete projects.
+                  {`Everyone else can only delete photos they uploaded in the last ${OWN_UPLOAD_TRASH_DAYS} days.`}
+                </p>
+              </div>
             </div>
           </div>
 

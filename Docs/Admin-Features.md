@@ -171,7 +171,7 @@ Auth: Admin role required
 |---------|-------------|
 | List Users | Paginated user list with search |
 | Create User | Add new employee or admin |
-| Edit User | Update name, phone, role |
+| Edit User | Update name, phone, role, Photo admin |
 | Ban User | Soft delete (100-year ban) |
 
 ### Create User
@@ -184,6 +184,7 @@ Optional fields:
 - Preferred name
 - Employee ID
 - Role (defaults to employee)
+- Photo admin (defaults to off)
 
 ### Edit User
 
@@ -192,6 +193,17 @@ Can change:
 - Full name / Preferred name
 - Employee ID
 - Role (employee ↔ admin)
+- Photo admin (checkbox below Role)
+
+### Photo admin
+
+A DWS Photos permission, separate from the Receipts role above: a Receipts admin
+is not a photo admin unless this box is ticked. A photo admin can delete any photo,
+delete forever, empty the Trash, and delete any project or album in DWS Photos.
+Everyone else can delete only photos they uploaded in the last 30 days, and only
+albums they made. Stored as `user_profiles.photo_admin`; `PATCH /api/admin/users/[id]`
+and `POST /api/admin/users` accept `photo_admin: true | false`. The change applies
+on the person's next request.
 
 ### Ban User
 

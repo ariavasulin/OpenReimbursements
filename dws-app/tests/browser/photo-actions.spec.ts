@@ -2,6 +2,7 @@ import { test, expect, type BrowserContext, type Page, type TestInfo } from '@pl
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createFixtures } from '../../integration/fixtures';
+import { TRASH_RULE_MESSAGE } from '../../src/lib/photos/permissions';
 
 let fixtures: Awaited<ReturnType<typeof createFixtures>>;
 let png: Buffer;
@@ -163,9 +164,8 @@ test('MCP filename ambiguity requires a visible exact choice before confirmation
   expect(rows.find(row => row.id === second.id).job_id).toBe(jobs[0]);
 });
 
-// photo-albums AC-4: the upload and edit pop-ups open and save with no Sheet # field, and the job page
-// has no Sheet filter or group. Also the visible half of AC-5: trash is offered on a colleague's photo.
-test('upload and edit pop-ups have no Sheet # field and still save; trash is offered on a colleague’s photo', async ({ page, context }, info) => {
+// The job page also has no Sheet filter or group.
+test('upload and edit pop-ups have no Sheet # field and still save; trash is offered on your own upload only', async ({ page, context }, info) => {
   await page.setViewportSize({ width: 390, height: 844 }); await authenticate(context);
   const bytes = Buffer.concat([png, randomBytes(16)]);
   const digest = createHash('sha256').update(bytes).digest('hex');
@@ -202,10 +202,14 @@ test('upload and edit pop-ups have no Sheet # field and still save; trash is off
   await expect(page.getByText('Photo updated', { exact: true })).toBeVisible();
   expect((await fixtures.sql.query('select tags from public.photos where id=$1', [uploaded.id])).rows[0].tags).toEqual(['after-sheet-removal']);
 
-  // A colleague's photo: the viewer offers trash to someone who is neither uploader nor administrator.
+  // Your own new upload offers trash; a colleague's photo explains why it does not.
+  await page.goto(`/photos/${jobs[1]}?photo=${uploaded.id}`);
+  await page.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Move to trash', exact: true })).toBeVisible();
   const theirs = await seed('colleague-photo.png', { uploader: fixtures.employeeB.id });
   await page.goto(`/photos/${jobs[0]}?photo=${theirs.id}`);
   await page.getByRole('button', { name: 'Details', exact: true }).click();
-  await expect(page.getByRole('link', { name: 'Move to trash', exact: true })).toBeVisible();
-  await capture(page, info, 'colleague-photo-offers-trash');
+  await expect(page.getByTestId('trash-rule')).toHaveText(TRASH_RULE_MESSAGE);
+  await expect(page.getByRole('link', { name: 'Move to trash', exact: true })).toHaveCount(0);
+  await capture(page, info, 'colleague-photo-explains-trash');
 });

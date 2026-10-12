@@ -55,7 +55,7 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   const retry=await json(await call(apply,d.batch.id,{photo_ids:[b]}));expect(retry.outcomes[0].status).toBe('applied');
   const skipped=await json(await call(control,d.batch.id,{action:'skip',photo_ids:[a]},f.employeeA,'PATCH'));expect(skipped.batch.status).toBe('completed');
  });
- it('denies wrong batch actors and forged origin/script/action changes, while any employee may target a colleague’s photo',async()=>{
+ it('denies wrong batch actors and forged origin/script/action changes; a colleague’s photo can be moved but a trash list asks to leave it out',async()=>{
   const from=await job(),to=await job(),id=await photo(from.id,{uploader_id:f.employeeB.id});
   const d=await draft('move',selected([id]),to.id);await confirm(d.batch.id);
   expect((await json(await call(read,d.batch.id,undefined,f.employeeB,'GET'))).can_mutate).toBe(false);
@@ -63,8 +63,12 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   await json(await call(apply,d.batch.id,{photo_ids:[id],action:'trash'}),400);
   await json(await call(create,'',{action:'trash',origin:'mcp',selector:selected([id])}),400);
   await json(await call(control,d.batch.id,{action:'trash'},f.employeeA,'PATCH'),400);
-  // employeeA did not upload this photo; the uploader-or-admin check is gone (photo-albums Decision 7).
-  const own=await draft('trash',selected([id]));const listed=await json(await call(materialize,own.batch.id,{}));expect(listed.items.map((item:{photo_id:string})=>item.photo_id)).toEqual([id]);
+  // employeeA did not upload this photo, so a trash list stops and asks about it rather than failing;
+  // a choice of it is refused.
+  const own=await draft('trash',selected([id]));const listed=await json(await call(materialize,own.batch.id,{}));
+  expect(listed.items).toEqual([]);expect(listed.unresolved).toMatchObject([{reference_index:0,reason:'forbidden',total:1}]);
+  await json(await call(materialize,own.batch.id,{choices:{0:id}}),403);
+  const skipped=await json(await call(materialize,own.batch.id,{choices:{0:null}}));expect(skipped.batch.materialization_complete).toBe(true);expect(skipped.total).toBe(0);
   expect((await f.admin.from('photo_action_batches').update({action:'trash'}).eq('id',d.batch.id)).error).not.toBeNull();
   expect((await json(await call(apply,d.batch.id,{photo_ids:[id]}))).outcomes[0].status).toBe('applied');
  });
@@ -172,21 +176,21 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   const last = await seal(d.batch.id);
   expect(last.items.map(item => item.photo_id).sort()).toEqual([a,b].sort());
  });
- it('ordinary delete is open to any employee and records them, PATCH rejects job edits and trash, and cancellation fences apply',async()=>{
+ it('ordinary delete records who, PATCH rejects job edits and trash, and cancellation fences apply',async()=>{
   const j=await job(),id=await photo(j.id),other=await photo(j.id,{uploader_id:f.employeeB.id});
-  const first=await json(await call(remove,other,{},f.employeeA,'DELETE'));
-  expect((await f.admin.from('photos').select('deleted_by').eq('id',other).single()).data?.deleted_by).toBe(f.employeeA.id);
+  const first=await json(await call(remove,other,{},f.photoAdmin,'DELETE'));
+  expect((await f.admin.from('photos').select('deleted_by').eq('id',other).single()).data?.deleted_by).toBe(f.photoAdmin.id);
   // A replay by anyone keeps the original deletion instant, deadline, and actor.
   expect(await json(await call(remove,other,{},f.administrator,'DELETE'))).toEqual(first);
-  expect((await f.admin.from('photos').select('deleted_by').eq('id',other).single()).data?.deleted_by).toBe(f.employeeA.id);
+  expect((await f.admin.from('photos').select('deleted_by').eq('id',other).single()).data?.deleted_by).toBe(f.photoAdmin.id);
   await json(await call(edit,id,{job_id:j.id},f.employeeA,'PATCH'),400);
   await json(await call(edit,other,{tags:['new']},f.employeeB,'PATCH'),404);
   const d=await draft('trash',selected([id]));await confirm(d.batch.id);await json(await call(control,d.batch.id,{action:'cancel'},f.employeeA,'PATCH'));await json(await call(apply,d.batch.id,{photo_ids:[id]}),409);
   expect((await f.admin.from('photos').select('deleted_at').eq('id',id).single()).data?.deleted_at).toBeNull();
  });
 
- // photo-albums AC-5. employeeA uploads every fixture photo; employeeB is an ordinary employee, not an administrator.
- it('lets employee B trash then restore employee A’s photo and records B; signed out is 401 and a closed gate is 503',async()=>{
+ // employeeA uploads every fixture photo; employeeB is an ordinary employee.
+ it('lets employee B restore employee A’s photo after a photo admin trashes it; signed out is 401 and a closed gate is 503',async()=>{
   const j=await job(),id=await photo(j.id);
   const state=async()=>(await f.admin.from('photos').select('uploader_id,deleted_at,deleted_by,purge_after').eq('id',id).single()).data!;
   const removeRequest=()=>new Request(`http://localhost:3000/api/photos/${id}`,{method:'DELETE',headers:{Origin:'http://localhost:3000','Content-Type':'application/json'},body:'{}'});
@@ -206,10 +210,10 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   expect((await state()).deleted_at).toBeNull();
   expect((await f.admin.from('photo_release_state').update({photo_writes_enabled:true}).eq('singleton',true)).error).toBeNull();
 
-  // Trash: B is neither the uploader nor an administrator, and it succeeds with deleted_by = B.
-  await json(await call(remove,id,{},f.employeeB,'DELETE'));
+  // Trash, by a photo admin.
+  await json(await call(remove,id,{},f.photoAdmin,'DELETE'));
   const trashed=await state();
-  expect(trashed.uploader_id).toBe(f.employeeA.id);expect(trashed.deleted_by).toBe(f.employeeB.id);expect(trashed.deleted_at).not.toBeNull();
+  expect(trashed.uploader_id).toBe(f.employeeA.id);expect(trashed.deleted_by).toBe(f.photoAdmin.id);expect(trashed.deleted_at).not.toBeNull();
   expect(new Date(trashed.purge_after).getTime()-new Date(trashed.deleted_at).getTime()).toBe(30*86400_000);
 
   // Restore through the ordinary confirm flow, still as B.

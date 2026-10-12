@@ -20,14 +20,14 @@ export async function createFixtures() {
   const options = { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
   const admin = createClient(url, process.env.SUPABASE_SERVICE_ROLE_KEY!, options);
   const anon = createClient(url, anonKey, options);
-  async function actor(phone: string, role: 'employee' | 'admin'): Promise<FixtureActor> {
+  async function actor(phone: string, role: 'employee' | 'admin', photoAdmin = false): Promise<FixtureActor> {
     let id = (await sql.query('select id from auth.users where phone = $1', [phone])).rows[0]?.id as string | undefined;
     if (!id) {
       const created = await admin.auth.admin.createUser({ phone, phone_confirm: true });
       if (created.error || !created.data.user) throw new Error(`Cannot create isolated Auth fixture: ${created.error?.message}`);
       id = created.data.user.id;
     }
-    await sql.query('update public.user_profiles set role = $1 where user_id = $2', [role, id]);
+    await sql.query('update public.user_profiles set role = $1, photo_admin = $3 where user_id = $2', [role, id, photoAdmin]);
     const cookies: Array<{ name: string; value: string }> = [];
     const client = createServerClient(url, anonKey, {
       auth: { autoRefreshToken: false },
@@ -55,9 +55,11 @@ export async function createFixtures() {
     const employeeA = await actor('15555550101', 'employee');
     const employeeB = await actor('15555550102', 'employee');
     const administrator = await actor('15555550103', 'admin');
+    // A photo admin is a separate flag from the Receipts role.
+    const photoAdmin = await actor('15555550104', 'employee', true);
     const storage = await admin.storage.getBucket('photos');
     if (storage.error || !storage.data.public) throw new Error('Isolated public photos bucket is unavailable');
-    return { admin, anon, employeeA, employeeB, administrator, sql, close: () => sql.end() };
+    return { admin, anon, employeeA, employeeB, administrator, photoAdmin, sql, close: () => sql.end() };
   } catch (error) {
     await sql.end();
     throw error;

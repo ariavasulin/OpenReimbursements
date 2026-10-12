@@ -69,6 +69,8 @@ export interface PhotoAlbumSummaryRow {
   latest_added: string | null;
   thumbs: string[] | null;
   created_at: string;
+  /** Not from the RPC: the album list route adds it. */
+  created_by?: string | null;
 }
 
 /** One album card: name, active-photo count, up to 4 newest thumbnails. */
@@ -79,6 +81,8 @@ export interface PhotoAlbumSummary {
   /** Storage paths (photos bucket) of up to 4 newest grid thumbnails. */
   thumb_paths: string[];
   created_at: string;
+  /** Who made the album: they and photo admins may delete it. */
+  created_by: string | null;
 }
 
 /** An album row as the create, rename, delete, and restore routes return it. */

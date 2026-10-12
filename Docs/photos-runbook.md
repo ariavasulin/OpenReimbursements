@@ -50,9 +50,24 @@ not roll back the data model.
 
 Move a photo through its review/confirmation screen. Direct `PATCH job_id`
 writes are rejected; tag edits apply only to active photos. Any signed-in
-employee can move, remove, or restore any photo, and `deleted_by` records who
-removed it. Each confirmation belongs to the employee who started it; a consumed
-MCP handoff authorizes only its bound consumer, action, and confirmed targets.
+employee can move or restore any photo, and `deleted_by` records who removed it.
+Each confirmation belongs to the employee who started it; a consumed MCP handoff
+authorizes only its bound consumer, action, and confirmed targets.
+
+**Who may delete.** A *photo admin* (`user_profiles.photo_admin`, separate from
+the Receipts `role`) may trash any photo, delete forever, empty the trash, and
+delete any project or album. Anyone else may trash only photos they uploaded in
+the last 30 days (`photos.created_at`, the upload time, not the capture time),
+and delete only albums they created. The rule is one SQL function,
+`photo_can_trash`; the trash confirmation functions (`photo_materialize_action`,
+`photo_approve_action`, `photo_apply_action`) raise `forbidden` for any other
+photo, whether the list came from the app or from an MCP `remove_photos`
+hand-off. Set the flag with the **Photo admin** checkbox on the Users page
+(Receipts admins only), or in SQL:
+`update public.user_profiles set photo_admin=true where user_id=<id>`. It takes
+effect on that person's next request. To widen or narrow the rule, edit
+`photo_can_trash`, and change the app's copy as the header of
+`src/lib/photos/permissions.ts` describes.
 
 Removal sends a photo to `/photos/trash` for 30 days. Repeating removal does
 not extend its original `purge_after`; restoration is unavailable at or after
@@ -60,9 +75,11 @@ that timestamp, even if permanent cleanup has not run. The public bucket is
 unchanged: someone with a known object URL can still fetch it during retention.
 Library listings, search, counts, tags, and deep links exclude all trash.
 
-**Delete forever.** Any signed-in employee can delete Trash items forever from
+**Delete forever.** A photo admin can delete Trash items forever from
 `/photos/trash`: one photo, several selected photos, a deleted album, a deleted
 project (with all of its trashed photos), or **Empty trash** for everything.
+Everyone else sees only **Restore** there; the purge route answers 403 and every
+`photo_purge_*` function raises `forbidden` for them.
 `POST /api/photos/trash/purge` marks the items (`photo_purge_request`); a marked
 photo leaves the Trash list at once and can no longer be restored. The route then
 removes its Storage files and row the same way the daily repair sweep does
@@ -84,7 +101,7 @@ Count marked photos with
 The only way to stop a running delete is to close `photo_writes_enabled`, which
 also stops every upload and edit.
 
-**Wiping the library.** Delete each project first: that sends every photo in it
+**Wiping the library** (as a photo admin). Delete each project first: that sends every photo in it
 to Trash, with no selection limit. Then trash the photos left with no project,
 up to 500 selected at a time, and delete each album. Finally press **Empty
 trash** and keep the tab open until the toast says the trash is emptied. After
@@ -105,9 +122,9 @@ A photo has at most one job, which employees call a project, and may have none
 (`photos.job_id` is nullable; the app shows "No project"). It can also sit in any
 number of albums (`albums`, `album_photos`). Every upload must name a project, an
 album, or both; after that, edits are free, including a move to "No project".
-Any signed-in employee can create, rename, delete, and restore any album. A
-deleted album keeps its photos and can be restored for 30 days; deleting an album
-never deletes a photo. Album and bulk-tag writes go through the `photo_*album*`
+Any signed-in employee can create, rename, and restore any album; only the
+album's creator or a photo admin can delete it. A deleted album keeps its photos
+and can be restored for 30 days; deleting an album never deletes a photo. Album and bulk-tag writes go through the `photo_*album*`
 and `photo_bulk_tag` functions behind the `photo_writes_enabled` gate.
 
 Where employees find things: `/photos` lists every photo, newest first (phone and
@@ -122,7 +139,8 @@ selected, from the selection bar. The name is `photos.display_name`
 (`photo_rename_photo`) and is also the download filename (the original extension
 is kept); `original_name` never changes, because MCP references and imports match
 on it. An empty name goes back to the uploaded filename. The Albums and Projects
-lists have **Select**: pick one to **Rename**, or any number to **Delete**.
+lists have **Select**: pick one to **Rename**, or any number to **Delete** (a
+mixed pick reads "Delete the N you can delete").
 
 Selecting many photos: **Add to album**, **Tag**, and **Remove from album** act at
 once on up to 500 photos (`MAX_BULK_PHOTOS`). **Set project** and **Trash** open
@@ -146,7 +164,7 @@ project wherever a job is chosen (upload, move, and the `/migrate` page) or with
   A number another project holds is refused (`job_number_taken`); so is one held
   by a project in Trash (`job_in_trash`). Renumbering an imported office job means
   a later `scripts/import-jobs.mjs` run creates a new row under the old number.
-- **Deleting a project** (`photo_delete_job`) sends it and every active photo in
+- **Deleting a project** (`photo_delete_job`, photo admins only) sends it and every active photo in
   it to Trash together, with one shared timestamp. Only an active project can be
   deleted. It stays hidden from project lists and pickers (`is_active` false,
   enforced by the `jobs_deleted_not_active` check), and the `photo_guard_live_job`

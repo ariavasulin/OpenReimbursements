@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabaseClient';
-import { fetchJson, invalidatePhotoCaches, usePhotoJobs } from '@/lib/photos/api';
+import { fetchJson, invalidatePhotoCaches, usePhotoActor, usePhotoJobs } from '@/lib/photos/api';
+import { canTrashPhoto, TRASH_RULE_MESSAGE } from '@/lib/photos/permissions';
 import { actionRequest, actionAlert, actionButton as button, actionPrimary as primary, actionField as field, trashDisclosure } from '@/lib/photos/action-client';
 import ActionThumbnail from '@/components/photos/action-thumbnail';
 import { jobLabel, NO_PROJECT, photoName, plural, projectName } from '@/lib/photos/format';
@@ -76,6 +77,7 @@ export default function PhotoActions() {
   const heading = useRef<HTMLHeadingElement>(null);
   const id = useRef<string | null>(null);
   const { data: jobs } = usePhotoJobs(ready);
+  const actor = usePhotoActor();
 
   const report = (reason: unknown) => setError(reason instanceof Error ? reason.message : 'That did not work. Check your connection and try again.');
   const act = async (work: () => Promise<void>) => {
@@ -232,10 +234,10 @@ export default function PhotoActions() {
     {view && <>
       {/* A reference the app could not pin to one photo (assistant hand-offs only). */}
       {view.unresolved.map(reference => <section key={reference.reference_index} className="space-y-3 rounded-xl border border-amber-700 bg-[#2e2e2e] p-4">
-        <h2 className="text-lg font-semibold">{reference.reason === 'ambiguous' ? 'Choose the matching photo' : 'We could not find this photo'}</h2>
+        <h2 className="text-lg font-semibold">{reference.reason === 'ambiguous' ? 'Choose the matching photo' : reference.reason === 'forbidden' ? 'You cannot delete this photo' : 'We could not find this photo'}</h2>
         <p className="break-all text-base text-[#bbb]">{'job_number' in reference.reference ? `Project #${reference.reference.job_number} · ${reference.reference.original_filename}` : 'photo_url' in reference.reference ? 'The photo from the link you were given' : 'The selected photo'}
-          {reference.reason === 'ambiguous' ? ' — more than one photo matches. Pick the one you mean.' : ' — it may have been removed. You can leave it out and carry on.'}</p>
-        {reference.candidates.map(photo => <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#555] p-3" key={photo.id}><ActionThumbnail photo={photo} /><span className="min-w-0 flex-1 break-all text-base">{label(photo)} · {projectName(photo.job, photo.job_id)}{!photo.deleted_at && <Link href={photoPath(photo.job_id, photo.id)} target="_blank" rel="noopener noreferrer" className="mt-1 block w-fit text-[#8bbaff] underline">View photo in new tab</Link>}</span><button className={`${button} ${tall}`} disabled={busy || !owner} onClick={() => void act(() => materialize(id.current!, { [reference.reference_index]: photo.id }))}>Choose this photo</button></div>)}
+          {reference.reason === 'ambiguous' ? ' — more than one photo matches. Pick the one you mean.' : reference.reason === 'forbidden' ? ` — ${TRASH_RULE_MESSAGE} Leave it out to carry on, or ask a photo admin to delete it.` : ' — it may have been removed. You can leave it out and carry on.'}</p>
+        {reference.candidates.map(photo => <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#555] p-3" key={photo.id}><ActionThumbnail photo={photo} /><span className="min-w-0 flex-1 break-all text-base">{label(photo)} · {projectName(photo.job, photo.job_id)}{!photo.deleted_at && <Link href={photoPath(photo.job_id, photo.id)} target="_blank" rel="noopener noreferrer" className="mt-1 block w-fit text-[#8bbaff] underline">View photo in new tab</Link>}</span>{reference.reason === 'ambiguous' && (action !== 'trash' || canTrashPhoto(actor, photo)) && <button className={`${button} ${tall}`} disabled={busy || !owner} onClick={() => void act(() => materialize(id.current!, { [reference.reference_index]: photo.id }))}>Choose this photo</button>}</div>)}
         <div className="flex flex-wrap gap-2">
           {reference.total > reference.candidates.length && <><button className={`${button} ${tall}`} disabled={busy || !(candidateOffsets[reference.reference_index] ?? 0)} onClick={() => void act(() => candidates(reference, Math.max(0, (candidateOffsets[reference.reference_index] ?? 0) - 100)))}>Earlier matches</button><button className={`${button} ${tall}`} disabled={busy || (candidateOffsets[reference.reference_index] ?? 0) + reference.candidates.length >= reference.total} onClick={() => void act(() => candidates(reference, (candidateOffsets[reference.reference_index] ?? 0) + 100))}>More matches</button></>}
           <button className={`${button} ${tall}`} disabled={busy || !owner} onClick={() => void act(() => materialize(id.current!, { [reference.reference_index]: null }))}>Leave this one out</button>
@@ -249,6 +251,8 @@ export default function PhotoActions() {
         <div className="grid max-h-[42dvh] grid-cols-1 gap-2 overflow-y-auto overscroll-contain rounded-xl sm:max-h-[52dvh] sm:grid-cols-3 sm:gap-3 lg:grid-cols-4 xl:grid-cols-6">
           {view.items.map(item => {
             const trouble = item.status === 'conflict' || item.status === 'retryable_failed';
+            // Refused at apply time because this person may no longer trash it (it turned 30 days old, say).
+            const refused = item.status === 'conflict' && item.error?.code === 'forbidden';
             return <article data-testid="action-item" key={item.photo_id} className={`flex gap-3 rounded-xl border bg-[#2e2e2e] p-2.5 sm:block sm:space-y-2 ${trouble ? 'border-amber-600' : 'border-[#444]'}`}>
               <div className="w-20 shrink-0 sm:w-auto"><ActionThumbnail photo={item.photo} fill /></div>
               <div className="min-w-0 flex-1 space-y-1">
@@ -258,11 +262,12 @@ export default function PhotoActions() {
               {item.photo?.purge_after && action === 'restore' && !terminal && <p className="text-sm text-amber-300">Restore before {new Date(item.photo.purge_after).toLocaleDateString()}.</p>}
               {item.requested_photo_id && item.requested_photo_id !== item.photo_id && <p className="text-sm text-[#bbb]">This is a copy of another photo. The change is made to the original shown here, so there is never a second copy.</p>}
               {/* Only when it has actually happened. */}
-              {item.status === 'conflict' && <p className="text-sm text-amber-200">Someone changed this photo after this page opened — it was moved, trashed, or restored. Nothing was done to it. Try it again, or leave it out.</p>}
+              {refused && <p className="text-sm text-amber-200">{TRASH_RULE_MESSAGE} Nothing was done to it. Leave it out, or ask a photo admin.</p>}
+              {item.status === 'conflict' && !refused && <p className="text-sm text-amber-200">Someone changed this photo after this page opened — it was moved, trashed, or restored. Nothing was done to it. Try it again, or leave it out.</p>}
               {item.status === 'retryable_failed' && <p className="text-sm text-amber-200">Something went wrong with this one. Choose Try again below.</p>}
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
                 {item.photo && !item.photo.deleted_at && <Link className="flex min-h-11 items-center text-[#8bbaff] underline" href={photoPath(item.photo.job_id, item.photo_id)}>View photo</Link>}
-                {item.status === 'conflict' && <Link className="flex min-h-11 items-center text-[#8bbaff] underline" href={`/photos/actions?action=${action}&photo=${item.photo_id}${view.batch.destination_job_id ? `&destination=${view.batch.destination_job_id}` : action === 'move' ? `&destination=${NO_PROJECT_VALUE}` : ''}`}>Try this photo again</Link>}
+                {item.status === 'conflict' && !refused && <Link className="flex min-h-11 items-center text-[#8bbaff] underline" href={`/photos/actions?action=${action}&photo=${item.photo_id}${view.batch.destination_job_id ? `&destination=${view.batch.destination_job_id}` : action === 'move' ? `&destination=${NO_PROJECT_VALUE}` : ''}`}>Try this photo again</Link>}
                 {owner && !terminal && trouble && <button className="flex min-h-11 items-center text-[#8bbaff] underline" disabled={busy} onClick={() => void act(async () => { await actionRequest(`batches/${id.current}`, { action: 'skip', photo_ids: [item.photo_id] }, 'PATCH'); await load(id.current!, offset); })}>Leave it out</button>}
                 {item.status === 'applied' && action === 'trash' && <Link className="flex min-h-11 items-center text-[#8bbaff] underline" href={`/photos/actions?action=restore&photo=${item.photo_id}`}>Undo: restore it</Link>}
               </div>

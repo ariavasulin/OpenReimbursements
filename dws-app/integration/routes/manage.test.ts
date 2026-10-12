@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createFixtures } from '../fixtures';
+import { createFixtures, type FixtureActor } from '../fixtures';
 import { withRequest } from './request-context';
 
 vi.mock('next/headers', async () => {
@@ -27,11 +27,11 @@ describe('managing routes: rename, delete a project, delete forever', () => {
   const origin = 'http://localhost:3000';
   const made: string[] = [];
   const call = async (handler: (request: Request, context: { params: Promise<{ id: string }> }) => Promise<Response>,
-    method: string, path: string, body?: unknown, id = '') => {
+    method: string, path: string, body?: unknown, id = '', actor: FixtureActor = f.employeeA) => {
     const request = new Request(`${origin}${path}`, { method,
       headers: body === undefined ? { origin } : { origin, 'content-type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body) });
-    const response = await withRequest(request, f.employeeA.cookies, () => handler(request, { params: Promise.resolve({ id }) }));
+    const response = await withRequest(request, actor.cookies, () => handler(request, { params: Promise.resolve({ id }) }));
     return { status: response.status, body: await response.json() };
   };
   const job = async (number = randomUUID().slice(0, 8)) => {
@@ -84,7 +84,7 @@ describe('managing routes: rename, delete a project, delete forever', () => {
   it('deletes a project to Trash with its photos, lists it, and restores both', async () => {
     const project = await job();
     const { id } = await photo(project.id);
-    expect(await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id)).toMatchObject({ status: 200, body: { trashed: 1 } });
+    expect(await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id, f.photoAdmin)).toMatchObject({ status: 200, body: { trashed: 1 } });
     const deleted = await call(listJobs, 'GET', '/api/photo-jobs?deleted=1');
     expect(deleted.body.jobs.find((row: { id: string }) => row.id === project.id)).toMatchObject({ photo_count: 1, job_number: project.job_number });
     const restored = await call(patchJob, 'PATCH', `/api/photo-jobs/${project.id}`, { action: 'restore' }, project.id);
@@ -95,7 +95,7 @@ describe('managing routes: rename, delete a project, delete forever', () => {
   it('deletes photos forever: files removed from Storage, rows gone, out of the Trash list at once', async () => {
     const trashed = await photo(null, true);
     const active = await photo(null);
-    const result = await call(purge, 'POST', '/api/photos/trash/purge', { photo_ids: [trashed.id, active.id] });
+    const result = await call(purge, 'POST', '/api/photos/trash/purge', { photo_ids: [trashed.id, active.id] }, '', f.photoAdmin);
     expect(result).toMatchObject({ status: 200, body: { marked: { photos: 1 }, purged: 1, remaining: 0, failed: 0 } });
     expect(await stored(trashed.original)).toBe(false);
     expect(await stored(trashed.thumb)).toBe(false);
@@ -109,8 +109,8 @@ describe('managing routes: rename, delete a project, delete forever', () => {
     const project = await job();
     const inProject = await photo(project.id);
     const loose = await photo(null, true);
-    await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id);
-    const result = await call(purge, 'POST', '/api/photos/trash/purge', { everything: true });
+    await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id, f.photoAdmin);
+    const result = await call(purge, 'POST', '/api/photos/trash/purge', { everything: true }, '', f.photoAdmin);
     expect(result.status).toBe(200);
     expect(result.body.marked.projects).toBeGreaterThanOrEqual(1);
     for (const path of [inProject.original, loose.original]) expect(await stored(path)).toBe(false);
@@ -122,11 +122,11 @@ describe('managing routes: rename, delete a project, delete forever', () => {
   it('photos left marked by a cut-off request are counted in Trash and finished by an empty request', async () => {
     const trashed = await photo(null, true);
     // A request that marked the photo and then stopped before removing its files.
-    expect((await f.admin.rpc('photo_purge_request', { p_actor: f.employeeA.id, p_photo_ids: [trashed.id] })).error).toBeNull();
+    expect((await f.admin.rpc('photo_purge_request', { p_actor: f.photoAdmin.id, p_photo_ids: [trashed.id] })).error).toBeNull();
     const before = await call(listTrash, 'GET', '/api/photos/trash?limit=100');
     expect(before.body.pending_purge).toBeGreaterThanOrEqual(1);
     expect(before.body.photos.some((row: { id: string }) => row.id === trashed.id)).toBe(false);
-    const finished = await call(purge, 'POST', '/api/photos/trash/purge', {});
+    const finished = await call(purge, 'POST', '/api/photos/trash/purge', {}, '', f.photoAdmin);
     expect(finished).toMatchObject({ status: 200, body: { marked: { photos: 0 }, remaining: 0, failed: 0 } });
     expect(await stored(trashed.original)).toBe(false);
     expect((await call(listTrash, 'GET', '/api/photos/trash?limit=100')).body.pending_purge).toBe(0);
@@ -134,18 +134,33 @@ describe('managing routes: rename, delete a project, delete forever', () => {
 
   it('lists a project in Trash past its 30 days, with Delete forever still possible', async () => {
     const project = await job();
-    await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id);
+    await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id, f.photoAdmin);
     await f.sql.query("update public.jobs set deleted_at=deleted_at-interval '31 days' where id=$1", [project.id]);
     const listed = (await call(listJobs, 'GET', '/api/photo-jobs?deleted=1')).body;
     expect(listed.truncated).toBe(false);
     const row = listed.jobs.find((item: { id: string }) => item.id === project.id);
     expect(Date.parse(row.restore_before)).toBeLessThan(Date.now());
-    expect((await call(purge, 'POST', '/api/photos/trash/purge', { project_ids: [project.id] })).body.marked.projects).toBe(1);
+    expect((await call(purge, 'POST', '/api/photos/trash/purge', { project_ids: [project.id] }, '', f.photoAdmin)).body.marked.projects).toBe(1);
+  });
+
+  it('refuses Delete forever, Empty trash, Finish deleting, and project Delete to anyone but a photo admin', async () => {
+    const project = await job();
+    const trashed = await photo(null, true);
+    for (const actor of [f.employeeA, f.administrator]) {
+      for (const body of [{ everything: true }, { photo_ids: [trashed.id] }, {}]) {
+        expect(await call(purge, 'POST', '/api/photos/trash/purge', body, '', actor)).toMatchObject({ status: 403, body: { error: { code: 'forbidden' } } });
+      }
+      expect(await call(deleteJob, 'DELETE', `/api/photo-jobs/${project.id}`, undefined, project.id, actor)).toMatchObject({ status: 403, body: { error: { code: 'forbidden' } } });
+    }
+    expect(await stored(trashed.original)).toBe(true);
+    expect((await f.sql.query('select deleted_at from public.jobs where id=$1', [project.id])).rows[0].deleted_at).toBeNull();
+    expect((await call(purge, 'POST', '/api/photos/trash/purge', { photo_ids: [trashed.id] }, '', f.photoAdmin)).status).toBe(200);
+    expect(await stored(trashed.original)).toBe(false);
   });
 
   it('refuses a bad purge body and a cross-site request', async () => {
-    expect((await call(purge, 'POST', '/api/photos/trash/purge', { everything: false })).status).toBe(400);
-    expect((await call(purge, 'POST', '/api/photos/trash/purge', { photo_ids: ['not-a-uuid'] })).status).toBe(400);
+    expect((await call(purge, 'POST', '/api/photos/trash/purge', { everything: false }, '', f.photoAdmin)).status).toBe(400);
+    expect((await call(purge, 'POST', '/api/photos/trash/purge', { photo_ids: ['not-a-uuid'] }, '', f.photoAdmin)).status).toBe(400);
     const request = new Request(`${origin}/api/photos/trash/purge`, { method: 'POST',
       headers: { origin: 'https://evil.example', 'content-type': 'application/json' }, body: JSON.stringify({ everything: true }) });
     expect((await withRequest(request, f.employeeA.cookies, () => purge(request))).status).toBe(403);

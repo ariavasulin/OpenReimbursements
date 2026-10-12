@@ -6,15 +6,15 @@ import { photoId, requirePhotoReader } from '@/lib/photos/server/reads';
 interface RouteContext { params: Promise<{ id: string }> }
 
 // GET /api/photo-albums/[id] — one live album for its page: { album: { id, name,
-// photo_count, created_at } }. Read through the employee's own session, like the
-// album list: a deleted or unknown album is hidden by its row rule and answers 404,
-// and the membership rows of trashed photos are hidden too, so the count is of
-// active photos only.
+// photo_count, created_at, created_by } }. Read through the employee's own
+// session, like the album list: a deleted or unknown album is hidden by its row
+// rule and answers 404, and the membership rows of trashed photos are hidden too,
+// so the count is of active photos only.
 export async function GET(_request: Request, context: RouteContext) {
   return photoRoute(async () => {
     const session = await requirePhotoReader(), id = photoId((await context.params).id);
     const [album, members] = await Promise.all([
-      session.from('albums').select('id,name,created_at').eq('id', id).is('deleted_at', null).maybeSingle(),
+      session.from('albums').select('id,name,created_at,created_by').eq('id', id).is('deleted_at', null).maybeSingle(),
       session.from('album_photos').select('photo_id', { count: 'exact', head: true }).eq('album_id', id),
     ]);
     if (album.error) throwPhotoDatabaseError(album.error);
@@ -24,8 +24,9 @@ export async function GET(_request: Request, context: RouteContext) {
   });
 }
 
-// Any signed-in employee may rename, delete, and restore any album (photo-albums
-// Decision 7). Every response is { album }, the full row including deleted_at.
+// Any signed-in employee may rename and restore any album; only its creator or a
+// photo admin may delete it (403 otherwise). Every response is { album }, the
+// full row including deleted_at.
 
 // PATCH /api/photo-albums/[id] { name }               — rename a live album.
 // PATCH /api/photo-albums/[id] { action: 'restore' }  — bring a deleted album back,

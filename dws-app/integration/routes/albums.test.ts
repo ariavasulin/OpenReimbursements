@@ -217,7 +217,7 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
   });
 
   describe('albums: create, list, rename, delete, restore (Decisions 2, 7, 8)', () => {
-    it('any employee creates, renames, deletes and restores any album; deleted albums leave the list and appear under ?deleted=1', async () => {
+    it('any employee creates, renames and restores any album; deleted albums leave the list and appear under ?deleted=1', async () => {
       const unique = randomUUID().slice(0, 8);
       const created = await json(await call(createAlbum, '/api/photo-albums', { method: 'POST', body: { name: `  Marketing   ${unique} ` } }), 201);
       madeAlbums.push(created.album.id);
@@ -231,13 +231,13 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
       const cards = await json(await call(listAlbums, `/api/photo-albums?q=${unique}`, { actor: f.employeeB }));
       expect(cards.albums).toHaveLength(2);
       expect(cards.albums.find((card: { id: string }) => card.id === id)).toEqual({ id, name: `Marketing ${unique}`, photo_count: 1,
-        thumb_paths: [`derived/${f.employeeA.id}/${inAlbum}_thumb.webp`], created_at: created.album.created_at });
+        thumb_paths: [`derived/${f.employeeA.id}/${inAlbum}_thumb.webp`], created_at: created.album.created_at, created_by: f.employeeA.id });
 
-      // Employee B renames and deletes employee A's album.
+      // Employee B renames employee A's album; a photo admin deletes it.
       const renamed = await json(await call(patchAlbum, `/api/photo-albums/${id}`, { method: 'PATCH', body: { name: `Renamed ${unique}` }, id, actor: f.employeeB }));
       expect(renamed.album).toMatchObject({ id, name: `Renamed ${unique}`, created_by: f.employeeA.id });
-      const deleted = await json(await call(deleteAlbum, `/api/photo-albums/${id}`, { method: 'DELETE', id, actor: f.employeeB }));
-      expect(deleted.album).toMatchObject({ id, deleted_by: f.employeeB.id });
+      const deleted = await json(await call(deleteAlbum, `/api/photo-albums/${id}`, { method: 'DELETE', id, actor: f.photoAdmin }));
+      expect(deleted.album).toMatchObject({ id, deleted_by: f.photoAdmin.id });
       expect(deleted.album.deleted_at).not.toBeNull();
       // A repeat does not restart the 30 days.
       expect((await json(await call(deleteAlbum, `/api/photo-albums/${id}`, { method: 'DELETE', id }))).album.deleted_at).toBe(deleted.album.deleted_at);
@@ -252,10 +252,10 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
 
       const trash = await json(await call(listAlbums, '/api/photo-albums?deleted=1', { actor: f.administrator }));
       const row = trash.albums.find((entry: { id: string }) => entry.id === id);
-      expect(row).toEqual({ id, name: `Renamed ${unique}`, deleted_at: deleted.album.deleted_at, deleted_by: f.employeeB.id,
+      expect(row).toEqual({ id, name: `Renamed ${unique}`, deleted_at: deleted.album.deleted_at, deleted_by: f.photoAdmin.id,
         restore_before: new Date(Date.parse(deleted.album.deleted_at) + 30 * 86_400_000).toISOString() });
 
-      const restored = await json(await call(patchAlbum, `/api/photo-albums/${id}`, { method: 'PATCH', body: { action: 'restore' }, id, actor: f.employeeA }));
+      const restored = await json(await call(patchAlbum, `/api/photo-albums/${id}`, { method: 'PATCH', body: { action: 'restore' }, id, actor: f.employeeB }));
       expect(restored.album).toMatchObject({ id, deleted_at: null, deleted_by: null });
       expect(ids(await list(`?album=${id}`))).toEqual([inAlbum]); // it came back whole
       expect((await json(await call(listAlbums, '/api/photo-albums?deleted=1'))).albums.map((entry: { id: string }) => entry.id)).not.toContain(id);

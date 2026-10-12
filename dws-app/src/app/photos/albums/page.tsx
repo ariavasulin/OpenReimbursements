@@ -19,7 +19,8 @@ import PhoneHeader from "@/components/photos/phone-header";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
 import StatusLine from "@/components/photos/status-line";
-import { deleteAlbum, invalidatePhotoCaches, renameAlbum, usePhotoAlbums } from "@/lib/photos/api";
+import { deleteAlbum, invalidatePhotoCaches, renameAlbum, usePhotoActor, usePhotoAlbums } from "@/lib/photos/api";
+import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
 const ALBUMS_PER_PAGE = 60;
@@ -32,12 +33,14 @@ export default function AlbumsPage() {
   const [requestedPage, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil((albums?.length ?? 0) / ALBUMS_PER_PAGE));
   const page = Math.min(requestedPage, pageCount - 1);
+  const actor = usePhotoActor();
   const select = useCollectionSelect(albums, {
     noun: "album",
     deleteOne: deleteAlbum,
     deletedDescription: "Their photos are still in Photos. You can restore the albums from Trash for 30 days.",
+    canDelete: (album) => canDeleteAlbum(actor, album),
   });
-  const { chosen } = select;
+  const { chosen, deletable } = select;
 
   const newAlbumButton = (
     <button type="button" onClick={openNewAlbum} className={emptyPrimary}>
@@ -109,6 +112,7 @@ export default function AlbumsPage() {
         <CollectionSelectBar
           label="Selected albums"
           count={chosen.length}
+          deletable={deletable.length}
           busy={select.busy}
           onClose={select.stop}
           onRename={() => select.setRenaming(true)}
@@ -135,16 +139,16 @@ export default function AlbumsPage() {
         open={select.confirming}
         onOpenChange={select.setConfirming}
         title={
-          chosen.length === 1
-            ? `Delete album “${chosen[0].name}”?`
-            : `Delete ${plural(chosen.length, "album")}?`
+          deletable.length === 1
+            ? `Delete album “${deletable[0].name}”?`
+            : `Delete ${plural(deletable.length, "album")}?`
         }
         confirmLabel="Delete"
         busyLabel="Deleting..."
         busy={select.busy}
         onConfirm={() => void select.remove()}
       >
-        <p>Only the {chosen.length === 1 ? "album goes" : "albums go"} away. The photos stay in Photos.</p>
+        <p>Only the {deletable.length === 1 ? "album goes" : "albums go"} away. The photos stay in Photos.</p>
         <p>You can restore from Trash for 30 days.</p>
       </ConfirmDialog>
     </main>

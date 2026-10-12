@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createFixtures } from '../../integration/fixtures';
 import { installDirectories } from './directory-fixture';
+import { TRASH_RULE_MESSAGE } from '../../src/lib/photos/permissions';
 
 let fixtures: Awaited<ReturnType<typeof createFixtures>>;
 let client: Client;
@@ -90,8 +91,9 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
     evidence.push({ script, batch, binding, photos, album: { id: made[0], name: album } });
   }
 
-  // This photo belongs to a different employee. Any employee may act on it now,
-  // so what this proves is the MCP binding: each batch is tied to its hand-off script.
+  // This photo belongs to a different employee. Anyone may move or restore it, so those
+  // prove the MCP binding: each batch is tied to its hand-off script. This employee may
+  // not trash it, so a photo admin trashes it for the restore below.
   const photo = randomUUID();
   const original = Buffer.concat([png, randomBytes(16)]);
   const path = `originals/${fixtures.employeeB.id}/${photo}/mcp-actions.png`;
@@ -102,8 +104,22 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
     await page.goto(output.handoff_url);
     await expect(page).toHaveURL(/\/photo-actions\?batch=[a-f0-9-]+$/);
     const batch = new URL(page.url()).searchParams.get('batch')!;
+    if (script === 'remove_photos') {
+      await expect(page.getByRole('heading', { name: 'You cannot delete this photo' })).toBeVisible();
+      await expect(page.locator('main')).toContainText(TRASH_RULE_MESSAGE);
+      await expect(page.getByRole('button', { name: 'Move to trash', exact: true })).toBeDisabled();
+      await page.getByRole('button', { name: 'Leave this one out', exact: true }).click();
+      await expect(page.getByTestId('action-count')).toHaveText('0 photos');
+      await expect(page.getByRole('button', { name: 'Move to trash', exact: true })).toBeDisabled();
+      expect((await fixtures.sql.query('select deleted_at from public.photos where id=$1', [photo])).rows[0].deleted_at).toBeNull();
+      const binding = (await fixtures.sql.query('select script_name,consumed_by from public.dws_action_handoffs where photo_action_batch_id=$1', [batch])).rows[0];
+      expect(binding).toEqual({ script_name: script, consumed_by: fixtures.employeeA.id });
+      evidence.push({ script, batch, binding, refused: 'forbidden' });
+      await fixtures.sql.query("update public.photos set deleted_at=now(),deleted_by=$2,purge_after=now()+interval '30 days' where id=$1", [photo, fixtures.photoAdmin.id]);
+      continue;
+    }
     await expect(page.getByTestId('action-count')).toHaveText('1 photo');
-    const confirmation = script === 'move_photos' ? 'Move photo' : script === 'remove_photos' ? 'Move to trash' : 'Restore photo';
+    const confirmation = script === 'move_photos' ? 'Move photo' : 'Restore photo';
     await expect(page.getByRole('button', { name: confirmation, exact: true })).toBeEnabled();
     await page.getByRole('button', { name: confirmation, exact: true }).click();
     await expect(page.getByTestId('action-status')).toHaveText('Done');
@@ -111,7 +127,7 @@ test('all five MCP handoffs enter authenticated review and complete their bound 
     expect(binding).toEqual({ script_name: script, consumed_by: fixtures.employeeA.id });
     const state = (await fixtures.sql.query('select job_id,deleted_at from public.photos where id=$1', [photo])).rows[0];
     expect(state.job_id).toBe(jobs[1]);
-    expect(state.deleted_at === null).toBe(script !== 'remove_photos');
+    expect(state.deleted_at).toBeNull();
     evidence.push({ script, batch, binding, state });
   }
   await writeFile(info.outputPath('mcp-browser-handoffs.json'), JSON.stringify(evidence, null, 2));

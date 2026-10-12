@@ -28,17 +28,25 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: usersError.message }, { status: 500 });
     }
 
-    const { data: total, error: countError } = await supabaseAdmin.rpc(
-      'get_auth_users_count',
-      {
+    // The photo-admin flag is not in the list RPC; read it for this page of users.
+    const ids = (users || []).map((u: { id: string }) => u.id);
+    const [{ data: total, error: countError }, { data: flags, error: flagsError }] = await Promise.all([
+      supabaseAdmin.rpc('get_auth_users_count', {
         search_query: search,
         include_deleted: includeDeleted,
-      }
-    );
+      }),
+      ids.length
+        ? supabaseAdmin.from('user_profiles').select('user_id, photo_admin').in('user_id', ids)
+        : Promise.resolve({ data: [] as { user_id: string; photo_admin: boolean }[], error: null }),
+    ]);
 
     if (countError) {
       return NextResponse.json({ error: countError.message }, { status: 500 });
     }
+    if (flagsError) {
+      return NextResponse.json({ error: flagsError.message }, { status: 500 });
+    }
+    const photoAdmins = new Set((flags || []).filter(row => row.photo_admin).map(row => row.user_id));
 
     const mappedUsers: AdminUser[] = (users || []).map((u: {
       id: string;
@@ -62,6 +70,7 @@ export async function GET(request: Request) {
       preferred_name: u.preferred_name || undefined,
       employee_id_internal: u.employee_id_internal || undefined,
       deleted_at: u.deleted_at || null,
+      photo_admin: photoAdmins.has(u.id),
     }));
 
     return NextResponse.json({
@@ -84,7 +93,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const { phone, full_name, preferred_name, employee_id_internal, role = 'employee' } = body;
+    const { phone, full_name, preferred_name, employee_id_internal, role = 'employee', photo_admin = false } = body;
 
     if (!phone || !full_name) {
       return NextResponse.json(
@@ -106,6 +115,10 @@ export async function POST(request: Request) {
         { error: 'Role must be "employee" or "admin"' },
         { status: 400 }
       );
+    }
+
+    if (typeof photo_admin !== 'boolean') {
+      return NextResponse.json({ error: 'photo_admin must be true or false' }, { status: 400 });
     }
 
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
@@ -141,6 +154,7 @@ export async function POST(request: Request) {
         {
           user_id: authData.user.id,
           role,
+          photo_admin,
           full_name,
           preferred_name: preferred_name || null,
           employee_id_internal: employee_id_internal || null,
@@ -165,6 +179,7 @@ export async function POST(request: Request) {
       preferred_name: preferred_name || undefined,
       employee_id_internal: employee_id_internal || undefined,
       deleted_at: null,
+      photo_admin,
     };
 
     return NextResponse.json({ user: createdUser }, { status: 201 });

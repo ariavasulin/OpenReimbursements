@@ -4,8 +4,12 @@ import { assertPhotoBatchActor, type PhotoActor } from './authority';
 import { photoId } from './reads';
 import { MAX_BULK_PHOTOS } from '../apiShared';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc, photoLinkIds } from './http';
+import { canTrashPhoto } from '../permissions';
 
-export const ACTION_PHOTO_COLUMNS = 'id,job_id,uploader_id,original_name,display_name,kind,thumb_path,deleted_at,purge_after,duplicate_of,job:jobs(id,job_number,name,deleted_at)';
+export const ACTION_PHOTO_COLUMNS = 'id,job_id,uploader_id,created_at,original_name,display_name,kind,thumb_path,deleted_at,purge_after,duplicate_of,job:jobs(id,job_number,name,deleted_at)';
+/** Who may trash this photo (permissions.ts), so a trash list can stop at a photo SQL would refuse and ask about it instead. */
+export const mayTrash = (actor: PhotoActor, photo: { uploader_id: string; created_at: string }) =>
+  canTrashPhoto({ user_id: actor.actorId, photo_admin: actor.isPhotoAdmin }, photo);
 export function onlyKeys(value: Record<string, unknown>, keys: string[]) {
   if (Object.keys(value).some(key => !keys.includes(key))) throw new PhotoApiError('invalid_input');
 }
@@ -75,7 +79,12 @@ export async function readActionBatch(actor:PhotoActor,id:string,origin:string,o
   const unresolved:PhotoActionBatchResponse['unresolved']=[];
   if(batch.status==='draft'&&!batch.materialization_complete&&'photos' in batch.selector) {
     const index=Number(batch.materialization_cursor??0), ref=batch.selector.photos[index];
-    if(ref) {const result=await referenceCandidates(actor,ref,origin);if(result.total!==1) unresolved.push({reference_index:index,reference:ref,reason:result.total?'ambiguous':'not_found',...result});}
+    if(ref) {
+      const result=await referenceCandidates(actor,ref,origin);
+      if(result.total!==1) unresolved.push({reference_index:index,reference:ref,reason:result.total?'ambiguous':'not_found',...result});
+      // One match this person may not trash (an assistant's list can name anyone's photo): ask to leave it out.
+      else if(batch.action==='trash'&&!mayTrash(actor,result.candidates[0])) unresolved.push({reference_index:index,reference:ref,reason:'forbidden',...result});
+    }
   }
   return {batch,items:(selected.data??[]).map(row=>({...row,photo:byId.get(row.photo_id)??null})) as PhotoActionBatchResponse['items'],total:selected.count??0,can_mutate,unresolved};
 }
@@ -99,10 +108,11 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
         if (!('photo_id' in candidate)) break;
         page.push(candidate.photo_id);
       }
-      const found = await actor.db.from('photos').select('id').in('id', page);
+      const found = await actor.db.from('photos').select('id,uploader_id,created_at').in('id', page);
       if (found.error) throwPhotoDatabaseError(found.error);
-      const existing = new Set((found.data ?? []).map(row => row.id));
-      const missing = page.findIndex(id => !existing.has(id));
+      // A trash list also stops before a photo this person may not trash, which then needs an answer.
+      const usable = new Set((found.data ?? []).filter(row => batch.action !== 'trash' || mayTrash(actor, row)).map(row => row.id));
+      const missing = page.findIndex(id => !usable.has(id));
       ids = missing < 0 ? page : page.slice(0, missing);
       if (ids.length) {
         const cursor = index + ids.length;
@@ -119,9 +129,10 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
       if(choice!==undefined) {
         const chosen=photoId(choice);
         // Validate choices independently of the candidate preview's pagination.
-        const chosenRow=await actor.db.from('photos').select('id,job_id,original_name').eq('id',chosen).maybeSingle();
+        const chosenRow=await actor.db.from('photos').select('id,job_id,original_name,uploader_id,created_at').eq('id',chosen).maybeSingle();
         if(chosenRow.error) throwPhotoDatabaseError(chosenRow.error);
         if(!chosenRow.data) throw new PhotoApiError('invalid_input');
+        if(batch.action==='trash'&&!mayTrash(actor,chosenRow.data)) throw new PhotoApiError('forbidden');
         if('job_number' in ref) {
           const job=await actor.db.from('jobs').select('id').eq('job_number',ref.job_number).maybeSingle();
           if(job.error) throwPhotoDatabaseError(job.error);
@@ -130,7 +141,7 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
         ids=[chosen];
       } else {
         const candidates=await referenceCandidates(actor,ref,origin);
-        if(candidates.total===1) ids=[candidates.candidates[0].id];
+        if(candidates.total===1&&(batch.action!=='trash'||mayTrash(actor,candidates.candidates[0]))) ids=[candidates.candidates[0].id];
         else return readActionBatch(actor,id,origin);
       }
     }

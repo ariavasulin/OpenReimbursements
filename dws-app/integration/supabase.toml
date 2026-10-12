@@ -46,6 +46,7 @@ enable_confirmations = true
 15555550101 = "123456"
 15555550102 = "123456"
 15555550103 = "123456"
+15555550104 = "123456"
 [edge_runtime]
 enabled = false
 [analytics]
