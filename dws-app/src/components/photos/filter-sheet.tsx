@@ -178,7 +178,7 @@ export default function FilterSheet({
       </Section>
       <Section title="Favorites" id={`${id}-favorites`}>
         <FavoritesChip active={filters.favorites} onChange={(favorites) => onChange({ favorites })} />
-        <p className="mt-1.5 text-sm text-[#b4b4b4]">Only the photos you put a heart on. Nobody else sees your hearts.</p>
+        <p className="mt-1.5 text-sm text-[#b4b4b4]">Only photos you hearted.</p>
       </Section>
       <Section title="File type" id={`${id}-type`}>
         <div role="group" aria-label="File type" className="flex flex-wrap gap-2">
