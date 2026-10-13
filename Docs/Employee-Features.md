@@ -211,12 +211,14 @@ Every photo grid (Photos, a project, an album, search) has one toolbar row:
 ### Favorites
 
 Open any photo and tap the heart in the viewer (or **Add to favorites** in its
-details) to keep it in **Favorites**, the fourth section beside Photos, Albums,
-and Projects. Favorites are personal: only you see your hearts, and nobody
-else's hearts show for you. A small heart in the corner of a tile marks your
-favorites in every grid. Favorites opens grouped by project, with the usual
-filters, select-many, Download, and slideshow. Select photos and press
-**Favorite** to heart several at once; on the Favorites page the same button is
+details). Favorites are personal, like a tag only you can see: nobody else sees
+your hearts, and nobody else's show for you. A small heart in the corner of a
+tile marks your favorites in every grid. To see only your hearts, turn on the
+**Favorites** chip in the filter row (desktop) or in the Filter sheet (phone);
+in a project that shows your picks for that job, and on Photos it shows every
+heart across projects. It stays in the page URL like any filter, so Photos with
+Favorites on can be bookmarked. Select photos and press **Favorite** to heart
+several at once; with the Favorites filter on, the same button is
 **Unfavorite**. A favorite stays through Trash and restore, and goes with the
 photo when it is deleted forever.
 

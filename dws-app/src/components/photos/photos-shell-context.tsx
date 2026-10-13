@@ -17,8 +17,8 @@ export const PHOTOS_SCROLLPORT_ID = "photos-scrollport";
  */
 export const PHOTOS_FLOATING_SLOT_ID = "photos-floating-slot";
 
-/** The four ways to browse. null on pages that belong to none (search, trash). */
-export type PhotoSection = "photos" | "albums" | "projects" | "favorites";
+/** The three ways to browse. null on pages that belong to none (search, trash). */
+export type PhotoSection = "photos" | "albums" | "projects";
 
 export function photoSection(
   pathname: string,
@@ -27,7 +27,6 @@ export function photoSection(
   if (pathname === "/photos") return "photos";
   if (pathname.startsWith("/photos/albums")) return "albums";
   if (pathname === "/photos/projects" || params.jobId) return "projects";
-  if (pathname === "/photos/favorites") return "favorites";
   return null;
 }
 

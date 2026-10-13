@@ -290,8 +290,9 @@ p_on)`, behind the `writes` gate. A favorite is personal: the table's row rule
 shows a person only their own rows, so `GET /api/photos` embedding
 `favorites:photo_favorites(user_id)` through the employee's session returns
 `[]` or `[{user_id: me}]` per photo, and `favorites=1` inner-joins to list only
-theirs. `POST /api/photos/favorites { photo_ids, on }` adds or removes up to 500
-at once. Rows cascade with the photo's permanent deletion and with the user.
+theirs: the Favorites chip in every grid, kept in the URL as `favorites=1`
+(`/photos/favorites` redirects there). `POST /api/photos/favorites { photo_ids,
+on }` adds or removes up to 500 at once. Rows cascade with the photo's permanent deletion and with the user.
 Apply the migration before the deploy that ships it (additive only).
 
 ## Share links (`/s/<token>`)

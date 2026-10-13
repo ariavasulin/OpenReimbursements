@@ -8,6 +8,7 @@ import {
   ActiveFilterChips,
   activeFilters,
   chipClass,
+  FavoritesChip,
   FILE_TYPE_OPTIONS,
   FilterChip,
   TagsFilterChip,
@@ -165,6 +166,7 @@ export default function BrowseToolbar({
               onClear={() => onFiltersChange({ type: null })}
             />
             <DateFilterChip filters={filters} onChange={onFiltersChange} />
+            <FavoritesChip active={filters.favorites} onChange={(favorites) => onFiltersChange({ favorites })} />
           </div>
         </div>
         {/* How the photos are laid out, not which ones. Wraps rather than

@@ -57,9 +57,7 @@ export type BrowserScope =
   | { kind: "all" }
   | { kind: "album"; album: PhotoAlbumRef }
   | { kind: "job"; jobId: string }
-  | { kind: "search"; q: string }
-  /** The signed-in person's own favorites, across every project. */
-  | { kind: "favorites" };
+  | { kind: "search"; q: string };
 
 /** What a page's summary line can say about the loaded results. */
 export interface BrowserSummary {
@@ -98,7 +96,6 @@ function scopeParams(scope: BrowserScope): URLSearchParams {
   if (scope.kind === "album") params.set("album", scope.album.id);
   if (scope.kind === "job") params.set("job", scope.jobId);
   if (scope.kind === "search") params.set("q", scope.q);
-  if (scope.kind === "favorites") params.set("favorites", "1");
   return params;
 }
 
@@ -109,7 +106,7 @@ const scopeKey = (scope: BrowserScope) =>
       ? `job:${scope.jobId}`
       : scope.kind === "search"
         ? `search:${scope.q}`
-        : scope.kind;
+        : "all";
 
 export default function PhotoBrowser({
   scope,
@@ -122,7 +119,7 @@ export default function PhotoBrowser({
 }: PhotoBrowserProps) {
   const queryClient = useQueryClient();
   // Project is a filter where the page is not already one project or album.
-  const projectFilter = scope.kind === "all" || scope.kind === "search" || scope.kind === "favorites";
+  const projectFilter = scope.kind === "all" || scope.kind === "search";
   const {
     filters,
     sort,
@@ -205,7 +202,7 @@ export default function PhotoBrowser({
   // Photos and a project know every tag in use up front; an album or a search
   // offers the tags its loaded photos carry.
   const knownTagScope =
-    scope.kind === "all" || scope.kind === "favorites" ? "" : scope.kind === "job" ? scope.jobId : null;
+    scope.kind === "all" ? "" : scope.kind === "job" ? scope.jobId : null;
   const { data: knownTags } = usePhotoTags(knownTagScope !== null, knownTagScope);
   const tagOptions = useMemo(() => toTagOptions(seen, knownTags ?? []), [seen, knownTags]);
   const { data: jobs } = usePhotoJobs(projectFilter);
@@ -429,7 +426,7 @@ export default function PhotoBrowser({
         selectedIds={selectedIds}
         onClear={clear}
         album={scope.kind === "album" ? scope.album : undefined}
-        inFavorites={scope.kind === "favorites"}
+        inFavorites={filters.favorites}
         limitMessage={limitMessage}
         photos={photos}
         listQuery={listKey}

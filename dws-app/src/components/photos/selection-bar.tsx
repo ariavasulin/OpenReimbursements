@@ -90,7 +90,7 @@ interface SelectionBarProps {
   onClear(): void;
   /** Inside an album: adds "Remove from album". */
   album?: PhotoAlbumRef;
-  /** The Favorites page: the heart action takes photos out instead of in. */
+  /** The Favorites filter is on: the heart action takes photos out instead of in. */
   inFavorites?: boolean;
   /** A tick was refused at the selection limit, or "Select all" matched more than it holds. */
   limitMessage: string | null;

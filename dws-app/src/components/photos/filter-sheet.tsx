@@ -4,7 +4,7 @@ import { useId, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import DateRangeFields, { fieldClass } from "@/components/photos/date-range-fields";
-import { chipClass, FILE_TYPE_OPTIONS, type FilterChoices } from "@/components/photos/filter-bar";
+import { chipClass, FILE_TYPE_OPTIONS, type FilterChoices, FavoritesChip } from "@/components/photos/filter-bar";
 import SheetShell from "@/components/photos/sheet-shell";
 import { activeFilterCount, type BrowseFilters } from "@/lib/photos/browse-state";
 import type { FilterOption } from "@/lib/photos/filter-options";
@@ -175,6 +175,10 @@ export default function FilterSheet({
         {filters.tags.length > 1 && (
           <p className="mt-1.5 text-sm text-[#b4b4b4]">Showing photos with every tag picked.</p>
         )}
+      </Section>
+      <Section title="Favorites" id={`${id}-favorites`}>
+        <FavoritesChip active={filters.favorites} onChange={(favorites) => onChange({ favorites })} />
+        <p className="mt-1.5 text-sm text-[#b4b4b4]">Only the photos you put a heart on. Nobody else sees your hearts.</p>
       </Section>
       <Section title="File type" id={`${id}-type`}>
         <div role="group" aria-label="File type" className="flex flex-wrap gap-2">

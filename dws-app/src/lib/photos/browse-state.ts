@@ -27,6 +27,8 @@ export interface BrowseFilters {
   type: FileTypeLabel | null;
   from: string | null;
   to: string | null;
+  /** Only the signed-in person's own favorites: a personal filter, like a tag only they can see. */
+  favorites: boolean;
 }
 
 export interface BrowseState {
@@ -53,10 +55,11 @@ export const NO_FILTERS: BrowseFilters = {
   type: null,
   from: null,
   to: null,
+  favorites: false,
 };
 
 /** Every query-string key this module owns; anything else (`q`, `photo`) is left alone. */
-export const BROWSE_KEYS = ["project", "uploader", "tags", "type", "from", "to", "sort", "group"] as const;
+export const BROWSE_KEYS = ["project", "uploader", "tags", "type", "from", "to", "favorites", "sort", "group"] as const;
 
 /** `project=none` and GET /api/photos `job=none`: photos with no project. */
 export const NO_PROJECT_VALUE = "none";
@@ -92,6 +95,7 @@ export function parseBrowseState(
       type: typeFromParam(params.get("type")),
       from: instantOrNull(params.get("from")),
       to: instantOrNull(params.get("to")),
+      favorites: params.get("favorites") === "1",
     },
     sort: parseSort(params.get("sort"), options),
     group: group && options.groupModes.includes(group) ? group : options.groupModes[0],
@@ -116,6 +120,7 @@ export function writeBrowseState(
   if (filters.type) params.set("type", filters.type.toLowerCase());
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
+  if (filters.favorites) params.set("favorites", "1");
   if (state.sort !== (options.defaultSort ?? "desc")) params.set("sort", state.sort);
   if (state.group !== options.groupModes[0]) params.set("group", state.group);
   const query = params.toString();
@@ -129,7 +134,8 @@ export function activeFilterCount(filters: BrowseFilters): number {
     (filters.uploader ? 1 : 0) +
     filters.tags.length +
     (filters.type ? 1 : 0) +
-    (filters.from || filters.to ? 1 : 0)
+    (filters.from || filters.to ? 1 : 0) +
+    (filters.favorites ? 1 : 0)
   );
 }
 
@@ -149,6 +155,7 @@ export function withFilterParams(
   if (filters.type) params.set("type", filters.type.toLowerCase());
   if (filters.from) params.set("from", filters.from);
   if (filters.to) params.set("to", filters.to);
+  if (filters.favorites) params.set("favorites", "1");
   if (sort !== "desc") params.set("sort", sort);
   return params;
 }

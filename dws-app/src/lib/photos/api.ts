@@ -342,8 +342,8 @@ export function setFavorites(photoIds: string[], on: boolean) {
 /**
  * Mark `photoIds` as `me`'s favorites (or not) in every cached grid, search,
  * and detail, without a refetch: a heart should fill the moment it is tapped.
- * A Favorites grid keeps an unfavorited photo in place until it is next
- * loaded, so the viewer does not lose its slide; its query is marked stale.
+ * A grid filtered to favorites keeps an unfavorited photo in place until it
+ * is next loaded, so the viewer does not lose its slide; it is marked stale.
  */
 export function patchFavorites(queryClient: QueryClient, photoIds: readonly string[], me: string, on: boolean) {
   const ids = new Set(photoIds);
@@ -357,7 +357,10 @@ export function patchFavorites(queryClient: QueryClient, photoIds: readonly stri
   for (const id of ids) {
     queryClient.setQueryData<PhotoDetail>(["photo-detail", id], (photo) => photo && (patch(photo) as PhotoDetail));
   }
-  void queryClient.invalidateQueries({ queryKey: ["photos", "favorites"], refetchType: "none" });
+  void queryClient.invalidateQueries({
+    predicate: (query) => typeof query.queryKey[2] === "string" && query.queryKey[2].includes("favorites=1"),
+    refetchType: "none",
+  });
 }
 
 // ---- Bulk tags, one photo, action batches ----------------------------------

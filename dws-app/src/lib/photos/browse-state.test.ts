@@ -24,7 +24,7 @@ const from = "2026-09-01T07:00:00.000Z", to = "2026-10-01T06:59:59.999Z";
 describe("parseBrowseState / writeBrowseState", () => {
   it("round-trips every filter, the sort, and the group, and leaves other keys alone", () => {
     const state = {
-      filters: { project: "p1", uploader: "u1", tags: ["shop drawing", "professional"], type: "RAW" as const, from, to },
+      filters: { project: "p1", uploader: "u1", tags: ["shop drawing", "professional"], type: "RAW" as const, from, to, favorites: true },
       sort: "asc" as const,
       group: "tag" as const,
     };
@@ -35,6 +35,7 @@ describe("parseBrowseState / writeBrowseState", () => {
     expect(params.get("tags")).toBe("shop drawing,professional");
     expect(params.get("type")).toBe("raw");
     expect(params.get("from")).toBe(from);
+    expect(params.get("favorites")).toBe("1");
     expect(parseBrowseState(search, photos)).toEqual(state);
   });
 
@@ -52,7 +53,7 @@ describe("parseBrowseState / writeBrowseState", () => {
 
   it("counts each tag as its own filter and a date range as one", () => {
     expect(activeFilterCount(NO_FILTERS)).toBe(0);
-    expect(activeFilterCount({ ...NO_FILTERS, project: "none", tags: ["a", "b"], from })).toBe(4);
+    expect(activeFilterCount({ ...NO_FILTERS, project: "none", tags: ["a", "b"], from, favorites: true })).toBe(5);
   });
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, X, Heart } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -54,7 +54,27 @@ export function activeFilters(filters: BrowseFilters, choices: FilterChoices): A
   if (filters.from || filters.to) {
     chips.push({ key: "date", label: dateFilterLabel(filters), remove: { from: null, to: null } });
   }
+  if (filters.favorites) chips.push({ key: "favorites", label: "Favorites", remove: { favorites: false } });
   return chips;
+}
+
+/**
+ * The personal filter: only the photos this person put a heart on. One chip
+ * that is on or off, in the row beside the real tags on desktop and in the
+ * phone's Filter sheet. Blue when on, like any narrowing filter.
+ */
+export function FavoritesChip({ active, onChange }: { active: boolean; onChange(favorites: boolean): void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={() => onChange(!active)}
+      className={`gap-1.5 ${chipClass(active)}`}
+    >
+      <Heart className={`h-4 w-4 shrink-0 ${active ? "fill-current" : ""}`} aria-hidden="true" />
+      Favorites
+    </button>
+  );
 }
 
 /** The active filters under the toolbar, each with its own ×, then Clear. */
