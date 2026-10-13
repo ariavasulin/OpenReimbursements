@@ -77,7 +77,12 @@ export function FavoritesChip({ active, onChange }: { active: boolean; onChange(
   );
 }
 
-/** The active filters under the toolbar, each with its own ×, then Clear. */
+/**
+ * The active filters under the toolbar, each with its own ×, then Clear.
+ * Desktop only: on a phone the Filter button's count says how many are on,
+ * and the sheet it opens is where each one is turned off, so a second row of
+ * the same blue chips under it only stacked two blue shapes.
+ */
 export function ActiveFilterChips({
   chips,
   onRemove,
@@ -89,7 +94,7 @@ export function ActiveFilterChips({
 }) {
   if (chips.length === 0) return null;
   return (
-    <div role="group" aria-label="Active filters" className="mb-1 flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
+    <div role="group" aria-label="Active filters" className="mb-2 hidden min-w-0 max-w-full flex-wrap items-center gap-2 desktop:flex">
       {chips.map((chip) => (
         <button
           key={chip.key}

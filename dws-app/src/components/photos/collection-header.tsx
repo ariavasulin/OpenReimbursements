@@ -17,8 +17,11 @@ import { cn } from "@/lib/utils";
  * same button is a 44px bordered button, icon beside label. Icons are sized
  * here, so each caller's own icon size does not matter.
  */
+// On a phone the page's actions are one row of equal pills, icon beside the
+// word, the same 44 px height as the toolbar chips under them; at desktop they
+// are plain buttons beside the name.
 export const headerActionClass =
-  "flex min-h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-xl border border-[#4e4e4e] bg-[#2e2e2e] px-2 py-1.5 text-sm font-medium text-white hover:border-[#2680FC] hover:bg-[#3a3a3a] active:bg-[#3a3a3a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC] disabled:opacity-50 [&_svg]:size-5 [&_svg]:shrink-0 desktop:min-h-11 desktop:flex-row desktop:gap-2 desktop:rounded-lg desktop:px-3 desktop:py-0 desktop:text-base desktop:[&_svg]:size-4";
+  "flex min-h-11 min-w-0 flex-row items-center justify-center gap-2 rounded-full border border-[#4e4e4e] bg-[#2e2e2e] px-3 text-sm font-medium text-white hover:border-[#2680FC] hover:bg-[#3a3a3a] active:bg-[#3a3a3a] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC] disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0 desktop:rounded-lg desktop:text-base";
 
 /**
  * The top of an album page and a project page: the name, a count line under
@@ -84,7 +87,7 @@ export default function CollectionHeader({
   };
 
   return (
-    <div className="mb-4 desktop:mb-3">
+    <div className="mb-3">
       <div className="flex flex-col gap-3 desktop:flex-row desktop:flex-wrap desktop:items-start desktop:justify-between desktop:gap-x-4 desktop:gap-y-2">
         <div className="min-w-0 desktop:flex-1 desktop:basis-64">
           <h1
@@ -99,7 +102,7 @@ export default function CollectionHeader({
           <p className="mt-0.5 text-sm text-[#b4b4b4] desktop:mt-1 desktop:text-base">{subtitle}</p>
         </div>
         {name !== undefined && draft === null && (
-          <div className="grid max-w-md auto-cols-fr grid-flow-col gap-2 desktop:flex desktop:max-w-none desktop:flex-wrap desktop:items-center">
+          <div className="grid auto-cols-fr grid-flow-col gap-2 desktop:flex desktop:max-w-none desktop:flex-wrap desktop:items-center">
             {actions}
             <button type="button" onClick={startRename} className={cn(headerActionClass, "hidden desktop:flex")}>
               <Pencil aria-hidden="true" />

@@ -68,9 +68,9 @@ function DateFilterChip({
 
 /**
  * A photo grid's toolbar, one row: Filter (with the number of filters on),
- * Group by, Sort. On a phone Filter opens a pop-up with every filter; on
- * desktop the same filters sit in the row as chips. Under the row, each
- * active filter is a chip with ×, then Clear.
+ * Group by, Sort. On a phone Filter opens a pop-up with every filter and
+ * carries the count of those on; on desktop the same filters sit in the row
+ * as chips, and under the row each active filter is a chip with ×, then Clear.
  */
 export default function BrowseToolbar({
   filters,
@@ -112,8 +112,8 @@ export default function BrowseToolbar({
     <>
       {/* One row on a phone (the Filter button plus two icon chips fit 390px);
           wider screens may wrap the desktop filter chips. */}
-      <div className="mb-1 flex flex-row flex-nowrap items-center gap-1.5 sm:flex-wrap sm:gap-2">
-        <div role="group" aria-label="Filters" className="flex shrink-0 items-center gap-1.5 sm:min-w-0 sm:max-w-full sm:shrink sm:flex-wrap">
+      <div className="mb-2 flex flex-row flex-nowrap items-center gap-2 sm:flex-wrap">
+        <div role="group" aria-label="Filters" className="flex shrink-0 items-center gap-2 sm:min-w-0 sm:max-w-full sm:shrink sm:flex-wrap">
           <button
             type="button"
             aria-label={count > 0 ? `Filter, ${count} on` : "Filter"}
@@ -169,13 +169,14 @@ export default function BrowseToolbar({
             <FavoritesChip active={filters.favorites} onChange={(favorites) => onFiltersChange({ favorites })} />
           </div>
         </div>
-        {/* How the photos are laid out, not which ones. Wraps rather than
-            pushing the page sideways on a narrow screen or at large text. */}
+        {/* How the photos are laid out, not which ones. One left-aligned row
+            with the Filter button on a phone; at desktop it sits at the far
+            right of the chips. Wraps rather than pushing the page sideways. */}
         {showView && (
           <div
             role="group"
             aria-label="View"
-            className="ml-auto flex min-w-0 max-w-full flex-nowrap items-center gap-1.5 sm:flex-wrap sm:gap-2"
+            className="flex min-w-0 max-w-full flex-nowrap items-center gap-2 sm:flex-wrap desktop:ml-auto"
           >
             {groupModes.length > 1 && (
               <GroupByToggle modes={groupModes} value={group} onChange={onGroupChange} />

@@ -334,7 +334,7 @@ export default function PhotoGrid({
           <section key={group.key}>
             {/* A stuck header must sit flush with the scrollport edge, with its
                 own tiles never scrolling through an unpainted band above it. */}
-            <div className="group/header mt-2 flex min-h-11 items-center desktop:sticky desktop:top-0 desktop:z-10 desktop:mt-0 desktop:bg-[#222222]/95 desktop:backdrop-blur">
+            <div className="group/header mt-1 flex min-h-11 items-center desktop:sticky desktop:top-0 desktop:z-10 desktop:mt-0 desktop:bg-[#222222]/95 desktop:backdrop-blur">
               {selection && (
                 <button
                   type="button"
