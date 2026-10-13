@@ -9,10 +9,10 @@ const actionClass =
   "flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50";
 
 /**
- * The bar under a list of albums or projects in select mode, styled like the
- * photo selection bar: the count, Rename (exactly one selected), and Delete —
- * shown only when this person may delete some of the selection, and saying so
- * when that is not all of it.
+ * The bar under a list of albums or projects while one or more are selected,
+ * styled like the photo selection bar: the count, Rename (exactly one
+ * selected), and Delete — shown only when this person may delete some of the
+ * selection, and saying so when that is not all of it. × or Escape clears.
  */
 export default function CollectionSelectBar({
   label,
@@ -73,14 +73,14 @@ export default function CollectionSelectBar({
           <X className="h-5 w-5" aria-hidden="true" />
         </button>
         <span aria-live="polite" className="mr-auto pr-2 text-base font-semibold text-white">
-          {count === 0 ? "Choose items" : `${count} selected`}
+          {count} selected
         </span>
         <button type="button" className={actionClass} disabled={busy || count !== 1} onClick={onRename}>
           <Pencil className="h-4 w-4" aria-hidden="true" />
           Rename
         </button>
-        {offerDelete && (count === 0 || deletable > 0) && (
-          <button type="button" className={`${actionClass} text-red-200`} disabled={busy || deletable === 0} onClick={onDelete}>
+        {offerDelete && deletable > 0 && (
+          <button type="button" className={`${actionClass} text-red-200`} disabled={busy} onClick={onDelete}>
             <Trash2 className="h-4 w-4" aria-hidden="true" />
             {deletable === count ? "Delete" : `Delete the ${deletable} you can delete`}
           </button>

@@ -104,19 +104,31 @@ export function usePhotoTags(enabled: boolean, jobId?: string | null) {
   });
 }
 
+/** The query key of the signed-in person's photo permissions. */
+export const PHOTO_ACTOR_KEY = ["photo-actor"] as const;
+
 /**
  * The signed-in employee's photo permissions (GET /api/photos/actor), for
  * showing Trash, Delete forever, Empty trash, and project or album Delete only
  * where they will work. Undefined while loading: callers show nothing they
  * cannot yet promise. The server checks every write regardless.
+ *
+ * The "Photo admin" box can be ticked in another tab, or for this person by
+ * someone else, so coming back to the tab asks again even inside the 30
+ * seconds — a one-row read — rather than keep offering yesterday's controls.
  */
 export function usePhotoActor() {
   return useQuery({
-    queryKey: ["photo-actor"],
+    queryKey: PHOTO_ACTOR_KEY,
     queryFn: () => fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions"),
     staleTime: 30_000,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: "always",
   }).data;
+}
+
+/** After the Users page saves someone's role or "Photo admin" box: the next screen asks again. */
+export function invalidatePhotoActor(queryClient: QueryClient) {
+  return queryClient.invalidateQueries({ queryKey: PHOTO_ACTOR_KEY });
 }
 
 /** After an upload, edit, or delete: every photo-derived query refetches. */

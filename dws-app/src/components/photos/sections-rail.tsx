@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { Plus, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { SECTIONS } from "@/components/photos/section-nav";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import { usePhotoAlbums, usePhotoJobs } from "@/lib/photos/api";
@@ -60,7 +60,7 @@ function RailStatus({ children }: { children: React.ReactNode }) {
 
 export default function SectionsRail() {
   const navRef = useRef<HTMLElement>(null);
-  const { section, activeJobId, activeAlbumId, openNewAlbum } = usePhotosShell();
+  const { section, activeJobId, activeAlbumId } = usePhotosShell();
 
   const jobs = usePhotoJobs(section === "projects");
   const albums = usePhotoAlbums(section === "albums");
@@ -132,21 +132,8 @@ export default function SectionsRail() {
 
       <div className="min-h-0 flex-1 overflow-y-auto border-t border-[#3a3a3a] py-1">
         {section === "albums" && (
-          <div className="flex items-center justify-between py-1 pl-4 pr-2">
-            <span className="text-[13px] font-semibold uppercase tracking-wide text-[#a8a8a8]">
-              All albums
-            </span>
-            <button
-              type="button"
-              onClick={openNewAlbum}
-              className={cn(
-                "flex min-h-11 items-center gap-1 rounded-lg px-2 text-base text-[#8bbaff] hover:bg-[#2a2a2a]",
-                focusRing
-              )}
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              New album
-            </button>
+          <div className="py-2 pl-4 pr-2 text-[13px] font-semibold uppercase tracking-wide text-[#a8a8a8]">
+            All albums
           </div>
         )}
         {section === "projects" && (

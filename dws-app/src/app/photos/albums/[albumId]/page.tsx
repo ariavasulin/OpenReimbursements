@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowDownUp, BookImage, Trash2, Upload } from "lucide-react";
+import { ArrowDownUp, BookImage, Upload } from "lucide-react";
 import { toast } from "sonner";
 import AlbumArrange from "@/components/photos/album-arrange";
 import ShareButton from "@/components/photos/share-button";
@@ -187,11 +187,17 @@ function AlbumPageContent() {
         fallbackName="Album"
         subtitle={album ? `Album · ${plural(album.photo_count, "photo")}` : " "}
         renameLabel="Album name"
-        share={
+        actions={
           album && (
             <>
               <PlayButton />
-              <ShareButton album={{ id: album.id, name: album.name }} />
+              <ShareButton album={{ id: album.id, name: album.name }} className={headerActionClass} />
+              {album.photo_count > 1 && (
+                <button type="button" onClick={startArranging} className={headerActionClass}>
+                  <ArrowDownUp aria-hidden="true" />
+                  Arrange
+                </button>
+              )}
             </>
           )
         }
@@ -199,26 +205,7 @@ function AlbumPageContent() {
           await renameAlbum(albumId, name);
           invalidatePhotoCaches(queryClient);
         }}
-        actions={
-          <>
-            {album && album.photo_count > 1 && (
-              <button type="button" onClick={startArranging} className={headerActionClass}>
-                <ArrowDownUp className="h-4 w-4" aria-hidden="true" />
-                Arrange
-              </button>
-            )}
-            {canDelete && (
-              <button
-                type="button"
-                onClick={() => setConfirmingDelete(true)}
-                className={headerActionClass}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                Delete album
-              </button>
-            )}
-          </>
-        }
+        remove={canDelete ? { label: "Delete album", onSelect: () => setConfirmingDelete(true) } : undefined}
       />
 
       {album && (

@@ -109,8 +109,10 @@ export default function BrowseToolbar({
 
   return (
     <>
-      <div className="mb-1 flex flex-row flex-wrap items-center gap-1.5 sm:gap-2">
-        <div role="group" aria-label="Filters" className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
+      {/* One row on a phone (the Filter button plus two icon chips fit 390px);
+          wider screens may wrap the desktop filter chips. */}
+      <div className="mb-1 flex flex-row flex-nowrap items-center gap-1.5 sm:flex-wrap sm:gap-2">
+        <div role="group" aria-label="Filters" className="flex shrink-0 items-center gap-1.5 sm:min-w-0 sm:max-w-full sm:shrink sm:flex-wrap">
           <button
             type="button"
             aria-label={count > 0 ? `Filter, ${count} on` : "Filter"}
@@ -171,7 +173,7 @@ export default function BrowseToolbar({
           <div
             role="group"
             aria-label="View"
-            className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2"
+            className="ml-auto flex min-w-0 max-w-full flex-nowrap items-center gap-1.5 sm:flex-wrap sm:gap-2"
           >
             {groupModes.length > 1 && (
               <GroupByToggle modes={groupModes} value={group} onChange={onGroupChange} />

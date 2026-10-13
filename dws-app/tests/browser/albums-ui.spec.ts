@@ -150,6 +150,13 @@ async function select(page: Page, viewport: ViewportName, photoNames: string[]) 
 }
 const rowsOf = async (ids: string[]) => (await fixtures.sql.query('select id,job_id,tags,deleted_at from public.photos where id=any($1::uuid[]) order by original_name', [ids])).rows;
 
+/** A collection page's Rename or Delete: a button at desktop; on a phone, an item under the header's More. */
+async function headerAction(page: Page, phone: boolean, name: string) {
+  if (!phone) return page.getByRole('button', { name, exact: true });
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  return page.getByRole('menuitem', { name, exact: true });
+}
+
 for (const viewport of VIEWPORTS) {
   const v = viewport.name;
 
@@ -171,27 +178,28 @@ for (const viewport of VIEWPORTS) {
     await sections(page).getByRole('link', { name: 'Albums', exact: true }).click();
     await expect(page).toHaveURL(/\/photos\/albums$/);
     await expect(page.getByRole('heading', { level: 1, name: 'Albums', exact: true })).toBeVisible();
-    await expect(page.locator('main').getByText('Like a folder. A photo can be in more than one.', { exact: true })).toBeVisible();
+    // The section pages no longer carry a one-line explainer under the heading.
+    await expect(page.locator('main').getByText('Like a folder. A photo can be in more than one.', { exact: true })).toHaveCount(0);
 
     await sections(page).getByRole('link', { name: 'Projects', exact: true }).click();
     await expect(page).toHaveURL(/\/photos\/projects$/);
-    await expect(page.locator('main').getByText('The job a photo belongs to. Optional.', { exact: true })).toBeVisible();
+    await expect(page.locator('main').getByText('The job a photo belongs to. Optional.', { exact: true })).toHaveCount(0);
     // Job numbers are labeled, never a bare number beside a count.
     await expect(page.locator('main').getByRole('link', { name: new RegExp(names.north) })).toContainText(`Project #${numbers.north} · `);
 
     await sections(page).getByRole('link', { name: 'Photos', exact: true }).click();
     await expect(page).toHaveURL(/\/photos$/);
 
-    if (v === 'desktop') {
-      await expect(page.getByRole('link', { name: 'Import folders', exact: true })).toHaveAttribute('href', '/migrate');
-      await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
-    } else {
-      // The "+" holds what the two wide buttons used to be, plus New album.
-      await page.getByRole('button', { name: 'Add', exact: true }).click();
-      await expect(page.getByRole('menuitem', { name: 'Upload', exact: true })).toBeVisible();
-      await expect(page.getByRole('menuitem', { name: 'New album', exact: true })).toBeVisible();
-      await page.keyboard.press('Escape');
-    }
+    if (v === 'desktop') await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+    // One "+" holds every way to add something, the same five on phone and desktop
+    // (Take photos only where there is a camera).
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(page.getByRole('menuitem', { name: 'Upload photos', exact: true })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Import folders', exact: true })).toHaveAttribute('href', '/migrate');
+    await expect(page.getByRole('menuitem', { name: 'New project', exact: true })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'New album', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menuitem', { name: 'New album', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Account menu', exact: true }).click();
     await expect(page.getByRole('menuitem', { name: 'Receipts', exact: true })).toBeVisible();
     await expect(page.getByRole('menuitem', { name: 'Sign out', exact: true })).toBeVisible();
@@ -211,7 +219,8 @@ for (const viewport of VIEWPORTS) {
     const first = `Party ${v} ${run}`, renamed = `Christmas Party ${v} ${run}`;
 
     await page.goto('/photos/albums');
-    await page.locator('main').getByRole('button', { name: 'New album', exact: true }).click();
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'New album', exact: true }).click();
     const create = page.getByRole('dialog', { name: 'New album' });
     await create.getByLabel('Album name', { exact: true }).fill(first);
     await create.getByRole('button', { name: 'Create album', exact: true }).click();
@@ -223,7 +232,7 @@ for (const viewport of VIEWPORTS) {
     await expect(page.getByRole('button', { name: 'Upload photos to this album', exact: true })).toBeVisible();
     await expect(page.getByRole('group', { name: 'Filters' })).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Rename', exact: true }).click();
+    await (await headerAction(page, v === 'phone', 'Rename')).click();
     await page.getByLabel('Album name', { exact: true }).fill(renamed);
     await page.getByRole('button', { name: 'Save', exact: true }).click();
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(renamed);
@@ -233,7 +242,7 @@ for (const viewport of VIEWPORTS) {
     await expect(tile(page, `album-kept-${v}-${run}.png`)).toBeVisible();
     await expect(page.locator('main')).toContainText('Album · 1 photo');
 
-    await page.getByRole('button', { name: 'Delete album', exact: true }).click();
+    await (await headerAction(page, v === 'phone', 'Delete album')).click();
     const confirm = page.getByRole('alertdialog');
     await expect(confirm).toContainText(`Delete album “${renamed}”? The photos stay in Photos.`);
     await confirm.getByRole('button', { name: 'Delete album', exact: true }).click();
@@ -344,8 +353,8 @@ for (const viewport of VIEWPORTS) {
 
     await page.goto(`/photos/${projects.north}?photo=${tagged}`);
     await openDetails(page, v);
-    await page.getByRole('button', { name: 'Edit details', exact: true }).click();
-    const edit = page.getByRole('dialog', { name: 'Edit details' });
+    await page.getByRole('button', { name: 'Edit tags', exact: true }).click();
+    const edit = page.getByRole('dialog', { name: 'Edit tags' });
     await expect(edit.getByText('A tag is a label you can filter by, like professional or shop drawing.', { exact: true })).toBeVisible();
     const field = edit.getByLabel('Tags (optional)', { exact: true });
     await field.click();
@@ -579,9 +588,9 @@ test('phone viewer: the photo is unobscured until the labeled Details pop-up is 
   const details = page.getByRole('dialog', { name: 'Details' });
   await expect(details.getByTestId('photo-project')).toHaveText(`#${numbers.north} · ${names.north}`);
   await expect(details.getByTestId('photo-albums').getByRole('link', { name: inAlbum, exact: true })).toBeVisible();
-  // "Set project" is its own action, and the form is "Edit details".
+  // "Set project" is its own action, and the form is "Edit tags".
   await expect(details.getByRole('button', { name: 'Set project', exact: true })).toBeVisible();
-  await expect(details.getByRole('button', { name: 'Edit details', exact: true })).toBeVisible();
+  await expect(details.getByRole('button', { name: 'Edit tags', exact: true })).toBeVisible();
   await expect(details.getByRole('button', { name: /Edit tags/ })).toHaveCount(0);
   // The 30-day recovery sentence sits with the trash action.
   await expect(details.getByRole('link', { name: 'Move to trash', exact: true })).toBeVisible();

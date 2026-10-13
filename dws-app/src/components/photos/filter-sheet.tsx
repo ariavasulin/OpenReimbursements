@@ -1,16 +1,16 @@
 "use client";
 
 import { useId, type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import DateRangeFields from "@/components/photos/date-range-fields";
+import DateRangeFields, { fieldClass } from "@/components/photos/date-range-fields";
 import { chipClass, FILE_TYPE_OPTIONS, type FilterChoices } from "@/components/photos/filter-bar";
 import SheetShell from "@/components/photos/sheet-shell";
 import { activeFilterCount, type BrowseFilters } from "@/lib/photos/browse-state";
 import type { FilterOption } from "@/lib/photos/filter-options";
+import { cn } from "@/lib/utils";
 
 const sectionHeading = "mb-2 text-sm font-semibold text-white";
-const selectClass =
-  "min-h-11 w-full rounded-lg border border-[#4e4e4e] bg-[#222222] px-3 text-base text-white focus:border-[#2680FC] focus:outline-none";
 
 function Section({ title, id, children }: { title: string; id: string; children: ReactNode }) {
   return (
@@ -23,7 +23,12 @@ function Section({ title, id, children }: { title: string; id: string; children:
   );
 }
 
-/** One choice from a long list (projects, people): the phone's own picker does that best. */
+/**
+ * One choice from a long list (projects, people): the phone's own picker does
+ * that best. The browser's arrow is replaced by our chevron, drawn inside the
+ * field (Safari pushed its own against the edge and clipped it); pr-10 keeps
+ * the text clear of it, and the chevron lets taps through to the picker.
+ */
 function OptionSelect({
   label,
   anyLabel,
@@ -39,20 +44,26 @@ function OptionSelect({
 }) {
   const known = value === null || options.some((option) => option.value === value);
   return (
-    <select
-      aria-label={label}
-      value={value ?? ""}
-      onChange={(event) => onChange(event.target.value || null)}
-      className={selectClass}
-    >
-      <option value="">{anyLabel}</option>
-      {!known && value !== null && <option value={value}>{label}</option>}
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+    <div className="relative">
+      <select
+        aria-label={label}
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value || null)}
+        className={cn(fieldClass, "truncate pr-10")}
+      >
+        <option value="">{anyLabel}</option>
+        {!known && value !== null && <option value={value}>{label}</option>}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown
+        className="pointer-events-none absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#b4b4b4]"
+        aria-hidden="true"
+      />
+    </div>
   );
 }
 

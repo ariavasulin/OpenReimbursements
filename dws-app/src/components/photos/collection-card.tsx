@@ -2,14 +2,31 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { Check } from "lucide-react";
+import { useDesktop } from "@/hooks/use-desktop";
+import { useLongPress } from "@/hooks/use-long-press";
+import { Tick } from "@/components/photos/photo-grid";
 import { plural } from "@/lib/photos/format";
 import { publicUrl } from "@/lib/photos/urls";
+import { cn } from "@/lib/utils";
+
+/** One card's part in selecting, from useCollectionSelect. */
+export interface CardSelection {
+  /** Marks the tick, so focus can come back to it when the bar closes. */
+  id: string;
+  selected: boolean;
+  /** Anything on the list is selected: every card shows its tick, and a click toggles. */
+  selecting: boolean;
+  /** `range`: shift was held, so select from the last tick to this card. */
+  onToggle(options: { range: boolean }): void;
+}
 
 /**
  * One album or project in a list: its name (up to two lines, never cut to a
- * few words), a labeled count line, and its four newest thumbnails. In select
- * mode (`selection` given) the card is a toggle instead of a link.
+ * few words), a labeled count line, and its four newest thumbnails.
+ *
+ * Selects like a photo tile: a tick in the corner on hover (desktop) or a
+ * press and hold (phone) starts selecting; while selecting, a click or tap
+ * anywhere on a card toggles it, and shift-click takes a range.
  */
 export default function CollectionCard({
   href,
@@ -28,28 +45,21 @@ export default function CollectionCard({
   /** Server caps at 4. */
   thumbPaths: string[];
   emptyText: string;
-  selection?: { selected: boolean; onToggle(): void };
+  selection?: CardSelection;
 }) {
+  const isDesktop = useDesktop();
+  const { handlers: pressHandlers, takeHold } = useLongPress(
+    selection && !isDesktop ? () => selection.onToggle({ range: false }) : null
+  );
+  const selected = selection?.selected ?? false;
+  const selecting = selection?.selecting ?? false;
   const remainder = photoCount - thumbPaths.length;
-  const cardClass =
-    "block w-full rounded-xl border bg-[#2a2a2a] p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
 
   const body: ReactNode = (
     <>
-      <div className="flex items-start gap-2">
-        <div className="line-clamp-2 min-w-0 flex-1 break-words text-base font-semibold leading-snug text-white">
-          {name}
-        </div>
-        {selection && (
-          <span
-            aria-hidden="true"
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${
-              selection.selected ? "border-[#2680FC] bg-[#2680FC]" : "border-[#8e8e8e]"
-            }`}
-          >
-            {selection.selected && <Check className="h-4 w-4 text-white" />}
-          </span>
-        )}
+      {/* The right padding keeps a long name clear of the tick. */}
+      <div className="line-clamp-2 break-words pr-7 text-base font-semibold leading-snug text-white">
+        {name}
       </div>
       <div className="mb-2.5 mt-0.5 text-sm text-[#b4b4b4]">
         {detail ? `${detail} · ` : ""}
@@ -67,6 +77,7 @@ export default function CollectionCard({
                 src={publicUrl(path)}
                 alt=""
                 loading="lazy"
+                draggable={false}
                 className="h-full w-full object-cover"
               />
               {index === thumbPaths.length - 1 && remainder > 0 && (
@@ -85,22 +96,76 @@ export default function CollectionCard({
     </>
   );
 
-  if (selection) {
-    return (
-      <button
-        type="button"
-        aria-pressed={selection.selected}
-        aria-label={`Select ${name}`}
-        onClick={selection.onToggle}
-        className={`${cardClass} ${selection.selected ? "border-[#2680FC]" : "border-[#3e3e3e] hover:border-[#8e8e8e]"}`}
-      >
-        {body}
-      </button>
-    );
-  }
+  // An inset ring beside the border makes a 2 px edge that no neighbour clips.
+  const cardClass = cn(
+    "block h-full w-full rounded-xl border bg-[#2a2a2a] p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]",
+    selected
+      ? "border-[#2680FC] ring-1 ring-inset ring-[#2680FC]"
+      : selecting
+        ? "border-[#3e3e3e] hover:border-[#8e8e8e]"
+        : "border-[#3e3e3e] hover:border-[#2680FC]"
+  );
+
   return (
-    <Link href={href} title={name} className={`${cardClass} border-[#3e3e3e] hover:border-[#2680FC]`}>
-      {body}
-    </Link>
+    <div
+      className="group relative select-none [-webkit-touch-callout:none]"
+      {...pressHandlers}
+      // The click that ends a press and hold must not also open or toggle the card.
+      onClickCapture={(event) => {
+        if (takeHold()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
+    >
+      {selection && selecting ? (
+        <button
+          type="button"
+          aria-pressed={selected}
+          aria-label={name}
+          onClick={(event) => selection.onToggle({ range: event.shiftKey })}
+          className={cardClass}
+        >
+          {body}
+        </button>
+      ) : (
+        <Link
+          href={href}
+          title={name}
+          onClick={(event) => {
+            // As on a photo tile, shift-click selects rather than opening.
+            if (!selection || !event.shiftKey) return;
+            event.preventDefault();
+            selection.onToggle({ range: true });
+          }}
+          className={cardClass}
+        >
+          {body}
+        </Link>
+      )}
+      {selection && (
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={selected}
+          aria-label={`Select ${name}`}
+          data-select-id={selection.id}
+          onClick={(event) => selection.onToggle({ range: event.shiftKey })}
+          // The photo tile's tick: a 44px target around a 24px tick, shown on
+          // hover or keyboard focus at desktop, and on a phone only once
+          // selecting has begun, so a stray tap on a corner never starts one.
+          className={cn(
+            "absolute right-0 top-0 z-[1] flex h-11 w-11 items-start justify-end p-2.5 focus:outline-none focus-visible:opacity-100 [&:focus-visible>span]:ring-2 [&:focus-visible>span]:ring-white",
+            selected || selecting
+              ? "opacity-100"
+              : isDesktop
+                ? "opacity-0 group-hover:opacity-100"
+                : "pointer-events-none opacity-0"
+          )}
+        >
+          <Tick checked={selected} />
+        </button>
+      )}
+    </div>
   );
 }

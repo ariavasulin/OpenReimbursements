@@ -35,7 +35,7 @@ import type { PhotoRow } from "@/lib/photos/types";
 import { videoSource } from "@/lib/photos/video-source";
 
 // Zoom/swipe run on the screen-quality preview, never the original —
-// "Download original" streams the untouched file. "Edit details" and "Set
+// "Download" streams the untouched original. "Edit tags" and "Set
 // project" open pop-ups on top of the viewer; both viewer paths sit at z-40 so
 // a pop-up (z-50) and its nested pickers (z-[60]) stack above them.
 //

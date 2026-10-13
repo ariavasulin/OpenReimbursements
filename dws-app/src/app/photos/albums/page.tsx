@@ -3,18 +3,12 @@
 import { useState } from "react";
 import { useCollectionSelect } from "@/hooks/use-collection-select";
 import { useQueryClient } from "@tanstack/react-query";
-import { BookImage, CheckSquare, Plus } from "lucide-react";
+import { BookImage, Plus } from "lucide-react";
 import CollectionCard from "@/components/photos/collection-card";
-import { headerActionClass } from "@/components/photos/collection-header";
 import CollectionSelectBar from "@/components/photos/collection-select-bar";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
-import { ALBUM_EXPLAINER } from "@/components/photos/new-album-sheet";
-import {
-  PAGE_MAIN_CLASS,
-  PAGE_SUBTITLE_CLASS,
-  PAGE_TITLE_CLASS,
-} from "@/components/photos/page-layout";
+import { PAGE_MAIN_CLASS, PAGE_TITLE_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
@@ -25,7 +19,7 @@ import { plural } from "@/lib/photos/format";
 
 const ALBUMS_PER_PAGE = 60;
 
-/** Albums: bounded card pages, "New album", and select to rename or delete. */
+/** Albums: bounded card pages; select (hover tick or press and hold) to rename or delete. New album lives in the "+" menu. */
 export default function AlbumsPage() {
   const queryClient = useQueryClient();
   const { openNewAlbum } = usePhotosShell();
@@ -52,21 +46,7 @@ export default function AlbumsPage() {
   return (
     <main className={PAGE_MAIN_CLASS}>
       <PhoneHeader />
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-        <div className="min-w-0">
-          <h1 className={PAGE_TITLE_CLASS}>Albums</h1>
-          <p className={PAGE_SUBTITLE_CLASS}>{ALBUM_EXPLAINER}</p>
-        </div>
-        {albums && albums.length > 0 && select.selected === null && (
-          <div className="flex flex-wrap gap-2">
-            <button ref={select.selectButton} type="button" onClick={select.start} className={headerActionClass}>
-              <CheckSquare className="h-4 w-4" aria-hidden="true" />
-              Select
-            </button>
-            {newAlbumButton}
-          </div>
-        )}
-      </div>
+      <h1 className={`${PAGE_TITLE_CLASS} mb-4`}>Albums</h1>
 
       {isLoading && <StatusLine>Loading albums...</StatusLine>}
       {error && (
@@ -94,7 +74,7 @@ export default function AlbumsPage() {
             photoCount={album.photo_count}
             thumbPaths={album.thumb_paths}
             emptyText="No photos yet"
-            selection={select.selected ? { selected: select.selected.has(album.id), onToggle: () => select.toggle(album.id) } : undefined}
+            selection={select.card(album.id)}
           />
         ))}
       </div>
@@ -108,7 +88,7 @@ export default function AlbumsPage() {
         </nav>
       )}
 
-      {select.selected && (
+      {select.selecting && (
         <CollectionSelectBar
           label="Selected albums"
           count={chosen.length}

@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { BookImage, Briefcase, Camera, Images, Plus, Upload } from "lucide-react";
+import { BookImage, Briefcase, Camera, FolderInput, Images, Plus, Upload } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { menuClass, menuItemClass } from "@/components/photos/filter-bar";
 import { useHasCamera } from "@/components/photos/multi-shot-camera";
 import {
   usePhotosShell,
@@ -46,23 +47,24 @@ export function BottomNav() {
           const active = id === section;
           return (
             <li key={id}>
+              {/* The whole cell is the target; the active one tints its icon
+                  and label together inside one soft pill. */}
               <Link
                 href={href}
                 aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex min-h-14 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2680FC]",
-                  active ? "font-semibold text-white" : "text-[#b4b4b4]"
-                )}
+                className="group flex min-h-14 items-center justify-center px-1 py-1.5 focus:outline-none"
               >
                 <span
                   className={cn(
-                    "flex h-7 w-14 items-center justify-center rounded-full",
-                    active && "bg-[#2680FC]/25 text-[#8bbaff]"
+                    "flex min-w-20 flex-col items-center gap-0.5 rounded-2xl px-3 py-1 text-sm group-focus-visible:ring-2 group-focus-visible:ring-[#2680FC]",
+                    active
+                      ? "bg-[#2680FC]/20 font-semibold text-[#8bbaff]"
+                      : "text-[#b4b4b4]"
                   )}
                 >
-                  <Icon className="h-5 w-5" aria-hidden="true" />
+                  <Icon className="h-6 w-6" aria-hidden="true" />
+                  {label}
                 </span>
-                {label}
               </Link>
             </li>
           );
@@ -72,23 +74,71 @@ export function BottomNav() {
   );
 }
 
-const menuItem =
-  "flex min-h-11 cursor-pointer items-center gap-3 px-3 text-base text-white focus:bg-[#3e3e3e] focus:text-white";
+const menuItem = cn(menuItemClass, "group cursor-pointer gap-3");
+const menuIcon = "h-5 w-5 text-[#b4b4b4] group-focus:text-white";
 
 /**
- * The phone's one round "+": Take photos, Upload, New album. It replaces the
- * two wide capture buttons, which no longer fit once the tab bar arrived and
- * ran off-screen at large text sizes.
+ * Everything that adds something, behind one "+": the phone's round floating
+ * button and the desktop top bar open this same menu, with the same five rows
+ * in the same order and words.
  */
-export function AddButton() {
+function AddMenu({
+  trigger,
+  side,
+}: {
+  trigger: React.ReactElement;
+  side: "top" | "bottom";
+}) {
   const hasCamera = useHasCamera();
-  const { openPicker, openCamera, openNewAlbum } = usePhotosShell();
+  const { openPicker, openCamera, openNewProject, openNewAlbum } = usePhotosShell();
 
   return (
-    // Not modal: "New album" opens a pop-up from this menu, and a modal menu
-    // closing at the same moment can leave the page unclickable.
+    // Not modal: "New project" and "New album" open a pop-up from this menu,
+    // and a modal menu closing at the same moment can leave the page
+    // unclickable.
     <DropdownMenu modal={false}>
-      <DropdownMenuTrigger asChild>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        side={side}
+        sideOffset={8}
+        className={cn("min-w-56", menuClass)}
+      >
+        <DropdownMenuItem onSelect={openPicker} className={menuItem}>
+          <Upload className={menuIcon} aria-hidden="true" />
+          Upload photos
+        </DropdownMenuItem>
+        {hasCamera && (
+          <DropdownMenuItem onSelect={openCamera} className={menuItem}>
+            <Camera className={menuIcon} aria-hidden="true" />
+            Take photos
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem asChild className={menuItem}>
+          <Link href="/migrate">
+            <FolderInput className={menuIcon} aria-hidden="true" />
+            Import folders
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={openNewProject} className={menuItem}>
+          <Briefcase className={menuIcon} aria-hidden="true" />
+          New project
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={openNewAlbum} className={menuItem}>
+          <BookImage className={menuIcon} aria-hidden="true" />
+          New album
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The phone's round floating "+", above the tab bar. */
+export function AddButton() {
+  return (
+    <AddMenu
+      side="top"
+      trigger={
         <button
           type="button"
           aria-label="Add"
@@ -96,28 +146,25 @@ export function AddButton() {
         >
           <Plus className="h-7 w-7" aria-hidden="true" />
         </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        align="end"
-        side="top"
-        sideOffset={8}
-        className="min-w-52 border-[#4e4e4e] bg-[#2e2e2e] p-1 text-white"
-      >
-        {hasCamera && (
-          <DropdownMenuItem onSelect={openCamera} className={menuItem}>
-            <Camera className="h-5 w-5 text-[#b4b4b4]" aria-hidden="true" />
-            Take photos
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onSelect={openPicker} className={menuItem}>
-          <Upload className="h-5 w-5 text-[#b4b4b4]" aria-hidden="true" />
-          Upload
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={openNewAlbum} className={menuItem}>
-          <BookImage className="h-5 w-5 text-[#b4b4b4]" aria-hidden="true" />
-          New album
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      }
+    />
+  );
+}
+
+/** The desktop top bar's "+", beside the account button. */
+export function TopBarAddButton() {
+  return (
+    <AddMenu
+      side="bottom"
+      trigger={
+        <button
+          type="button"
+          aria-label="Add"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#2680FC] text-white hover:bg-[#1a6fd8] focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#222222]"
+        >
+          <Plus className="h-6 w-6" aria-hidden="true" />
+        </button>
+      }
+    />
   );
 }

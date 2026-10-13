@@ -2,6 +2,7 @@
 
 import ChoiceChip from "@/components/photos/choice-chip";
 import type { GroupBy } from "@/lib/photos/group";
+import { ArrowUpDown, LayoutGrid } from "lucide-react";
 import type { PhotoSort } from "@/lib/photos/api";
 
 const MODE_LABEL: Record<GroupBy, string> = {
@@ -28,6 +29,7 @@ export default function GroupByToggle<T extends GroupBy>({
   return (
     <ChoiceChip
       name="Group by"
+      icon={<LayoutGrid className="h-4 w-4" />}
       options={modes.map((mode) => ({ value: mode, label: MODE_LABEL[mode] }))}
       value={value}
       onChange={onChange}
@@ -60,6 +62,7 @@ export function SortToggle({
   return (
     <ChoiceChip
       name="Sort"
+      icon={<ArrowUpDown className="h-4 w-4" />}
       options={custom ? WITH_CUSTOM : SORT_OPTIONS}
       value={value}
       onChange={onChange}

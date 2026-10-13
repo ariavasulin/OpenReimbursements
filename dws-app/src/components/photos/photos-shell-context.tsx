@@ -41,6 +41,9 @@ export interface PhotosShellValue {
     target?: UploadTarget,
     capturedAtOverrides?: Map<File, Date>
   ): void;
+  /** Opens the "New project" pop-up; creating one (or choosing an existing
+   *  match) opens its page. */
+  openNewProject(): void;
   /** Opens the "New album" pop-up; creating one opens its page. */
   openNewAlbum(): void;
   /** From useParams(); jobs are UUIDs so there is no collision with "search". */

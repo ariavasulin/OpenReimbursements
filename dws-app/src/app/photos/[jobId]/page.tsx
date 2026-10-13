@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Briefcase, Trash2, Upload } from "lucide-react";
+import { Briefcase, Upload } from "lucide-react";
 import { toast } from "sonner";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
@@ -116,11 +116,11 @@ function ProjectPageContent() {
         }
         renameLabel="Project name"
         number={job?.job_number}
-        share={
+        actions={
           job && (
             <>
               <PlayButton />
-              <ShareButton project={{ id: job.id, name: job.name }} />
+              <ShareButton project={{ id: job.id, name: job.name }} className={headerActionClass} />
             </>
           )
         }
@@ -128,14 +128,7 @@ function ProjectPageContent() {
           await renameJob(jobId, name, number);
           invalidatePhotoCaches(queryClient);
         }}
-        actions={
-          canDelete && (
-            <button type="button" onClick={() => setConfirmingDelete(true)} className={headerActionClass}>
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-              Delete project
-            </button>
-          )
-        }
+        remove={canDelete ? { label: "Delete project", onSelect: () => setConfirmingDelete(true) } : undefined}
       />
 
       <PhotoBrowser

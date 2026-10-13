@@ -1,18 +1,36 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { BookImage, BookMinus, Briefcase, Download, Tag, TextCursorInput, Trash2, X } from "lucide-react";
+import {
+  BookImage,
+  BookMinus,
+  Briefcase,
+  Download,
+  MoreHorizontal,
+  Tag,
+  TextCursorInput,
+  Trash2,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import AlbumField from "@/components/photos/album-field";
 import { PHOTOS_FLOATING_SLOT_ID, usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
 import SetProjectSheet from "@/components/photos/set-project-sheet";
 import SheetShell from "@/components/photos/sheet-shell";
 import TagDropdown, { useTagChoices } from "@/components/photos/tag-dropdown";
+import { useDesktop } from "@/hooks/use-desktop";
 import { useMobile } from "@/hooks/use-mobile";
 import {
   addPhotosToAlbum,
@@ -20,6 +38,7 @@ import {
   createActionBatch,
   fetchPhotosPage,
   invalidatePhotoCaches,
+  PHOTO_ACTOR_KEY,
   removePhotosFromAlbum,
   renamePhoto,
   usePhotoActor,
@@ -30,8 +49,14 @@ import { MAX_BULK_PHOTOS, MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { inChunks, PartialBulkError, sumCounts } from "@/lib/photos/chunks";
 import { formatCount, photoName, plural } from "@/lib/photos/format";
 import { MAX_SELECTION } from "@/lib/photos/selection";
+import {
+  desktopActions,
+  phoneActions,
+  selectionActions,
+  type SelectionActionKey,
+} from "@/lib/photos/selection-actions";
 import { appendResolvedTag } from "@/lib/photos/tags";
-import { canTrashPhoto, isPhotoAdmin } from "@/lib/photos/permissions";
+import { trashActionLabel, trashableIds } from "@/lib/photos/permissions";
 import type { PhotoAlbumRef, PhotoRow } from "@/lib/photos/types";
 import {
   findRows,
@@ -49,9 +74,16 @@ import { openZipTarget, saveZip, ZipEmptyError, type ZipTarget } from "@/lib/pho
 // label, and are easy to undo); their routes take 500 photos a request, so a
 // bigger selection goes in slices under one progress toast. Set project and
 // Trash open the confirm page with exactly the selected photos, as one batch —
-// for Trash, the ones this person may delete, so the button never promises
-// what the server will refuse. Download confirms the count and size, then
-// saves every selected original as one zip (lib/photos/zip-download.ts).
+// for Trash, the ones this person may delete (trashableIds), so the button
+// never promises what the server will refuse. Download confirms the count and
+// size, then saves every selected original as one zip (lib/photos/zip-download.ts).
+//
+// Layout. Desktop: one row — clear and the count on the left, the actions in
+// one fixed order on the right, Trash last behind a divider. Actions that do
+// not fit the row's width go into a "More" menu, least used first, so the bar
+// never wraps. Phone: the count on top, then a bottom row of icon-over-label
+// buttons; past PHONE_SLOTS the least used go into a "More" sheet. Trash is
+// never folded away on either.
 
 interface SelectionBarProps {
   selectedIds: ReadonlySet<string>;
@@ -74,8 +106,17 @@ interface SelectionBarProps {
   onSelectAll(answer: PhotoIdsAnswer): void;
 }
 
-const actionClass =
-  "flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium text-white hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50";
+const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-white";
+/** A desktop action: icon and label in one line. Also the measuring copies' class, so widths match. */
+const desktopAction = `flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 text-sm font-medium disabled:opacity-50 ${focusRing}`;
+/** A phone action: icon over label, a full-height ≥44 px slot. Width comes from the caller's flex share. */
+const phoneAction = `flex min-h-14 min-w-0 basis-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 py-1.5 text-center text-xs font-medium leading-tight disabled:opacity-50 ${focusRing}`;
+// Colours stay out of the shared classes: Tailwind's output order, not the
+// class order, would decide between two text colours on one button.
+const plainTone = "text-white hover:bg-white/10 active:bg-white/15";
+const trashTone = "text-red-200 hover:bg-red-500/15 active:bg-red-500/20";
+const menuItem =
+  "flex min-h-11 cursor-pointer items-center gap-3 px-3 text-base text-white focus:bg-[#3e3e3e] focus:text-white";
 const primaryButton =
   "h-auto min-h-11 w-full bg-[#2680FC] py-2.5 text-base text-white hover:bg-[#1a6fd8]";
 
@@ -111,6 +152,11 @@ const sliceError = (reason: unknown, fallback: string, done: (count: string) => 
     ? `${done(`${formatCount(reason.done)} of ${plural(reason.total, "photo")}`)}, then it stopped: ${reason.message.replace(/[.!?]?$/, ".")} Try again to finish.`
     : errorText(reason, fallback);
 
+type SheetKey = "album" | "tag" | "project" | "rename" | "download" | "more";
+type Measured = { available: number; widths: Partial<Record<SelectionActionKey | "more", number>> };
+
+const MIXED_TRASH_TAIL = " you can delete";
+
 export default function SelectionBar({
   selectedIds,
   onClear,
@@ -124,21 +170,13 @@ export default function SelectionBar({
 }: SelectionBarProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const isDesktop = useDesktop();
   const { setSelecting } = usePhotosShell();
   const actor = usePhotoActor();
   const count = selectedIds.size;
   const ids = [...selectedIds];
-  // A loaded photo is checked here. One selected through "Select all" or a
-  // group tick and not loaded yet goes to the confirm page, which asks to leave
-  // out any the server refuses; SQL decides either way.
-  const trashable = useMemo(() => {
-    if (!actor) return [];
-    const byId = new Map(photos.map((photo) => [photo.id, photo]));
-    return [...selectedIds].filter((id) => {
-      const photo = byId.get(id);
-      return isPhotoAdmin(actor) || photo === undefined || canTrashPhoto(actor, photo);
-    });
-  }, [actor, photos, selectedIds]);
+  const trashable = useMemo(() => trashableIds(actor, selectedIds, photos), [actor, photos, selectedIds]);
+  const trashLabel = trashActionLabel(trashable.length, count);
   // "Select all" while some match that are not selected and there is room.
   const selectAllLabel = useMemo(() => {
     if (!allMatches || count >= MAX_SELECTION) return null;
@@ -149,32 +187,40 @@ export default function SelectionBar({
   }, [allMatches, count, selectedIds]);
 
   const [slot, setSlot] = useState<HTMLElement | null>(null);
-  const [sheet, setSheet] = useState<"album" | "tag" | "project" | "rename" | "download" | null>(null);
+  const [sheet, setSheet] = useState<SheetKey | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   // Rename needs the one selected photo's current name.
   const { data: only, error: onlyError } = usePhotoDetail(sheet === "rename" && count === 1 ? ids[0] : null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => setSlot(document.getElementById(PHOTOS_FLOATING_SLOT_ID)), []);
   // The shell hides its "+" button while this bar is up.
+  const selecting = count > 0;
   useEffect(() => {
-    setSelecting(count > 0);
+    setSelecting(selecting);
     return () => setSelecting(false);
-  }, [count, setSelecting]);
+  }, [selecting, setSelecting]);
+  // Starting a selection re-asks "may I trash anything?" if the answer is over
+  // 30 seconds old, so a Photo admin box ticked since shows here at once.
+  useEffect(() => {
+    if (selecting) void queryClient.refetchQueries({ queryKey: PHOTO_ACTOR_KEY, stale: true });
+  }, [selecting, queryClient]);
 
   const done = () => {
     invalidatePhotoCaches(queryClient);
     onClear();
   };
 
-  // Esc clears the selection, as it would close any other transient layer.
+  // Esc clears the selection, as it would close any other transient layer —
+  // unless a pop-up or the More menu is open, which Esc closes instead.
   useEffect(() => {
-    if (count === 0 || sheet !== null) return;
+    if (count === 0 || sheet !== null || menuOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClear();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [count, sheet, onClear]);
+  }, [count, sheet, menuOpen, onClear]);
 
   const trash = async () => {
     if (busy) return;
@@ -220,9 +266,236 @@ export default function SelectionBar({
     }
   };
 
+  const actions: Record<SelectionActionKey, { label: string; icon: LucideIcon; run(): void; testId?: string }> = {
+    download: { label: "Download", icon: Download, run: () => setSheet("download"), testId: "selection-download" },
+    album: { label: "Add to album", icon: BookImage, run: () => setSheet("album") },
+    remove: {
+      label: "Remove from album",
+      icon: BookMinus,
+      run: () => {
+        setSheet(null);
+        void removeFromAlbum();
+      },
+    },
+    tag: { label: "Tag", icon: Tag, run: () => setSheet("tag") },
+    project: { label: "Set project", icon: Briefcase, run: () => setSheet("project") },
+    rename: { label: "Rename", icon: TextCursorInput, run: () => setSheet("rename") },
+  };
+  const keys = selectionActions({ inAlbum: Boolean(album), count });
+  const keysSignature = keys.join(" ");
+
+  // Desktop: measure each action's width (hidden copies) and the room the row
+  // leaves for them, before paint and again whenever the row resizes.
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const rulerRef = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState<Measured | null>(null);
+  const visible = Boolean(slot) && count > 0;
+  useLayoutEffect(() => {
+    if (!isDesktop || !visible) return;
+    const box = actionsRef.current;
+    const ruler = rulerRef.current;
+    if (!box || !ruler) return;
+    const measure = () => {
+      const widths: Measured["widths"] = {};
+      ruler.querySelectorAll<HTMLElement>("[data-measure]").forEach((element) => {
+        widths[element.dataset.measure as SelectionActionKey | "more"] = Math.ceil(element.getBoundingClientRect().width);
+      });
+      const available = box.clientWidth;
+      setMeasured((previous) =>
+        previous &&
+        previous.available === available &&
+        JSON.stringify(previous.widths) === JSON.stringify(widths)
+          ? previous
+          : { available, widths }
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    observer.observe(ruler); // the widths change once the web font loads
+    return () => observer.disconnect();
+  }, [isDesktop, visible, keysSignature]);
+
   if (!slot || count === 0) return null;
 
-  const message = limitMessage;
+  const fit = isDesktop
+    ? measured
+      ? desktopActions(keys, measured.widths, measured.available)
+      : { shown: keys, more: [] }
+    : phoneActions(keys, trashLabel !== null);
+  const mixedTrash = trashLabel !== null && trashLabel !== "Trash";
+  // On a phone it reads as two even lines: "Trash the 3" / "you can delete".
+  const phoneTrashLabel =
+    trashLabel !== null && trashLabel.endsWith(MIXED_TRASH_TAIL) ? (
+      <>
+        <span className="block">{trashLabel.slice(0, -MIXED_TRASH_TAIL.length)}</span>{" "}
+        <span className="block">{MIXED_TRASH_TAIL.trim()}</span>
+      </>
+    ) : (
+      trashLabel
+    );
+
+  const selectAll = selectAllLabel && allMatches && (
+    <button
+      type="button"
+      data-testid="selection-select-all"
+      disabled={busy}
+      onClick={() => onSelectAll(allMatches)}
+      className={
+        isDesktop
+          ? `-mx-1 rounded px-1 text-left text-sm font-medium leading-snug text-[#8bbaff] hover:text-white hover:underline disabled:opacity-50 ${focusRing}`
+          : `flex min-h-11 items-center rounded-lg px-1.5 text-base font-medium text-[#8bbaff] hover:text-white disabled:opacity-50 ${focusRing}`
+      }
+    >
+      {selectAllLabel}
+    </button>
+  );
+  const countText = (
+    <span data-testid="selection-count" aria-live="polite" className="text-base font-semibold leading-snug text-white">
+      {formatCount(count)} selected
+    </span>
+  );
+  const clearButton = (
+    <button
+      type="button"
+      onClick={onClear}
+      aria-label="Clear selection"
+      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-white hover:bg-white/10 ${focusRing}`}
+    >
+      <X className="h-5 w-5" aria-hidden="true" />
+    </button>
+  );
+  const divider = (
+    <span aria-hidden="true" className={isDesktop ? "mx-1 h-7 w-px shrink-0 bg-white/20" : "my-2 w-px shrink-0 bg-white/15"} />
+  );
+
+  const desktopRow = (
+    <div className="relative flex items-center gap-2 px-1.5 py-1">
+      {clearButton}
+      <div className="flex shrink-0 flex-col items-start pr-2">
+        {countText}
+        {selectAll}
+      </div>
+      <div ref={actionsRef} className="flex min-w-0 flex-1 items-center justify-end gap-1">
+        {fit.shown.map((key) => {
+          const { label, icon: Icon, run, testId } = actions[key];
+          return (
+            <button key={key} type="button" data-testid={testId} className={`${desktopAction} ${plainTone}`} disabled={busy} onClick={run}>
+              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              {label}
+            </button>
+          );
+        })}
+        {fit.more.length > 0 && (
+          <DropdownMenu modal={false} open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className={`${desktopAction} ${plainTone}`} disabled={busy}>
+                <MoreHorizontal className="h-4 w-4 shrink-0" aria-hidden="true" />
+                More
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              side="top"
+              sideOffset={6}
+              className="min-w-52 border-[#4e4e4e] bg-[#2e2e2e] p-1 text-white"
+              // A chosen action opens its own pop-up, which takes the focus.
+              onCloseAutoFocus={(event) => event.preventDefault()}
+            >
+              {fit.more.map((key) => {
+                const { label, icon: Icon, run, testId } = actions[key];
+                return (
+                  <DropdownMenuItem key={key} data-testid={testId} className={menuItem} disabled={busy} onSelect={run}>
+                    <Icon className="h-5 w-5 text-[#b4b4b4]" aria-hidden="true" />
+                    {label}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+      {trashLabel && (
+        <>
+          {divider}
+          <button
+            type="button"
+            data-testid="selection-trash"
+            className={`${desktopAction} ${trashTone}`}
+            disabled={busy}
+            onClick={() => void trash()}
+          >
+            <Trash2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {trashLabel}
+          </button>
+        </>
+      )}
+      {/* Hidden copies of every action, for their widths. No test ids, no roles. */}
+      <div aria-hidden="true" inert className="pointer-events-none invisible absolute left-0 top-0 h-0 overflow-hidden">
+        <div ref={rulerRef} className="flex w-max">
+          {keys.map((key) => {
+            const { label, icon: Icon } = actions[key];
+            return (
+              <span key={key} data-measure={key} className={desktopAction}>
+                <Icon className="h-4 w-4 shrink-0" />
+                {label}
+              </span>
+            );
+          })}
+          <span data-measure="more" className={desktopAction}>
+            <MoreHorizontal className="h-4 w-4 shrink-0" />
+            More
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+
+  const phoneButton = (key: string, label: ReactNode, Icon: LucideIcon, onClick: () => void, extra?: { testId?: string; className?: string; popup?: boolean }) => (
+    <button
+      key={key}
+      type="button"
+      data-testid={extra?.testId}
+      aria-haspopup={extra?.popup ? "dialog" : undefined}
+      className={`${phoneAction} ${extra?.className ?? `grow ${plainTone}`}`}
+      disabled={busy}
+      onClick={onClick}
+    >
+      <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+      <span className="block">{label}</span>
+    </button>
+  );
+  const phoneRows = (
+    <>
+      <div className="flex items-center gap-1 px-1 pt-1">
+        {clearButton}
+        {/* A long "Select all 5,000 (of 12,345)" wraps under the count. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3">
+          {countText}
+          {selectAll}
+        </div>
+      </div>
+      <div className="flex items-stretch gap-0.5 px-1 pb-1">
+        {fit.shown.map((key) => {
+          const { label, icon, run, testId } = actions[key];
+          return phoneButton(key, label, icon, run, { testId });
+        })}
+        {fit.more.length > 0 && phoneButton("more", "More", MoreHorizontal, () => setSheet("more"), { popup: true })}
+        {trashLabel && (
+          <>
+            {(fit.shown.length > 0 || fit.more.length > 0) && divider}
+            {phoneButton(
+              "trash",
+              phoneTrashLabel,
+              Trash2,
+              () => void trash(),
+              { testId: "selection-trash", className: `${trashTone} ${mixedTrash ? "grow-[1.4]" : "grow"}` }
+            )}
+          </>
+        )}
+      </div>
+    </>
+  );
 
   return (
     <>
@@ -230,106 +503,42 @@ export default function SelectionBar({
         <div
           role="region"
           aria-label="Selected photos"
-          className="pointer-events-auto mx-auto w-full max-w-3xl rounded-xl border border-[#2680FC]/60 bg-[#1f2c40] shadow-xl shadow-black/50"
+          className={`pointer-events-auto mx-auto w-full rounded-xl border border-[#2680FC]/60 bg-[#1f2c40] shadow-xl shadow-black/50 ${isDesktop ? "max-w-6xl" : "max-w-xl"}`}
         >
-          <div className="flex flex-wrap items-center gap-x-1 gap-y-0 px-1.5 py-1">
-            <button
-              type="button"
-              onClick={onClear}
-              aria-label="Clear selection"
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-white hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              <X className="h-5 w-5" aria-hidden="true" />
-            </button>
-            <div className="mr-auto flex min-w-0 flex-wrap items-center gap-x-1 pr-2">
-              <span
-                data-testid="selection-count"
-                aria-live="polite"
-                className="text-base font-semibold text-white"
-              >
-                {formatCount(count)} selected
-              </span>
-              {selectAllLabel && allMatches && (
-                <>
-                  <span aria-hidden="true" className="text-[#8bbaff]">·</span>
-                  <button
-                    type="button"
-                    data-testid="selection-select-all"
-                    disabled={busy}
-                    onClick={() => onSelectAll(allMatches)}
-                    className="flex min-h-11 items-center rounded-lg px-1.5 text-base font-medium text-[#8bbaff] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
-                  >
-                    {selectAllLabel}
-                  </button>
-                </>
-              )}
-            </div>
-            {count === 1 && (
-              <button type="button" className={actionClass} disabled={busy} onClick={() => setSheet("rename")}>
-                <TextCursorInput className="h-4 w-4" aria-hidden="true" />
-                Rename
-              </button>
-            )}
-            <button
-              type="button"
-              data-testid="selection-download"
-              className={actionClass}
-              disabled={busy}
-              onClick={() => setSheet("download")}
-            >
-              <Download className="h-4 w-4" aria-hidden="true" />
-              Download
-            </button>
-            <button type="button" className={actionClass} disabled={busy} onClick={() => setSheet("album")}>
-              <BookImage className="h-4 w-4" aria-hidden="true" />
-              Add to album
-            </button>
-            <button type="button" className={actionClass} disabled={busy} onClick={() => setSheet("tag")}>
-              <Tag className="h-4 w-4" aria-hidden="true" />
-              Tag
-            </button>
-            <button
-              type="button"
-              className={actionClass}
-              disabled={busy}
-              onClick={() => {
-                setSheet("project");
-              }}
-            >
-              <Briefcase className="h-4 w-4" aria-hidden="true" />
-              Set project
-            </button>
-            {album && (
-              <button type="button" className={actionClass} disabled={busy} onClick={() => void removeFromAlbum()}>
-                <BookMinus className="h-4 w-4" aria-hidden="true" />
-                Remove from album
-              </button>
-            )}
-            {trashable.length > 0 && (
-              <button
-                type="button"
-                data-testid="selection-trash"
-                className={`${actionClass} text-red-200`}
-                disabled={busy}
-                onClick={() => void trash()}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                {trashable.length === count ? "Trash" : `Trash the ${trashable.length} you can delete`}
-              </button>
-            )}
-          </div>
-          {message && (
+          {isDesktop ? desktopRow : phoneRows}
+          {limitMessage && (
             <p
               role="status"
               data-testid="selection-message"
               className="border-t border-[#2680FC]/40 px-3 py-2 text-sm text-amber-200"
             >
-              {message}
+              {limitMessage}
             </p>
           )}
         </div>,
         slot
       )}
+
+      <SheetShell open={sheet === "more"} onOpenChange={(open) => setSheet(open ? "more" : null)} title={`More for ${plural(count, "photo")}`}>
+        <div className="-mx-2 flex flex-col">
+          {fit.more.map((key) => {
+            const { label, icon: Icon, run, testId } = actions[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                data-testid={testId}
+                disabled={busy}
+                onClick={run}
+                className={`flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-base text-white hover:bg-white/10 active:bg-white/15 disabled:opacity-50 ${focusRing}`}
+              >
+                <Icon className="h-5 w-5 shrink-0 text-[#b4b4b4]" aria-hidden="true" />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </SheetShell>
 
       <AddToAlbumSheet
         open={sheet === "album"}

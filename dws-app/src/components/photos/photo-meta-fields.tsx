@@ -7,7 +7,7 @@ import TagDropdown, { type TagChoices } from "@/components/photos/tag-dropdown";
 import { usePhotoJobs } from "@/lib/photos/api";
 import type { PhotoMeta } from "@/lib/photos/tags";
 
-// The project / album / tags form shared by the upload pop-up and Edit details.
+// The project / album / tags form shared by the upload pop-up and Edit tags.
 // Owns the project list query; the host owns the values and the tag choices
 // (it needs them again on save, to keep a half-typed tag).
 
@@ -29,7 +29,7 @@ interface PhotoMetaFieldsProps {
   /** Whether to fetch projects and albums (pass the pop-up's `open`). */
   enabled?: boolean;
   disabled?: boolean;
-  /** Project and Album fields: the upload pop-up shows them, Edit details does not. */
+  /** Project and Album fields: the upload pop-up shows them, Edit tags does not. */
   showDestination?: boolean;
 }
 

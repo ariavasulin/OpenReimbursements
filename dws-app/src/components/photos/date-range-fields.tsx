@@ -12,8 +12,18 @@ import {
 } from "@/lib/photos/browse-state";
 import { cn } from "@/lib/utils";
 
-const dayInputClass =
-  "min-h-11 w-full min-w-0 rounded-lg border border-[#4e4e4e] bg-[#222222] px-3 text-base text-white [color-scheme:dark] focus:border-[#2680FC] focus:outline-none";
+/**
+ * A field in the filter controls (the Project and Uploader pickers, the Custom
+ * range days): exactly 44px, the chips' fill, border, and 12px inset, and 16px
+ * text so iPhone Safari does not zoom the page on focus. appearance-none drops
+ * Safari's own field look; color-scheme keeps the browser's pickers dark.
+ */
+export const fieldClass =
+  "block h-11 w-full min-w-0 appearance-none rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] px-3 text-base leading-normal text-white [color-scheme:dark] focus:border-[#2680FC] focus:outline-none";
+
+// iPhone Safari centres a date's value and gives an empty date field no
+// height; these keep the day left-aligned like the pickers above it.
+const dayInputClass = `${fieldClass} text-left [&::-webkit-date-and-time-value]:min-h-[1.5em] [&::-webkit-date-and-time-value]:text-left`;
 
 /**
  * The Date filter's choices, the same in the phone's Filter pop-up and the

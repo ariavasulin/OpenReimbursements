@@ -87,7 +87,8 @@ test('AC-21, AC-22, AC-23: share a project, open the link signed out, then turn 
   await expect(visitor.getByTestId('shared-count')).toHaveText(`${expected} photo${expected === 1 ? '' : 's'}`);
   await expect(visitor.getByTestId('shared-grid').getByRole('button')).toHaveCount(expected);
   // No app chrome, and nothing private: not in what is shown, and not in what was sent.
-  for (const chrome of ['Sign out', 'Import folders', 'Trash', 'Upload']) await expect(visitor.getByText(chrome, { exact: true })).toHaveCount(0);
+  for (const chrome of ['Sign out', 'Trash']) await expect(visitor.getByText(chrome, { exact: true })).toHaveCount(0);
+  await expect(visitor.getByRole('button', { name: 'Add', exact: true })).toHaveCount(0);
   const sent = (await response!.text()) + JSON.stringify(await (await visitor.request.get(`/api/share/${link.split('/').pop()}`)).json());
   for (const secret of [UPLOADER, 'Rosalind', 'secret-share-tag', '.xmp', 'sidecar']) expect(sent, secret).not.toContain(secret);
   // View, step, and download.

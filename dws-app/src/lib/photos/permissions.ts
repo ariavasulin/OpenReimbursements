@@ -32,6 +32,39 @@ export function canTrashPhoto(
 }
 
 /**
+ * The selected photos Trash takes, in selection order. An admin: every one.
+ * Anyone else: each loaded photo canTrashPhoto allows, plus every selected photo
+ * not loaded yet (from "Select all" or a group tick past the loaded pages) —
+ * the confirm page lists any of those the server refuses, and SQL decides.
+ * Nothing before the permissions load. `loaded` may hold a photo twice (tag
+ * groups); each selected id counts once.
+ */
+export function trashableIds(
+  actor: PhotoPermissions | null | undefined,
+  selectedIds: Iterable<string>,
+  loaded: readonly { id: string; uploader_id: string; created_at: string }[],
+  now = Date.now(),
+): string[] {
+  if (!actor) return [];
+  const ids = [...new Set(selectedIds)];
+  if (isPhotoAdmin(actor)) return ids;
+  const byId = new Map(loaded.map((photo) => [photo.id, photo]));
+  return ids.filter((id) => {
+    const photo = byId.get(id);
+    return photo === undefined || canTrashPhoto(actor, photo, now);
+  });
+}
+
+/**
+ * The selection bar's Trash button: "Trash" when it takes every selected photo,
+ * "Trash the N you can delete" when it takes some, null (no button) when none.
+ */
+export function trashActionLabel(trashable: number, selected: number): string | null {
+  if (trashable <= 0) return null;
+  return trashable >= selected ? "Trash" : `Trash the ${trashable.toLocaleString("en-US")} you can delete`;
+}
+
+/**
  * The PostgREST filter matching photos this person may NOT trash: canTrashPhoto's
  * complement, for a count over a whole project. Not for an admin, who may trash anything.
  */

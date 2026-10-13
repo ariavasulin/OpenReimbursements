@@ -13,6 +13,7 @@ import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
 import DropZone from "@/components/photos/drop-zone";
 import MultiShotCamera from "@/components/photos/multi-shot-camera";
 import NewAlbumSheet from "@/components/photos/new-album-sheet";
+import NewProjectSheet from "@/components/photos/new-project-sheet";
 import { AddButton, BottomNav } from "@/components/photos/section-nav";
 import SectionsRail from "@/components/photos/sections-rail";
 import TopBar from "@/components/photos/top-bar";
@@ -56,6 +57,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [newAlbumOpen, setNewAlbumOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
@@ -91,6 +93,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
     openPicker: () => fileInputRef.current?.click(),
     openCamera: () => batch.openCamera(uploadTarget),
     openSheet: batch.openSheet,
+    openNewProject: () => setNewProjectOpen(true),
     openNewAlbum: () => setNewAlbumOpen(true),
     activeJobId,
     activeAlbumId,
@@ -186,6 +189,11 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
         open={batch.cameraOpen}
         onClose={batch.closeCamera}
         onDone={batch.handleShotsDone}
+      />
+      <NewProjectSheet
+        open={newProjectOpen}
+        onOpenChange={setNewProjectOpen}
+        onDone={(job) => router.push(`/photos/${job.id}`)}
       />
       <NewAlbumSheet
         open={newAlbumOpen}
