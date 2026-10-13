@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Check, Download, FileText, Play, Video } from "lucide-react";
+import { Check, Download, FileText, Heart, Play, Video } from "lucide-react";
 import {
   formatBytes,
   formatCaptureDay,
@@ -10,11 +10,13 @@ import {
   plural,
 } from "@/lib/photos/format";
 import { useDesktop } from "@/hooks/use-desktop";
+import { usePhotoActor } from "@/lib/photos/api";
 import { useLongPress } from "@/hooks/use-long-press";
 import { fileTypeLabel } from "@/lib/photos/file-type";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
+import { isFavorite } from "@/lib/photos/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -70,16 +72,33 @@ export function Tick({ checked, className }: { checked: boolean; className?: str
 /** A small corner label on a tile: a video's duration, a file's type. */
 const tilePillClass = "absolute rounded bg-black/65 px-[5px] py-px text-[11px] font-medium text-white";
 
+/** The reader's heart, bottom-left: clear of the tick (top-left), the type pill
+ * (top-right), and a video's length or a file's download (bottom-right). */
+function FavoriteBadge() {
+  return (
+    <span
+      aria-label="Favorite"
+      role="img"
+      className="pointer-events-none absolute bottom-1 left-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/55"
+    >
+      <Heart className="h-3 w-3 fill-[#FF4D6D] text-[#FF4D6D]" aria-hidden="true" />
+    </span>
+  );
+}
+
 function Tile({
   photo,
   onOpen,
   isDesktop,
   selection,
+  favorite,
 }: {
   photo: PhotoRow;
   onOpen?: OnOpen;
   isDesktop: boolean;
   selection?: GridSelection;
+  /** One of the reader's favorites: a small heart in the corner. */
+  favorite: boolean;
 }) {
   const selected = selection?.selectedIds.has(photo.id) ?? false;
   const selecting = (selection?.selectedIds.size ?? 0) > 0;
@@ -177,6 +196,7 @@ function Tile({
                 : "Video"}
             </span>
           )}
+          {favorite && <FavoriteBadge />}
         </button>
         {tick}
       </div>
@@ -213,6 +233,7 @@ function Tile({
       </div>
       {/* In a corner so the name line keeps clear of the download link on a phone tile. */}
       {type !== "Other" && <span className={cn(tilePillClass, "right-1 top-1")}>{type}</span>}
+      {favorite && <FavoriteBadge />}
       {!selecting && (
         <a
           href={downloadUrl(photo)}
@@ -244,6 +265,7 @@ function TileGrid({
   isDesktop: boolean;
   selection?: GridSelection;
 }) {
+  const me = usePhotoActor()?.user_id;
   return (
     <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
       {photos.map((photo) => (
@@ -253,6 +275,7 @@ function TileGrid({
           onOpen={onOpen}
           isDesktop={isDesktop}
           selection={selection}
+          favorite={isFavorite(photo, me)}
         />
       ))}
     </div>

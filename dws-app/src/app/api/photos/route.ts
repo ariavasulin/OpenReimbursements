@@ -3,7 +3,7 @@ import { photoJson, photoRoute, readPhotoJson } from '@/lib/photos/server/http';
 import { finalizeUpload } from '@/lib/photos/server/uploads';
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
-import { PHOTO_COLUMNS, PHOTOS_PAGE_SIZE } from '@/lib/photos/apiShared';
+import { FAVORITES_EMBED, PHOTO_COLUMNS, PHOTOS_PAGE_SIZE } from '@/lib/photos/apiShared';
 import { type PhotoRow } from '@/lib/photos/types';
 import { parseLimit } from '@/lib/keysetCursor';
 import {
@@ -65,7 +65,9 @@ export async function GET(request: Request) {
     );
   }
 
-  const columns = filters.custom ? `${PHOTO_COLUMNS}, album_position` : PHOTO_COLUMNS;
+  // The reader's own favorite on each row; the favorites filter brings its own embed.
+  const columns = [PHOTO_COLUMNS, filters.custom ? 'album_position' : null, filters.favorites ? null : FAVORITES_EMBED]
+    .filter(Boolean).join(', ');
   let query = filteredPhotos(supabase, filters, search, columns).limit(limit + 1);
   if (cursor) {
     // Separate or() calls are ANDed by PostgREST, so this composes with the filters.

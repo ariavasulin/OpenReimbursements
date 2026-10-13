@@ -329,6 +329,37 @@ export function removePhotosFromAlbum(albumId: string, photoIds: string[]) {
   );
 }
 
+// ---- Favorites ---------------------------------------------------------------
+
+/** POST /api/photos/favorites: the signed-in person's own favorites, on or off, up to 500 ids. */
+export function setFavorites(photoIds: string[], on: boolean) {
+  return fetchJson<{ updated: number }>(
+    "/api/photos/favorites", on ? "Could not add to favorites" : "Could not remove from favorites",
+    jsonInit("POST", { photo_ids: photoIds, on })
+  );
+}
+
+/**
+ * Mark `photoIds` as `me`'s favorites (or not) in every cached grid, search,
+ * and detail, without a refetch: a heart should fill the moment it is tapped.
+ * A Favorites grid keeps an unfavorited photo in place until it is next
+ * loaded, so the viewer does not lose its slide; its query is marked stale.
+ */
+export function patchFavorites(queryClient: QueryClient, photoIds: readonly string[], me: string, on: boolean) {
+  const ids = new Set(photoIds);
+  const patch = (photo: PhotoRow): PhotoRow =>
+    ids.has(photo.id) ? { ...photo, favorites: on ? [{ user_id: me }] : [] } : photo;
+  for (const prefix of ["photos", "photo-search"]) {
+    queryClient.setQueriesData<{ pages: PhotosPage[]; pageParams: unknown[] }>({ queryKey: [prefix] }, (data) =>
+      data && { ...data, pages: data.pages.map((page) => ({ ...page, photos: page.photos.map(patch) })) }
+    );
+  }
+  for (const id of ids) {
+    queryClient.setQueryData<PhotoDetail>(["photo-detail", id], (photo) => photo && (patch(photo) as PhotoDetail));
+  }
+  void queryClient.invalidateQueries({ queryKey: ["photos", "favorites"], refetchType: "none" });
+}
+
 // ---- Bulk tags, one photo, action batches ----------------------------------
 
 /** Rename one photo. A blank name goes back to the automatic name. */

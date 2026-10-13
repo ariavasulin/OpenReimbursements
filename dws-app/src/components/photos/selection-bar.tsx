@@ -16,6 +16,7 @@ import {
   Trash2,
   X,
   type LucideIcon,
+  Heart,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -43,8 +44,7 @@ import {
   renamePhoto,
   usePhotoActor,
   usePhotoDetail,
-  type PhotoIdsAnswer,
-} from "@/lib/photos/api";
+  type PhotoIdsAnswer, setFavorites, patchFavorites } from "@/lib/photos/api";
 import { MAX_BULK_PHOTOS, MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { inChunks, PartialBulkError, sumCounts } from "@/lib/photos/chunks";
 import { formatCount, photoName, plural } from "@/lib/photos/format";
@@ -90,6 +90,8 @@ interface SelectionBarProps {
   onClear(): void;
   /** Inside an album: adds "Remove from album". */
   album?: PhotoAlbumRef;
+  /** The Favorites page: the heart action takes photos out instead of in. */
+  inFavorites?: boolean;
   /** A tick was refused at the selection limit, or "Select all" matched more than it holds. */
   limitMessage: string | null;
   /** The loaded photos, so Trash can count which selected ones this person may
@@ -161,6 +163,7 @@ export default function SelectionBar({
   selectedIds,
   onClear,
   album,
+  inFavorites = false,
   limitMessage,
   photos,
   listQuery,
@@ -283,6 +286,46 @@ export default function SelectionBar({
     }
   };
 
+  // Personal hearts on the whole selection: in, or on the Favorites page, out.
+  const favoriteAll = async () => {
+    const on = !inFavorites;
+    const photoIds = ids;
+    if (busy) return;
+    setBusy(true);
+    try {
+      const { results, toastId } = await sendInSlices(
+        photoIds,
+        (chunk) => setFavorites(chunk, on),
+        (sent, total) => `${on ? "Adding" : "Removing"} ${plural(total, "photo")}… ${formatCount(sent)} done`
+      );
+      const { updated } = sumCounts(results, ["updated"]);
+      if (actor) patchFavorites(queryClient, photoIds, actor.user_id, on);
+      toast.success(
+        on ? `Added ${plural(updated, "photo")} to your favorites` : `Removed ${plural(updated, "photo")} from your favorites`,
+        {
+          id: toastId,
+          description: "Only you see your favorites.",
+          action: {
+            label: "Undo",
+            onClick: () => {
+              void inChunks(photoIds, (chunk) => setFavorites(chunk, !on)).then(() => {
+                if (actor) patchFavorites(queryClient, photoIds, actor.user_id, !on);
+                if (inFavorites) invalidatePhotoCaches(queryClient);
+              });
+            },
+          },
+        }
+      );
+      if (inFavorites) invalidatePhotoCaches(queryClient);
+      onClear();
+    } catch (reason) {
+      toast.error(sliceError(reason, on ? "Could not add to favorites" : "Could not remove from favorites", (n) => `${on ? "Added" : "Removed"} ${n}`));
+      invalidatePhotoCaches(queryClient);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const actions: Record<SelectionActionKey, { label: string; icon: LucideIcon; run(): void; testId?: string }> = {
     download: { label: "Download", icon: Download, run: () => setSheet("download"), testId: "selection-download" },
     album: { label: "Add to album", icon: BookImage, run: () => setSheet("album") },
@@ -295,6 +338,14 @@ export default function SelectionBar({
       },
     },
     tag: { label: "Tag", icon: Tag, run: () => setSheet("tag") },
+    favorite: {
+      label: inFavorites ? "Unfavorite" : "Favorite",
+      icon: Heart,
+      run: () => {
+        setSheet(null);
+        void favoriteAll();
+      },
+    },
     project: { label: "Set project", icon: Briefcase, run: () => setSheet("project") },
     rename: { label: "Rename", icon: TextCursorInput, run: () => setSheet("rename") },
   };

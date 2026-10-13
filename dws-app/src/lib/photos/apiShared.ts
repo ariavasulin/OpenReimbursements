@@ -9,6 +9,13 @@ export const PHOTO_COLUMNS =
   'created_at, ' +
   'uploader:user_profiles!photos_uploader_id_fkey(full_name), job:jobs(id, job_number, name)';
 
+/**
+ * The signed-in person's own favorite on each photo, as `favorites: [] | [{user_id}]`.
+ * Read through the employee's session: photo_favorites' row rule shows only their
+ * rows. Appended to PHOTO_COLUMNS by the list and detail reads; see isFavorite().
+ */
+export const FAVORITES_EMBED = 'favorites:photo_favorites(user_id)';
+
 /** Rows one GET /api/photos page returns when the caller names no `limit`. */
 export const PHOTOS_PAGE_SIZE = 100;
 

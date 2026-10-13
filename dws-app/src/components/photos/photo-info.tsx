@@ -3,12 +3,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
-import { Briefcase, Download, Link2, Pencil, TextCursorInput, Trash2 } from "lucide-react";
+import { Briefcase, Download, Heart, Link2, Pencil, TextCursorInput, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { invalidatePhotoCaches, renamePhoto, usePhotoActor, usePhotoDetail } from "@/lib/photos/api";
 import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { buildPhotoLink } from "@/lib/photos/photo-link";
 import { runPhotoAction } from "@/lib/photos/trash-now";
+import { useFavorite } from "@/hooks/use-favorite";
 import { trashDisclosure } from "@/lib/photos/action-client";
 import { canTrashPhoto, TRASH_RULE_MESSAGE } from "@/lib/photos/permissions";
 import {
@@ -50,6 +51,8 @@ const actionIcon = "h-5 w-5 shrink-0 text-[#b4b4b4]";
 
 export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate, onTrashed }: PhotoInfoProps) {
   const queryClient = useQueryClient();
+  const { favorite, toggle: toggleFavorite } = useFavorite();
+  const hearted = favorite(photo);
   const [trashing, setTrashing] = useState(false);
   // No confirmation (owner ruling): Trash is restorable for 30 days, and the
   // toast offers Undo right away.
@@ -287,6 +290,11 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate, onT
       </dl>
 
       <div className="flex flex-col gap-2">
+        {/* Personal: only this person sees their hearts. */}
+        <button type="button" onClick={() => void toggleFavorite(photo)} aria-pressed={hearted} className={action}>
+          <Heart className={cn(actionIcon, hearted && "fill-[#FF4D6D] text-[#FF4D6D]")} aria-hidden="true" />
+          {hearted ? "Remove from favorites" : "Add to favorites"}
+        </button>
         {/* The untouched original file; see downloadUrl. */}
         <a href={downloadUrl(photo)} className={action}>
           <Download className={actionIcon} aria-hidden="true" />

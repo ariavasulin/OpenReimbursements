@@ -17,10 +17,10 @@ const id = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
 describe("parsePhotoFilters", () => {
   it("reads every filter, with no filter meaning everything newest first", () => {
     expect(parse("")).toEqual({ job: null, noProject: false, album: null, uploader: null, tags: [], type: null,
-      from: null, to: null, words: null, direction: "desc", custom: false });
+      from: null, to: null, words: null, direction: "desc", custom: false, favorites: false });
     expect(parse(`job=none&album=${id}&uploader=${id}&tags=a, b,,&type=raw&from=2026-09-01T07:00:00.000Z&to=2026-09-08T06:59:59.999Z&q=3962 professional&sort=asc`))
       .toEqual({ job: null, noProject: true, album: id, uploader: id, tags: ["a", "b"], type: "RAW",
-        from: "2026-09-01T07:00:00.000Z", to: "2026-09-08T06:59:59.999Z", words: ["3962", "professional"], direction: "asc", custom: false });
+        from: "2026-09-01T07:00:00.000Z", to: "2026-09-08T06:59:59.999Z", words: ["3962", "professional"], direction: "asc", custom: false, favorites: false });
     expect(parse("type=video")).toMatchObject({ type: "Video" });
     expect(parse("from=2026-09-01T00:00:00-07:00".replace("+", "%2B"))).toMatchObject({ from: "2026-09-01T00:00:00-07:00" });
   });
@@ -83,5 +83,14 @@ describe("fileTypeFilter", () => {
     expect(png).toContain("or(mime_type.ilike.image/png)");
     expect(fileTypeFilter("Video").startsWith("kind.eq.video,")).toBe(true);
     // The route's integration test checks each filter against fileTypeLabel row by row.
+  });
+});
+
+describe("favorites", () => {
+  it("reads favorites=1 and refuses any other value", () => {
+    const on = parsePhotoFilters(new URLSearchParams("favorites=1"));
+    expect(on).toMatchObject({ favorites: true });
+    expect(parsePhotoFilters(new URLSearchParams(""))).toMatchObject({ favorites: false });
+    expect(parsePhotoFilters(new URLSearchParams("favorites=yes"))).toBe("Invalid favorites");
   });
 });

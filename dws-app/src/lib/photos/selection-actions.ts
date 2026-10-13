@@ -3,13 +3,13 @@
 // Desktop fits by measured width; a phone by a fixed number of bottom slots.
 
 /** What the bar can do with a selection, besides Trash. */
-export type SelectionActionKey = "download" | "album" | "remove" | "tag" | "project" | "rename";
+export type SelectionActionKey = "download" | "album" | "remove" | "tag" | "favorite" | "project" | "rename";
 
 /** The order actions appear in, on every screen and in every More list. */
-export const ACTION_ORDER: readonly SelectionActionKey[] = ["download", "album", "remove", "tag", "project", "rename"];
+export const ACTION_ORDER: readonly SelectionActionKey[] = ["download", "album", "remove", "tag", "favorite", "project", "rename"];
 
 /** Which go into More first when they do not all fit: the least used first. */
-export const FOLD_ORDER: readonly SelectionActionKey[] = ["rename", "project", "tag", "remove", "album", "download"];
+export const FOLD_ORDER: readonly SelectionActionKey[] = ["rename", "project", "favorite", "tag", "remove", "album", "download"];
 
 /** Buttons in the phone's bottom row, More and Trash included: five fit 390 px at ≥44 px each. */
 export const PHONE_SLOTS = 5;

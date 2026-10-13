@@ -17,6 +17,8 @@
 //   sort      asc | desc (default desc), on (captured_at, id); or `custom` with
 //             `album`: the album's arranged order, (album_position, id) ascending,
 //             read from the album_photo_order view
+//   favorites `1`: only the signed-in person's favorites (an inner join to
+//             photo_favorites, whose row rule shows only their rows)
 // Filters combine with AND.
 //
 // A cursor names the order it continues: [captured_at, id] for date order, and
@@ -59,6 +61,8 @@ export interface PhotoFilters {
   direction: KeysetDirection;
   /** `sort=custom`: the album's arranged order (always ascending). Only with `album`. */
   custom: boolean;
+  /** `favorites=1`: only the reader's own favorites. */
+  favorites: boolean;
 }
 
 /** Search words: whitespace-separated; characters that are PostgREST filter grammar separate words too. */
@@ -86,8 +90,10 @@ export function parsePhotoFilters(params: URLSearchParams): PhotoFilters | strin
   const to = params.get('to') || null;
   const q = params.get('q')?.trim() || null;
   const sort = params.get('sort') || null;
+  const favoritesParam = params.get('favorites');
 
   if (job && !isUuid(job)) return 'Invalid job id';
+  if (favoritesParam !== null && favoritesParam !== '1') return 'Invalid favorites';
   if (album && !isUuid(album)) return 'Invalid album id';
   if (uploader && !isUuid(uploader)) return 'Invalid uploader id';
   if (sort !== null && sort !== 'asc' && sort !== 'desc' && sort !== 'custom') return 'Invalid sort';
@@ -102,7 +108,7 @@ export function parsePhotoFilters(params: URLSearchParams): PhotoFilters | strin
   if (words && words.length > MAX_SEARCH_WORDS) return `Search at most ${MAX_SEARCH_WORDS} words`;
 
   const custom = sort === 'custom';
-  return { job, noProject, album, uploader, tags, type, from, to, words, direction: sort === 'desc' || sort === null ? 'desc' : 'asc', custom };
+  return { job, noProject, album, uploader, tags, type, from, to, words, direction: sort === 'desc' || sort === null ? 'desc' : 'asc', custom, favorites: favoritesParam === '1' };
 }
 
 // --- order and cursor ----------------------------------------------------------
@@ -227,6 +233,10 @@ export function filteredPhotos(
   options: { count?: 'exact' } = {}
 ) {
   const ascending = filters.direction === 'asc';
+  // Favorites: an inner join keeps only photos with a favorites row the reader
+  // may see, which the row rule makes their own. The embed doubles as the
+  // `favorites` column the grid reads, so a caller must not add it again.
+  if (filters.favorites) columns = `${columns}, favorites:photo_favorites!inner(user_id)`;
   let query = (filters.custom
     ? supabase.from('album_photo_order').select(columns, options).eq('album_id', filters.album!)
     : supabase.from('photos').select(filters.album ? `${columns}, albums!inner(id)` : columns, options)

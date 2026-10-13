@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookImage, Briefcase, Camera, FolderInput, Images, Plus, Upload } from "lucide-react";
+import { BookImage, Briefcase, Camera, FolderInput, Heart, Images, Plus, Upload } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,8 +16,9 @@ import {
 } from "@/components/photos/photos-shell-context";
 import { cn } from "@/lib/utils";
 
-// The three ways to browse, one tap apart: a bottom tab bar on phones, the top
-// of the left rail on desktop. Same three entries, same order, same words.
+// The four ways to browse, one tap apart: a bottom tab bar on phones, the top
+// of the left rail on desktop. Same four entries, same order, same words.
+// Favorites is personal: the hearts this person has put on photos.
 
 export const SECTIONS: {
   id: PhotoSection;
@@ -28,6 +29,7 @@ export const SECTIONS: {
   { id: "photos", label: "Photos", href: "/photos", icon: Images },
   { id: "albums", label: "Albums", href: "/photos/albums", icon: BookImage },
   { id: "projects", label: "Projects", href: "/photos/projects", icon: Briefcase },
+  { id: "favorites", label: "Favorites", href: "/photos/favorites", icon: Heart },
 ];
 
 /**
@@ -42,7 +44,7 @@ export function BottomNav() {
       aria-label="Sections"
       className="shrink-0 border-t border-[#3e3e3e] bg-[#262626] pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="mx-auto grid max-w-3xl grid-cols-3">
+      <ul className="mx-auto grid max-w-3xl grid-cols-4">
         {SECTIONS.map(({ id, label, href, icon: Icon }) => {
           const active = id === section;
           return (
@@ -56,7 +58,7 @@ export function BottomNav() {
               >
                 <span
                   className={cn(
-                    "flex min-w-20 flex-col items-center gap-0.5 rounded-2xl px-3 py-1 text-sm group-focus-visible:ring-2 group-focus-visible:ring-[#2680FC]",
+                    "flex min-w-[4.5rem] flex-col items-center gap-0.5 rounded-2xl px-2 py-1 text-sm group-focus-visible:ring-2 group-focus-visible:ring-[#2680FC]",
                     active
                       ? "bg-[#2680FC]/20 font-semibold text-[#8bbaff]"
                       : "text-[#b4b4b4]"

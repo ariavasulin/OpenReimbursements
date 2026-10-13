@@ -1,4 +1,4 @@
-import { cleanPhotoName, cleanTags, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
+import { cleanPhotoName, cleanTags, FAVORITES_EMBED, PHOTO_COLUMNS } from '@/lib/photos/apiShared';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { PhotoApiError, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError, photoRpc } from '@/lib/photos/server/http';
 import { photoId, readPhotoOwnership, requirePhotoReader } from '@/lib/photos/server/reads';
@@ -13,7 +13,7 @@ interface RouteContext { params:Promise<{id:string}> }
  */
 export async function GET(_request:Request,context:RouteContext){return photoRoute(async()=>{
  const session=await requirePhotoReader(),id=photoId((await context.params).id);
- const {data,error}=await session.from('photos').select(PHOTO_COLUMNS+', albums(id, name)').eq('id',id).is('deleted_at',null)
+ const {data,error}=await session.from('photos').select(PHOTO_COLUMNS+', '+FAVORITES_EMBED+', albums(id, name)').eq('id',id).is('deleted_at',null)
   .order('name',{referencedTable:'albums'}).order('id',{referencedTable:'albums'}).maybeSingle();
  if(error) throwPhotoDatabaseError(error);if(!data) throw new PhotoApiError('not_found');
  return photoJson({success:true,photo:data});

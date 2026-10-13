@@ -47,6 +47,18 @@ export interface PhotoRow {
   uploader: { full_name: string | null } | null;
   /** Embedded project, for cross-project grids. Null when `job_id` is null. */
   job: { id: string; job_number: string; name: string } | null;
+  /** The reader's own favorite, if any (FAVORITES_EMBED). Absent on reads that
+   * do not embed it; treat as none. See isFavorite(). */
+  favorites?: { user_id: string }[];
+}
+
+/**
+ * Whether `photo` is one of `me`'s favorites. The embed is read under a row rule
+ * that shows only the reader's rows, but a row read with service credentials
+ * would carry everyone's, so the check names the person either way.
+ */
+export function isFavorite(photo: Pick<PhotoRow, "favorites">, me: string | null | undefined): boolean {
+  return Boolean(me) && (photo.favorites ?? []).some((favorite) => favorite.user_id === me);
 }
 
 /** An album as a photo carries it. */

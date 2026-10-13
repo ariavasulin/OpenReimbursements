@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Info, Pause, Play, X } from "lucide-react";
+import { Heart, Info, Pause, Play, X } from "lucide-react";
 import Lightbox, {
   type GenericSlide,
   type Slide,
@@ -23,6 +23,7 @@ import { downloadUrl, previewUrl, publicUrl } from "@/lib/photos/urls";
 import { photoName } from "@/lib/photos/format";
 import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
 import PhotoInfo from "@/components/photos/photo-info";
+import { useFavorite } from "@/hooks/use-favorite";
 import SetProjectSheet from "@/components/photos/set-project-sheet";
 import SheetShell from "@/components/photos/sheet-shell";
 import {
@@ -278,6 +279,10 @@ export default function PhotoLightbox({
   }, [open, isDesktop, setViewerOpen]);
 
   const photo = photos[index] as PhotoRow | undefined;
+  // The heart: filled when this photo is the viewer's favorite; one tap toggles it.
+  const { favorite, toggle: toggleFavorite } = useFavorite();
+  const hearted = photo ? favorite(photo) : false;
+  const heartLabel = hearted ? "Remove from favorites" : "Add to favorites";
 
   const slides = useMemo(
     () =>
@@ -694,6 +699,17 @@ export default function PhotoLightbox({
                 // toolbar slot — Esc and click-away are not discoverable.
                 toolbar={{
                   buttons: [
+                    <button
+                      key="favorite"
+                      type="button"
+                      aria-label={heartLabel}
+                      aria-pressed={hearted}
+                      title={heartLabel}
+                      onClick={() => { if (photo) void toggleFavorite(photo); }}
+                      className={toolbarButtonClass}
+                    >
+                      <Heart className={`h-6 w-6 ${hearted ? "fill-[#FF4D6D] text-[#FF4D6D]" : ""}`} aria-hidden="true" />
+                    </button>,
                     "slideshow",
                     // Fullscreen hides its own button where the browser can't.
                     "fullscreen",
@@ -779,6 +795,16 @@ export default function PhotoLightbox({
         // albums, tags, and actions on a phone.
         toolbar={{
           buttons: [
+            <button
+              key="favorite"
+              type="button"
+              aria-label={heartLabel}
+              aria-pressed={hearted}
+              onClick={() => { if (photo) void toggleFavorite(photo); }}
+              className="mr-1 mt-1 flex h-11 w-11 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur"
+            >
+              <Heart className={`h-5 w-5 ${hearted ? "fill-[#FF4D6D] text-[#FF4D6D]" : ""}`} aria-hidden="true" />
+            </button>,
             "slideshow",
             <button
               key="details"
@@ -792,7 +818,9 @@ export default function PhotoLightbox({
             "close",
           ],
         }}
-        render={common.render}
+        // No zoom buttons on a phone: pinch and double-tap zoom, and the heart,
+        // Play, Details, and Close already fill the row beside the counter.
+        render={{ ...common.render, buttonZoom: () => null }}
       />
       <SheetShell
         open={detailsOpen && Boolean(photo)}

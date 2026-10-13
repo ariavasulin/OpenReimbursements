@@ -208,6 +208,18 @@ Every photo grid (Photos, a project, an album, search) has one toolbar row:
   project number or name, an uploader name, a tag, or a photo's name. So
   `3962 professional` finds photos in project 3962 tagged professional.
 
+### Favorites
+
+Open any photo and tap the heart in the viewer (or **Add to favorites** in its
+details) to keep it in **Favorites**, the fourth section beside Photos, Albums,
+and Projects. Favorites are personal: only you see your hearts, and nobody
+else's hearts show for you. A small heart in the corner of a tile marks your
+favorites in every grid. Favorites opens grouped by project, with the usual
+filters, select-many, Download, and slideshow. Select photos and press
+**Favorite** to heart several at once; on the Favorites page the same button is
+**Unfavorite**. A favorite stays through Trash and restore, and goes with the
+photo when it is deleted forever.
+
 ### Selecting many
 
 Long-press (phone) or click the tick (desktop) to start a selection. The bar
