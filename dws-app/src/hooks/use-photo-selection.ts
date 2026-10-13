@@ -42,6 +42,9 @@ export function usePhotoSelection(
   groupIdsRef.current = groupIds;
   // Bumped by clear(): an answer asked for before it belongs to another selection.
   const generationRef = useRef(0);
+  // Tiles ticked or unticked by hand while a group's answer is on its way: the
+  // answer leaves those as the person left them.
+  const manualRef = useRef(new Set<string>());
   const orderedIds = useMemo(
     () => groups.flatMap((group) => group.photos.map((photo) => photo.id)),
     [groups]
@@ -99,6 +102,7 @@ export function usePhotoSelection(
         } else {
           apply(toggleSelection(selectedRef.current, photo.id));
         }
+        manualRef.current.add(photo.id);
         anchorRef.current = photo.id;
       },
       onToggleGroup: (group) => {
@@ -108,15 +112,18 @@ export function usePhotoSelection(
         const pending = groupIdsRef.current?.(group);
         if (!pending) return;
         const generation = generationRef.current;
+        manualRef.current = new Set();
         pending.then(
           (answer) => {
             if (generation !== generationRef.current) return;
+            const manual = manualRef.current;
+            const ids = answer.ids.filter((id) => !manual.has(id));
             if (!removing) {
-              selectAll(answer);
+              selectAll({ ...answer, ids });
               return;
             }
             const next = new Set(selectedRef.current);
-            for (const id of answer.ids) next.delete(id);
+            for (const id of ids) next.delete(id);
             commit(next);
             setLimitMessage(null);
           },

@@ -159,7 +159,7 @@ function unplayableSlide(slide: {
   name: string;
 }) {
   return (
-    <div className="relative flex h-full w-full items-center justify-center">
+    <div data-tap="photo" className="relative flex h-full w-full items-center justify-center">
       {slide.poster && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -207,7 +207,9 @@ function writeDetailsPreference(on: boolean): void {
 /** What a tap landed on: the photo, the black around it, or neither. */
 function tapArea(target: EventTarget): "photo" | "backdrop" | null {
   if (!(target instanceof Element)) return null;
-  if (target.classList.contains("yarl__slide_image")) return "photo";
+  if (target.classList.contains("yarl__slide_image") || target.getAttribute("data-tap") === "photo") {
+    return "photo";
+  }
   if (
     target.classList.contains("yarl__slide") ||
     target.classList.contains("yarl__slide_wrapper")
@@ -226,6 +228,8 @@ interface PhotoLightboxProps {
   open: boolean;
   index: number;
   onIndexChange(index: number): void;
+  /** The viewer is a few photos from the end of `photos`: load more if there are more. */
+  onNearEnd?(): void;
   onClose(): void;
   /** Fired after a successful edit or delete so grids refetch. */
   onChanged(): void;
@@ -236,6 +240,7 @@ export default function PhotoLightbox({
   open,
   index,
   onIndexChange,
+  onNearEnd,
   onClose,
   onChanged,
 }: PhotoLightboxProps) {
@@ -256,6 +261,9 @@ export default function PhotoLightbox({
   };
   // A tap hides every control; the next one brings them back.
   const [chromeHidden, setChromeHidden] = useState(false);
+  // YARL's Fullscreen plugin fullscreens its own container; the Details panel
+  // sits outside it, so the toggle is hidden while fullscreen is on.
+  const [fullscreen, setFullscreen] = useState(false);
   // True from Play until the slideshow stops: the slides are the stills only.
   const [slideshowActive, setSlideshowActive] = useState(false);
   const slideshowRef = useRef<SlideshowRef>(null);
@@ -345,7 +353,14 @@ export default function PhotoLightbox({
     setDetailsOpen(false);
     setChromeHidden(false);
     setSlideshowActive(false);
+    setFullscreen(false);
   }, [open]);
+
+  // The slideshow (and the arrow keys) can run past the loaded pages: ask the
+  // grid for the next one a few photos before the end.
+  useEffect(() => {
+    if (open && onNearEnd && index >= photos.length - 5) onNearEnd();
+  }, [open, index, photos.length, onNearEnd]);
 
   /** Play from the viewer's toolbar: from this photo, or the next still. */
   const playFromHere = () => {
@@ -382,14 +397,22 @@ export default function PhotoLightbox({
   useEffect(() => {
     if (!(open && isDesktop) || editing || settingProject) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
       const { target } = event;
       if (target instanceof Node && panelRef.current?.contains(target)) return;
+      // With the controls hidden nothing is tabbable, so Space or Enter stands
+      // in for the tap: pause the slideshow and bring the controls back.
+      if (chromeHidden && (event.key === " " || event.key === "Enter")) {
+        event.preventDefault();
+        slideshowRef.current?.pause();
+        setChromeHidden(false);
+        return;
+      }
+      if (event.key !== "Escape") return;
       onClose();
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [open, isDesktop, editing, settingProject, onClose]);
+  }, [open, isDesktop, editing, settingProject, chromeHidden, onClose]);
 
   // Everything outside the viewer goes inert + aria-hidden while it is up —
   // the loop YARL's Portal ran over its own siblings — and closing hands focus
@@ -597,6 +620,8 @@ export default function PhotoLightbox({
         setSlideshowActive(false);
         setChromeHidden(false);
       },
+      enterFullscreen: () => setFullscreen(true),
+      exitFullscreen: () => setFullscreen(false),
     },
     slides: viewSlides,
     zoom: { maxZoomPixelRatio: 4, doubleTapDelay: 300 },
@@ -672,17 +697,23 @@ export default function PhotoLightbox({
                     "slideshow",
                     // Fullscreen hides its own button where the browser can't.
                     "fullscreen",
-                    <button
-                      key="details"
-                      type="button"
-                      aria-label="Details"
-                      aria-pressed={desktopDetails}
-                      title={desktopDetails ? "Hide details" : "Show details"}
-                      onClick={toggleDesktopDetails}
-                      className={`${toolbarButtonClass} ${desktopDetails ? "text-[#2680FC]" : ""}`}
-                    >
-                      <Info className="h-6 w-6" aria-hidden="true" />
-                    </button>,
+                    // Not while fullscreen: the panel would open outside the
+                    // fullscreen element, where it cannot be seen.
+                    ...(fullscreen
+                      ? []
+                      : [
+                          <button
+                            key="details"
+                            type="button"
+                            aria-label="Details"
+                            aria-pressed={desktopDetails}
+                            title={desktopDetails ? "Hide details" : "Show details"}
+                            onClick={toggleDesktopDetails}
+                            className={`${toolbarButtonClass} ${desktopDetails ? "text-[#2680FC]" : ""}`}
+                          >
+                            <Info className="h-6 w-6" aria-hidden="true" />
+                          </button>,
+                        ]),
                     <button
                       key="close"
                       type="button"

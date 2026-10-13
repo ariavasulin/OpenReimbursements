@@ -510,7 +510,7 @@ merges. **Split:** A1 (server) then A2 (client) as two workers in the same workt
 ### Verify
 - [x] [AC-10] `test:routes`: `type=raw&from=…&to=…&tags=a,b&uploader=…` ANDs; `test:browser` (phone + desktop): set three filters, reload, filters persist; `Clear` empties the URL; empty state shows `Clear filters`.
 - [x] [AC-11] `test:routes`: `q=3962 professional` matches only the intersection; `q=yana sept` returns nothing in a fixture with no `sept` in names.
-- [x] [AC-13] `test:routes`: `/ids` on 1,200 fixtures returns 1,200; `test:browser`: "Select all 1,200" then Tag → every photo tagged (three requests observed); Trash → confirm page lists 1,200.
+- [ ] [AC-13] `test:routes`: `/ids` on 1,200 fixtures returns 1,200; `test:browser`: "Select all 1,200" then Tag → every photo tagged (three requests observed); Trash → confirm page lists 1,200.
 - [x] [AC-14] `test:routes`: 6,000 fixtures → 5,000 ids, `truncated:true`.
 - [ ] [AC-12] Rendered review (Decision 12) on `iPhone 15` and desktop: no clipped controls, ≥44 px targets, no horizontal scroll, Filter sheet sections readable; dispositions recorded in `reviews/`.
 - [x] Suites green; `tsc` clean; A1 and A2 each hand back separately.
@@ -609,7 +609,7 @@ Starts after W2-A merges (shares `GET /api/photos`).
    custom).
 
 ### Verify
-- [x] [AC-16] `test:db`: reorder, add (appends), switch to date and back; `test:routes`: `sort=custom` pages correctly; share read follows it. `test:browser` desktop: drag the third photo first, Done, reload → first.
+- [ ] [AC-16] `test:db`: reorder, add (appends), switch to date and back; `test:routes`: `sort=custom` pages correctly; share read follows it. `test:browser` desktop: drag the third photo first, Done, reload → first.
 - [ ] [AC-17] `test:browser` phone device: long-press drag reorders; rendered review on `iPhone 15` and desktop.
 - [x] Suites green; `tsc` clean.
 

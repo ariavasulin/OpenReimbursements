@@ -41,8 +41,11 @@ export async function GET(request: Request) {
       .limit(20);
     if (error) throwPhotoDatabaseError(error);
     const wanted = base.toLowerCase();
-    const hit = (data ?? []).find((row) => row.original_name &&
-      baseName(row.original_name).toLowerCase() === wanted && row.content_sha256 !== sha);
+    const sameName = (data ?? []).filter((row) => row.original_name &&
+      baseName(row.original_name).toLowerCase() === wanted);
+    // The same bytes already here is the duplicate case (the upload adds the existing photo to
+    // the chosen album); it is never held as a twin, even when another format sits beside it.
+    const hit = sameName.some((row) => row.content_sha256 === sha) ? undefined : sameName[0];
     const photo: FormatTwin | null = hit ? {
       id: hit.id, job_id: hit.job_id, original_name: hit.original_name,
       display_name: hit.display_name, captured_at: hit.captured_at,

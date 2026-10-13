@@ -269,10 +269,10 @@ export default function MigratePage() {
     const { jobs } = await request<{ jobs: ProjectRef[] }>('jobs?limit=100'); setProjects(jobs);
   };
 
-  const makeEngine = (id: string, savedFolders = folders) => {
+  const makeEngine = (id: string, savedFolders = folders, keepFormatTwins = keepFormats) => {
     const uploadRequest = createUploadRequest({ refreshAuth });
     return new MigrationEngine({ batchId: id, uploaderId: userId, sources, folders: savedFolders,
-      localSources: localSources.current, request, deps: buildBrowserUploadDeps(), keepFormatTwins: keepFormats,
+      localSources: localSources.current, request, deps: buildBrowserUploadDeps(), keepFormatTwins,
       prepare: (input, options) => uploadRequest<UploadAttempt>('prepare', input, options),
       onChange: async completedItemId => {
         invalidatePhotoCaches(queryClient);
@@ -287,7 +287,8 @@ export default function MigratePage() {
   };
 
   const retryXmp = async (item: MigrationItem) => {
-    const worker = makeEngine(batchId.current!); engine.current = worker;
+    // The photo is already in: a twin hold would only block the XMP from being attached.
+    const worker = makeEngine(batchId.current!, folders, true); engine.current = worker;
     setRunning(true);
     try {
       const result = await worker.upload(item);
@@ -347,7 +348,9 @@ export default function MigratePage() {
   // AC-18: loose photos need a project or an album. A folder always has its album, so this only ever stops loose photos.
   const looseNeedsChoice = Boolean(looseRow && looseRow.photo_count > 0 && !looseRow.job_id && !looseRow.album_id && !looseRow.album_name);
   const canStart = owner && allRead && photos > 0 && !looseNeedsChoice && !looseAlbumPending && !busy && !running && !preparing;
-  const imported = count('completed'), already = count('skipped_duplicate'), leftOut = count('skipped_unsupported');
+  const imported = count('completed'), already = count('skipped_duplicate');
+  // Left out: not a photo, or another format of a photo already in the project ("Keep other formats" off).
+  const leftOut = count('skipped_unsupported') + count('skipped_user');
   const waiting = ['pending', 'hashing', 'waiting_claim', 'uploading', 'finalizing'].reduce((total, key) => total + count(key), 0);
   const trouble = count('retryable_failed') + count('job_conflict') + count('restore_required');
   const exclusions = Object.entries((totals.exclusions_by_reason ?? {}) as Record<string, number>);
@@ -357,7 +360,7 @@ export default function MigratePage() {
   const summary = (
     <div data-testid="batch-counts" className="space-y-1 text-base">
       <p><strong>{plural(photos, 'photo')}</strong>{mode === 'migrate_photos' && <> in <strong>{plural(folders.filter(row => row.photo_count > 0).length, 'folder')}</strong></>} · {size(Number(totals.upload_bytes ?? totals.total_bytes ?? 0))}</p>
-      {status !== 'draft' && <p>{plural(imported, 'photo')} imported{already > 0 && <> · {already.toLocaleString()} already in DWS Photos</>}{waiting > 0 && <> · {waiting.toLocaleString()} still to go</>}{trouble > 0 && <> · <span className="text-amber-300">{plural(trouble, 'needs', 'need')} attention</span></>}</p>}
+      {status !== 'draft' && <p>{plural(imported, 'photo')} imported{already > 0 && <> · {already.toLocaleString()} already in DWS Photos</>}{leftOut > 0 && <> · {leftOut.toLocaleString()} left out</>}{waiting > 0 && <> · {waiting.toLocaleString()} still to go</>}{trouble > 0 && <> · <span className="text-amber-300">{plural(trouble, 'needs', 'need')} attention</span></>}</p>}
     </div>
   );
 

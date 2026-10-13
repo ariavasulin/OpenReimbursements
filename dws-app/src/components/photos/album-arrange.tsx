@@ -113,9 +113,10 @@ function TileFace({ photo, place }: { photo: PhotoRow; place: number }) {
 const tileClass =
   "relative aspect-square select-none overflow-hidden rounded-md bg-[#2e2e2e] [-webkit-touch-callout:none]";
 
-function SortableTile({ photo, place }: { photo: PhotoRow; place: number }) {
+function SortableTile({ photo, place, disabled }: { photo: PhotoRow; place: number; disabled: boolean }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: photo.id,
+    disabled,
   });
   const style: CSSProperties = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -143,7 +144,7 @@ function SortableTile({ photo, place }: { photo: PhotoRow; place: number }) {
 
 export default function AlbumArrange({
   album,
-  startSort,
+  startSort: startSortProp,
   onClose,
 }: {
   album: PhotoAlbumHeader;
@@ -153,6 +154,9 @@ export default function AlbumArrange({
   onClose(saved: boolean): void;
 }) {
   const isDesktop = useDesktop();
+  // Fixed when Arrange opens: a refresh of the album's header while someone is
+  // arranging (another person saved an order) must not reload over their draft.
+  const [startSort] = useState(startSortProp);
   const [loaded, setLoaded] = useState<PhotoRow[] | null>(null);
   const [order, setOrder] = useState<PhotoRow[]>([]);
   const [loadError, setLoadError] = useState("");
@@ -281,7 +285,7 @@ export default function AlbumArrange({
           <SortableContext items={ids} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
               {order.map((photo, index) => (
-                <SortableTile key={photo.id} photo={photo} place={index + 1} />
+                <SortableTile key={photo.id} photo={photo} place={index + 1} disabled={saving} />
               ))}
             </div>
           </SortableContext>

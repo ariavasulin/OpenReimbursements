@@ -271,6 +271,8 @@ export function groupFilters(group: PhotoGroup, filters: BrowseFilters): BrowseF
     const range = localDayRange(day);
     return { ...filters, from: later(filters.from, range.from), to: earlier(filters.to, range.to) };
   }
+  // TODO(#28): GET /api/photos and /ids have no missing-value predicate for tags (none) or
+  // uploader (unknown), so the "No tags" and "Unknown" header ticks select only the loaded photos.
   if (kind === "tag") {
     return value === "none" ? null : { ...filters, tags: [...new Set([...filters.tags, value])] };
   }

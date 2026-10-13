@@ -1,4 +1,5 @@
 import { baseName } from '../classify';
+import { fileTypeLabel } from '../file-type';
 import { formatTwinMessage, uploadOne, type UploadDeps, type UploadIdentity, type UploadMeta, type UploadResult } from '../upload';
 import type { UploadAttempt } from '../upload-contract';
 import { abortUploadWork, UploadRequestError } from '../upload-http';
@@ -59,7 +60,7 @@ export class MigrationEngine {
       do {
         signal.throwIfAborted();
         const page: ItemPage = await request(`batches/${batchId}/items?limit=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`, undefined, { signal });
-        const pending = page.items.filter(item => runnable.has(item.status) && item.retryable !== false && retryDue(item));
+        const pending = previewableFirst(page.items.filter(item => runnable.has(item.status) && item.retryable !== false && retryDue(item)));
         for (const pair of pairs(pending)) {
           signal.throwIfAborted();
           const results = await Promise.allSettled(pair.map(async item => {
@@ -167,6 +168,15 @@ export class MigrationEngine {
     }
     return result;
   }
+}
+
+/**
+ * RAW files after everything else (a stable sort), so when a shot's JPEG and RAW are both in the page the
+ * JPEG, which gets a preview, is the one imported and the RAW is the one held as its other format.
+ */
+function previewableFirst(items: MigrationItem[]): MigrationItem[] {
+  const raw = (item: MigrationItem) => fileTypeLabel({ kind: 'image', mime_type: null, original_name: item.relative_path }) === 'RAW' ? 1 : 0;
+  return [...items].sort((a, b) => raw(a) - raw(b));
 }
 
 /**

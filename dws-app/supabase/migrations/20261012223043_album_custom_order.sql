@@ -55,10 +55,13 @@ begin
   end if;
   update public.album_photos ap set position=o.ord from unnest(p_photo_ids) with ordinality o(photo_id,ord)
     where ap.album_id=p_album and ap.photo_id=o.photo_id;
+  -- Every member the list did not name (the trashed ones at validation time, plus any restored since)
+  -- goes after the arranged photos, so a photo coming back from Trash lands last rather than on a
+  -- position the list just assigned.
   update public.album_photos ap set position=n+t.ord from (
       select ap2.photo_id,row_number() over(order by ap2.position nulls last,ap2.added_at,ap2.photo_id) as ord
-      from public.album_photos ap2 join public.photos ph on ph.id=ap2.photo_id
-      where ap2.album_id=p_album and ph.deleted_at is not null) t
+      from public.album_photos ap2
+      where ap2.album_id=p_album and ap2.photo_id<>all(p_photo_ids)) t
     where ap.album_id=p_album and ap.photo_id=t.photo_id;
   update public.albums set sort_mode='custom',updated_at=clock_timestamp() where id=p_album;
   return jsonb_build_object('sort_mode','custom','arranged',n);
@@ -72,6 +75,9 @@ create or replace function public.photo_album_append_position()
 returns trigger language plpgsql security definer set search_path=public,pg_temp as $$
 begin
   if new.position is null and exists(select 1 from public.albums where id=new.album_id and sort_mode='custom') then
+    -- Two photos joining at once would otherwise both read the same max. An advisory lock keyed on
+    -- the album serializes them without touching the row locks photo_album_add already holds.
+    perform pg_advisory_xact_lock(hashtext('album_position:'||new.album_id::text));
     select coalesce(max(ap.position),0)+1 into new.position from public.album_photos ap where ap.album_id=new.album_id;
   end if;
   return new;

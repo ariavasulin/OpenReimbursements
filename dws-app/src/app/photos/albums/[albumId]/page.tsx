@@ -31,11 +31,15 @@ import { MAX_ARRANGE_PHOTOS } from "@/lib/photos/apiShared";
 import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
-/** Drop `sort` from the address bar, so the grid shows the album's own order again. */
-function showAlbumOrder() {
+/**
+ * Drop `sort` from the address bar, so the grid shows the album's own order
+ * again. Only while that album's page is still up: a change that finishes
+ * after moving to another album leaves that page's address alone.
+ */
+function showAlbumOrder(albumId: string) {
   const { pathname, search, hash } = window.location;
   const params = new URLSearchParams(search);
-  if (!params.has("sort")) return;
+  if (!params.has("sort") || !pathname.endsWith(`/albums/${albumId}`)) return;
   params.delete("sort");
   const query = params.toString();
   window.history.replaceState(null, "", `${pathname}${query ? `?${query}` : ""}${hash}`);
@@ -76,7 +80,7 @@ function AlbumPageContent() {
     try {
       await restoreAlbumOrder(albumId);
       setMode("custom");
-      showAlbumOrder();
+      showAlbumOrder(albumId);
       toast.success(`“${name}” shows its arranged order again, for everyone`);
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "Failed to change the order");
@@ -167,7 +171,7 @@ function AlbumPageContent() {
             setArranging(false);
             if (!saved) return;
             setMode("custom");
-            showAlbumOrder();
+            showAlbumOrder(albumId);
             toast.success("Order saved", { description: "Everyone sees this order, including the share link." });
           }}
         />

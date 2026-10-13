@@ -5,7 +5,7 @@ import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@t
 import BrowseToolbar from "@/components/photos/browse-toolbar";
 import type { FilterChoices } from "@/components/photos/filter-bar";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
-import PhotoGrid from "@/components/photos/photo-grid";
+import PhotoGrid, { type GridSelection } from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
 import SelectionBar from "@/components/photos/selection-bar";
 import StatusLine from "@/components/photos/status-line";
@@ -297,6 +297,17 @@ export default function PhotoBrowser({
       : openable;
   }, [groups, linked.data, linked.isError]);
 
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  // While the previous filter's photos are still on screen (dimmed), a group
+  // tick would mix those rows with the new filter's ids: wait for the page.
+  const gridSelection = useMemo<GridSelection>(
+    () => (isPlaceholderData ? { ...selection, onToggleGroup: () => {} } : selection),
+    [selection, isPlaceholderData]
+  );
+
   const {
     openPhotoId,
     setOpenPhotoId,
@@ -395,7 +406,7 @@ export default function PhotoBrowser({
           // "date" draws the custom list's one header without a loaded-count.
           groupBy={custom ? "date" : groupBy}
           onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
-          selection={selection}
+          selection={gridSelection}
           pinnedTag={noFiltersActive ? pinnedTag : undefined}
           pinnedLabel={pinnedLabel}
           onExpandPinned={() =>
@@ -425,6 +436,7 @@ export default function PhotoBrowser({
 
       <PhotoLightbox
         {...lightboxProps}
+        onNearEnd={loadMore}
         onChanged={() => invalidatePhotoCaches(queryClient)}
       />
     </>
