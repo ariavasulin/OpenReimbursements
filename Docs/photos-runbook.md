@@ -823,6 +823,11 @@ Run them on an iPhone over LTE (not office Wi-Fi). Record results inline.
   after signing back in, Retry succeeds without re-picking.
 - [ ] **Three green crons.** Three consecutive daily `/api/photos/repair`
   runs green in Vercel → Settings → Cron Jobs, each with `errors: []`.
-- [ ] **Transcode turn-on** (after the above): set `PHOTOS_TRANSCODE=1`, run
+- [x] **Transcode turn-on** (after the above): set `PHOTOS_TRANSCODE=1`, run
   the sweep by hand, confirm the backlog clips gain `playback_path` and play
   in desktop Chrome/Firefox (see "Video transcoding" above).
+  Done 2026-10-13 (Ariav Asulin): `PHOTOS_TRANSCODE=1` set in production,
+  live with deploy `24cc7ce`; one manual run answered
+  `{"counts":{"transcodeVideo":1},"error_count":0}` in 62 s and the one
+  QuickTime clip (1.6 MB, 0.6 s) gained its `playback_path`. Desktop playback
+  check is still the owner's.
