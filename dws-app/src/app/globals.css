@@ -148,6 +148,27 @@ body:not([data-scroll-locked]) {
    the next tap brings them back. Overlaid controls fade, and `visibility`
    takes them out of reach of the pointer and Tab while hidden; the thumbnail
    strip leaves the layout so the photo can take its room. */
+/* Edge to edge: YARL never scales a photo past its own pixel size, so a
+   preview smaller than the screen sat in the middle of it. Fill the slide and
+   let object-fit keep the aspect ratio. */
+.yarl__slide_image {
+  width: 100%;
+  height: 100%;
+  /* YARL also writes inline max-width/max-height at the image's own pixel size. */
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+/* Desktop shows a thumbnail strip under the photo with a small gap above
+   it; give the top of the photo the same small gap. Gone with the controls. */
+.yarl__root:has(.yarl__thumbnails_container) .yarl__slide {
+  padding-top: var(--yarl__thumbnails_container_padding, 16px);
+}
+
+.yarl__immersive .yarl__root:has(.yarl__thumbnails_container) .yarl__slide {
+  padding-top: 0;
+}
+
 .yarl__toolbar,
 .yarl__navigation_prev,
 .yarl__navigation_next,
