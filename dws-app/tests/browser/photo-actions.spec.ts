@@ -54,15 +54,16 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await confirm.click(); await expect(page.getByTestId('action-status')).toHaveText('Done');
     expect((await fixtures.sql.query('select job_id from public.photos where id=$1', [photo.id])).rows[0].job_id).toBe(jobs[1]);
 
-    await page.goto(`/photos/actions?action=trash&photo=${photo.id}`);
-    await expect(page.getByTestId('action-question')).toHaveText('Move 1 photo to trash?');
-    // The 30-day recovery facts stay, in plain words, beside the question.
-    await expect(page.getByText('You can restore a photo from Trash for 30 days.')).toBeVisible();
-    await expect(page.locator('main')).not.toContainText(/exact target|draft|pending|canonical|MCP/i);
-    await expect(page.getByRole('button', { name: 'Move to trash', exact: true })).toBeEnabled();
-    await capture(page, info, `${viewport.name}-trash-confirmation`);
+    // Move to trash from the viewer's details: at once, no confirm page; the toast offers Undo.
+    await page.goto(`/photos/${jobs[1]}?photo=${photo.id}`);
+    await expect(page.locator('.yarl__slide_image').first()).toBeVisible();
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
+    // The 30-day recovery facts stay, in plain words, beside the action.
+    await expect(page.getByText('You can restore a photo from Trash for 30 days.').first()).toBeVisible();
     await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
-    await expect(page.getByTestId('action-status')).toHaveText('Done');
+    await expect(page.getByText('Moved to Trash', { exact: true })).toBeVisible();
+    await capture(page, info, `${viewport.name}-trashed-toast`);
+    await expect.poll(async () => (await fixtures.sql.query('select deleted_at from public.photos where id=$1', [photo.id])).rows[0].deleted_at).not.toBeNull();
     const trashed = (await fixtures.sql.query('select deleted_at,purge_after from public.photos where id=$1', [photo.id])).rows[0];
     expect(new Date(trashed.purge_after).getTime() - new Date(trashed.deleted_at).getTime()).toBe(30 * 86400_000);
     const publicFile = await context.request.get(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/photos/${photo.path}`);

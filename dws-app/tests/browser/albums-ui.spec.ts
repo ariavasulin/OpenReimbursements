@@ -552,16 +552,11 @@ for (const viewport of VIEWPORTS) {
     expect((await fixtures.sql.query('select count(*)::int as n from public.album_photos where album_id=$1', [albumId])).rows[0].n).toBe(2);
     expect((await rowsOf([ids[0]]))[0].deleted_at).toBeNull();
 
-    // 6. Trash — the other two, through the confirm page; then they are gone from the album.
+    // 6. Trash — the other two, at once (no confirm page; the toast offers Undo); then they are gone from the album.
     await select(page, v, photoNames.slice(1));
     await bar(page).getByRole('button', { name: 'Trash', exact: true }).click();
-    await expect(page).toHaveURL(/\/photos\/actions\?batch=/);
-    await expect(page.getByTestId('action-question')).toHaveText('Move 2 photos to trash?');
-    await expect(page.getByTestId('action-item')).toHaveCount(2);
-    await expect(page.getByText(/restore a photo from Trash for 30 days/)).toBeVisible();
-    await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
-    await expect(page.getByTestId('action-status')).toHaveText('Done');
-    expect((await rowsOf(ids.slice(1))).every(row => row.deleted_at !== null)).toBe(true);
+    await expect(page.getByText('Moved 2 photos to Trash', { exact: true })).toBeVisible();
+    await expect.poll(async () => (await rowsOf(ids.slice(1))).every(row => row.deleted_at !== null)).toBe(true);
     await page.goto(`/photos/albums/${albumId}`);
     await expect(page.getByText('This album is empty', { exact: true })).toBeVisible();
 
@@ -581,7 +576,7 @@ test('phone viewer: the photo is unobscured until the labeled Details pop-up is 
   await expect(page.locator('.yarl__slide_image').first()).toBeVisible();
   // Nothing about the photo is laid over it.
   await expect(page.getByTestId('photo-project')).toHaveCount(0);
-  await expect(page.getByRole('link', { name: 'Move to trash' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Move to trash' })).toHaveCount(0);
   const open = page.getByRole('button', { name: 'Details', exact: true });
   expect((await open.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await open.click();
@@ -593,7 +588,7 @@ test('phone viewer: the photo is unobscured until the labeled Details pop-up is 
   await expect(details.getByRole('button', { name: 'Edit tags', exact: true })).toBeVisible();
   await expect(details.getByRole('button', { name: /Edit tags/ })).toHaveCount(0);
   // The 30-day recovery sentence sits with the trash action.
-  await expect(details.getByRole('link', { name: 'Move to trash', exact: true })).toBeVisible();
+  await expect(details.getByRole('button', { name: 'Move to trash', exact: true })).toBeVisible();
   await expect(details.getByText(/restore a photo from Trash for 30 days/)).toBeVisible();
   const close = details.getByRole('button', { name: 'Close', exact: true });
   expect((await close.boundingBox())!.height).toBeGreaterThanOrEqual(44);
@@ -688,8 +683,8 @@ test('client-feedback AC-13: a date tick and Select all take all 1,200 photos of
     await page.getByTestId('selection-select-all').click();
     await expect(page.getByTestId('selection-count')).toHaveText('1,200 selected');
     await bar(page).getByRole('button', { name: 'Trash', exact: true }).click();
-    await expect(page).toHaveURL(/\/photos\/actions\?batch=/);
-    await expect(page.getByTestId('action-question')).toHaveText('Move 1,200 photos to trash?', { timeout: 120_000 });
+    await expect(page.getByText('Moved 1,200 photos to Trash', { exact: true })).toBeVisible({ timeout: 120_000 });
+    expect((await fixtures.sql.query('select count(*)::int as n from public.photos where id=any($1::uuid[]) and deleted_at is not null', [ids])).rows[0].n).toBe(1200);
   } finally {
     await removeFillers();
     // The Trash step left an action batch whose items name this project.

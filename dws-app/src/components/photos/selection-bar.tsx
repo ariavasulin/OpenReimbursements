@@ -1,8 +1,9 @@
 "use client";
 
+import { runPhotoAction } from "@/lib/photos/trash-now";
+
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   BookImage,
@@ -35,7 +36,6 @@ import { useMobile } from "@/hooks/use-mobile";
 import {
   addPhotosToAlbum,
   bulkTagPhotos,
-  createActionBatch,
   fetchPhotosPage,
   invalidatePhotoCaches,
   PHOTO_ACTOR_KEY,
@@ -168,7 +168,6 @@ export default function SelectionBar({
   allMatches,
   onSelectAll,
 }: SelectionBarProps) {
-  const router = useRouter();
   const queryClient = useQueryClient();
   const isDesktop = useDesktop();
   const { setSelecting } = usePhotosShell();
@@ -226,9 +225,27 @@ export default function SelectionBar({
     if (busy) return;
     setBusy(true);
     try {
-      const batchId = await createActionBatch({ action: "trash", photoIds: trashable });
+      // No confirmation (owner ruling): Trash is restorable for 30 days, and the
+      // toast offers Undo. Photos the rule refuses are left out and counted.
+      const result = await runPhotoAction("trash", trashable);
       onClear();
-      router.push(`/photos/actions?batch=${encodeURIComponent(batchId)}`);
+      invalidatePhotoCaches(queryClient);
+      const moved = result.photoIds.length;
+      if (moved === 0) {
+        toast.error("None of those photos could be moved to Trash.");
+      } else {
+        toast.success(`Moved ${plural(moved, "photo")} to Trash`, {
+          description: result.leftOut > 0 ? `${plural(result.leftOut, "photo")} left out: not yours to delete.` : undefined,
+          action: {
+            label: "Undo",
+            onClick: () => {
+              void runPhotoAction("restore", result.photoIds)
+                .then(() => { invalidatePhotoCaches(queryClient); toast.success(`Restored ${plural(moved, "photo")}`); })
+                .catch((reason) => toast.error(errorText(reason, "Could not restore those photos.")));
+            },
+          },
+        });
+      }
     } catch (reason) {
       toast.error(errorText(reason, "Could not start that. Try again."));
     } finally {

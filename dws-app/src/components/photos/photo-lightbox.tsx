@@ -751,6 +751,7 @@ export default function PhotoLightbox({
                   onEdit={startEdit}
                   onSetProject={startSetProject}
                   onNavigate={onClose}
+                  onTrashed={() => { onClose(); onChanged?.(); }}
                 />
               </aside>
             )}
@@ -805,6 +806,7 @@ export default function PhotoLightbox({
             onEdit={startEdit}
             onSetProject={startSetProject}
             onNavigate={onClose}
+            onTrashed={() => { onClose(); onChanged?.(); }}
           />
         )}
       </SheetShell>

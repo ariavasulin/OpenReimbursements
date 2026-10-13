@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { invalidatePhotoCaches, renamePhoto, usePhotoActor, usePhotoDetail } from "@/lib/photos/api";
 import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { buildPhotoLink } from "@/lib/photos/photo-link";
+import { runPhotoAction } from "@/lib/photos/trash-now";
 import { trashDisclosure } from "@/lib/photos/action-client";
 import { canTrashPhoto, TRASH_RULE_MESSAGE } from "@/lib/photos/permissions";
 import {
@@ -30,8 +31,10 @@ interface PhotoInfoProps {
   onEdit(): void;
   /** Opens "Set project". */
   onSetProject(): void;
-  /** A link inside is about to leave the viewer (an album, the confirm page). */
+  /** A link inside is about to leave the viewer (an album). */
   onNavigate?(): void;
+  /** The photo was just moved to Trash: the viewer should close and refresh. */
+  onTrashed?(): void;
 }
 
 // One type scale for the phone sheet and the desktop panel (only the width
@@ -45,8 +48,39 @@ const action =
   "flex min-h-11 w-full items-center gap-3 rounded-lg border border-[#4e4e4e] bg-[#3a3a3a] px-3 text-base text-white hover:border-[#2680FC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
 const actionIcon = "h-5 w-5 shrink-0 text-[#b4b4b4]";
 
-export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: PhotoInfoProps) {
+export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate, onTrashed }: PhotoInfoProps) {
   const queryClient = useQueryClient();
+  const [trashing, setTrashing] = useState(false);
+  // No confirmation (owner ruling): Trash is restorable for 30 days, and the
+  // toast offers Undo right away.
+  const moveToTrash = async () => {
+    if (trashing) return;
+    setTrashing(true);
+    try {
+      const result = await runPhotoAction("trash", [photo.id]);
+      invalidatePhotoCaches(queryClient);
+      if (result.photoIds.length === 0) {
+        toast.error("That photo could not be moved to Trash.");
+        return;
+      }
+      toast.success("Moved to Trash", {
+        description: trashDisclosure,
+        action: {
+          label: "Undo",
+          onClick: () => {
+            void runPhotoAction("restore", result.photoIds)
+              .then(() => { invalidatePhotoCaches(queryClient); toast.success("Photo restored"); })
+              .catch((reason) => toast.error(reason instanceof Error ? reason.message : "Could not restore the photo"));
+          },
+        },
+      });
+      onTrashed?.();
+    } catch (reason) {
+      toast.error(reason instanceof Error ? reason.message : "Could not move the photo to Trash");
+    } finally {
+      setTrashing(false);
+    }
+  };
   // The grid's rows do not carry albums; the one-photo read does.
   const { data: detail, isLoading: albumsLoading } = usePhotoDetail(photo.id);
   const albums = detail?.albums ?? [];
@@ -287,14 +321,15 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
           shows until the permissions have loaded. */}
       {actor && (canTrashPhoto(actor, photo) ? (
         <div className="border-t border-[#4e4e4e] pt-4">
-          <Link
-            href={`/photos/actions?action=trash&photo=${encodeURIComponent(photo.id)}`}
-            onClick={onNavigate}
-            className={cn(action, "text-red-200 hover:border-red-400")}
+          <button
+            type="button"
+            onClick={() => void moveToTrash()}
+            disabled={trashing}
+            className={cn(action, "text-red-200 hover:border-red-400 disabled:opacity-60")}
           >
             <Trash2 className="h-5 w-5 shrink-0 text-red-300" aria-hidden="true" />
-            Move to trash
-          </Link>
+            {trashing ? "Moving to trash..." : "Move to trash"}
+          </button>
           <p className="mt-2 text-sm leading-relaxed text-[#a0a0a0]">{trashDisclosure}</p>
         </div>
       ) : (

@@ -108,11 +108,9 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await expect(trash).toHaveText('Trash the 3 you can delete');
     await capture(page, info, `${viewport.name}-mixed-selection`);
     await trash.click();
-    await expect(page).toHaveURL(/\/photos\/actions\?batch=/);
-    await expect(page.getByTestId('action-question')).toHaveText('Move 3 photos to trash?');
-    await expect(page.getByTestId('action-item')).toHaveCount(3);
-    await page.getByRole('button', { name: 'Move to trash', exact: true }).click();
-    await expect(page.getByTestId('action-status')).toHaveText('Done');
+    // At once, no confirm page: the toast reports the count, and Undo would restore them.
+    await expect(page.getByText('Moved 3 photos to Trash', { exact: true })).toBeVisible();
+    await expect.poll(async () => (await fixtures.sql.query('select count(*)::int as n from public.photos where id=any($1::uuid[]) and deleted_at is not null', [Object.values(ids)])).rows[0].n).toBe(3);
     const rows = (await fixtures.sql.query('select id,deleted_at from public.photos where id=any($1::uuid[])', [Object.values(ids)])).rows;
     const trashed = new Set(rows.filter(row => row.deleted_at !== null).map(row => row.id));
     expect(Object.keys(ids).filter(name => trashed.has(ids[name])).sort()).toEqual([...own].sort());
@@ -122,7 +120,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     // A phone's Details pop-up; desktop's Details panel (off by default, so one press turns it on).
     await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(page.getByTestId('trash-rule')).toHaveText(TRASH_RULE_MESSAGE);
-    await expect(page.getByRole('link', { name: 'Move to trash', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Move to trash', exact: true })).toHaveCount(0);
     await capture(page, info, `${viewport.name}-viewer-explains`);
   });
 
