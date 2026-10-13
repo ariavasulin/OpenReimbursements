@@ -251,6 +251,16 @@ Users page, separate from the Receipts role) can trash any photo, delete
 forever, empty the Trash, and delete any project or album. The buttons only
 appear when allowed; a mixed selection reads "Trash the N you can delete".
 
+### Previews for every photo
+
+Your browser makes each photo's thumbnail and preview while it uploads. When it
+cannot — an iPhone HEIC picked on a desktop browser, a TIFF, an image over
+24 MB, a video the browser cannot play — the server makes them as soon as the
+upload lands, so the photo has a preview by the time the tray says done. There
+is no upload size limit; a file the server cannot read either (a RAW file, an
+image over 250 MB) shows as a "No preview" tile that still downloads. A photo
+that somehow missed both gets its preview from the nightly sweep.
+
 ### Other formats of the same photo
 
 Uploading `IMG_1234.CR2` into a project that already holds `IMG_1234.JPG` with

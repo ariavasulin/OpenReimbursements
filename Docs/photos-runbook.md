@@ -549,6 +549,24 @@ repair against retained trash. A successful metadata rollback alone does not
 authorize restoring old app write grants: first prove that no retained trash
 would become visible or hard-deletable.
 
+## Previews made on the server (`POST /api/photos/<id>/derive`)
+
+The uploader's browser makes each photo's thumbnail and preview while it
+uploads, for images up to 24 MB that it can decode. For anything else — a HEIC
+picked on a desktop browser, a TIFF or RAW, an image over 24 MB, a video the
+browser cannot play — the upload client asks the server for them as soon as the
+row is in, through this route, with the same renderers the nightly sweep uses
+(sharp; Supabase image transforms for HEIC; ffmpeg for a video poster). So a
+60 MB TIFF has a preview when the tray says done, not the next morning. Any
+signed-in employee may call it for any active photo: it fills only an empty
+slot at that photo's fixed derived keys. A refusal (a RAW, a HEIC over 25 MB,
+an image over 250 MB) answers `thumb_path: null` with the reason and changes
+nothing; the sweep decides later whether the row becomes a file tile. On
+success it also removes the upload's "Previews skipped…" note from
+`upload_warnings`. It needs `photo_writes_enabled`, not `repair_enabled`, and
+has the same 300-second limit as the sweep. If it fails (offline, a timeout),
+the upload still completes and the sweep fills the preview that night.
+
 ## Repair sweep (`/api/photos/repair`)
 
 A daily Vercel cron (09:00 UTC, `vercel.json`) first permanently purges up to
@@ -585,8 +603,8 @@ response looks like:
 
 | Key | What happened |
 | --- | --- |
-| `fillImageDerivatives` | An image row had no thumbnail (client couldn't decode it — e.g. HEIC picked in Chrome). The sweep rendered a thumb + preview via Supabase image transforms and filled the row. |
-| `markFileTile` | An image couldn't be transformed (RAW format, or original over 25 MB, or the transform endpoint refused it). The row was set to `kind='file'` — a deliberate file tile, not a hole. Check the log line for the reason. |
+| `fillImageDerivatives` | An image row had no thumbnail (the browser did not make one — a HEIC picked in Chrome, a TIFF, an image over the browser's 24 MB decoding budget). The sweep rendered a thumb + preview and filled the row: with sharp from a /tmp copy of the original for every format libvips reads (JPEG, PNG, WebP, TIFF, GIF, AVIF), with no 25 MB ceiling; through Supabase image transforms for HEIC/HEIF, which the prebuilt sharp cannot decode, under that endpoint's 25 MB input cap. |
+| `markFileTile` | No renderer could read the image (a RAW format, a HEIC over 25 MB, an original over the server's 250 MB cap, or corrupt bytes). The row was set to `kind='file'` — a deliberate file tile, not a hole. Check the log line for the reason. |
 | `makeVideoPoster` | A video row had no poster. The sweep downloaded the original, extracted a frame with ffmpeg (~1 s in), uploaded it as thumb + preview WebPs, and recorded `duration_secs`. |
 | `transcodeVideo` | A video within the caps gained an H.264/AAC `playback_path` rendition (`derived/{uid}/{photoId}_playback.mp4`). Only planned when `PHOTOS_TRANSCODE=1`. |
 | `posterSkipped` | A video exceeds the server poster processing cap. The persistent `poster_skipped_reason` explains the skip; its original and video kind are retained. |

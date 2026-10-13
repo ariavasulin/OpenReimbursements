@@ -896,3 +896,38 @@ describe("format twins", () => {
     expect(finalized[1]).toMatchObject({ captured_at: new Date(CAPTURED.getTime() + 5_000).toISOString(), captured_at_source: "exif" });
   });
 });
+
+describe("previews made on the server", () => {
+  it("asks the server for previews the browser could not make, and drops the note once they exist", async () => {
+    const { deps, finalized } = makeDeps({ noDerivatives: true });
+    deps.deriveOnServer = vi.fn(async () => ({ thumb_path: "derived/u/photo-1_thumb.webp" }));
+    const result = await uploadOne(makeFile("IMG_1.heic", "image/heic"), "photo-1", META, deps);
+    expect(result.status).toBe("done");
+    expect(deps.deriveOnServer).toHaveBeenCalledWith("photo-1", expect.anything());
+    // The row was finalized first, with the note; the server clears its copy.
+    expect(finalized[0].warnings).toEqual(["Previews could not be generated; the original is preserved."]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("keeps the note when the server refuses or fails, and still reports the upload done", async () => {
+    const { deps } = makeDeps({ noDerivatives: true });
+    deps.deriveOnServer = vi.fn(async () => ({ thumb_path: null }));
+    const refused = await uploadOne(makeFile("scan.tiff", "image/tiff", 10), "photo-1", META, deps);
+    expect(refused.status).toBe("done");
+    expect(refused.warnings).toContain("Previews skipped to limit browser decoding memory use.");
+    deps.deriveOnServer = vi.fn(async () => { throw new Error("offline"); });
+    const failed = await uploadOne(makeFile("scan.tiff", "image/tiff", 10), "photo-2", META, deps);
+    expect(failed.status).toBe("done");
+    expect(failed.warnings).toContain("Previews skipped to limit browser decoding memory use.");
+  });
+
+  it("does not ask when the browser made the previews itself, or for a plain file", async () => {
+    const { deps } = makeDeps();
+    deps.deriveOnServer = vi.fn(async () => ({ thumb_path: null }));
+    await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    const { deps: fileDeps } = makeDeps({ noDerivatives: true });
+    fileDeps.deriveOnServer = deps.deriveOnServer;
+    await uploadOne(makeFile("notes.pdf", "application/pdf"), "photo-2", META, fileDeps);
+    expect(deps.deriveOnServer).not.toHaveBeenCalled();
+  });
+});

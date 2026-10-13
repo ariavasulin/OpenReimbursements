@@ -1,9 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 import { DeadlineExceeded, WorkBudget } from "./deadline";
+import { TRANSFORM_MAX_BYTES } from "./sweep";
 import { fillImageDerivatives } from "./transforms";
 
-const row = { id: "photo", uploader_id: "employee", original_path: "employee/original.heic" };
+/** A HEIC: the one format that goes to the transform endpoint, so these
+ * tests exercise that path; sharp has its own block below. */
+const row = { id: "photo", uploader_id: "employee", original_path: "employee/original.heic", mime_type: "image/heic", original_bytes: 1000 };
 
 function fixture(changed: object | null = { id: row.id }) {
   const upload = vi.fn().mockResolvedValue({ error: null });
@@ -132,6 +136,79 @@ describe("repair image transforms", () => {
     expect(active).toBe(0);
     expect(aborted).toHaveLength(2);
     expect(aborted.every(signal => signal.aborted)).toBe(true);
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe("sharp renders what the browser and the transform endpoint would not", () => {
+  const big = { ...row, original_path: "employee/original.jpg", mime_type: "image/jpeg", original_bytes: TRANSFORM_MAX_BYTES + 1 };
+  /** The stored original, served to the renderer's download. */
+  const serve = (bytes: Buffer, type: string) => vi.stubGlobal("fetch", vi.fn(async () =>
+    new Response(new Uint8Array(bytes), { headers: { "content-type": type, "content-length": String(bytes.byteLength) } })));
+  const uploaded = async (upload: ReturnType<typeof vi.fn>) => {
+    const byPath: Record<string, sharp.Metadata> = {};
+    for (const [path, body] of upload.mock.calls as [string, Blob][]) {
+      byPath[path] = await sharp(Buffer.from(await body.arrayBuffer())).metadata();
+    }
+    return byPath;
+  };
+
+  it("makes both WebPs from a JPEG over the transform cap, scaled and never enlarged", async () => {
+    const original = await sharp({ create: { width: 3000, height: 2000, channels: 3, background: "#4080c0" } }).jpeg().toBuffer();
+    serve(original, "image/jpeg");
+    const { admin, upload, update } = fixture();
+    await expect(fillImageDerivatives(admin, big)).resolves.toEqual({ ok: true });
+    const made = await uploaded(upload);
+    expect(made["derived/employee/photo_thumb.webp"]).toMatchObject({ format: "webp", width: 640, height: 427 });
+    expect(made["derived/employee/photo_preview.webp"]).toMatchObject({ format: "webp", width: 2048, height: 1365 });
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("reads a TIFF, which the browser never decodes", async () => {
+    const original = await sharp({ create: { width: 1200, height: 900, channels: 3, background: "#c04040" } }).tiff().toBuffer();
+    serve(original, "image/tiff");
+    const { admin, upload } = fixture();
+    await expect(fillImageDerivatives(admin, { ...big, original_path: "employee/scan.tif", mime_type: "image/tiff" })).resolves.toEqual({ ok: true });
+    const made = await uploaded(upload);
+    expect(made["derived/employee/photo_thumb.webp"]).toMatchObject({ width: 640, height: 480 });
+    // Smaller than the preview size: kept as is, not blown up.
+    expect(made["derived/employee/photo_preview.webp"]).toMatchObject({ width: 1200, height: 900 });
+  });
+
+  it("applies the EXIF orientation so a rotated phone photo comes out upright", async () => {
+    const original = await sharp({ create: { width: 800, height: 400, channels: 3, background: "#40c040" } })
+      .jpeg().withMetadata({ orientation: 6 }).toBuffer();
+    serve(original, "image/jpeg");
+    const { admin, upload } = fixture();
+    await expect(fillImageDerivatives(admin, big)).resolves.toEqual({ ok: true });
+    const made = await uploaded(upload);
+    expect(made["derived/employee/photo_thumb.webp"]).toMatchObject({ width: 320, height: 640 });
+  });
+
+  it("reports bytes no renderer reads as a deliberate file tile", async () => {
+    serve(Buffer.from("not an image at all, and not small either".repeat(64)), "image/x-adobe-dng");
+    const { admin, upload, update } = fixture();
+    const result = await fillImageDerivatives(admin, { ...big, original_path: "employee/raw.dng", mime_type: "image/x-adobe-dng" });
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { reason: string }).reason).toMatch(/unsupported image format/);
+    expect(upload).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a HEIC over the transform cap without downloading it", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const { admin, upload } = fixture();
+    await expect(fillImageDerivatives(admin, { ...row, original_bytes: TRANSFORM_MAX_BYTES + 1 }))
+      .resolves.toEqual({ ok: false, reason: `image/heic over ${TRANSFORM_MAX_BYTES} bytes` });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("keeps a failed download retryable", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 503 })));
+    const { admin, update } = fixture();
+    await expect(fillImageDerivatives(admin, big)).rejects.toThrow("download original: 503");
     expect(update).not.toHaveBeenCalled();
   });
 });

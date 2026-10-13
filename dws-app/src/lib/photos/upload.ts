@@ -104,6 +104,10 @@ export interface UploadDeps {
   makeDerivatives?: (file: File) => Promise<Derivatives | null>;
   /** GET /api/photos/twin. Without it no upload is checked for a format twin. */
   findFormatTwin?: (query: FormatTwinQuery, options?: RequestOptions) => Promise<FormatTwin | null>;
+  /** POST /api/photos/<id>/derive: the server makes the previews this browser
+   *  could not (HEIC on a desktop, TIFF, an image over the decoding budget, a
+   *  video it cannot play). Without it those photos wait for the nightly sweep. */
+  deriveOnServer?: (photoId: string, options?: RequestOptions) => Promise<{ thumb_path: string | null }>;
 }
 
 export interface UploadResult {
@@ -395,9 +399,22 @@ export async function uploadOne(
       content_sha256: digest, warnings,
     }, requestOptions));
     completed = true;
+    // The row is in; previews the browser could not make are made on the
+    // server now, so the photo has one when the tray says done. A failure
+    // here changes nothing: the sweep fills it later and the note stands.
+    let reported = warnings;
+    if (result.status === "created" && !derivatives && deps.deriveOnServer
+        && (classified.kind === "image" || classified.kind === "video")) {
+      try {
+        const made = await deps.deriveOnServer(attempt.photo_id, requestOptions);
+        if (made.thumb_path) reported = warnings.filter((warning) => !warning.startsWith("Previews "));
+      } catch {
+        // Left to the sweep.
+      }
+    }
     // Only the server may clean unreferenced duplicate objects after commit.
     return {
-      ...canonicalResult(result, meta.jobId, warnings),
+      ...canonicalResult(result, meta.jobId, reported),
       sidecarRetry: result.status === "created" && (result.sidecar_retry || (!sidecarPath && Boolean(opts.sidecar || opts.expectedSidecarName))),
       retryAt: sidecarRetryAt,
     };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ORPHAN_MS,
+  SERVER_IMAGE_MAX_BYTES,
   SETTLE_MS,
   TRANSFORM_MAX_BYTES,
   planSweep,
@@ -36,7 +37,7 @@ describe("planSweep", () => {
     expect(plan).toEqual([{ action: "fillImageDerivatives", photoId: "p1" }]);
   });
 
-  it("file-tiles a RAW and an oversize image instead of transforming", () => {
+  it("fills derivatives for a RAW-named or over-25 MB image too: the renderer decides the format", () => {
     const raw = row({ mime_type: "image/x-adobe-dng" });
     const big = row({
       id: "p2",
@@ -49,8 +50,15 @@ describe("planSweep", () => {
       NOW
     );
     expect(plan).toEqual([
-      { action: "markFileTile", photoId: "p1", reason: "not transformable" },
-      { action: "markFileTile", photoId: "p2", reason: "not transformable" },
+      { action: "fillImageDerivatives", photoId: "p1" },
+      { action: "fillImageDerivatives", photoId: "p2" },
+    ]);
+  });
+
+  it("file-tiles an image over the server's own cap", () => {
+    const huge = row({ original_bytes: SERVER_IMAGE_MAX_BYTES + 1 });
+    expect(planSweep([huge], stored(huge.original_path), NOW)).toEqual([
+      { action: "markFileTile", photoId: "p1", reason: `over ${SERVER_IMAGE_MAX_BYTES} bytes` },
     ]);
   });
 

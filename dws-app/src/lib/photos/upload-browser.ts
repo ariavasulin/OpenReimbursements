@@ -35,6 +35,13 @@ export function buildBrowserUploadDeps(): UploadDeps {
     findFormatTwin: async ({ job_id, base, captured_at, content_sha256 }, options) =>
       (await uploadRequest<{ photo: FormatTwin | null }>("twin",
         { job: job_id, base, captured_at, sha: content_sha256 }, options)).photo,
+    deriveOnServer: async (photoId, options) => {
+      const response = await fetch(`/api/photos/${encodeURIComponent(photoId)}/derive`, {
+        method: "POST", credentials: "same-origin", cache: "no-store", signal: options?.signal,
+      });
+      if (!response.ok) throw new Error(`derive failed (HTTP ${response.status})`);
+      return (await response.json()) as { thumb_path: string | null };
+    },
   };
 }
 

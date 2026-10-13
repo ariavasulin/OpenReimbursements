@@ -1,12 +1,9 @@
-import { createWriteStream } from 'node:fs';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { WorkBudget } from './deadline';
+import { downloadOriginal, MediaProcessingLimit } from './download';
 import {
   derivedKeys,
   type Action,
@@ -29,36 +26,7 @@ import {
 
 const BUCKET = 'photos';
 const POSTER_BYTES = 8 * 1024 * 1024;
-export class MediaProcessingLimit extends Error {
-  constructor(detail: string) {
-    super(`repair media processing limit: ${detail}; generate derivatives in the upload client`);
-    this.name = 'MediaProcessingLimit';
-  }
-}
-
-/** Never trust Content-Length (or row metadata) to bound bytes written to /tmp. */
-export async function downloadOriginal(url: string, input: string, budget: WorkBudget, maxBytes = CAP.bytes) {
-  await budget.run(async signal => {
-    const res = await fetch(url, { signal });
-    if (!res.ok || !res.body) {
-      await res.body?.cancel();
-      throw new Error(`download original: ${res.status}`);
-    }
-    if (Number(res.headers.get('content-length')) > maxBytes) {
-      await res.body.cancel();
-      throw new MediaProcessingLimit(`original exceeds ${maxBytes} bytes`);
-    }
-    let bytes = 0;
-    const limit = new Transform({
-      transform(chunk: Buffer, _encoding, next) {
-        bytes += chunk.byteLength;
-        if (bytes > maxBytes) next(new MediaProcessingLimit(`original exceeds ${maxBytes} bytes`));
-        else next(null, chunk);
-      },
-    });
-    await pipeline(Readable.fromWeb(res.body as WebReadableStream<Uint8Array>), limit, createWriteStream(input), { signal });
-  });
-}
+export { downloadOriginal, MediaProcessingLimit };
 
 /** ffmpeg -fs can leave a successfully exited but truncated file. Reject it
  * before reading/uploading; the cap is a processing failure, never playback. */
@@ -103,7 +71,7 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
     const { data } = supabaseAdmin.storage
       .from(BUCKET)
       .getPublicUrl(row.original_path);
-    await downloadOriginal(data.publicUrl, input, budget);
+    await downloadOriginal(data.publicUrl, input, budget, CAP.bytes);
     const { durationSecs } = await probe(input, budget);
     return { input, durationSecs };
   }

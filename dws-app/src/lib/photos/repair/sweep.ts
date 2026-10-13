@@ -52,6 +52,10 @@ export const TRANSFORMABLE = new Set([
 ]);
 /** Transform endpoint input cap (Supabase: 25 MB). */
 export const TRANSFORM_MAX_BYTES = 25 * 1024 * 1024;
+/** The server renders larger images itself (sharp, from a /tmp copy); an
+ * original over this becomes a file tile. Bounded by the function's /tmp and
+ * memory, not by any format. */
+export const SERVER_IMAGE_MAX_BYTES = 250 * 1024 * 1024;
 /** Rows younger than this are skipped — the client may still be uploading
  * derivatives right behind the original. */
 export const SETTLE_MS = 10 * 60 * 1000;
@@ -89,13 +93,13 @@ export function planSweep(
     }
     if (r.thumb_path == null) {
       if (r.kind === "image") {
-        const ok =
-          TRANSFORMABLE.has(r.mime_type ?? "") &&
-          (r.original_bytes ?? Infinity) <= TRANSFORM_MAX_BYTES;
+        // Format is the renderer's call (sharp first, the transform endpoint
+        // for HEIC); only size is known here.
+        const ok = (r.original_bytes ?? Infinity) <= SERVER_IMAGE_MAX_BYTES;
         out.push(
           ok
             ? { action: "fillImageDerivatives", photoId: r.id }
-            : { action: "markFileTile", photoId: r.id, reason: "not transformable" }
+            : { action: "markFileTile", photoId: r.id, reason: `over ${SERVER_IMAGE_MAX_BYTES} bytes` }
         );
       } else if (r.kind === "video" && !r.poster_skipped_reason) {
         out.push({ action: "makeVideoPoster", photoId: r.id });
