@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { Briefcase, Trash2, Upload } from "lucide-react";
+import { Briefcase, Upload } from "lucide-react";
 import { toast } from "sonner";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
@@ -13,6 +13,7 @@ import EmptyState, { emptyPrimary, emptySecondary } from "@/components/photos/em
 import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
+import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoActor, usePhotoJobs } from "@/lib/photos/api";
 import { isPhotoAdmin } from "@/lib/photos/permissions";
@@ -22,6 +23,15 @@ const PINNED_TAG = "professional";
 
 /** One project. The URL is unchanged, so every link already sent keeps working. */
 export default function ProjectPage() {
+  // The header's Play button starts the viewer's slideshow (slideshow-link.tsx).
+  return (
+    <SlideshowLink>
+      <ProjectPageContent />
+    </SlideshowLink>
+  );
+}
+
+function ProjectPageContent() {
   const { jobId } = useParams<{ jobId: string }>();
   const linkedPhoto = useSearchParams().get("photo");
   const router = useRouter();
@@ -106,19 +116,19 @@ export default function ProjectPage() {
         }
         renameLabel="Project name"
         number={job?.job_number}
-        share={job && <ShareButton project={{ id: job.id, name: job.name }} />}
+        actions={
+          job && (
+            <>
+              <PlayButton />
+              <ShareButton project={{ id: job.id, name: job.name }} className={headerActionClass} />
+            </>
+          )
+        }
         onRename={async (name, number) => {
           await renameJob(jobId, name, number);
           invalidatePhotoCaches(queryClient);
         }}
-        actions={
-          canDelete && (
-            <button type="button" onClick={() => setConfirmingDelete(true)} className={headerActionClass}>
-              <Trash2 className="h-4 w-4" aria-hidden="true" />
-              Delete project
-            </button>
-          )
-        }
+        remove={canDelete ? { label: "Delete project", onSelect: () => setConfirmingDelete(true) } : undefined}
       />
 
       <PhotoBrowser

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addToSelection, MAX_SELECTION, selectionLimitMessage, selectionRange, toggleGroupSelection, toggleSelection,
+  addToSelection, MAX_SELECTION, selectionCappedMessage, selectionLimitMessage, selectionRange, toggleGroupSelection, toggleSelection,
 } from "./selection";
 
 const ids = ["a", "b", "c", "d", "e"];
@@ -40,13 +40,14 @@ describe("selection changes", () => {
     expect([...toggleSelection(full, "a", 2).selected]).toEqual(["b"]);
   });
 
-  it("limits a selection to the bulk routes' 500", () => {
-    const many = Array.from({ length: 501 }, (_, index) => `photo-${index}`);
+  it("limits a selection to the 5,000 one action batch takes", () => {
+    const many = Array.from({ length: 5001 }, (_, index) => `photo-${index}`);
     const result = addToSelection(new Set(), many);
-    expect(MAX_SELECTION).toBe(500);
-    expect(result.selected.size).toBe(500);
+    expect(MAX_SELECTION).toBe(5000);
+    expect(result.selected.size).toBe(5000);
     expect(result.refused).toBe(1);
-    expect(selectionLimitMessage()).toContain("up to 500 photos");
+    expect(selectionLimitMessage()).toContain("up to 5,000 photos");
+    expect(selectionCappedMessage(6000)).toContain("the first 5,000 of 6,000");
   });
 
   it("a group tick selects the whole group, and clears it when all of it is already selected", () => {

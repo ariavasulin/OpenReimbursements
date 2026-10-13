@@ -175,9 +175,94 @@ First login without profile creates default:
 }
 ```
 
+## DWS Photos
+
+The photo app shares the sign-in and the Users page with Receipts. The words
+employees see are **Project**, **Album**, and **Tag**; `job` in code means project.
+
+### Browsing
+
+Every photo grid (Photos, a project, an album, search) has one toolbar row:
+**Filter**, **Group by**, and **Sort**.
+
+- **Filter** opens a sheet on the phone and shows inline chips on desktop:
+  Project (Photos and search only), Uploader, Tags (several, all must match),
+  File type (JPEG, HEIC, PNG, RAW, Video, Other), and Date (This week, This
+  month, This year, or a custom range). Active filters show as removable chips
+  under the toolbar with **Clear**. When nothing matches, the grid says "No
+  photos match" with a **Clear filters** button.
+- **Group by** Date, Tag, Uploader, or File type (search adds Project).
+- **Sort** Newest or Oldest. An album with a saved order also offers **Custom**.
+- Filters, grouping, and sort live in the page URL, so a reload or a shared
+  link keeps them.
+- **Search** splits what you type into words, and every word has to match a
+  project number or name, an uploader name, a tag, or a photo's name. So
+  `3962 professional` finds photos in project 3962 tagged professional.
+
+### Selecting many
+
+Long-press (phone) or click the tick (desktop) to start a selection. The bar
+reads "N selected · Select all M"; **Select all** picks every photo that matches
+the current filters, loaded or not, up to 5,000 ("Select all 5,000 (of M)" past
+that). A group header's tick selects the whole group the same way. Tag and
+Add to album work in slices of 500 behind one progress toast; Trash and Set
+project go through the confirmation page as one batch.
+
+### Download
+
+**Download** in the selection bar builds one zip in the browser. A confirmation
+shows the count and total size first, warns above 2 GB, and on a phone says
+large downloads work best on a computer. Entries are named with each photo's
+display name plus its original extension; duplicates get " (2)", " (3)". If any
+photo could not be fetched, the toast names it and never calls the zip complete.
+
+### Viewer and slideshow
+
+Photos open edge to edge. One tap or click hides every control (toolbar,
+counter, arrows, thumbnails, Details); another brings them back. On desktop,
+Details is an **i** button, off by default, and **Fullscreen** appears where the
+browser supports it. **Play** in the viewer or in a project, album, or search
+page header starts a slideshow of that page's photos in its current order: 4 s
+each, looping, photos only. Any tap pauses it.
+
+### Arranging an album
+
+**Arrange** on an album page (2 or more photos, up to 2,000) enters a drag mode:
+long-press and drag on the phone, click and drag on desktop, with **Done** and
+**Cancel**. The saved order is what everyone sees, including the share link and
+the slideshow. Photos added later go last. Choosing Newest or Oldest on an
+arranged album puts it back in date order for everyone (the toast offers Undo);
+choosing Custom again restores the saved order.
+
+### Names
+
+A photo's name is automatic: `<project number> – <YYMMDD> <HHMMSS>` from its
+capture time (Pacific), or `<YYMMDD> <HHMMSS>` without a project, with " (2)",
+" (3)" for the same second. Moving a photo to another project renames it.
+Renaming by hand keeps that name; renaming to blank goes back to automatic. The
+original filename stays under "About this file", and downloads use the display
+name plus the original extension.
+
+### Deleting
+
+Anyone can trash a photo they uploaded in the last 30 days, restore any trashed
+photo, and delete an album they created. A **photo admin** (a checkbox on the
+Users page, separate from the Receipts role) can trash any photo, delete
+forever, empty the Trash, and delete any project or album. The buttons only
+appear when allowed; a mixed selection reads "Trash the N you can delete".
+
+### Other formats of the same photo
+
+Uploading `IMG_1234.CR2` into a project that already holds `IMG_1234.JPG` with
+the same capture second pauses that file: "Looks like another format of
+IMG_1234.JPG", with **Keep** to upload it anyway. The folder import has one
+"Keep other formats" switch per batch; left off, such files are listed as left
+out. Live Photo videos are not treated as another format of their photo.
+
 ## Related Pages
 
 - [[Receipts]] - Upload and OCR details
 - [[Authentication]] - Login flow
 - [[API]] - Endpoint reference
 - [[Components]] - UI components used
+- [[photos-runbook]] - Operator notes for DWS Photos

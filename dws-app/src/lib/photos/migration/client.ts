@@ -121,6 +121,15 @@ export function migrationItemStatusLabel(status: string): string {
   return ITEM_STATUS_LABELS[status] ?? 'Waiting';
 }
 
+/** The error code an import saves on a file it left out as another format of a photo already in the project. */
+export const FORMAT_TWIN_CODE = 'format_twin';
+/** "Left out: looks like another format of IMG_1234.JPG", or null when the file was not left out for that. */
+export function formatTwinLabel(item: Pick<MigrationItem, 'status' | 'error' | 'warnings'>): string | null {
+  if (item.status !== 'skipped_user' || item.error?.code !== FORMAT_TWIN_CODE) return null;
+  const note = item.warnings?.[0];
+  return note ? `Left out: ${note.charAt(0).toLowerCase()}${note.slice(1)}` : 'Left out: looks like another format of a photo already here';
+}
+
 /** The whole import's state in plain words. `attention` wins: something needs the employee. */
 export function migrationBatchStatusLabel(status: string, attention = false): string {
   if (attention) return 'Needs attention';

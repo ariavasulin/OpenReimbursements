@@ -13,6 +13,12 @@ export function photoId(value: unknown): string {
 /** 500 UUIDs are about 20 KB of JSON, over the 16 KB default body limit. */
 export const BULK_BODY_BYTES = 64 * 1024;
 
+/**
+ * An action batch names up to MAX_SELECTION_PHOTOS photos, each as
+ * `{"photo_id":"<uuid>"}` (52 bytes with its comma): 5,000 are about 260 KB.
+ */
+export const SELECTION_BODY_BYTES = 320 * 1024;
+
 /** 1-500 photo ids, counted as sent. SQL applies the same limits; this saves the round trip. */
 export function bulkPhotoIds(value: unknown): string[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_BULK_PHOTOS) throw new PhotoApiError('invalid_input');

@@ -32,7 +32,8 @@ test('a project created from the move page receives the photo, and can be rename
     values($1,$2,$3,'image','project.png',$4,$5,'image/png',$6,$4,now())`, [id, source, fixtures.employeeA.id, path, bytes.length, createHash('sha256').update(bytes).digest('hex')]);
 
   await page.goto(`/photos/actions?action=move&photo=${id}`);
-  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New project', exact: true }).click();
   // Typing part of an existing name offers that project before a duplicate is made.
   await page.getByLabel('Project name').fill(`harbor remodel ${tag}`);
   await expect(page.getByRole('button', { name: new RegExp(`Use #PROJ-${tag}`) })).toBeVisible();

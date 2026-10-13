@@ -29,6 +29,23 @@ describe("upload-queue", () => {
     });
   });
 
+  it("a held format twin waits for Keep, which queues it to upload, and survives a reload", () => {
+    let q = enq(Q.emptyQueue(), [{ file: f("IMG_1.CR2") }]);
+    const held = q.items[0].photoId;
+    const twin = { id: "jpg", job_id: "job-1", original_name: "IMG_1.JPG", display_name: null, captured_at: "2026-01-01T00:00:00Z" };
+    q = Q.recordOutcome(Q.start(q, held), held, { status: "format_twin", twin, error: "Looks like another format of IMG_1.JPG" });
+    expect(Q.nextQueued(q)).toBeNull();
+    expect(Q.isActive(q)).toBe(false);
+    expect(Q.clearSettled(q).items).toHaveLength(1);
+    expect(Q.toManifest(q, 1)).toEqual([expect.objectContaining({ photoId: held, status: "interrupted" })]);
+    expect(Q.retry(Q.keep(Q.emptyQueue(), held), held).items).toEqual([]);
+    q = Q.keep(q, held);
+    expect(q.items[0]).toMatchObject({ status: "queued", keepFormatTwin: true, twin: undefined, error: undefined });
+    // Kept survives a reload: the re-picked file uploads without being held again.
+    expect(Q.restoreManifest(Q.toManifest(q, 1), 1).items[0]).toMatchObject({ status: "interrupted", keepFormatTwin: true });
+    expect(Q.keep(q, held)).toBe(q);
+  });
+
   it("manifest strips files, restores as interrupted, expires after 24h", () => {
     const q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }]);
     const saved = Q.toManifest(q, 1);

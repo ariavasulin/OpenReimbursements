@@ -22,12 +22,12 @@ function summary(items: QueueItem[], active: boolean): string {
   if (count(["cancelling"])) return "Removing upload...";
   if (count(["cancel_pending"])) return `${plural(count(["cancel_pending"]), "removal")} pending`;
   if (active) {
-    const settled = count(["done", "duplicate", "failed", "job_conflict", "restore_required", "waiting_claim"]);
+    const settled = count(["done", "duplicate", "failed", "job_conflict", "restore_required", "waiting_claim", "format_twin"]);
     return `Uploading ${Math.min(settled + 1, items.length)} of ${items.length}`;
   }
   const interrupted = count(["interrupted"]);
   if (interrupted) return `${plural(interrupted, "upload")} interrupted`;
-  const unresolved = count(["job_conflict", "restore_required", "waiting_claim"]);
+  const unresolved = count(["job_conflict", "restore_required", "waiting_claim", "format_twin"]);
   if (unresolved) return `${plural(unresolved, "upload")} needs attention`;
   const failed = count(["failed"]);
   if (failed) return `${plural(failed, "upload")} failed`;
@@ -115,6 +115,11 @@ export default function UploadTray({
           {retryDeferred ? "Retry later" : item.status === "failed" ? "Retry" : "Check again"}
         </RowButton>
       );
+    } else if (item.status === "format_twin") {
+      // Held, never dropped: the uploader decides. Keep uploads it as its own photo; the X leaves it out.
+      primary = (
+        <RowButton onClick={() => manager.keep(item.photoId)}>Keep</RowButton>
+      );
     } else if (item.status === "interrupted") {
       primary = (
         <RowButton onClick={() => repickInputRef.current?.click()}>
@@ -130,6 +135,14 @@ export default function UploadTray({
           {item.canonicalPhotoId && item.status !== "restore_required" && (
             <Link
               href={photoPath(item.canonicalJobId ?? null, item.canonicalPhotoId)}
+              className="rounded-md px-2 py-1.5 text-[11px] text-[#8bbaff] underline"
+            >
+              View photo
+            </Link>
+          )}
+          {item.status === "format_twin" && item.twin && (
+            <Link
+              href={photoPath(item.twin.job_id, item.twin.id)}
               className="rounded-md px-2 py-1.5 text-[11px] text-[#8bbaff] underline"
             >
               View photo

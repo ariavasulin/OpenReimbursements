@@ -11,7 +11,7 @@ import {
 import { METADATA_MAX_BYTES, DERIVATIVES_MAX_BYTES } from "./decode-limits";
 import { SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
 import { RESUMABLE_THRESHOLD_BYTES, TUS_CHUNK_BYTES } from "./upload-tus";
-import type { CanonicalUploadOutcome, FinalizeUploadInput } from "./upload-contract";
+import { FORMAT_TWIN_WINDOW_MS, type CanonicalUploadOutcome, type FinalizeUploadInput, type FormatTwin, type FormatTwinQuery } from "./upload-contract";
 import { makeDeps, makeFile, META, CAPTURED, sanitizeFilename, storagePaths, sha256, type Recorded } from "./__fixtures__/upload";
 
 describe("uploadOne", () => {
@@ -91,7 +91,7 @@ describe("uploadOne", () => {
 
   it("handles undecodable files: no derivatives, row lands with nulls", async () => {
     const { deps, uploads, finalized } = makeDeps({ noDerivatives: true });
-    const file = makeFile("shot.CR3", "", 6);
+    const file = makeFile("shot.ORF", "", 6); // a RAW format the upload table does not know
 
     const result = await uploadOne(file, "photo-1", META, deps);
 
@@ -831,5 +831,68 @@ describe("retry metadata survives the upload orchestrator", () => {
     const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps, undefined, { sidecar: makeFile("a.xmp", "application/rdf+xml") });
     expect(result).toMatchObject({ status: "done", sidecarRetry: true, retryAt: 60_000 });
     expect(finalized[0].sidecar_path).toBeNull();
+  });
+});
+
+// AC-21, plan Decision 11: a second-format copy of a shot already in the project is held, never
+// uploaded unasked and never silently dropped; the uploader decides.
+describe("format twins", () => {
+  const JPG: FormatTwin = { id: "jpg-1", job_id: META.jobId!, original_name: "IMG_1234.JPG", display_name: null,
+    captured_at: CAPTURED.toISOString() };
+  /** Stands in for GET /api/photos/twin over a project holding IMG_1234.JPG captured at CAPTURED. */
+  const server = () => vi.fn(async (query: FormatTwinQuery) =>
+    query.job_id === META.jobId && query.base.toLowerCase() === "img_1234" &&
+      Math.abs(Date.parse(query.captured_at) - CAPTURED.getTime()) <= FORMAT_TWIN_WINDOW_MS ? JPG : null);
+
+  it("holds a twin before any attempt, claim, or bytes, naming the photo it looks like", async () => {
+    const { deps, uploads } = makeDeps();
+    deps.findFormatTwin = server();
+    const result = await uploadOne(makeFile("IMG_1234.CR2", ""), "photo-1", META, deps, undefined, { shutter: CAPTURED });
+    expect(result).toMatchObject({ status: "format_twin", twin: JPG, error: "Looks like another format of IMG_1234.JPG" });
+    expect(deps.findFormatTwin).toHaveBeenCalledWith({ job_id: META.jobId, base: "IMG_1234",
+      captured_at: CAPTURED.toISOString(), content_sha256: expect.stringMatching(/^[0-9a-f]{64}$/) }, expect.anything());
+    expect(deps.createAttempt).not.toHaveBeenCalled();
+    expect(deps.claimContent).not.toHaveBeenCalled();
+    expect(uploads).toEqual([]);
+  });
+
+  it("Keep uploads it as its own photo without asking again", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.findFormatTwin = server();
+    const result = await uploadOne(makeFile("IMG_1234.CR2", ""), "photo-1", META, deps, undefined,
+      { shutter: CAPTURED, keepFormatTwin: true });
+    expect(result.status).toBe("done");
+    expect(deps.findFormatTwin).not.toHaveBeenCalled();
+    expect(finalized[0]).toMatchObject({ original_name: "IMG_1234.CR2", captured_at: CAPTURED.toISOString() });
+  });
+
+  it("never checks an album-only upload", async () => {
+    const { deps } = makeDeps();
+    deps.findFormatTwin = server();
+    const result = await uploadOne(makeFile("IMG_1234.CR2", ""), "photo-1", { ...META, jobId: null, albumIds: ["album-1"] },
+      deps, undefined, { shutter: CAPTURED });
+    expect(result.status).toBe("done");
+    expect(deps.findFormatTwin).not.toHaveBeenCalled();
+  });
+
+  it("does not hold a file captured two seconds apart", async () => {
+    const { deps } = makeDeps();
+    deps.findFormatTwin = server();
+    const result = await uploadOne(makeFile("IMG_1234.CR2", ""), "photo-1", META, deps, undefined,
+      { shutter: new Date(CAPTURED.getTime() + 2_000) });
+    expect(deps.findFormatTwin).toHaveBeenCalledOnce();
+    expect(result.status).toBe("done");
+  });
+
+  it("checks only images, and reads the capture time once", async () => {
+    const { deps, finalized } = makeDeps({ noDerivatives: true });
+    deps.findFormatTwin = server();
+    deps.extractCapturedAt = vi.fn(async () => ({ date: new Date(CAPTURED.getTime() + 5_000), source: "exif" as const }));
+    expect((await uploadOne(makeFile("IMG_1234.MOV", ""), "photo-1", META, deps)).status).toBe("done");
+    expect(deps.findFormatTwin).not.toHaveBeenCalled();
+    expect((await uploadOne(makeFile("IMG_1234.JPG", "image/jpeg"), "photo-2", META, deps)).status).toBe("done");
+    expect(deps.findFormatTwin).toHaveBeenCalledOnce();
+    expect(deps.extractCapturedAt).toHaveBeenCalledTimes(2);
+    expect(finalized[1]).toMatchObject({ captured_at: new Date(CAPTURED.getTime() + 5_000).toISOString(), captured_at_source: "exif" });
   });
 });

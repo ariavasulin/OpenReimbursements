@@ -39,11 +39,18 @@ describe("classifyFile", () => {
     });
   });
 
+  it("classifies .CR3 with no browser type as a RAW image", () => {
+    expect(classifyFile(file("IMG_1.CR3"))).toMatchObject({
+      kind: "image",
+      mime: "image/x-canon-cr3",
+    });
+  });
+
   it("falls back to the File.type prefix, then octet-stream", () => {
-    expect(classifyFile(file("shot.cr3", "image/x-canon-cr3")).kind).toBe(
+    expect(classifyFile(file("shot.orf", "image/x-olympus-orf")).kind).toBe(
       "image"
     );
-    expect(classifyFile(file("shot.cr3"))).toMatchObject({
+    expect(classifyFile(file("shot.orf"))).toMatchObject({
       kind: "file",
       mime: "application/octet-stream",
     });

@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { keepPreviousData, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { FilterChip, chipClass } from "@/components/photos/filter-bar";
-import GroupByToggle, { SortToggle } from "@/components/photos/group-by-toggle";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import BrowseToolbar from "@/components/photos/browse-toolbar";
+import type { FilterChoices } from "@/components/photos/filter-bar";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
-import PhotoGrid from "@/components/photos/photo-grid";
+import PhotoGrid, { type GridSelection } from "@/components/photos/photo-grid";
 import PhotoLightbox from "@/components/photos/photo-lightbox";
 import SelectionBar from "@/components/photos/selection-bar";
 import StatusLine from "@/components/photos/status-line";
+import { useBrowseState } from "@/hooks/use-browse-state";
 import { usePhotoSelection } from "@/hooks/use-photo-selection";
 import {
   useLightboxByPhotoId,
@@ -16,6 +17,7 @@ import {
   usePhotoDeepLink,
 } from "@/hooks/use-photo-deep-link";
 import {
+  fetchPhotoIds,
   fetchPhotosPage,
   invalidatePhotoCaches,
   usePhotoDetail,
@@ -23,6 +25,12 @@ import {
   usePhotoTags,
   type PhotoSort,
 } from "@/lib/photos/api";
+import {
+  activeFilterCount,
+  groupFilters,
+  NO_PROJECT_VALUE,
+  withFilterParams,
+} from "@/lib/photos/browse-state";
 import {
   accumulateSeenOptions,
   emptySeenOptions,
@@ -35,31 +43,21 @@ import {
   groupPhotos,
   openableInDisplayOrder,
   type GroupBy,
+  type PhotoGroup,
 } from "@/lib/photos/group";
 import type { PhotoAlbumRef, PhotoRow } from "@/lib/photos/types";
 import { cn } from "@/lib/utils";
 
 // The one photo grid screen, shared by Photos (every photo), an album, a
-// project, and search results: filters, Group by, Sort, the grid with
-// select-many and its action bar, endless scrolling, and the viewer with its
-// `?photo=` link.
+// project, and search results: the toolbar (filters, Group by, Sort, all kept
+// in the URL), the grid with select-many and its action bar, endless
+// scrolling, and the viewer with its `?photo=` link.
 
 export type BrowserScope =
   | { kind: "all" }
   | { kind: "album"; album: PhotoAlbumRef }
   | { kind: "job"; jobId: string }
   | { kind: "search"; q: string };
-
-/** `job=none` on GET /api/photos: photos with no project. */
-const NO_PROJECT_VALUE = "none";
-
-interface Filters {
-  project: { id: string; label: string } | null;
-  uploader: { id: string; name: string } | null;
-  tag: string | null;
-}
-
-const NO_FILTERS: Filters = { project: null, uploader: null, tag: null };
 
 /** What a page's summary line can say about the loaded results. */
 export interface BrowserSummary {
@@ -79,6 +77,16 @@ interface PhotoBrowserProps {
   summary?(info: BrowserSummary): ReactNode;
   pinnedTag?: string;
   pinnedLabel?: string;
+  /**
+   * An album's order: Sort's default (`custom` while the album shows its
+   * arranged order), whether Custom is offered, and a hook told of every Sort
+   * pick, which an album page uses to switch the order everyone sees.
+   */
+  albumOrder?: {
+    defaultSort: PhotoSort;
+    customOffered: boolean;
+    onSortPicked(sort: PhotoSort): void;
+  };
 }
 
 const DEFAULT_MODES = ["date", "tag", "uploader", "type"] as const;
@@ -107,19 +115,49 @@ export default function PhotoBrowser({
   summary,
   pinnedTag,
   pinnedLabel,
+  albumOrder,
 }: PhotoBrowserProps) {
   const queryClient = useQueryClient();
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS);
-  const [groupBy, setGroupBy] = useState<GroupBy>(groupModes[0]);
-  // Like Group by, kept only while the page is open.
-  const [sort, setSort] = useState<PhotoSort>("desc");
+  // Project is a filter where the page is not already one project or album.
+  const projectFilter = scope.kind === "all" || scope.kind === "search";
+  const {
+    filters,
+    sort,
+    group: groupBy,
+    setFilters,
+    clearFilters,
+    setSort,
+    setGroup,
+  } = useBrowseState({
+    groupModes,
+    projectFilter,
+    defaultSort: albumOrder?.defaultSort,
+    customSort: albumOrder !== undefined,
+  });
+  const custom = sort === "custom";
+  const pickSort = useCallback(
+    (next: PhotoSort) => {
+      setSort(next);
+      albumOrder?.onSortPicked(next);
+    },
+    [setSort, albumOrder]
+  );
   const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
   const key = scopeKey(scope);
   const enabled = scope.kind !== "search" || scope.q.length > 0;
+  // "photos" / "photo-search" are the prefixes invalidatePhotoCaches refreshes.
+  const prefix = scope.kind === "search" ? "photo-search" : "photos";
+  // Exactly what the grid lists, for GET /api/photos and /ids alike.
+  const scopeQuery = scopeParams(scope).toString();
+  const listParams = useMemo(
+    () => withFilterParams(new URLSearchParams(scopeQuery), filters, sort),
+    [scopeQuery, filters, sort]
+  );
+  const listKey = listParams.toString();
 
-  // A new album, project, or search is a new screen: nothing carries over.
+  // A new album, project, or search is a new screen: its menus start empty.
+  // (Its filters come from its own URL.)
   useEffect(() => {
-    setFilters(NO_FILTERS);
     setSeen(emptySeenOptions());
   }, [key]);
 
@@ -133,21 +171,9 @@ export default function PhotoBrowser({
     isFetchNextPageError,
     isPlaceholderData,
   } = useInfiniteQuery({
-    // "photos" / "photo-search" are the prefixes invalidatePhotoCaches refreshes.
-    queryKey: [
-      scope.kind === "search" ? "photo-search" : "photos",
-      key,
-      filters.project?.id ?? null,
-      filters.uploader?.id ?? null,
-      filters.tag,
-      sort,
-    ],
+    queryKey: [prefix, key, listKey],
     queryFn: ({ pageParam }) => {
-      const params = scopeParams(scope);
-      if (filters.project) params.set("job", filters.project.id);
-      if (filters.uploader) params.set("uploader", filters.uploader.id);
-      if (filters.tag) params.set("tags", filters.tag);
-      if (sort === "asc") params.set("sort", "asc");
+      const params = new URLSearchParams(listKey);
       if (pageParam) params.set("cursor", pageParam);
       return fetchPhotosPage(params);
     },
@@ -179,19 +205,65 @@ export default function PhotoBrowser({
     scope.kind === "all" ? "" : scope.kind === "job" ? scope.jobId : null;
   const { data: knownTags } = usePhotoTags(knownTagScope !== null, knownTagScope);
   const tagOptions = useMemo(() => toTagOptions(seen, knownTags ?? []), [seen, knownTags]);
-  const { data: jobs } = usePhotoJobs(scope.kind === "all");
+  const { data: jobs } = usePhotoJobs(projectFilter);
   const projectOptions = useMemo(
-    () => [
-      { value: NO_PROJECT_VALUE, label: NO_PROJECT },
-      ...(jobs ?? [])
-        .filter((job) => job.photo_count > 0)
-        .map((job) => ({ value: job.id, label: jobLabel(job) })),
-    ],
-    [jobs]
+    () =>
+      projectFilter
+        ? [
+            { value: NO_PROJECT_VALUE, label: NO_PROJECT },
+            ...(jobs ?? [])
+              .filter((job) => job.photo_count > 0)
+              .map((job) => ({ value: job.id, label: jobLabel(job) })),
+          ]
+        : null,
+    [jobs, projectFilter]
+  );
+  const choices = useMemo<FilterChoices>(
+    () => ({ projects: projectOptions, uploaders: uploaderOptions, tags: tagOptions }),
+    [projectOptions, uploaderOptions, tagOptions]
   );
 
-  const groups = useMemo(() => groupPhotos(photos, groupBy), [photos, groupBy]);
-  const { selection, selectedIds, clear, limitMessage } = usePhotoSelection(groups);
+  // GET /api/photos/ids answers, shared by "Select all" and the group ticks;
+  // under the grid's own prefix, so an edit that refreshes the grid refreshes them.
+  const idsQuery = useCallback(
+    (params: URLSearchParams) => ({
+      queryKey: [prefix, key, params.toString(), "ids"],
+      queryFn: () => fetchPhotoIds(params),
+      staleTime: 30_000,
+    }),
+    [prefix, key]
+  );
+  const groupIds = useCallback(
+    (group: PhotoGroup) => {
+      const narrowed = groupFilters(group, filters);
+      return narrowed
+        ? queryClient.fetchQuery(
+            idsQuery(withFilterParams(new URLSearchParams(scopeQuery), narrowed, sort))
+          )
+        : null;
+    },
+    [queryClient, idsQuery, filters, sort, scopeQuery]
+  );
+
+  // An arranged album is one list in its own order: grouping would reshuffle it.
+  const groups = useMemo<PhotoGroup[]>(
+    () =>
+      custom
+        ? photos.length > 0
+          ? [{ key: "custom:all", label: "Custom order", photos }]
+          : []
+        : groupPhotos(photos, groupBy),
+    [photos, groupBy, custom]
+  );
+  const { selection, selectedIds, clear, limitMessage, selectAll } = usePhotoSelection(
+    groups,
+    groupIds
+  );
+  // Every match, once something is selected: the bar offers "Select all M".
+  const allMatches = useQuery({
+    ...idsQuery(listParams),
+    enabled: enabled && selectedIds.size > 0,
+  });
   // Another album, project, or search is another screen, so its selection goes.
   // Changing a filter keeps it: that is how photos from two projects get picked
   // for one album — filter to the first, tick, filter to the second, tick.
@@ -224,6 +296,17 @@ export default function PhotoBrowser({
       ? [extra, ...openable]
       : openable;
   }, [groups, linked.data, linked.isError]);
+
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  // While the previous filter's photos are still on screen (dimmed), a group
+  // tick would mix those rows with the new filter's ids: wait for the page.
+  const gridSelection = useMemo<GridSelection>(
+    () => (isPlaceholderData ? { ...selection, onToggleGroup: () => {} } : selection),
+    [selection, isPlaceholderData]
+  );
 
   const {
     openPhotoId,
@@ -258,7 +341,7 @@ export default function PhotoBrowser({
     },
   });
 
-  const noFiltersActive = !filters.project && !filters.uploader && !filters.tag;
+  const noFiltersActive = activeFilterCount(filters) === 0;
   // Known once any data is in hand, including the previous view's while a new
   // sort or filter loads (isLoading is false then). Only a settled answer may
   // say the view is empty: a dimmed previous view is not the new one's answer.
@@ -275,75 +358,22 @@ export default function PhotoBrowser({
       {loaded && summary?.({ count: photos.length, hasMore: hasNextPage, projectCount })}
 
       {/* Filters and grouping only appear when there is something to filter;
-          they stay through a failed first page so All or Newest is reachable. */}
+          they stay through a failed first page so Clear or Newest is reachable. */}
       {(loaded || error !== null) && !scopeIsEmpty && (
-        // One row wherever it fits; on a phone the View chips take a second row.
-        <div className="mb-1 flex flex-row flex-wrap items-center gap-2">
-          <div role="group" aria-label="Filters" className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              aria-pressed={noFiltersActive}
-              onClick={() => setFilters(NO_FILTERS)}
-              className={chipClass(noFiltersActive)}
-            >
-              All
-            </button>
-            {scope.kind === "all" && (
-              <FilterChip
-                label="Project"
-                active={filters.project?.label ?? null}
-                options={projectOptions}
-                onSelect={(value) =>
-                  setFilters((previous) => ({
-                    ...previous,
-                    project: {
-                      id: value,
-                      label:
-                        projectOptions.find((option) => option.value === value)?.label ??
-                        "Project",
-                    },
-                  }))
-                }
-                onClear={() => setFilters((previous) => ({ ...previous, project: null }))}
-              />
-            )}
-            <FilterChip
-              label="Tag"
-              active={filters.tag}
-              options={tagOptions}
-              onSelect={(value) => setFilters((previous) => ({ ...previous, tag: value }))}
-              onClear={() => setFilters((previous) => ({ ...previous, tag: null }))}
-            />
-            <FilterChip
-              label="Uploader"
-              active={filters.uploader?.name ?? null}
-              options={uploaderOptions}
-              onSelect={(value) =>
-                setFilters((previous) => ({
-                  ...previous,
-                  uploader: { id: value, name: seen.uploaders.get(value) ?? "Uploader" },
-                }))
-              }
-              onClear={() => setFilters((previous) => ({ ...previous, uploader: null }))}
-            />
-          </div>
-          {/* How the photos are laid out, not which ones. Wraps rather than
-              pushing the page sideways on a narrow screen or at large text. */}
-          {(photos.length > 0 || error !== null) && (
-            <div
-              role="group"
-              aria-label="View"
-              className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2"
-            >
-              {groupModes.length > 1 && (
-                <GroupByToggle modes={groupModes} value={groupBy} onChange={setGroupBy} />
-              )}
-              <SortToggle value={sort} onChange={setSort} />
-            </div>
-          )}
-        </div>
+        <BrowseToolbar
+          filters={filters}
+          choices={choices}
+          onFiltersChange={setFilters}
+          onClear={clearFilters}
+          groupModes={custom ? [] : groupModes}
+          group={groupBy}
+          onGroupChange={setGroup}
+          sort={sort}
+          onSortChange={pickSort}
+          customSort={albumOrder?.customOffered || custom}
+          showView={photos.length > 0 || error !== null}
+        />
       )}
-
       {enabled && isLoading && <StatusLine>Loading photos...</StatusLine>}
       {/* A failed next page is the sentinel's to report (it keeps the loaded
           grid and offers retry); the banner is for the first page only. */}
@@ -356,13 +386,13 @@ export default function PhotoBrowser({
       {scopeIsEmpty && empty}
       {settled && !noFiltersActive && photos.length === 0 && (
         <div className="py-10 text-center">
-          <p className="text-base text-[#d0d0d0]">No photos match these filters.</p>
+          <p className="text-base text-[#d0d0d0]">No photos match</p>
           <button
             type="button"
-            onClick={() => setFilters(NO_FILTERS)}
+            onClick={clearFilters}
             className="mx-auto mt-3 flex min-h-11 items-center rounded-lg border border-[#4e4e4e] bg-[#2e2e2e] px-4 text-base text-white hover:border-[#2680FC]"
           >
-            Show all photos
+            Clear filters
           </button>
         </div>
       )}
@@ -373,13 +403,14 @@ export default function PhotoBrowser({
       >
         <PhotoGrid
           groups={groups}
-          groupBy={groupBy}
+          // "date" draws the custom list's one header without a loaded-count.
+          groupBy={custom ? "date" : groupBy}
           onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
-          selection={selection}
+          selection={gridSelection}
           pinnedTag={noFiltersActive ? pinnedTag : undefined}
           pinnedLabel={pinnedLabel}
           onExpandPinned={() =>
-            pinnedTag && setFilters((previous) => ({ ...previous, tag: pinnedTag }))
+            pinnedTag && setFilters({ tags: [pinnedTag] })
           }
         />
       </div>
@@ -397,11 +428,15 @@ export default function PhotoBrowser({
         album={scope.kind === "album" ? scope.album : undefined}
         limitMessage={limitMessage}
         photos={photos}
+        listQuery={listKey}
         sharedJobId={sharedJobId}
+        allMatches={allMatches.data}
+        onSelectAll={selectAll}
       />
 
       <PhotoLightbox
         {...lightboxProps}
+        onNearEnd={loadMore}
         onChanged={() => invalidatePhotoCaches(queryClient)}
       />
     </>

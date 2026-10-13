@@ -116,6 +116,43 @@ photo from the upload tray's **Review restore** link (any signed-in employee
 can, while the 30 days last), then retries the original queue item to resolve
 the canonical result.
 
+## Browsing, select all, download, and album order (Wave 2, 2026-10-12)
+
+What an operator needs to know about the client-feedback round; the employee
+view is in `Employee-Features.md` § DWS Photos.
+
+- **Filters live in the URL** (`project, uploader, tags, type, from, to, sort,
+  group`); `GET /api/photos` and `GET /api/photos/ids` parse them in one place
+  (`src/lib/photos/server/list-filters.ts`). `from`/`to` are zoned ISO instants
+  the browser computes in its own local time; the server never picks a
+  timezone. `q` is split into words (at most 8) and every word must match.
+- **Select all** calls `GET /api/photos/ids`, which walks the match server-side
+  1,000 rows at a time and stops at 5,000 (`truncated: true`). The selection
+  cap is 5,000 (`MAX_SELECTION_PHOTOS`); the action batch accepts it as one
+  request, while the tag, album, and purge routes keep 500 per request and the
+  client chunks. No SQL cap changed. Lower `MAX_SELECTION_PHOTOS` if `/ids`
+  ever times out.
+- **Zip download is built in the browser** from the public originals
+  (`client-zip`, store-only). Without `showSaveFilePicker` (Safari, Firefox,
+  iPhone) the zip is held in memory, which is what the 2 GB warning is for;
+  there is no hard cap. A failed original is left out and named in the toast.
+- **Album order.** Migration `20261012223043_album_custom_order.sql` adds
+  `album_photos.position` and `albums.sort_mode` (`date` | `custom`),
+  `photo_album_reorder` (full order, or `null` to return to date order while
+  keeping positions), a trigger that gives a newly added photo `max+1` when the
+  album is custom (covers Add to album, upload into an album, and folder
+  import), and the `album_photo_order` view the photos route reads for
+  `sort=custom`. `photo_share_read` orders by `(position, id)` for a custom
+  album and hands out a `{position, id}` cursor; switching an album's mode
+  while someone pages a share link makes their next page read as nothing (the
+  existing foreign-cursor behavior). Arrange is capped at 2,000 photos
+  (`MAX_ARRANGE_PHOTOS`).
+- **Format twins.** `GET /api/photos/twin?job=&base=&captured_at=&sha=` finds an
+  active image in the project with the same base name and a capture time
+  within 1 s and different bytes. The check runs in the browser before any
+  attempt row or bytes, images only. `.CR3` is now a RAW image in the upload
+  table, so folder imports include it.
+
 ## Hand-made projects
 
 A photo has at most one job, which employees call a project, and may have none

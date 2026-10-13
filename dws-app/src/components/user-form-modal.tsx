@@ -18,6 +18,8 @@ import { Loader2 } from "lucide-react"
 import { isValidUSPhoneNumber } from "@/lib/phone"
 import type { AdminUser } from "@/lib/types"
 import { OWN_UPLOAD_TRASH_DAYS } from "@/lib/photos/permissions"
+import { invalidatePhotoActor } from "@/lib/photos/api"
+import { useQueryClient } from "@tanstack/react-query"
 
 interface UserFormModalProps {
   open: boolean
@@ -51,6 +53,7 @@ export function UserFormModal({
     role: "employee",
     photo_admin: false,
   })
+  const queryClient = useQueryClient()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -129,6 +132,10 @@ export function UserFormModal({
         throw new Error(data.error || `Failed to ${mode} user`)
       }
 
+      // The Photos screens cache "am I a photo admin" (usePhotoActor). If this
+      // save changed it for the person signed in, Trash and Delete must follow
+      // on the next screen, not after the cache goes stale.
+      void invalidatePhotoActor(queryClient)
       onSuccess(data.user)
       onOpenChange(false)
     } catch (err) {

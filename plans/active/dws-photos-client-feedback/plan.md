@@ -157,6 +157,8 @@ later experience; *structural* = no planned reversal.
     toolbar, W2-A, W2-B, W2-E; photo-albums Decision 14 continues) by a worker of a different
     model family, before the PR is called ready. There is no separate end-of-wave review: Ari's
     click-through on the review stack is the final look. *First-release*.
+    *Amended 2026-10-12 (owner):* for Wave 2 the rendered reviews run once, on the combined
+    branch, not per unit.
 
 ## Alternatives
 
@@ -309,6 +311,15 @@ click through, and **merges only on Ari's approval**. Rendered reviews (Decision
 once on `iPhone 15` and once on desktop. Ari is told in one or two plain sentences per PR and is
 asked before every production step.
 
+**As run (owner steering, 2026-10-12).** Wave 1 shipped as one squashed PR (#26) rather than
+three. Wave 2 is one PR from one combined branch: the unit worktrees were a speed tool only,
+with no PR, bot review, review stack, or rendered review per unit. Each worker ran `--permissions
+yolo`, ran the unit, db, and routes suites, and wrote its browser specs without running them;
+the orchestrator merged every unit branch into `wave2`, ran the full browser suite once there,
+and then shipped, requested one bot-review round (claude and codex), triaged it, and started one
+review stack for Ari. The production wipe (§ Launch ops step 3) moved to after the Wave 2 PR
+merges, so the production photos stayed useful for testing in between.
+
 **Waves.** Wave 1 holds what must be true before real photos arrive, in three parallel
 worktrees. Wave 2 starts after Wave 1 merges (its toolbar and sort parameter are the base),
 with four parallel worktrees and one that follows.
@@ -436,14 +447,15 @@ Establishes the browsing basics the Wave 2 toolbar builds on. Independent of W1-
 - [ ] [AC-8] `integration/routes/albums.test.ts`: `sort=asc` first and second page are strictly increasing on `(captured_at, id)` with no overlap against the `desc` pages' reverse.
 - [ ] [AC-9] `tags.test.ts` or a `tag-dropdown` test: the job-scoped fetch is used when a project is known; `test:browser`: tag picker in project A does not list a tag only used in project B, and does on `/photos`.
 - [ ] Rendered review (Decision 12) on `iPhone 15` and desktop: the toolbar row with Filters, Group by, and Sort stays one tidy row with ≥44 px targets.
-- [ ] Suites green; `tsc` clean.
+- [x] Suites green; `tsc` clean.
 
 ### Exit criteria
 Every grid groups by four modes, sorts both ways across pages, and the tag picker is scoped per project.
 
-## Launch ops (after W1-A and W1-B deploy)
+## Launch ops (after W1-A and W1-B deploy; step 3 after the Wave 2 PR merges)
 
-Orchestrator by hand, each step confirmed with Ari first. Production facts on 2026-10-12: 22
+Orchestrator by hand, each step confirmed with Ari first. Steps 1 and 2 ran on 2026-10-12 with
+Wave 1; the owner moved step 3 (the wipe) to after the Wave 2 PR merges. Production facts on 2026-10-12: 22
 office jobs, 0 hand-made, 41 active photos, 4 trashed, 1 album, 0 live links, gates
 `writes=true, repair=false, sharing=false, mcp=true`.
 
@@ -496,12 +508,12 @@ merges. **Split:** A1 (server) then A2 (client) as two workers in the same workt
 7. Search page: `q` feeds the same grid; Projects and Albums sections unchanged.
 
 ### Verify
-- [ ] [AC-10] `test:routes`: `type=raw&from=…&to=…&tags=a,b&uploader=…` ANDs; `test:browser` (phone + desktop): set three filters, reload, filters persist; `Clear` empties the URL; empty state shows `Clear filters`.
-- [ ] [AC-11] `test:routes`: `q=3962 professional` matches only the intersection; `q=yana sept` returns nothing in a fixture with no `sept` in names.
+- [x] [AC-10] `test:routes`: `type=raw&from=…&to=…&tags=a,b&uploader=…` ANDs; `test:browser` (phone + desktop): set three filters, reload, filters persist; `Clear` empties the URL; empty state shows `Clear filters`.
+- [x] [AC-11] `test:routes`: `q=3962 professional` matches only the intersection; `q=yana sept` returns nothing in a fixture with no `sept` in names.
 - [ ] [AC-13] `test:routes`: `/ids` on 1,200 fixtures returns 1,200; `test:browser`: "Select all 1,200" then Tag → every photo tagged (three requests observed); Trash → confirm page lists 1,200.
-- [ ] [AC-14] `test:routes`: 6,000 fixtures → 5,000 ids, `truncated:true`.
+- [x] [AC-14] `test:routes`: 6,000 fixtures → 5,000 ids, `truncated:true`.
 - [ ] [AC-12] Rendered review (Decision 12) on `iPhone 15` and desktop: no clipped controls, ≥44 px targets, no horizontal scroll, Filter sheet sections readable; dispositions recorded in `reviews/`.
-- [ ] Suites green; `tsc` clean; A1 and A2 each hand back separately.
+- [x] Suites green; `tsc` clean; A1 and A2 each hand back separately.
 
 ### Exit criteria
 Every grid has the toolbar, filters and sort live in the URL, search words AND, and select-all selects every match up to 5,000.
@@ -529,7 +541,7 @@ Independent of W2-A; may run in parallel.
 - [ ] [AC-19] `test:browser` desktop: aside absent on open, present after "i", persists across photos; Fullscreen button present on desktop Chromium (Playwright), absent under an iPhone device emulation.
 - [ ] [AC-20] `test:browser`: `Play` on an album with one video and three photos cycles the three photos (counter advances at ~4 s, video never shown), controls hidden until a tap.
 - [ ] Rendered review on `iPhone 15` and desktop: edge-to-edge, hide/show feel, "i" placement.
-- [ ] Suites green; `tsc` clean.
+- [x] Suites green; `tsc` clean.
 
 ### Exit criteria
 Photos fill the screen, every control hides on a tap, Details is opt-in on desktop, and Play runs a slideshow from pages and the viewer.
@@ -551,7 +563,7 @@ Independent; small.
 
 ### Verify
 - [ ] [AC-21] `upload.test.ts`: twin hit parks the item; `keep` proceeds; album-only upload never calls `/twin`; a 2-second difference is not a twin. `test:routes`: `/twin` matches `IMG_1234.CR2` against `IMG_1234.JPG` in the same job and not across jobs. `test:browser`: tray shows the row and `Keep` uploads; `/migrate` switch on uploads both.
-- [ ] Suites green.
+- [x] Suites green.
 
 ### Exit criteria
 A second-format copy is flagged and held, never silently dropped, and the uploader decides.
@@ -571,8 +583,8 @@ Independent of the toolbar; merges after W2-A so "Select all → Download" is te
 
 ### Verify
 - [ ] [AC-15] `test:browser` desktop: select 40 fixtures → one `.zip` download with 40 uniquely named entries and the expected total size (Playwright `download.path()` + a zip listing); phone device shows the note; a fixture over 2 GB (stubbed sizes) shows the warning before fetching.
-- [ ] Unit test for the entry-name de-duplication.
-- [ ] Suites green.
+- [x] Unit test for the entry-name de-duplication.
+- [x] Suites green.
 
 ### Exit criteria
 Any selection downloads as one correctly named zip, with honest progress and failure reporting.
@@ -599,7 +611,7 @@ Starts after W2-A merges (shares `GET /api/photos`).
 ### Verify
 - [ ] [AC-16] `test:db`: reorder, add (appends), switch to date and back; `test:routes`: `sort=custom` pages correctly; share read follows it. `test:browser` desktop: drag the third photo first, Done, reload → first.
 - [ ] [AC-17] `test:browser` phone device: long-press drag reorders; rendered review on `iPhone 15` and desktop.
-- [ ] Suites green; `tsc` clean.
+- [x] Suites green; `tsc` clean.
 
 ### Exit criteria
 Albums can be arranged by hand and everyone, including the share page and slideshow, sees that order.
@@ -616,8 +628,8 @@ Albums can be arranged by hand and everyone, including the share page and slides
 ## Rollout
 
 Every migration is additive and applied before its deploy; no deploy depends on a drop. Order:
-W1-A and W1-B migrations → Wave 1 deploys → launch ops (admins, wipe) → W2-E migration →
-Wave 2 deploys. Rollback for each unit is reverting its PR; the
+W1-A and W1-B migrations → Wave 1 deploy → launch ops (admins) → W2-E migration →
+Wave 2 deploy → launch ops (wipe). Rollback for each unit is reverting its PR; the
 columns stay (unused columns are harmless), and the delete rule can be widened by one function
 edit if it ever blocks real work. `repair_enabled` stays as the operator left it; this plan does
 not change gates.

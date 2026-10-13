@@ -9,7 +9,7 @@ import {
   extractCapturedAt as defaultExtractCapturedAt,
   type CapturedAt,
 } from "./exif";
-import { classifyFile, extensionOf, rewrap } from "./classify";
+import { baseName, classifyFile, extensionOf, rewrap } from "./classify";
 import { readSidecarMeta, SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
 import { METADATA_MAX_BYTES, canDecodePreview, isRawImage } from "./decode-limits";
 import {
@@ -18,7 +18,7 @@ import {
 } from "./derivatives";
 import type {
   AcquireUploadOutcome, AttachUploadSidecarInput, CanonicalUploadOutcome, ClaimUploadOutcome,
-  CreateUploadAttemptInput, FinalizeUploadInput, ReleaseUploadInput,
+  CreateUploadAttemptInput, FinalizeUploadInput, FormatTwin, FormatTwinQuery, ReleaseUploadInput,
   OriginalUploadState, UploadAttempt, UploadClaimInput, UploadLeaseInput, UploadOwner,
 } from "./upload-contract";
 
@@ -102,10 +102,12 @@ export interface UploadDeps {
     opts?: { shutter?: Date; sidecarDate?: Date | null }
   ) => Promise<CapturedAt>;
   makeDerivatives?: (file: File) => Promise<Derivatives | null>;
+  /** GET /api/photos/twin. Without it no upload is checked for a format twin. */
+  findFormatTwin?: (query: FormatTwinQuery, options?: RequestOptions) => Promise<FormatTwin | null>;
 }
 
 export interface UploadResult {
-  status: "done" | "failed" | "duplicate" | "job_conflict" | "restore_required" | "cancelled" | "waiting_claim";
+  status: "done" | "failed" | "duplicate" | "job_conflict" | "restore_required" | "cancelled" | "waiting_claim" | "format_twin";
   error?: string;
   errorCode?: string;
   canonicalPhotoId?: string;
@@ -117,7 +119,13 @@ export interface UploadResult {
   retryAt?: number;
   retryable?: boolean;
   newAttemptRequired?: boolean;
+  /** With status format_twin: the photo already in the project that this file looks like. */
+  twin?: FormatTwin;
 }
+
+/** The words for a held format twin (plan Decision 11), in the tray and the import list. */
+export const formatTwinMessage = (twin: Pick<FormatTwin, "original_name">) =>
+  `Looks like another format of ${twin.original_name}`;
 
 export const LEASE_RENEW_MS = 30_000;
 
@@ -157,6 +165,8 @@ export async function uploadOne(
     shutter?: Date; sidecar?: File; signal?: AbortSignal;
     identity?: UploadIdentity; onIdentity?: (identity: UploadIdentity) => void;
     expectedSidecarName?: string;
+    /** Upload even when the project already holds this shot in another format. */
+    keepFormatTwin?: boolean;
   } = {}
 ): Promise<UploadResult> {
   const warnings: string[] = [];
@@ -208,6 +218,53 @@ export async function uploadOne(
     // Every size must finish the same hash/preflight contract before any bytes.
     const digest = await run(() => deps.hash(file, requestOptions));
     if (!isSha256(digest)) throw new Error("Hashing did not return a SHA-256 digest");
+
+    // Read once: before the claim when the format-twin check needs it, otherwise
+    // beside the previews. Its notes join the warnings only once the upload gets
+    // that far, so an early outcome (a duplicate) carries none of them.
+    const captureNotes: string[] = [];
+    let capture: Promise<CapturedAt> | undefined;
+    const readCapture = () => capture ??= run(async (): Promise<CapturedAt> => {
+      let sidecarDate: Date | null = null;
+      if (opts.sidecar) {
+        if (opts.sidecar.size > SIDECAR_METADATA_MAX_BYTES) {
+          captureNotes.push("Sidecar capture metadata skipped: XMP exceeds the metadata size limit.");
+        } else {
+          try {
+            sidecarDate = (await run(() => readSidecarMeta(opts.sidecar!))).capturedAt;
+          } catch {
+            signal.throwIfAborted();
+            captureNotes.push("Sidecar metadata could not be read. Reselect the sidecar to retry.");
+          }
+        }
+      }
+      const captureOptions = { shutter: opts.shutter, sidecarDate };
+      const fallbackCapture = () => defaultExtractCapturedAt(
+        new File([], file.name, { type: "application/octet-stream", lastModified: file.lastModified }), captureOptions
+      );
+      if (file.size > METADATA_MAX_BYTES || rawImage) {
+        if (classified.kind === "image") captureNotes.push("Embedded capture metadata skipped to limit browser memory use.");
+        return fallbackCapture();
+      }
+      try {
+        return await (deps.extractCapturedAt ?? defaultExtractCapturedAt)(file, captureOptions);
+      } catch {
+        captureNotes.push("Embedded capture metadata could not be read.");
+        return fallbackCapture();
+      }
+    });
+
+    // Format twin (plan Decision 11): the same shot already in this project in
+    // another format (IMG_1234.CR2 beside IMG_1234.JPG) is held for the uploader
+    // to decide, before any attempt, claim, or bytes. Album-only uploads skip it.
+    if (meta.jobId !== null && classified.kind === "image" && !opts.keepFormatTwin && deps.findFormatTwin) {
+      const { date } = await readCapture();
+      const jobId = meta.jobId;
+      const twin = date ? await run(() => deps.findFormatTwin!({
+        job_id: jobId, base: baseName(file.name), captured_at: date.toISOString(), content_sha256: digest,
+      }, requestOptions)) : null;
+      if (twin) return { status: "format_twin", twin, error: formatTwinMessage(twin), warnings };
+    }
     const sourceSignature = JSON.stringify([file.name, file.size, file.lastModified, classified.mime]);
     const unchanged = opts.identity?.contentSha256 === digest && opts.identity.sourceSignature === sourceSignature;
     let identity: UploadIdentity = unchanged ? opts.identity! : {
@@ -260,53 +317,24 @@ export async function uploadOne(
     // TUS URL. The server checks the bound path and size under this exact claim.
     const originalState = await run(() => deps.probeOriginal(claim, requestOptions));
 
-    let sidecarDate: Date | null = null;
-    if (opts.sidecar) {
-      if (opts.sidecar.size > SIDECAR_METADATA_MAX_BYTES) {
-        warnings.push("Sidecar capture metadata skipped: XMP exceeds the metadata size limit.");
-      } else {
-        try {
-          sidecarDate = (await run(() => readSidecarMeta(opts.sidecar!))).capturedAt;
-        } catch (error) {
-          signal.throwIfAborted();
-          warnings.push("Sidecar metadata could not be read. Reselect the sidecar to retry.");
-        }
+    const capturedAt = await readCapture();
+    warnings.push(...captureNotes);
+    const derivatives = await run(async (): Promise<Derivatives | null> => {
+      if (!canDecodePreview(file)) {
+        warnings.push("Previews skipped to limit browser decoding memory use.");
+        return null;
       }
-    }
-    const captureOptions = { shutter: opts.shutter, sidecarDate };
-    const fallbackCapture = () => defaultExtractCapturedAt(
-      new File([], file.name, { type: "application/octet-stream", lastModified: file.lastModified }), captureOptions
-    );
-    const [capturedAt, derivatives] = await run(() => Promise.all([
-      (async (): Promise<CapturedAt> => {
-        if (file.size > METADATA_MAX_BYTES || rawImage) {
-          if (classified.kind === "image") warnings.push("Embedded capture metadata skipped to limit browser memory use.");
-          return fallbackCapture();
-        }
-        try {
-          return await (deps.extractCapturedAt ?? defaultExtractCapturedAt)(file, captureOptions);
-        } catch {
-          warnings.push("Embedded capture metadata could not be read.");
-          return fallbackCapture();
-        }
-      })(),
-      (async (): Promise<Derivatives | null> => {
-        if (!canDecodePreview(file)) {
-          warnings.push("Previews skipped to limit browser decoding memory use.");
-          return null;
-        }
-        try {
-          const result = await (deps.makeDerivatives ?? defaultMakeDerivatives)(file);
-          if (!result && classified.kind !== "file" && classified.kind !== "sidecar") {
-            warnings.push("Previews could not be generated; the original is preserved.");
-          }
-          return result;
-        } catch {
+      try {
+        const result = await (deps.makeDerivatives ?? defaultMakeDerivatives)(file);
+        if (!result && classified.kind !== "file" && classified.kind !== "sidecar") {
           warnings.push("Previews could not be generated; the original is preserved.");
-          return null;
         }
-      })(),
-    ]));
+        return result;
+      } catch {
+        warnings.push("Previews could not be generated; the original is preserved.");
+        return null;
+      }
+    });
 
     const transfer = (path: string, body: File, contentType: string, progress?: ByteProgress) =>
       run(() => body.size > RESUMABLE_THRESHOLD_BYTES

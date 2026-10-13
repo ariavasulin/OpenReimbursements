@@ -13,7 +13,6 @@ import { canTrashPhoto, TRASH_RULE_MESSAGE } from "@/lib/photos/permissions";
 import {
   formatCapturedAt,
   formatFileInfo,
-  jobLabel,
   NO_PROJECT,
   photoName,
 } from "@/lib/photos/format";
@@ -27,7 +26,7 @@ import type { PhotoRow } from "@/lib/photos/types";
 
 interface PhotoInfoProps {
   photo: PhotoRow;
-  /** Opens "Edit details" (owned by the lightbox, so it stacks above it). */
+  /** Opens "Edit tags" (owned by the lightbox, so it stacks above it). */
   onEdit(): void;
   /** Opens "Set project". */
   onSetProject(): void;
@@ -35,7 +34,13 @@ interface PhotoInfoProps {
   onNavigate?(): void;
 }
 
-const factLabel = "text-sm text-[#a8a8a8]";
+// One type scale for the phone sheet and the desktop panel (only the width
+// differs): a small uppercase muted label over a body-size medium value. Albums
+// and tags share one chip; "About this file" is a label/value list.
+const factLabel = "mb-1 text-xs font-medium uppercase tracking-wider text-[#a0a0a0]";
+const factValue = "text-base font-medium text-white";
+const chip = "inline-flex min-h-8 items-center rounded-full bg-[#3a3a3a] px-3 text-base font-medium";
+const fileFactLabel = "text-base text-[#a0a0a0]";
 const action =
   "flex min-h-11 w-full items-center gap-3 rounded-lg border border-[#4e4e4e] bg-[#3a3a3a] px-3 text-base text-white hover:border-[#2680FC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2680FC]";
 const actionIcon = "h-5 w-5 shrink-0 text-[#b4b4b4]";
@@ -88,18 +93,16 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
   const sidecarUrl = sidecarDownloadUrl(photo);
   // 'file'/'upload' dates are fallbacks (lastModified / server time), never
   // EXIF evidence — say so.
-  const capturedPrefix =
-    photo.captured_at_source === "file" || photo.captured_at_source === "upload"
-      ? "Approx."
-      : "Taken";
+  const approxDate =
+    photo.captured_at_source === "file" || photo.captured_at_source === "upload";
 
   return (
     // break-words: project names and 64-char tags are unconstrained text.
-    <div className="flex flex-col gap-4 break-words">
-      <dl className="space-y-2.5">
+    <div className="flex flex-col gap-6 break-words">
+      <dl className="flex flex-col gap-4">
         <div>
           <dt className={factLabel}>Name</dt>
-          <dd data-testid="photo-name" className="break-all text-base font-semibold text-white">
+          <dd data-testid="photo-name" className={cn(factValue, "wrap-anywhere")}>
             {draft === null ? (
               name ?? "Untitled"
             ) : (
@@ -153,27 +156,43 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
         </div>
         <div>
           <dt className={factLabel}>Project</dt>
-          <dd data-testid="photo-project" className="text-base font-semibold text-white">
-            {photo.job
-              ? jobLabel(photo.job)
-              : photo.job_id === null
-                ? NO_PROJECT
-                : "Photo"}
+          <dd data-testid="photo-project" className={factValue}>
+            {photo.job ? (
+              <>
+                {/* The number is a quiet prefix; the text still reads "#4211 · Name". */}
+                <span className="font-normal text-[#a0a0a0] tabular-nums">
+                  #{photo.job.job_number} ·{" "}
+                </span>
+                {photo.job.name}
+              </>
+            ) : photo.job_id === null ? (
+              NO_PROJECT
+            ) : (
+              "Photo"
+            )}
           </dd>
         </div>
         <div>
           <dt className={factLabel}>Albums</dt>
-          <dd data-testid="photo-albums" className="text-base text-white">
+          <dd data-testid="photo-albums" className={factValue}>
             {albums.length > 0 ? (
-              <ul className="mt-1 flex flex-wrap gap-1.5">
+              <ul className="-my-1.5 flex flex-wrap gap-x-1.5">
                 {albums.map((album) => (
                   <li key={album.id}>
+                    {/* The 44px target is the link; the chip inside it matches a tag's. */}
                     <Link
                       href={`/photos/albums/${album.id}`}
                       onClick={onNavigate}
-                      className="flex min-h-11 items-center rounded-full border border-[#4e4e4e] bg-[#3a3a3a] px-3 text-base text-[#8bbaff] hover:border-[#2680FC]"
+                      className="group flex min-h-11 items-center rounded-full focus:outline-none"
                     >
-                      {album.name}
+                      <span
+                        className={cn(
+                          chip,
+                          "text-[#8bbaff] group-hover:bg-[#444444] group-focus-visible:ring-2 group-focus-visible:ring-[#2680FC]"
+                        )}
+                      >
+                        {album.name}
+                      </span>
                     </Link>
                   </li>
                 ))}
@@ -187,40 +206,57 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
         </div>
         <div>
           <dt className={factLabel}>Tags</dt>
-          <dd data-testid="photo-tags" className="text-base text-[#d0d0d0]">
-            {photo.tags.length > 0 ? photo.tags.join(" · ") : "No tags"}
+          <dd data-testid="photo-tags" className={factValue}>
+            {photo.tags.length > 0 ? (
+              <ul className="flex flex-wrap gap-1.5">
+                {photo.tags.map((tag) => (
+                  <li key={tag} className={cn(chip, "text-white")}>
+                    {tag}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <span className="text-[#d0d0d0]">No tags</span>
+            )}
           </dd>
         </div>
         <div>
           <dt className={factLabel}>About this file</dt>
-          <dd className="space-y-0.5 text-base text-[#d0d0d0]">
-            <div>
-              {capturedPrefix} {formatCapturedAt(photo.captured_at)}
-            </div>
-            {photo.uploader?.full_name && <div>Uploaded by {photo.uploader.full_name}</div>}
-            {(photo.original_name || fileInfo) && (
-              <div className="break-words">
-                {[
-                  name !== photo.original_name && photo.original_name
-                    ? `Uploaded as ${photo.original_name}`
-                    : photo.original_name,
-                  fileInfo,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </div>
-            )}
+          <dd>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
+              <dt className={fileFactLabel}>Taken</dt>
+              <dd className={factValue}>
+                {approxDate && "Approx. "}
+                {formatCapturedAt(photo.captured_at)}
+              </dd>
+              {photo.uploader?.full_name && (
+                <>
+                  <dt className={fileFactLabel}>Uploaded by</dt>
+                  <dd className={factValue}>{photo.uploader.full_name}</dd>
+                </>
+              )}
+              {photo.original_name && photo.original_name !== name && (
+                <>
+                  <dt className={fileFactLabel}>Uploaded as</dt>
+                  <dd className={cn(factValue, "wrap-anywhere")}>{photo.original_name}</dd>
+                </>
+              )}
+              {fileInfo && (
+                <>
+                  <dt className={fileFactLabel}>File</dt>
+                  <dd className={factValue}>{fileInfo}</dd>
+                </>
+              )}
+            </dl>
           </dd>
         </div>
       </dl>
 
       <div className="flex flex-col gap-2">
-        <a
-          href={downloadUrl(photo)}
-          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#2680FC] px-3 text-base font-medium text-white hover:bg-[#1a6fd8] focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
-        >
-          <Download className="h-5 w-5" aria-hidden="true" />
-          Download original
+        {/* The untouched original file; see downloadUrl. */}
+        <a href={downloadUrl(photo)} className={action}>
+          <Download className={actionIcon} aria-hidden="true" />
+          Download
         </a>
         {sidecarUrl && (
           <a href={sidecarUrl} className={action}>
@@ -234,7 +270,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
         </button>
         <button type="button" onClick={onEdit} className={action}>
           <Pencil className={actionIcon} aria-hidden="true" />
-          Edit details
+          Edit tags
         </button>
         <button type="button" onClick={onSetProject} className={action}>
           <Briefcase className={actionIcon} aria-hidden="true" />
@@ -259,7 +295,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate }: P
             <Trash2 className="h-5 w-5 shrink-0 text-red-300" aria-hidden="true" />
             Move to trash
           </Link>
-          <p className="mt-2 text-base leading-relaxed text-[#b4b4b4]">{trashDisclosure}</p>
+          <p className="mt-2 text-sm leading-relaxed text-[#a0a0a0]">{trashDisclosure}</p>
         </div>
       ) : (
         <p data-testid="trash-rule" className="border-t border-[#4e4e4e] pt-4 text-sm leading-relaxed text-[#a8a8a8]">

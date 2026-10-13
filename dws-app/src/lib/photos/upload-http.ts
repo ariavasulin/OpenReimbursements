@@ -1,4 +1,4 @@
-const OPERATIONS = new Set(["prepare", "attempt", "acquire", "claim", "renew", "release", "cancel", "sidecar", "original", "finalize"]);
+const OPERATIONS = new Set(["prepare", "attempt", "acquire", "claim", "renew", "release", "cancel", "sidecar", "original", "finalize", "twin"]);
 export const MAX_UPLOAD_ATTEMPTS = 5;
 export const MAX_UPLOAD_RETRY_DELAY_MS = 20_000;
 
@@ -115,8 +115,11 @@ export function createUploadRequest(deps: UploadRetryDeps & { fetch?: typeof fet
     if (!OPERATIONS.has(operation)) {
       throw new UploadRequestError("Unknown upload operation", { code: "invalid_input", retryable: false });
     }
-    const path = operation === "finalize" ? "/api/photos" : `/api/photo-migrations/uploads/${operation}`;
-    const body = JSON.stringify(input);
+    // The format-twin check is the one read: a GET whose input is its query.
+    const read = operation === "twin";
+    const path = read ? `/api/photos/twin?${new URLSearchParams(input as Record<string, string>)}`
+      : operation === "finalize" ? "/api/photos" : `/api/photo-migrations/uploads/${operation}`;
+    const body = read ? undefined : JSON.stringify(input);
     const retry = createUploadRetryPolicy(deps);
     for (let attempt = 1; attempt <= MAX_UPLOAD_ATTEMPTS; attempt++) {
       let response: Response | undefined;
@@ -124,9 +127,9 @@ export function createUploadRequest(deps: UploadRetryDeps & { fetch?: typeof fet
         code: "network_error", retryable: true,
       });
       try {
-        response = await abortUploadWork(() => fetchRequest(path, {
-          method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body, signal,
-        }), signal);
+        response = await abortUploadWork(() => fetchRequest(path, read
+          ? { method: "GET", credentials: "same-origin", cache: "no-store", signal }
+          : { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body, signal }), signal);
       } catch (error) {
         if (signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
       }

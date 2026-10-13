@@ -13,7 +13,7 @@ import { appendResolvedTag } from "@/lib/photos/tags";
 import { fetchJson } from "@/lib/photos/api";
 import type { PhotoRow } from "@/lib/photos/types";
 
-// "Edit details": tags save here. Changing the project is its own action in the
+// "Edit tags": tags save here. Changing the project is its own action in the
 // viewer ("Set project"), so it is no longer tucked under this form.
 
 interface EditPhotoSheetProps {
@@ -78,7 +78,7 @@ export default function EditPhotoSheet({
     <SheetShell
       open={open}
       onOpenChange={handleOpenChange}
-      title="Edit details"
+      title="Edit tags"
       footer={
         <Button
           onClick={save}

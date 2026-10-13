@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import {
   DropdownMenu,
@@ -21,12 +21,15 @@ import { cn } from "@/lib/utils";
  */
 export default function ChoiceChip<T extends string>({
   name,
+  icon,
   options,
   value,
   onChange,
 }: {
   /** The setting, shown in front of the choice and naming the menu. */
   name: string;
+  /** Stands in for the name on a phone, where "Group by Uploader" and "Sort Newest" would not share a row with Filter. */
+  icon?: ReactNode;
   options: readonly { value: T; label: string }[];
   value: T;
   onChange(value: T): void;
@@ -55,12 +58,14 @@ export default function ChoiceChip<T extends string>({
           }}
           onBlur={() => setQuietFocus(false)}
           className={cn(
-            "min-w-0 max-w-full gap-1.5",
+            // On touch screens a tap leaves the chip focused; the ring would read as "on".
+            "min-w-0 max-w-full gap-1.5 [@media(hover:none)]:focus-visible:ring-0 [@media(hover:none)]:focus-visible:ring-offset-0",
             chipClass(false),
             quietFocus && "focus-visible:ring-0 focus-visible:ring-offset-0"
           )}
         >
-          <span className="whitespace-nowrap text-[#a0a0a0]">{name}</span>
+          {icon && <span className="shrink-0 text-[#a0a0a0] sm:hidden" aria-hidden="true">{icon}</span>}
+          <span className={cn("whitespace-nowrap text-[#a0a0a0]", icon && "hidden sm:inline")}>{name}</span>
           <span className="min-w-0 truncate font-medium text-white">{current}</span>
           <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
         </button>

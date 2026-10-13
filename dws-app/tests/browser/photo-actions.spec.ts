@@ -57,7 +57,7 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await page.goto(`/photos/actions?action=trash&photo=${photo.id}`);
     await expect(page.getByTestId('action-question')).toHaveText('Move 1 photo to trash?');
     // The 30-day recovery facts stay, in plain words, beside the question.
-    await expect(page.getByText(/restore a photo from Trash for 30 days.*already saved its web address/)).toBeVisible();
+    await expect(page.getByText('You can restore a photo from Trash for 30 days.')).toBeVisible();
     await expect(page.locator('main')).not.toContainText(/exact target|draft|pending|canonical|MCP/i);
     await expect(page.getByRole('button', { name: 'Move to trash', exact: true })).toBeEnabled();
     await capture(page, info, `${viewport.name}-trash-confirmation`);
@@ -170,8 +170,8 @@ test('upload and edit pop-ups have no Sheet # field and still save; trash is off
   const bytes = Buffer.concat([png, randomBytes(16)]);
   const digest = createHash('sha256').update(bytes).digest('hex');
   await page.goto(`/photos/${jobs[1]}`);
-  // The filter row is up (a chip with nothing to offer, like Uploader for nameless fixture people, is left out).
-  await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: 'All', exact: true })).toBeVisible();
+  // The toolbar is up.
+  await expect(page.getByRole('group', { name: 'Filters' }).getByRole('button', { name: 'Filter', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sheet', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'sheet', exact: true })).toHaveCount(0);
 
@@ -191,8 +191,8 @@ test('upload and edit pop-ups have no Sheet # field and still save; trash is off
   await page.goto(`/photos/${jobs[1]}?photo=${uploaded.id}`);
   // On a phone the photo is unobscured; its facts and actions are behind the labeled Details button.
   await page.getByRole('button', { name: 'Details', exact: true }).click();
-  await page.getByRole('button', { name: 'Edit details', exact: true }).click();
-  const editDialog = page.getByRole('dialog', { name: 'Edit details' });
+  await page.getByRole('button', { name: 'Edit tags', exact: true }).click();
+  const editDialog = page.getByRole('dialog', { name: 'Edit tags' });
   await expect(editDialog.getByText('Tags (optional)', { exact: true })).toBeVisible();
   await expect(editDialog.getByText(/sheet/i)).toHaveCount(0);
   await expect(editDialog.getByLabel(/sheet/i)).toHaveCount(0);

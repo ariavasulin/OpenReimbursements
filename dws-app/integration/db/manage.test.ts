@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
@@ -152,7 +152,13 @@ describe('managing photos, projects, albums, and Trash', () => {
       const id = await photo(job.id, { capturedAt: '2026-05-05T17:30:00Z' }), kept = await photo(job.id, { capturedAt: '2026-05-05T17:30:00Z' });
       await rpc('photo_rename_photo', { p_actor: f.employeeA.id, p_photo: kept, p_name: 'Hand named' });
       await f.sql.query('update public.photos set display_name=null where id=$1', [id]);
-      await f.sql.query(await readFile(resolve(import.meta.dirname, '../../supabase/migrations/20261012182343_photo_auto_names.sql'), 'utf8'));
+      const migrations = resolve(import.meta.dirname, '../../supabase/migrations'), file = '20261012182343_photo_auto_names.sql';
+      await f.sql.query(await readFile(resolve(migrations, file), 'utf8'));
+      // That put back its own versions of functions later files re-create (photo_share_read); re-run
+      // the later files too, as the harness does, so the files after this one see the current schema.
+      for (const later of (await readdir(migrations)).filter(name => /^\d{14}_.+\.sql$/.test(name) && name > file).sort()) {
+        await f.sql.query(await readFile(resolve(migrations, later), 'utf8'));
+      }
       expect(await named(id)).toMatchObject({ display_name: `${job.job_number} – 260505 103000`, name_source: 'auto' });
       expect(await named(kept)).toMatchObject({ display_name: 'Hand named', name_source: 'manual' });
     });

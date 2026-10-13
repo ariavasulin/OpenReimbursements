@@ -10,6 +10,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { Check, Copy, Share2 } from 'lucide-react';
 import SheetShell from '@/components/photos/sheet-shell';
 import { fetchJson } from '@/lib/photos/api';
+import { cn } from '@/lib/utils';
 
 type Target = { id: string; name: string };
 type ShareButtonProps = ({ album: Target; project?: never } | { project: Target; album?: never }) & { className?: string };
@@ -60,7 +61,7 @@ export default function ShareButton(props: ShareButtonProps) {
 
   return (
     <>
-      <button type="button" className={`${button} ${props.className ?? ''}`} onClick={() => setOpen(true)}><Share2 className="h-5 w-5" aria-hidden />Share</button>
+      <button type="button" className={cn(button, props.className)} onClick={() => setOpen(true)}><Share2 className="h-5 w-5" aria-hidden />Share</button>
       <SheetShell title={`Share ${what}`} size="compact" open={open} onOpenChange={setOpen}
         footer={<div className="flex justify-end"><button type="button" className={button} onClick={() => setOpen(false)}>Done</button></div>}>
         <div className="space-y-5 text-white">

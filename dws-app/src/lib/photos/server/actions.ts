@@ -2,7 +2,7 @@ import 'server-only';
 import type { ActionPhoto, PhotoActionBatch, PhotoActionBatchResponse, PhotoReference, PhotoSelector } from '../action-types';
 import { assertPhotoBatchActor, type PhotoActor } from './authority';
 import { photoId } from './reads';
-import { MAX_BULK_PHOTOS } from '../apiShared';
+import { MAX_SELECTION_PHOTOS } from '../apiShared';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc, photoLinkIds } from './http';
 import { canTrashPhoto, trashRefusedFilter } from '../permissions';
 
@@ -24,7 +24,7 @@ export function validateSelector(value: unknown): PhotoSelector {
   const selector = value as Record<string, unknown>;
   if ('photos' in selector) {
     onlyKeys(selector, ['photos']);
-    if (!Array.isArray(selector.photos) || selector.photos.length < 1 || selector.photos.length > MAX_BULK_PHOTOS) throw new PhotoApiError('invalid_input');
+    if (!Array.isArray(selector.photos) || selector.photos.length < 1 || selector.photos.length > MAX_SELECTION_PHOTOS) throw new PhotoApiError('invalid_input');
     for (const ref of selector.photos) {
       if (!ref || typeof ref !== 'object' || Array.isArray(ref)) throw new PhotoApiError('invalid_input');
       if ('photo_id' in ref) { onlyKeys(ref, ['photo_id']); photoId(ref.photo_id); }

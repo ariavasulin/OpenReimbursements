@@ -14,7 +14,7 @@ import { useCloseOnBlur } from "@/hooks/use-close-on-blur";
 import { MAX_TAGS } from "@/lib/photos/apiShared";
 import { cn } from "@/lib/utils";
 
-// The one tag field, used by the upload pop-up, Edit details, and bulk Tag.
+// The one tag field, used by the upload pop-up, Edit tags, and bulk Tag.
 // It opens to the tags already in use — in the project at hand when there is
 // one, else everywhere — plus the three starter tags, narrows as you type, and
 // ends with `Add "<typed>"`. What is typed is matched, ignoring case, against

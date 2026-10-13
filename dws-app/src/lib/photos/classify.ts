@@ -26,6 +26,7 @@ const EXT: Record<string, { kind: PickKind; mime: string }> = {
   tiff: { kind: "image", mime: "image/tiff" },
   dng: { kind: "image", mime: "image/x-adobe-dng" },
   cr2: { kind: "image", mime: "image/x-canon-cr2" },
+  cr3: { kind: "image", mime: "image/x-canon-cr3" },
   nef: { kind: "image", mime: "image/x-nikon-nef" },
   arw: { kind: "image", mime: "image/x-sony-arw" },
   mov: { kind: "video", mime: "video/quicktime" },
@@ -36,6 +37,11 @@ const EXT: Record<string, { kind: PickKind; mime: string }> = {
   xmp: { kind: "sidecar", mime: "application/rdf+xml" },
 };
 
+/** Every extension the table above knows, lowercase, without the dot. */
+export function knownExtensions(): string[] {
+  return Object.keys(EXT);
+}
+
 /** The canonical MIME type uploads store for a known extension; undefined otherwise. */
 export function mimeForExtension(ext: string): string | undefined {
   return EXT[ext]?.mime;
@@ -44,6 +50,13 @@ export function mimeForExtension(ext: string): string | undefined {
 export function extensionOf(name: string): string {
   const dot = name.lastIndexOf(".");
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+}
+
+/** The name without its last extension ("IMG_1234.CR2" → "IMG_1234"), the
+ * rule extensionOf uses: a leading dot is part of the name, not an extension. */
+export function baseName(name: string): string {
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(0, dot) : name;
 }
 
 export function classifyFile(file: File): Classified {

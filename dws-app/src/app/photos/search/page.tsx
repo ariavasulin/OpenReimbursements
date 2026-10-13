@@ -8,6 +8,7 @@ import EmptyState from "@/components/photos/empty-state";
 import { PAGE_MAIN_CLASS, PAGE_TITLE_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
+import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import { usePhotoAlbums, usePhotoJobs } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
@@ -22,6 +23,15 @@ const resultLink =
  * photos looking like a failed search.
  */
 export default function PhotoSearchPage() {
+  // The header's Play button starts the viewer's slideshow (slideshow-link.tsx).
+  return (
+    <SlideshowLink>
+      <PhotoSearchPageContent />
+    </SlideshowLink>
+  );
+}
+
+function PhotoSearchPageContent() {
   const q = useSearchParams().get("q")?.trim() ?? "";
   // One search box per layout: the phone header's below, the top bar's at
   // desktop. Both are the shell's `query`, seeded from `?q=` on a pasted link.
@@ -36,9 +46,13 @@ export default function PhotoSearchPage() {
   return (
     <main className={PAGE_MAIN_CLASS}>
       <PhoneHeader />
-      <h1 className={PAGE_TITLE_CLASS}>
-        {q ? <>Results for &ldquo;{q}&rdquo;</> : "Search"}
-      </h1>
+      {/* Play appears once the photo results hold something to play. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <h1 className={`${PAGE_TITLE_CLASS} min-w-0 flex-1 basis-64`}>
+          {q ? <>Results for &ldquo;{q}&rdquo;</> : "Search"}
+        </h1>
+        {q && <PlayButton />}
+      </div>
 
       {!q && (
         <EmptyState icon={<Search className="h-7 w-7" aria-hidden="true" />} title="Search DWS Photos">
@@ -103,8 +117,8 @@ export default function PhotoSearchPage() {
             )}
             empty={
               <p className="py-6 text-base text-[#b4b4b4]">
-                No photos match &ldquo;{q}&rdquo;. Photos are matched by project, uploader
-                name, and tag.
+                No photos match &ldquo;{q}&rdquo;. Every word has to match a project,
+                an uploader name, a tag, or a photo&rsquo;s name.
               </p>
             }
           />

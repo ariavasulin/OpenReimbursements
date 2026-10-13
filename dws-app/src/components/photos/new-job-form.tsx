@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSheetLayout } from "@/components/photos/sheet-shell";
 import { useQueryClient } from "@tanstack/react-query";
 import { createJob, invalidatePhotoCaches, type PhotoJobRef } from "@/lib/photos/api";
 import { filterJobs } from "@/lib/photos/job-filter";
 import type { PhotoJobSummary } from "@/lib/photos/types";
+import { cn } from "@/lib/utils";
 
 // Create a project by hand wherever a job is chosen. Existing jobs that match
 // the typed name or number are listed first, so choosing one is easier than
@@ -23,13 +25,20 @@ interface NewJobFormProps {
   /** Only a brand-new project will do: a taken number stays in the form as an error. */
   refuseExisting?: boolean;
   onCancel(): void;
+  /**
+   * Hosted alone in a pop-up (the "+" menu's New project): no box around it,
+   * 44px buttons, and no Cancel of its own on phones, whose pop-up header
+   * already has one.
+   */
+  inSheet?: boolean;
 }
 
 const input =
   "w-full rounded-lg border border-[#3e3e3e] bg-[#3e3e3e] px-3 py-2.5 text-base text-white placeholder:text-[#b4b4b4] focus:border-[#2680FC] focus:outline-none md:text-sm";
 
-export default function NewJobForm({ jobs, initialName = "", onDone, onCancel, refuseExisting = false }: NewJobFormProps) {
+export default function NewJobForm({ jobs, initialName = "", onDone, onCancel, refuseExisting = false, inSheet = false }: NewJobFormProps) {
   const queryClient = useQueryClient();
+  const { isMobile } = useSheetLayout();
   const [name, setName] = useState(initialName);
   const [number, setNumber] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,7 +69,7 @@ export default function NewJobForm({ jobs, initialName = "", onDone, onCancel, r
   };
 
   return (
-    <div className="mb-3.5 space-y-2 rounded-lg border border-[#4e4e4e] p-3">
+    <div className={inSheet ? "space-y-2" : "mb-3.5 space-y-2 rounded-lg border border-[#4e4e4e] p-3"}>
       <input aria-label="Project name" autoFocus value={name} maxLength={120} disabled={busy}
         onChange={(event) => setName(event.target.value)} placeholder="Project name" className={input} />
       <input aria-label="Project number (optional)" value={number} maxLength={32} disabled={busy}
@@ -80,13 +89,15 @@ export default function NewJobForm({ jobs, initialName = "", onDone, onCancel, r
       {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
       <div className="flex gap-2">
         <button type="button" disabled={busy || !name.trim()} onClick={() => void submit()}
-          className="rounded-lg bg-[#2680FC] px-3 py-2 text-sm text-white disabled:opacity-50">
+          className={cn("rounded-lg bg-[#2680FC] px-3 py-2 text-sm text-white disabled:opacity-50", inSheet && "min-h-11 px-4 text-base")}>
           {busy ? "Creating..." : "Create project"}
         </button>
-        <button type="button" disabled={busy} onClick={onCancel}
-          className="rounded-lg px-3 py-2 text-sm text-[#b4b4b4] hover:text-white">
-          Cancel
-        </button>
+        {!(inSheet && isMobile) && (
+          <button type="button" disabled={busy} onClick={onCancel}
+            className={cn("rounded-lg px-3 py-2 text-sm text-[#b4b4b4] hover:text-white", inSheet && "min-h-11 text-base")}>
+            Cancel
+          </button>
+        )}
       </div>
     </div>
   );

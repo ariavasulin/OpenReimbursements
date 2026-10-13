@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { Check, Download, FileText, Play, Video } from "lucide-react";
 import {
   formatBytes,
@@ -10,6 +10,7 @@ import {
   plural,
 } from "@/lib/photos/format";
 import { useDesktop } from "@/hooks/use-desktop";
+import { useLongPress } from "@/hooks/use-long-press";
 import { fileTypeLabel } from "@/lib/photos/file-type";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
@@ -48,12 +49,8 @@ interface PhotoGridProps {
 
 type OnOpen = (photo: PhotoRow) => void;
 
-/** How long a press must last to start selecting, and how far it may drift. */
-const LONG_PRESS_MS = 450;
-const LONG_PRESS_DRIFT_PX = 10;
-
-/** The round tick shown on a tile and in a group header. */
-function Tick({ checked, className }: { checked: boolean; className?: string }) {
+/** The round tick shown on a tile, in a group header, and on an album or project card. */
+export function Tick({ checked, className }: { checked: boolean; className?: string }) {
   return (
     <span
       aria-hidden="true"
@@ -88,55 +85,13 @@ function Tile({
   const selecting = (selection?.selectedIds.size ?? 0) > 0;
   const name = photoName(photo) ?? photo.kind;
 
-  // Press and hold (phone layout). The click that follows the hold must not
-  // also toggle or open the photo, so the hold leaves a note for it.
-  const press = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null);
-  const heldRef = useRef(false);
-  const cancelPress = () => {
-    if (press.current) clearTimeout(press.current.timer);
-    press.current = null;
-  };
-  const pressHandlers =
-    selection && !isDesktop
-      ? {
-          onPointerDown: (event: React.PointerEvent) => {
-            if (event.button !== 0) return;
-            heldRef.current = false;
-            cancelPress();
-            press.current = {
-              x: event.clientX,
-              y: event.clientY,
-              timer: setTimeout(() => {
-                press.current = null;
-                heldRef.current = true;
-                navigator.vibrate?.(10);
-                selection.onToggle(photo, { range: false });
-              }, LONG_PRESS_MS),
-            };
-          },
-          onPointerMove: (event: React.PointerEvent) => {
-            const start = press.current;
-            if (!start) return;
-            if (
-              Math.abs(event.clientX - start.x) > LONG_PRESS_DRIFT_PX ||
-              Math.abs(event.clientY - start.y) > LONG_PRESS_DRIFT_PX
-            ) {
-              cancelPress();
-            }
-          },
-          onPointerUp: cancelPress,
-          onPointerCancel: cancelPress,
-          onPointerLeave: cancelPress,
-          // A long press on a phone otherwise opens the browser's image menu.
-          onContextMenu: (event: React.MouseEvent) => event.preventDefault(),
-        }
-      : {};
+  // Press and hold (phone layout) starts selecting.
+  const { handlers: pressHandlers, takeHold } = useLongPress(
+    selection && !isDesktop ? () => selection.onToggle(photo, { range: false }) : null
+  );
 
   const handleClick = (event: React.MouseEvent<HTMLElement>, open: boolean) => {
-    if (heldRef.current) {
-      heldRef.current = false;
-      return;
-    }
+    if (takeHold()) return;
     if (selection && (selecting || event.shiftKey)) {
       selection.onToggle(photo, { range: event.shiftKey });
       return;
@@ -175,9 +130,12 @@ function Tile({
     </button>
   );
 
+  // Selected: a blue edge drawn *inside* the tile, uncovered once the photo
+  // shrinks to scale-90. A ring outside the tile was clipped by the
+  // scrollport's sides and hidden under a stuck group header.
   const frame = cn(
     "group relative aspect-square select-none overflow-hidden rounded-md bg-[#2e2e2e] [-webkit-touch-callout:none]",
-    selected && "ring-2 ring-[#2680FC] ring-offset-2 ring-offset-[#222222]"
+    selected && "shadow-[inset_0_0_0_2px_#2680FC]"
   );
 
   if (isOpenable(photo) && photo.thumb_path) {
@@ -230,7 +188,12 @@ function Tile({
   const type = fileTypeLabel(photo);
   return (
     <div
-      className={cn(frame, "border border-[#4e4e4e]")}
+      // Selected, the 1px border turns blue and the inset adds 1px: the same 2px edge.
+      className={cn(
+        frame,
+        "border",
+        selected ? "border-[#2680FC] shadow-[inset_0_0_0_1px_#2680FC]" : "border-[#4e4e4e]"
+      )}
       {...pressHandlers}
       onClick={(event) => handleClick(event, false)}
     >

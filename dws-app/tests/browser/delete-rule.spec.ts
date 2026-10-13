@@ -46,6 +46,8 @@ const bar = (page: Page) => page.getByRole('region', { name: 'Selected photos' }
 async function select(page: Page, phone: boolean, names: string[]) {
   const [first, ...rest] = names;
   if (phone) {
+    // The press is raw mouse input, which does not scroll: bring the photo into view first.
+    await tile(page, first).scrollIntoViewIfNeeded();
     const box = (await tile(page, first).boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
@@ -65,6 +67,13 @@ async function capture(page: Page, info: TestInfo, name: string) {
   await page.screenshot({ path: info.outputPath(`${name}.png`), fullPage: true,
     style: 'div:has(> button[aria-label="Open Tanstack query devtools"]) { visibility: hidden !important; }' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+}
+
+/** A collection page's Rename or Delete: a button at desktop; on a phone, an item under the header's More. */
+async function headerAction(page: Page, phone: boolean, name: string) {
+  if (!phone) return page.getByRole('button', { name, exact: true });
+  await page.getByRole('button', { name: 'More', exact: true }).click();
+  return page.getByRole('menuitem', { name, exact: true });
 }
 
 for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 'phone', width: 390, height: 844 }]) {
@@ -110,7 +119,8 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
 
     // The viewer: a colleague's photo has no Move to trash, and says why.
     await page.goto(`/photos/${job}?photo=${ids[theirs[0]]}`);
-    if (phone) await page.getByRole('button', { name: 'Details', exact: true }).click();
+    // A phone's Details pop-up; desktop's Details panel (off by default, so one press turns it on).
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(page.getByTestId('trash-rule')).toHaveText(TRASH_RULE_MESSAGE);
     await expect(page.getByRole('link', { name: 'Move to trash', exact: true })).toHaveCount(0);
     await capture(page, info, `${viewport.name}-viewer-explains`);
@@ -133,11 +143,25 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await capture(page, info, `${viewport.name}-trash-employee`);
     await open(page, `/photos/${job}`);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Delete rule admin-${viewport.name}`);
-    await expect(page.getByRole('button', { name: 'Rename', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Delete project', exact: true })).toHaveCount(0);
+    await expect(await headerAction(page, phone, 'Rename')).toBeVisible();
+    await expect(page.getByRole(phone ? 'menuitem' : 'button', { name: 'Delete project', exact: true })).toHaveCount(0);
+    if (phone) await page.keyboard.press('Escape');
     await open(page, '/photos/projects');
-    await page.getByRole('button', { name: 'Select', exact: true }).click();
-    await expect(page.getByRole('region', { name: 'Selected projects' }).getByRole('button', { name: /Delete/ })).toHaveCount(0);
+    // Select the project the way a photo is selected: hover and tick at desktop, press and hold on a phone.
+    // By its link, since earlier runs leave projects with the same name.
+    const card = page.locator(`a[href="/photos/${job}"]`);
+    await card.scrollIntoViewIfNeeded();
+    if (phone) {
+      const box = (await card.boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down(); await page.waitForTimeout(650); await page.mouse.up();
+    } else {
+      await card.hover();
+      await card.locator('xpath=..').getByRole('checkbox', { name: `Select Delete rule admin-${viewport.name}`, exact: true }).click();
+    }
+    const projectBar = page.getByRole('region', { name: 'Selected projects' });
+    await expect(projectBar).toContainText('1 selected');
+    await expect(projectBar.getByRole('button', { name: /Delete/ })).toHaveCount(0);
 
     await signIn(context, fixtures.photoAdmin);
     await page.goto('/photos/trash');
@@ -145,6 +169,6 @@ for (const viewport of [{ name: 'desktop', width: 1440, height: 1000 }, { name: 
     await expect(page.getByTestId('trash-photo').filter({ hasText: name }).getByRole('button', { name: 'Delete forever', exact: true })).toBeVisible();
     await capture(page, info, `${viewport.name}-trash-admin`);
     await page.goto(`/photos/${job}`);
-    await expect(page.getByRole('button', { name: 'Delete project', exact: true })).toBeVisible();
+    await expect(await headerAction(page, phone, 'Delete project')).toBeVisible();
   });
 }

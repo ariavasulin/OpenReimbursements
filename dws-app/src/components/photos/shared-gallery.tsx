@@ -19,6 +19,8 @@ export default function SharedGallery({ token, first }: { token: string; first: 
   const [loading, setLoading] = useState(false);
   const [problem, setProblem] = useState('');
   const [open, setOpen] = useState<number | null>(null);
+  // A tap on the photo hides the viewer's top bar and arrows; the next brings them back.
+  const [chromeHidden, setChromeHidden] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
 
   const loadMore = useCallback(async () => {
@@ -36,7 +38,7 @@ export default function SharedGallery({ token, first }: { token: string; first: 
     finally { setLoading(false); }
   }, [next, loading, token]);
 
-  const close = useCallback(() => { setOpen(null); opener.current?.focus(); }, []);
+  const close = useCallback(() => { setOpen(null); setChromeHidden(false); opener.current?.focus(); }, []);
   const step = useCallback((by: number) => setOpen(index => index === null ? index : Math.min(photos.length - 1, Math.max(0, index + by))), [photos.length]);
   useEffect(() => {
     if (open === null) return;
@@ -48,6 +50,8 @@ export default function SharedGallery({ token, first }: { token: string; first: 
   useEffect(() => { if (open !== null && open >= photos.length - 3) void loadMore(); }, [open, photos.length, loadMore]);
 
   const current = open === null ? null : photos[open];
+  // Hidden controls fade and leave the pointer's and Tab's reach (visibility), like the app's viewer.
+  const chrome = `transition-[opacity,visibility] duration-200 ${chromeHidden ? 'invisible opacity-0' : ''}`;
   return (
     <main className="h-dvh overflow-y-auto bg-[#222222] text-white">
       <div className="mx-auto max-w-6xl px-3 py-6 sm:px-6">
@@ -81,8 +85,21 @@ export default function SharedGallery({ token, first }: { token: string; first: 
       </div>
 
       {current && open !== null && (
-        <div role="dialog" aria-modal="true" aria-label={`${current.kind === 'video' ? 'Video' : 'Photo'} ${open + 1} of ${first.count}`} className="fixed inset-0 z-50 flex flex-col bg-black/95">
-          <div className="flex items-center justify-between gap-3 p-3">
+        <div role="dialog" aria-modal="true" aria-label={`${current.kind === 'video' ? 'Video' : 'Photo'} ${open + 1} of ${first.count}`} className="fixed inset-0 z-50 bg-black">
+          {/* Edge to edge: the photo takes the whole screen, and the bar and arrows sit over it.
+              A tap anywhere but a control or a playing video toggles them. */}
+          <div className="absolute inset-0 flex items-center justify-center" data-testid="shared-stage"
+            onClick={event => { if (!(event.target instanceof Element) || !event.target.closest('button, a, video')) setChromeHidden(hidden => !hidden); }}>
+            {current.kind === 'video' && current.video_url
+              ? <video key={current.id} src={current.video_url} poster={current.preview_url ?? undefined} controls playsInline className="max-h-full max-w-full" />
+              : current.preview_url
+                // eslint-disable-next-line @next/next/no-img-element -- see above
+                ? <img key={current.id} src={current.preview_url} alt="" referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain" />
+                : <p className="px-4 text-base text-[#c4c4c4]">No preview for this one. You can still download it.</p>}
+            <button type="button" aria-label="Previous" disabled={open === 0} onClick={() => step(-1)} className={`${iconButton} ${chrome} absolute left-2 top-1/2 -translate-y-1/2`}><ChevronLeft className="h-6 w-6" aria-hidden /></button>
+            <button type="button" aria-label="Next" disabled={open >= photos.length - 1} onClick={() => step(1)} className={`${iconButton} ${chrome} absolute right-2 top-1/2 -translate-y-1/2`}><ChevronRight className="h-6 w-6" aria-hidden /></button>
+          </div>
+          <div data-testid="shared-viewer-bar" className={`${chrome} absolute inset-x-0 top-0 flex items-center justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent p-3 pb-8`}>
             <p className="min-w-0 text-base text-[#d6d6d6]"><span className="font-medium text-white">{open + 1} of {first.count.toLocaleString()}</span> · {day(current.captured_at)}</p>
             <div className="flex shrink-0 items-center gap-2">
               <a href={current.download_url} download rel="noreferrer" referrerPolicy="no-referrer"
@@ -90,16 +107,6 @@ export default function SharedGallery({ token, first }: { token: string; first: 
                 <Download className="h-5 w-5" aria-hidden />Download</a>
               <button type="button" aria-label="Close" autoFocus onClick={close} className={iconButton}><X className="h-6 w-6" aria-hidden /></button>
             </div>
-          </div>
-          <div className="relative flex min-h-0 flex-1 items-center justify-center px-2 pb-3">
-            {current.kind === 'video' && current.video_url
-              ? <video key={current.id} src={current.video_url} poster={current.preview_url ?? undefined} controls playsInline className="max-h-full max-w-full" />
-              : current.preview_url
-                // eslint-disable-next-line @next/next/no-img-element -- see above
-                ? <img key={current.id} src={current.preview_url} alt="" referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain" />
-                : <p className="text-base text-[#c4c4c4]">No preview for this one. You can still download it.</p>}
-            <button type="button" aria-label="Previous" disabled={open === 0} onClick={() => step(-1)} className={`${iconButton} absolute left-2 top-1/2 -translate-y-1/2`}><ChevronLeft className="h-6 w-6" aria-hidden /></button>
-            <button type="button" aria-label="Next" disabled={open >= photos.length - 1} onClick={() => step(1)} className={`${iconButton} absolute right-2 top-1/2 -translate-y-1/2`}><ChevronRight className="h-6 w-6" aria-hidden /></button>
           </div>
         </div>
       )}

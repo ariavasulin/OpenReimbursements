@@ -1,9 +1,11 @@
-import { uploadOne, type UploadDeps, type UploadIdentity, type UploadMeta, type UploadResult } from '../upload';
+import { baseName } from '../classify';
+import { fileTypeLabel } from '../file-type';
+import { formatTwinMessage, uploadOne, type UploadDeps, type UploadIdentity, type UploadMeta, type UploadResult } from '../upload';
 import type { UploadAttempt } from '../upload-contract';
 import { abortUploadWork, UploadRequestError } from '../upload-http';
 import type { LocalSource } from './inventory';
 import { folderOf, type MigrationFolder } from './folders';
-import { migrationItemStatusLabel, outcomePayload, retryDue, type BatchView, type ItemPage, type MigrationItem, type MigrationRequest, type MigrationSource } from './client';
+import { FORMAT_TWIN_CODE, migrationItemStatusLabel, outcomePayload, retryDue, type BatchView, type ItemPage, type MigrationItem, type MigrationRequest, type MigrationSource } from './client';
 
 export interface MigrationEngineOptions {
   batchId: string; uploaderId: string; sources: MigrationSource[]; localSources: Map<string, LocalSource>;
@@ -12,6 +14,8 @@ export interface MigrationEngineOptions {
   request: MigrationRequest; deps: UploadDeps;
   prepare(input: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<UploadAttempt>;
   meta?: Pick<UploadMeta, 'tags'>;
+  /** The batch's "Keep other formats" switch. Off: a format twin is left out, never uploaded. */
+  keepFormatTwins?: boolean;
   onChange(completedItemId?: string): Promise<void>;
   onProgress?(itemId: string, bytes: number, total: number): void;
   onIdentity?(itemId: string, identity: UploadIdentity): void;
@@ -56,10 +60,10 @@ export class MigrationEngine {
       do {
         signal.throwIfAborted();
         const page: ItemPage = await request(`batches/${batchId}/items?limit=100${cursor ? `&after=${encodeURIComponent(cursor)}` : ''}`, undefined, { signal });
-        const pending = page.items.filter(item => runnable.has(item.status) && item.retryable !== false && retryDue(item));
-        for (let i = 0; i < pending.length; i += 2) {
+        const pending = previewableFirst(page.items.filter(item => runnable.has(item.status) && item.retryable !== false && retryDue(item)));
+        for (const pair of pairs(pending)) {
           signal.throwIfAborted();
-          const results = await Promise.allSettled(pending.slice(i, i + 2).map(async item => {
+          const results = await Promise.allSettled(pair.map(async item => {
             try {
               const result = await this.upload(item, signal);
               await this.changed(item.id);
@@ -141,14 +145,20 @@ export class MigrationEngine {
     const result = await uploadOne(file, item.upload_attempt_id, {
       uploaderId: this.options.uploaderId, ...this.destination(item, source),
     }, deps, (bytes, total) => this.options.onProgress?.(item.id, bytes, total), {
-      signal, identity, sidecar,
+      signal, identity, sidecar, keepFormatTwin: this.options.keepFormatTwins,
       expectedSidecarName: item.sidecar?.original_name ?? item.sidecar?.name ?? item.sidecar?.relative_path,
       onIdentity: next => { identity = next; onIdentity?.(currentItem.id, next); },
     });
     // Canonical outcomes remain server-owned. This saves only resumable UI details.
-    if (!signal.aborted && (result.status === 'failed' || result.status === 'waiting_claim')) {
+    // A format twin is left out: its reason is saved first, so the list can say why, then the file is
+    // skipped. Nothing was claimed, and a skip is final for this import.
+    const leftOut = result.status === 'format_twin';
+    if (!signal.aborted && (leftOut || result.status === 'failed' || result.status === 'waiting_claim')) {
       try {
-        await request(`items/${currentItem.id}`, { ...outcomePayload(result), lease_generation: leaseGeneration }, { signal });
+        await request(`items/${currentItem.id}`, leftOut
+          ? { action: 'outcome', error_code: FORMAT_TWIN_CODE, warnings: [formatTwinMessage(result.twin!)], lease_generation: leaseGeneration }
+          : { ...outcomePayload(result), lease_generation: leaseGeneration }, { signal });
+        if (leftOut) await request(`items/${currentItem.id}`, { action: 'skip' }, { signal });
       } catch (reason) {
         if (!(reason instanceof UploadRequestError && reason.status === 409)) throw reason;
         // A rejected generation CAS belongs to a live or more recent worker.
@@ -158,4 +168,28 @@ export class MigrationEngine {
     }
     return result;
   }
+}
+
+/**
+ * RAW files after everything else (a stable sort), so when a shot's JPEG and RAW are both in the page the
+ * JPEG, which gets a preview, is the one imported and the RAW is the one held as its other format.
+ */
+function previewableFirst(items: MigrationItem[]): MigrationItem[] {
+  const raw = (item: MigrationItem) => fileTypeLabel({ kind: 'image', mime_type: null, original_name: item.relative_path }) === 'RAW' ? 1 : 0;
+  return [...items].sort((a, b) => raw(a) - raw(b));
+}
+
+/**
+ * Two files at a time, except that two names differing only in extension in one folder never share a
+ * pair: one finishes before the other starts, so the second can be checked as a format twin of the first.
+ */
+function pairs(items: MigrationItem[]): MigrationItem[][] {
+  const shot = (item: MigrationItem) => `${item.source_id}\n${baseName(item.relative_path).toLowerCase()}`;
+  const out: MigrationItem[][] = [];
+  for (const item of items) {
+    const last = out.at(-1);
+    if (last && last.length < 2 && shot(last[0]) !== shot(item)) last.push(item);
+    else out.push([item]);
+  }
+  return out;
 }
