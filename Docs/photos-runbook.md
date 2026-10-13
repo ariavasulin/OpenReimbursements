@@ -356,6 +356,14 @@ To turn off one link without the app, set `revoked_at=clock_timestamp()` and
 `revoked_by` on its row. Never clear `revoked_at` to "bring a link back": turn
 sharing on again from the app, which makes a new link.
 
+**Opened in production on 2026-10-13 18:01 UTC** by Ariav Asulin (operator user
+`4829df26-0658-4edf-b2df-f66c5f21b506`), at the owner's request after the Wave 2
+release, with the statement above. Checks before: PR 20 records the security
+read of `photo_share_read` and the public route, and the Wave 2 review confirmed
+that function unchanged; a live project link answered 404 while the switch was
+off. Checks after: the same project link opened without a login, and a made-up
+token still answered 404.
+
 ## Legacy standalone-sidecar audit
 
 `node dws-app/scripts/attach-orphan-sidecars.mjs` is read-only and considers
