@@ -133,6 +133,9 @@ function ProjectPageContent() {
 
       <PhotoBrowser
         scope={{ kind: "job", jobId }}
+        // A project opens grouped by tag: that is how the office sorts a job's
+        // photos (shop drawings, install, professional). The first mode is the default.
+        groupModes={["tag", "date", "uploader", "type"] as const}
         pinnedTag={PINNED_TAG}
         pinnedLabel="Professional Photography"
         empty={

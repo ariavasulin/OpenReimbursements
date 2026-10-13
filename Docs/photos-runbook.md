@@ -483,6 +483,18 @@ operator target before promising an outage window.
    re-enable the schedule, then save the first successful scheduled report.
    The release remains outstanding until this scheduled result is observed.
 
+   **Done 2026-10-13** by Ariav Asulin (operator user
+   `4829df26-0658-4edf-b2df-f66c5f21b506`): `repair_enabled` opened at
+   20:18 UTC after deploy `95f4103` (server-made previews). `CRON_SECRET` was
+   rotated the same day, so the manual runs used the new value; the schedule
+   had stayed enabled in Vercel since cutover. Three manual runs:
+   `{"counts":{"fillImageDerivatives":30},"error_count":0,"work_deferred":1}`
+   (241 s, deadline), `{"counts":{"fillImageDerivatives":14},"error_count":0}`
+   (98 s), then `{"counts":{},"planned":0}` (40 s). All 278 active photos had
+   thumbnails after it, none became a file tile. The first scheduled report
+   (09:00 UTC 2026-10-14) is still to be saved here. `PHOTOS_TRANSCODE=1` was
+   set in production the same day, for the next deploy.
+
 Gate changes require an operator database session and an administrator identity:
 
 ```sql

@@ -704,15 +704,20 @@ function BulkTagSheet({
   const [tags, setTags] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Add is the usual job; Remove is how a tag given to the wrong photos comes
+  // off them all at once (group by Tag, tick the group, Tag, Remove).
+  const [mode, setMode] = useState<"add" | "remove">("add");
 
   useEffect(() => {
     if (open) {
       setTags([]);
       setInput("");
+      setMode("add");
     }
   }, [open]);
 
   const pending = appendResolvedTag(tags, input, choices.spellings);
+  const removing = mode === "remove";
 
   const save = async () => {
     if (pending.length === 0 || busy) return;
@@ -720,27 +725,43 @@ function BulkTagSheet({
     try {
       const { results, toastId } = await sendInSlices(
         photoIds,
-        (chunk) => bulkTagPhotos(chunk, { add: pending }),
-        (sent, total) => `Tagging ${plural(total, "photo")}… ${formatCount(sent)} done`
+        (chunk) => bulkTagPhotos(chunk, removing ? { remove: pending } : { add: pending }),
+        (sent, total) => `${removing ? "Untagging" : "Tagging"} ${plural(total, "photo")}… ${formatCount(sent)} done`
       );
       const result = sumCounts(results, ["updated", "skipped", "missing"]);
       const detail = [
         result.skipped > 0 && `${plural(result.skipped, "photo")} skipped: a photo can hold 20 tags`,
         result.missing > 0 && `${plural(result.missing, "photo")} no longer available`,
       ].filter(Boolean).join(" · ");
-      toast.success(`Tagged ${plural(result.updated, "photo")} ${pending.join(", ")}`, {
-        id: toastId,
-        description: detail || undefined,
-      });
+      toast.success(
+        removing
+          ? `Removed ${pending.join(", ")} from ${plural(result.updated, "photo")}`
+          : `Tagged ${plural(result.updated, "photo")} ${pending.join(", ")}`,
+        { id: toastId, description: detail || undefined }
+      );
       onOpenChange(false);
       onDone();
     } catch (reason) {
-      toast.error(sliceError(reason, "Failed to tag the photos", (n) => `Tagged ${n}`));
+      toast.error(sliceError(reason, removing ? "Failed to remove the tags" : "Failed to tag the photos", (n) => `${removing ? "Untagged" : "Tagged"} ${n}`));
       if (reason instanceof PartialBulkError) invalidatePhotoCaches(queryClient);
     } finally {
       setBusy(false);
     }
   };
+  const modeButton = (value: "add" | "remove", label: string) => (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={mode === value}
+      disabled={busy}
+      onClick={() => setMode(value)}
+      className={`min-h-11 flex-1 rounded-lg px-3 text-base font-medium ${
+        mode === value ? "bg-[#2680FC] text-white" : "bg-[#3a3a3a] text-[#d0d0d0] hover:bg-[#454545]"
+      }`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <SheetShell
@@ -752,12 +773,16 @@ function BulkTagSheet({
       title={`Tag ${plural(photoIds.length, "photo")}`}
       footer={
         <Button onClick={() => void save()} disabled={busy || pending.length === 0} className={primaryButton} size="lg">
-          {busy ? "Saving..." : pending.length > 1 ? "Add tags" : "Add tag"}
+          {busy ? "Saving..." : `${removing ? "Remove" : "Add"} ${pending.length > 1 ? "tags" : "tag"}`}
         </Button>
       }
     >
+      <div role="radiogroup" aria-label="Add or remove" className="mb-3 flex gap-2">
+        {modeButton("add", "Add tags")}
+        {modeButton("remove", "Remove tags")}
+      </div>
       <label htmlFor={inputId} className="mb-1.5 block text-sm font-medium text-[#d0d0d0]">
-        Tags to add
+        {removing ? "Tags to remove" : "Tags to add"}
       </label>
       <TagDropdown
         inputId={inputId}

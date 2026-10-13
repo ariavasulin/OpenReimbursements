@@ -7,9 +7,18 @@ import {
 import PhotosShell from "@/components/photos/photos-shell";
 import UploadShell from "@/components/photos/upload-shell";
 
+// Its own icon and manifest, so a home-screen shortcut to the photo library is
+// a blue photo tile called "DWS Photos" that opens on Projects, not the
+// receipts icon the rest of the site carries.
 export const metadata: Metadata = {
   title: "DWS Photos",
   description: "Project photo hub for Design Workshops",
+  manifest: "/photos-app/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/photos-app/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: "/photos-app/apple-touch-icon.png",
+  },
+  appleWebApp: { title: "DWS Photos", capable: true, statusBarStyle: "black" },
 };
 
 // The upload shell lives HERE (not in a page) so in-flight uploads survive

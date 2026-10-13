@@ -32,7 +32,8 @@ function getPostLoginPath(): string {
   if (next && next.startsWith('/') && !next.startsWith('//')) {
     return next;
   }
-  return isPhotosHost(window.location.hostname) ? '/photos' : '/employee';
+  // The photo library starts on Projects.
+  return isPhotosHost(window.location.hostname) ? '/photos/projects' : '/employee';
 }
 
 async function needsNamePrompt(user: {

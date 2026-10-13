@@ -180,6 +180,14 @@ First login without profile creates default:
 The photo app shares the sign-in and the Users page with Receipts. The words
 employees see are **Project**, **Album**, and **Tag**; `job` in code means project.
 
+### Starting the app
+
+Signing in on the photos address, or opening its root, lands on **Projects**.
+The photo library has its own home-screen icon, a blue tile with a photo on it
+called "DWS Photos", and opens on Projects from it. On an iPhone: open the site
+in Safari, Share, **Add to Home Screen**. A shortcut added before this icon
+existed keeps the receipts icon; remove it and add it again.
+
 ### Browsing
 
 Every photo grid (Photos, a project, an album, search) has one toolbar row:
@@ -191,7 +199,8 @@ Every photo grid (Photos, a project, an album, search) has one toolbar row:
   month, This year, or a custom range). Active filters show as removable chips
   under the toolbar with **Clear**. When nothing matches, the grid says "No
   photos match" with a **Clear filters** button.
-- **Group by** Date, Tag, Uploader, or File type (search adds Project).
+- **Group by** Date, Tag, Uploader, or File type (search adds Project). A
+  project opens grouped by Tag; Photos, albums, and search open by Date.
 - **Sort** Newest or Oldest. An album with a saved order also offers **Custom**.
 - Filters, grouping, and sort live in the page URL, so a reload or a shared
   link keeps them.
@@ -205,8 +214,14 @@ Long-press (phone) or click the tick (desktop) to start a selection. The bar
 reads "N selected · Select all M"; **Select all** picks every photo that matches
 the current filters, loaded or not, up to 5,000 ("Select all 5,000 (of M)" past
 that). A group header's tick selects the whole group the same way. Tag and
-Add to album work in slices of 500 behind one progress toast; Trash and Set
-project go through the confirmation page as one batch.
+Add to album work in slices of 500 behind one progress toast; Set project goes
+through the confirmation page as one batch, and Trash moves the photos at once
+with an Undo.
+
+**Tag** has two modes, **Add tags** and **Remove tags**. To take a tag off
+photos it was given by mistake: Group by Tag, tick that tag's group header,
+press Tag, choose Remove tags, pick the tag, and press Remove tag. A single
+photo's tags are edited from **Edit tags** in its details.
 
 ### Download
 
@@ -260,6 +275,13 @@ upload lands, so the photo has a preview by the time the tray says done. There
 is no upload size limit; a file the server cannot read either (a RAW file, an
 image over 250 MB) shows as a "No preview" tile that still downloads. A photo
 that somehow missed both gets its preview from the nightly sweep.
+
+Videos upload at any size too. The poster frame comes from your browser when it
+can play the clip, otherwise from the server (clips up to 200 MB). Playing a
+clip in the app depends on the browser: an iPhone's HEVC .mov plays on iPhones
+and Macs, and a Windows browser may only offer it for download. The nightly
+sweep makes a standard MP4 copy of clips up to 200 MB and 2 minutes so they
+play everywhere; longer or larger clips stay download-only.
 
 ### Other formats of the same photo
 

@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isPhotosHost } from "./lib/cookieDomain";
 
-// photos host: / -> /photos; everything else untouched (matcher is "/" only).
+// photos host: / -> /photos/projects (the app starts on Projects); everything
+// else untouched (matcher is "/" only).
 
 export function middleware(request: NextRequest) {
   if (
@@ -12,7 +13,7 @@ export function middleware(request: NextRequest) {
     request.nextUrl.pathname === "/"
   ) {
     const url = request.nextUrl.clone();
-    url.pathname = "/photos";
+    url.pathname = "/photos/projects";
     return NextResponse.rewrite(url);
   }
   return NextResponse.next();
