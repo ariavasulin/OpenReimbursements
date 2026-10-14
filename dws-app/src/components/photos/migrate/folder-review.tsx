@@ -192,20 +192,19 @@ function Row({ source, row, ...props }: FolderReviewProps & { source: MigrationS
     <div className="rounded-lg bg-[#262626] p-3" data-testid="folder-row">
       <p className="break-words text-base text-[#c4c4c4]"><span className="sr-only">Folder: </span>{where} · {plural(row.photo_count, 'photo')}</p>
       <div className="mt-2 grid gap-4 lg:grid-cols-3">
-        <div>
-          <div className="flex min-h-11 items-center gap-2">
+        {/* The same label-then-field shape as Project and Tags: the checkbox row stands where a field would, and the name field drops under it when the album is on. */}
+        <div><span className={labelClass}>Album</span>
+          <label htmlFor={checkboxId} className={`mt-1 flex min-h-11 items-center gap-2.5 text-base ${props.editable ? 'cursor-pointer' : ''}`}>
             <input id={checkboxId} type="checkbox" checked={makeAlbum} disabled={!props.editable || props.busy}
-              className="h-5 w-5 accent-[#2680FC]" data-testid="make-album"
+              className="h-5 w-5 shrink-0 accent-[#2680FC]" data-testid="make-album"
               onChange={event => props.onPatch(source, row.folder, false, { album_name: event.target.checked ? '' : null })} />
-            <label htmlFor={checkboxId} className={labelClass}>Make an album</label>
-          </div>
-          {makeAlbum
-            ? props.editable
-              ? <input aria-label={`Album name for ${where}`} value={name} maxLength={120} disabled={props.busy} className={`${field} mt-1`}
-                  onChange={event => setName(event.target.value)} onBlur={commit}
-                  onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
-              : <span className="mt-1 block break-words text-base text-white">{album}</span>
-            : <p className={`${hint} mt-1`}>{props.editable ? 'No album: the photos go to the project only.' : 'No album.'}</p>}
+            <span className={makeAlbum || props.editable ? 'text-white' : 'text-[#c4c4c4]'}>{makeAlbum ? 'Make an album' : props.editable ? 'Make an album' : 'No album'}</span>
+          </label>
+          {makeAlbum && (props.editable
+            ? <input aria-label={`Album name for ${where}`} value={name} maxLength={120} disabled={props.busy} className={`${field} mt-1`}
+                onChange={event => setName(event.target.value)} onBlur={commit}
+                onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+            : <span className="mt-1 block break-words text-base text-white">{album}</span>)}
         </div>
         <div><span className={labelClass}>Project</span>
           <div className="mt-1"><ProjectChoice request={props.request} value={row.jobs ?? null} disabled={!props.editable || props.busy}
