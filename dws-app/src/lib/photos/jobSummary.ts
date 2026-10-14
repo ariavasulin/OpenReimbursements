@@ -8,5 +8,6 @@ export function mapJobSummary(row: PhotoJobSummaryRow): PhotoJobSummary {
     location: row.location,
     photo_count: Number(row.photo_count),
     thumb_paths: row.thumbs ?? [],
+    latest_activity: row.latest_upload ?? null,
   };
 }

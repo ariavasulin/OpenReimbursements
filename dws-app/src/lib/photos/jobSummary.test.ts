@@ -19,11 +19,13 @@ describe("mapJobSummary", () => {
     expect(mapJobSummary({ ...row, thumbs: ["a.webp", "b.webp"] }).thumb_paths).toEqual(["a.webp", "b.webp"]);
   });
 
-  it("does not leak latest_upload into the wire shape", () => {
+  it("carries the latest upload time as latest_activity, for the Sort chip", () => {
     const row = {
       id: "j4", job_number: "3615", name: "Site D", location: null,
       photo_count: 1, latest_upload: "2026-08-03T00:00:00Z", thumbs: [],
     };
     expect(mapJobSummary(row)).not.toHaveProperty("latest_upload");
+    expect(mapJobSummary(row).latest_activity).toBe("2026-08-03T00:00:00Z");
+    expect(mapJobSummary({ ...row, latest_upload: null }).latest_activity).toBeNull();
   });
 });

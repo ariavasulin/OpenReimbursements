@@ -1,13 +1,15 @@
 "use client";
 
+import { useMemo } from "react";
 import { useCollectionSelect } from "@/hooks/use-collection-select";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Plus } from "lucide-react";
 import CollectionCard from "@/components/photos/collection-card";
 import CollectionSelectBar from "@/components/photos/collection-select-bar";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
+import CollectionTitleRow from "@/components/photos/collection-sort-chip";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
-import { PAGE_MAIN_CLASS, PAGE_TITLE_CLASS } from "@/components/photos/page-layout";
+import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
@@ -15,12 +17,17 @@ import StatusLine from "@/components/photos/status-line";
 import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoActor, usePhotoJobs } from "@/lib/photos/api";
 import { isPhotoAdmin } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
+import { DEFAULT_JOB_SORT, JOB_SORT_OPTIONS, parseJobSort, sortJobs } from "@/lib/photos/collection-sort";
+import { useCollectionSort } from "@/hooks/use-collection-sort";
 
-/** Projects: every project as a card; select (hover tick or press and hold) to rename or delete. New project lives in the "+" menu. */
+/** Projects: every project as a card, in the order the Sort chip says (job number, newest first, by default); select (hover tick or press and hold) to rename or delete. New project lives in the "+" menu. */
 export default function ProjectsPage() {
   const queryClient = useQueryClient();
   const { openNewProject } = usePhotosShell();
-  const { data: jobs, isLoading, error } = usePhotoJobs(true);
+  const loaded = usePhotoJobs(true);
+  const [sort, setSort] = useCollectionSort(parseJobSort, DEFAULT_JOB_SORT);
+  const jobs = useMemo(() => loaded.data && sortJobs(loaded.data, sort), [loaded.data, sort]);
+  const { isLoading, error } = loaded;
   // Deleting a project trashes every photo in it: photo admins only.
   const admin = isPhotoAdmin(usePhotoActor());
   const select = useCollectionSelect(jobs, {
@@ -43,7 +50,7 @@ export default function ProjectsPage() {
   return (
     <main className={PAGE_MAIN_CLASS}>
       <PhoneHeader />
-      <h1 className={`${PAGE_TITLE_CLASS} mb-4`}>Projects</h1>
+      <CollectionTitleRow title="Projects" options={JOB_SORT_OPTIONS} value={sort} onChange={setSort} />
 
       {isLoading && <StatusLine>Loading projects...</StatusLine>}
       {error && (

@@ -193,8 +193,10 @@ existed keeps the receipts icon; remove it and add it again.
 **Projects** lists projects by job number, highest first, so the newest job is
 on top (a project made without a number gets a `P-` code and sits after the
 numbered ones). **Albums** lists albums by name, A to Z, with names that start
-with a number first. Neither list has a sort control. **Photos** stays by date
-taken, newest first.
+with a number first. Each page has a **Sort** chip beside its name: projects by
+Job number, Name, or Latest upload; albums by Name, Latest added, or Most
+photos. The choice lives in the page URL, and the desktop rail follows it.
+**Photos** stays by date taken, newest first.
 
 Every photo grid (Photos, a project, an album, search) has one toolbar row:
 **Filter**, **Group by**, and **Sort**.

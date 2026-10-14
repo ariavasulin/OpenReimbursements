@@ -10,6 +10,7 @@ function makeJob(job_number: string, name: string): PhotoJobSummary {
     location: null,
     photo_count: 0,
     thumb_paths: [],
+    latest_activity: null,
   };
 }
 

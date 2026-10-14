@@ -9,5 +9,6 @@ export function mapAlbumSummary(row: PhotoAlbumSummaryRow): PhotoAlbumSummary {
     thumb_paths: row.thumbs ?? [],
     created_at: row.created_at,
     created_by: row.created_by ?? null,
+    latest_activity: row.latest_added ?? null,
   };
 }

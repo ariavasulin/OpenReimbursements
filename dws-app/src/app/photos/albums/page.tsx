@@ -1,14 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useCollectionSelect } from "@/hooks/use-collection-select";
 import { useQueryClient } from "@tanstack/react-query";
 import { BookImage, Plus } from "lucide-react";
 import CollectionCard from "@/components/photos/collection-card";
 import CollectionSelectBar from "@/components/photos/collection-select-bar";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
+import CollectionTitleRow from "@/components/photos/collection-sort-chip";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
-import { PAGE_MAIN_CLASS, PAGE_TITLE_CLASS } from "@/components/photos/page-layout";
+import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
@@ -16,14 +17,19 @@ import StatusLine from "@/components/photos/status-line";
 import { deleteAlbum, invalidatePhotoCaches, renameAlbum, usePhotoActor, usePhotoAlbums } from "@/lib/photos/api";
 import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
+import { ALBUM_SORT_OPTIONS, DEFAULT_ALBUM_SORT, parseAlbumSort, sortAlbums } from "@/lib/photos/collection-sort";
+import { useCollectionSort } from "@/hooks/use-collection-sort";
 
 const ALBUMS_PER_PAGE = 60;
 
-/** Albums: bounded card pages; select (hover tick or press and hold) to rename or delete. New album lives in the "+" menu. */
+/** Albums: bounded card pages in the order the Sort chip says (name, A to Z, by default); select (hover tick or press and hold) to rename or delete. New album lives in the "+" menu. */
 export default function AlbumsPage() {
   const queryClient = useQueryClient();
   const { openNewAlbum } = usePhotosShell();
-  const { data: albums, isLoading, error } = usePhotoAlbums(true);
+  const loaded = usePhotoAlbums(true);
+  const [sort, setSort] = useCollectionSort(parseAlbumSort, DEFAULT_ALBUM_SORT);
+  const albums = useMemo(() => loaded.data && sortAlbums(loaded.data, sort), [loaded.data, sort]);
+  const { isLoading, error } = loaded;
   const [requestedPage, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil((albums?.length ?? 0) / ALBUMS_PER_PAGE));
   const page = Math.min(requestedPage, pageCount - 1);
@@ -46,7 +52,7 @@ export default function AlbumsPage() {
   return (
     <main className={PAGE_MAIN_CLASS}>
       <PhoneHeader />
-      <h1 className={`${PAGE_TITLE_CLASS} mb-4`}>Albums</h1>
+      <CollectionTitleRow title="Albums" options={ALBUM_SORT_OPTIONS} value={sort} onChange={setSort} />
 
       {isLoading && <StatusLine>Loading albums...</StatusLine>}
       {error && (

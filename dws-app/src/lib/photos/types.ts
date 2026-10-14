@@ -77,7 +77,7 @@ export interface PhotoAlbumSummaryRow {
   id: string;
   name: string;
   photo_count: number | string; // bigint arrives as a string over PostgREST
-  /** Drives the RPC's ordering; not part of the wire shape we return. */
+  /** When a photo was last added to it; the Sort chip's "Latest added". */
   latest_added: string | null;
   thumbs: string[] | null;
   created_at: string;
@@ -95,6 +95,8 @@ export interface PhotoAlbumSummary {
   created_at: string;
   /** Who made the album: they and photo admins may delete it. */
   created_by: string | null;
+  /** When a photo was last added; null for an empty album (then created_at stands in). */
+  latest_activity: string | null;
 }
 
 /** An album row as the create, rename, delete, and restore routes return it. */
@@ -120,7 +122,7 @@ export interface PhotoJobSummaryRow {
   name: string;
   location: string | null;
   photo_count: number | string; // bigint arrives as a string over PostgREST
-  /** Drives the RPC's ordering; not part of the wire shape we return. */
+  /** When a photo was last uploaded to it; the Sort chip's "Latest upload". */
   latest_upload: string | null;
   thumbs: string[] | null;
 }
@@ -134,4 +136,6 @@ export interface PhotoJobSummary {
   photo_count: number;
   /** Storage paths (photos bucket) of up to 4 newest grid thumbnails. */
   thumb_paths: string[];
+  /** When a photo was last uploaded; null for a project with no photos. */
+  latest_activity: string | null;
 }

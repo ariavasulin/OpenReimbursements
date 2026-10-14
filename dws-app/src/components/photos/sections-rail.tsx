@@ -1,11 +1,13 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { SECTIONS } from "@/components/photos/section-nav";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import { usePhotoAlbums, usePhotoJobs } from "@/lib/photos/api";
+import { DEFAULT_ALBUM_SORT, DEFAULT_JOB_SORT, parseAlbumSort, parseJobSort, sortAlbums, sortJobs } from "@/lib/photos/collection-sort";
+import { useCollectionSort } from "@/hooks/use-collection-sort";
 import { plural } from "@/lib/photos/format";
 import { cn } from "@/lib/utils";
 
@@ -62,8 +64,13 @@ export default function SectionsRail() {
   const navRef = useRef<HTMLElement>(null);
   const { section, activeJobId, activeAlbumId } = usePhotosShell();
 
-  const jobs = usePhotoJobs(section === "projects");
-  const albums = usePhotoAlbums(section === "albums");
+  const jobsQuery = usePhotoJobs(section === "projects");
+  const albumsQuery = usePhotoAlbums(section === "albums");
+  // The list page's Sort chip (its `?sort=`) orders the rail too, so the two agree.
+  const [jobSort] = useCollectionSort(parseJobSort, DEFAULT_JOB_SORT);
+  const [albumSort] = useCollectionSort(parseAlbumSort, DEFAULT_ALBUM_SORT);
+  const jobs = useMemo(() => ({ ...jobsQuery, data: jobsQuery.data && sortJobs(jobsQuery.data, jobSort) }), [jobsQuery, jobSort]);
+  const albums = useMemo(() => ({ ...albumsQuery, data: albumsQuery.data && sortAlbums(albumsQuery.data, albumSort) }), [albumsQuery, albumSort]);
   const list = section === "projects" ? jobs : section === "albums" ? albums : null;
   const [pages, setPages] = useState({ albums: 0, projects: 0 });
   const collection = section === "albums" ? "albums" : "projects";
