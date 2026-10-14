@@ -301,10 +301,10 @@ Three migrations, applied to production on 2026-10-14 before the deploy:
   tag rename: `professional` → `Photoshoot`, `shop`/`shop drawing` → `Shop`,
   `field`/`field dimension` → `Field`, on every photo and on draft import rows.
   `GET/PATCH /api/photos/settings` carries both; the Settings page is
-  `/photos/settings`. **Re-run the rename block of that migration right after the
-  deploy**: the app that was live between the migration and the deploy still
-  offered `professional` as a default tag, and any photo tagged in between keeps
-  the old spelling until the block runs again (it is repeat-safe).
+  `/photos/settings`. The rename block is repeat-safe. It was re-run once after
+  the deploy of `13fa30b` (2026-10-14 22:58 UTC): the app live between the
+  migration and the deploy had tagged 17 more photos `professional`; afterwards
+  0 remain and 258 carry `Photoshoot`.
 - `20261014120200_photo_import_album_optional.sql`: see Importing folders.
 
 ## Favorites (`photo_favorites`)
