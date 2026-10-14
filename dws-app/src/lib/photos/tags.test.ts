@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addTagToMeta, appendResolvedTag, appendTag, resolveTag, STARTER_TAGS, tagChoices, tagMenu,
+  addTagToMeta, appendResolvedTag, appendTag, DEFAULT_STARTER_TAGS, resolveTag, tagChoices, tagMenu,
   tagSuggestions, toTagPairs, type PhotoMeta,
 } from "./tags";
 
@@ -62,20 +62,25 @@ describe("addTagToMeta", () => {
 });
 
 describe("the tag dropdown", () => {
-  const choices = tagChoices(["Roof", "kitchen", "Professional"]);
+  const choices = tagChoices(["Roof", "kitchen", "photoshoot"]);
 
-  it("always offers the three starter tags, even when no photo carries one", () => {
-    expect(tagChoices([])).toEqual(["field dimension", "professional", "shop drawing"]);
-    expect([...STARTER_TAGS]).toEqual(["professional", "field dimension", "shop drawing"]);
+  it("always offers the default tags, even when no photo carries one", () => {
+    expect(tagChoices([])).toEqual(["Field", "Photoshoot", "Shop"]);
+    expect([...DEFAULT_STARTER_TAGS]).toEqual(["Shop", "Field", "Photoshoot"]);
   });
 
-  it("lists existing and starter tags once each, A to Z ignoring case; an existing spelling wins", () => {
-    expect(choices).toEqual(["field dimension", "kitchen", "Professional", "Roof", "shop drawing"]);
+  it("offers the defaults a photo admin set instead, and none when the list is empty", () => {
+    expect(tagChoices(["Roof"], ["Install", "Punch list"])).toEqual(["Install", "Punch list", "Roof"]);
+    expect(tagChoices(["Roof"], [])).toEqual(["Roof"]);
+  });
+
+  it("lists existing and default tags once each, A to Z ignoring case; an existing spelling wins", () => {
+    expect(choices).toEqual(["Field", "kitchen", "photoshoot", "Roof", "Shop"]);
   });
 
   it("opens to every choice that is not already picked", () => {
     expect(tagMenu(choices, ["Roof"], "")).toEqual({
-      options: ["field dimension", "kitchen", "Professional", "shop drawing"], add: null,
+      options: ["Field", "kitchen", "photoshoot", "Shop"], add: null,
     });
   });
 
@@ -100,11 +105,11 @@ describe("the tag dropdown", () => {
     expect(tagMenu(scoped, [], "Roof")).toEqual({ options: [], add: "Roof" });
   });
 
-  it("stores the existing or starter spelling for what was typed", () => {
+  it("stores the existing or default spelling for what was typed", () => {
     expect(resolveTag(" Kitchen ", choices)).toBe("kitchen");
-    // A starter tag matches before any photo carries it.
-    expect(resolveTag("Shop Drawing", tagChoices([]))).toBe("shop drawing");
-    expect(resolveTag("Professional", tagChoices([]))).toBe("professional");
+    // A default tag matches before any photo carries it.
+    expect(resolveTag("shop", tagChoices([]))).toBe("Shop");
+    expect(resolveTag("PHOTOSHOOT", tagChoices([]))).toBe("Photoshoot");
     expect(resolveTag("  brand new ", choices)).toBe("brand new");
   });
 

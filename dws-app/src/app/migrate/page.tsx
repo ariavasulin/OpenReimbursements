@@ -44,6 +44,10 @@ export default function MigratePage() {
   const [recent, setRecent] = useState<MigrationBatch[]>([]);
   const [items, setItems] = useState<ItemPage>({ items: [], next_cursor: null });
   const [cursor, setCursor] = useState<string | null>(null);
+  // The page of files on screen, for refreshes that fire from the engine (which
+  // holds no state): without it every finished file snapped the list back to page 1.
+  const cursorRef = useRef<string | null>(null);
+  cursorRef.current = cursor;
   const [mode, setMode] = useState<Mode>('migrate_photos');
   const [looseOpen, setLooseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -280,7 +284,7 @@ export default function MigratePage() {
           if (!completedItemId) return {};
           const next = { ...current }; delete next[completedItemId]; return next;
         });
-        await refresh(id, null, !completedItemId);
+        await refresh(id, cursorRef.current, !completedItemId);
       },
       onProgress: (itemId, sent, total) => setProgress(current => ({ ...current, [itemId]: [sent, total] })),
     });
@@ -294,7 +298,7 @@ export default function MigratePage() {
       const result = await worker.upload(item);
       if (!['done', 'duplicate'].includes(result.status)) throw new Error(result.error ?? 'This photo can no longer have an XMP file attached.');
       setMessage(result.sidecarRetry ? 'The XMP file still needs attention. Choose the folder again and retry.' : 'The XMP file was checked. The photo itself was left as it is.');
-    } finally { engine.current = null; setRunning(false); await refresh(); }
+    } finally { engine.current = null; setRunning(false); await refresh(batchId.current, cursorRef.current); }
   };
 
   const start = async (approve: boolean) => {
@@ -319,10 +323,10 @@ export default function MigratePage() {
       if (!(reason instanceof DOMException && reason.name === 'AbortError')) report(reason);
     } finally {
       setRunning(false); starting.current = false; engine.current = null;
-      const after = await refresh(id);
+      const after = await refresh(id, cursorRef.current);
       // Never leave "Importing…" on a page that has stopped. Pause and Cancel set their own message, so only replace ours.
       const finished = after?.view.batch.status === 'completed';
-      const done = after?.view.batch.script_name === 'add_photos' ? 'Finished. Your photos are in DWS Photos.' : 'Finished. Every folder is now an album: find them under Albums.';
+      const done = 'Finished. Your photos are in DWS Photos.';
       setMessage(current => finished ? done : current.startsWith('Importing.') ? '' : current);
     }
   };
@@ -345,9 +349,12 @@ export default function MigratePage() {
     && source.sealed_scan_id && source.sealed_scan_id === source.scan_id);
   const needsAttention = !running && ['running', 'approved'].includes(status) && (Boolean(error) || ['retryable_failed', 'job_conflict', 'restore_required'].some(state => count(state) > 0));
   const photos = folders.reduce((total, row) => total + row.photo_count, 0);
-  // AC-18: loose photos need a project or an album. A folder always has its album, so this only ever stops loose photos.
-  const looseNeedsChoice = Boolean(looseRow && looseRow.photo_count > 0 && !looseRow.job_id && !looseRow.album_id && !looseRow.album_name);
-  const canStart = owner && allRead && photos > 0 && !looseNeedsChoice && !looseAlbumPending && !busy && !running && !preparing;
+  // AC-18: photos need a project or an album, or there is no way to find them again. Loose photos
+  // and, since an album is off by default, every folder with photos.
+  const needsChoice = folders.filter(row => row.photo_count > 0 && !row.job_id && !row.album_id && !row.album_name);
+  const looseNeedsChoice = Boolean(looseRow && needsChoice.includes(looseRow));
+  const foldersNeedChoice = needsChoice.filter(row => row !== looseRow).length;
+  const canStart = owner && allRead && photos > 0 && needsChoice.length === 0 && !looseAlbumPending && !busy && !running && !preparing;
   const imported = count('completed'), already = count('skipped_duplicate');
   // Left out: not a photo, or another format of a photo already in the project ("Keep other formats" off).
   const leftOut = count('skipped_unsupported') + count('skipped_user');
@@ -392,6 +399,7 @@ export default function MigratePage() {
       </div>
       {looseRow && <div aria-label="What will be imported">{summary}</div>}
       {looseNeedsChoice && <p className="text-base text-amber-300" role="status">Choose a project or an album to start. That is how you will find these photos again.</p>}
+      {foldersNeedChoice > 0 && <p className="text-base text-amber-300" role="status">{plural(foldersNeedChoice, 'folder')} below {foldersNeedChoice === 1 ? 'has' : 'have'} neither a project nor an album. Give each a project, or turn on Make an album, to start. That is how you will find the photos again.</p>}
       {error && <p className="text-base text-red-300" role="alert">{error}</p>}
     </div>
   );
@@ -402,7 +410,7 @@ export default function MigratePage() {
       <section className="space-y-3">
         <h1 ref={heading} tabIndex={-1} className="text-3xl font-semibold outline-none">{mode === 'add_photos' ? 'Add photos' : 'Import folders'}</h1>
         {mode === 'migrate_photos'
-          ? <p className="max-w-3xl text-lg leading-7">Each folder becomes an album with the same name.</p>
+          ? <p className="max-w-3xl text-lg leading-7">Photos go into the project you choose for each folder. Turn on <strong>Make an album</strong> on a folder to put its photos in an album too.</p>
           : <p className="max-w-3xl text-lg leading-7">Add up to 500 photos to a project, an album, or both.</p>}
         <p className={`${hint} max-w-3xl`}>Your files stay where they are: this copies them into DWS Photos. Keep this page open while it runs. If you close it, come back to this page and choose the same {mode === 'add_photos' ? 'photos' : 'folders'} again; nothing is imported twice.</p>
         {view && !owner && <p className={`${card} text-base`}>You can look at this import. Only the person who started it can change, start, or cancel it.</p>}
@@ -505,8 +513,8 @@ export default function MigratePage() {
                   {!retryDue(item) && <div className="text-amber-300">Try again after {new Date(item.retry_after ?? Number(item.result?.retryAt)).toLocaleString()}</div>}
                 </td>
                 <td className="p-3">{owner && !running && !paused && ['retryable_failed', 'waiting_claim', 'job_conflict', 'restore_required'].includes(item.status) && <div className="flex flex-wrap gap-2">
-                    <button className={button} disabled={!retryDue(item) || busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'retry', ...(item.new_attempt_required ? { new_attempt_required: true } : {}) }); await refresh(); })}>{['job_conflict', 'restore_required'].includes(item.status) ? 'Check again' : 'Retry'}</button>
-                    <button className={button} disabled={busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'skip' }); await refresh(); })}>Skip</button></div>}
+                    <button className={button} disabled={!retryDue(item) || busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'retry', ...(item.new_attempt_required ? { new_attempt_required: true } : {}) }); await refresh(batchId.current, cursorRef.current); })}>{['job_conflict', 'restore_required'].includes(item.status) ? 'Check again' : 'Retry'}</button>
+                    <button className={button} disabled={busy} onClick={() => void act(async () => { await request(`items/${item.id}`, { action: 'skip' }); await refresh(batchId.current, cursorRef.current); })}>Skip</button></div>}
                   {item.canonical_photo_id && ['job_conflict', 'restore_required'].includes(item.status) && <Link target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex min-h-11 items-center text-[#8bbaff] underline underline-offset-2"
                     href={`/photo-actions?${new URLSearchParams({ action: item.status === 'job_conflict' ? 'move' : 'restore', photo: item.canonical_photo_id, ...(row?.job_id ? { destination: row.job_id } : {}) })}`}>
                     {item.status === 'job_conflict' ? 'Review move' : 'Review restore'} (new tab)</Link>}

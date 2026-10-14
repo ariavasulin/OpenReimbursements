@@ -36,11 +36,12 @@ afterEach(async () => {
 
 const answer = (tags: string[]) => new Response(JSON.stringify({ success: true, tags }), { status: 200 });
 
+// Three reads: the project's tags to offer, every tag to match spellings against, and the default tags.
 it('asks for one project\'s tags to offer, and every tag to match spellings against, when a project is known', async () => {
   fetchMock.mockImplementation(async () => answer(['punch list']));
   await render('3962-job');
-  await act(async () => { await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2)); });
-  expect(fetchMock.mock.calls.map(call => call[0]).sort()).toEqual(['/api/photo-tags', '/api/photo-tags?job=3962-job']);
+  await act(async () => { await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3)); });
+  expect(fetchMock.mock.calls.map(call => call[0]).sort()).toEqual(['/api/photo-tags', '/api/photo-tags?job=3962-job', '/api/photos/settings']);
 });
 
 it('asks for every tag with no project', async () => {

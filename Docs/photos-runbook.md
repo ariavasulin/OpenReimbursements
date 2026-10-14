@@ -238,12 +238,15 @@ project wherever a job is chosen (upload, move, and the `/migrate` page) or with
 
 ## Importing folders (`/migrate`)
 
-Each imported folder that directly holds photos becomes one album named from its
-path under the picked folder (`Smith Residence/Finished` arrives as
-`Smith Residence – Finished`). A project is optional. The employee reviews one row
-per folder — album name, project, tags — and may set a project and tags on a
-top-level folder to cover every folder inside it. Pressing Start with no edits is
-always valid. The rows live in `migration_folders`.
+Each imported folder that directly holds photos is one review row — project,
+tags, and a **Make an album** switch, off by default (round three,
+`20261014120200_photo_import_album_optional.sql`). Turned on, the row's album is
+named from its path under the picked folder (`Smith Residence/Finished` arrives
+as `Smith Residence – Finished`) and can be renamed; `migration_folders.album_name`
+null means no album, which is what `migration_seal` now writes. A row with photos
+needs a project or an album before approval (the page says which rows lack one).
+A project and tags may be set on a top-level folder to cover every folder inside
+it. The rows live in `migration_folders`.
 
 - **No album is created before Start, and then only once a photo lands in it.**
   So a folder whose photos all fail, are skipped, or already sit in trash leaves no
@@ -281,6 +284,28 @@ nested-loop joins (`set enable_nestloop=off` on `migration_reserve_uuids` and
 `photo_repair_guard_owner_ids`); do not remove that setting when editing them. The
 test "seals 100,000 entries inside the limit with 1,500 live photos the planner
 believes are one row" in `integration/db/migrations.test.ts` guards it.
+
+## Settings, default tags, and list order (round three, 2026-10-14)
+
+Three migrations, applied to production on 2026-10-14 before the deploy:
+
+- `20261014120000_photo_list_order.sql`: `get_photo_job_summaries_by_number_page`
+  (projects by job number descending, `P-` codes last) and
+  `get_photo_album_summaries_by_name_page` (albums by name, digits as numbers,
+  via `photo_sort_key`). The activity-ordered page functions the old app called
+  are left in place; drop them once no deploy calls them.
+- `20261014120100_photo_settings_and_tags.sql`: `photo_settings` (one row;
+  `starter_tags`, read by every signed-in session, written only by a photo admin
+  through `photo_set_starter_tags`), `user_profiles.slideshow_shuffle` and
+  `slideshow_delay_seconds` (own row, through `photo_set_slideshow`), and the
+  tag rename: `professional` → `Photoshoot`, `shop`/`shop drawing` → `Shop`,
+  `field`/`field dimension` → `Field`, on every photo and on draft import rows.
+  `GET/PATCH /api/photos/settings` carries both; the Settings page is
+  `/photos/settings`. **Re-run the rename block of that migration right after the
+  deploy**: the app that was live between the migration and the deploy still
+  offered `professional` as a default tag, and any photo tagged in between keeps
+  the old spelling until the block runs again (it is repeat-safe).
+- `20261014120200_photo_import_album_optional.sql`: see Importing folders.
 
 ## Favorites (`photo_favorites`)
 

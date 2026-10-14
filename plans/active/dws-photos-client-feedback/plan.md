@@ -625,6 +625,26 @@ Albums can be arranged by hand and everyone, including the share page and slides
    download, arrange, slideshow, and the delete rule.
 3. Completion retro per the planning contract; `status: done`; archive.
 
+## Round three — the owner's notes of 2026-10-14 (one PR, branch `round3-dad-notes`)
+
+Notes, verbatim in `/tmp/dws-wave1/STATE.md`; the research behind the plan in
+`/tmp/dws-fanout-ciP8F8/`. Decisions (Ari, 2026-10-14): map the old tags onto the new
+(`shop drawing`→Shop, `field dimension`→Field, `professional`→Photoshoot); the import's
+album switch is per folder and off by default; the slideshow setting is per account (a
+database column); rotate/crop and importing while browsing are not in this round.
+
+1. Projects by job number descending, albums by name A to Z; Photos unchanged
+   (`20261014120000_photo_list_order.sql`, new page functions, cursor by sort key).
+2. The import file list keeps its page while the import runs (`/migrate` refreshed page 1 on
+   every finished file).
+3. Default tags Shop, Field, Photoshoot, editable by photo admins on a new Settings page
+   (`photo_settings.starter_tags`); the project page's pinned group is Photoshoot.
+4. Slideshow: random order and seconds a photo stays, per account, on the Settings page.
+5. Import: **Make an album** per folder, off by default; a folder needs a project or an album.
+
+Migrations were applied to production on 2026-10-14 ahead of the PR; the runbook notes the
+tag-rename re-run owed at deploy.
+
 ## Rollout
 
 Every migration is additive and applied before its deploy; no deploy depends on a drop. Order:

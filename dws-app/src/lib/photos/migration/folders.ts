@@ -6,7 +6,7 @@ export interface MigrationFolder {
   id: string; source_id: string;
   /** Path under the picked folder; '' is the picked folder itself. */
   folder: string;
-  /** Null only for loose files, where an album is optional. */
+  /** The album this folder's photos join, created when the first lands; null means no album (the default). */
   album_name: string | null;
   /** Set once the album exists (or, for loose files, when an existing album was chosen). */
   album_id: string | null;

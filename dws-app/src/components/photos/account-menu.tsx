@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { LogOut, Receipt, Trash2, UserRound } from "lucide-react";
+import { LogOut, Receipt, Settings, Trash2, UserRound } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,8 +11,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { signOut } from "@/hooks/use-session-guard";
 
-// The quiet home for the things that are not browsing: Trash, the Receipts app,
-// and Sign out. They used to sit in the header as peers of search and upload,
+// The quiet home for the things that are not browsing: Trash, Settings, the
+// Receipts app, and Sign out. They used to sit in the header as peers of search and upload,
 // with Sign out in red as the loudest thing on the page.
 //
 // The button is a filled 44px disc with a bare person glyph, the same size and
@@ -52,6 +52,12 @@ export default function AccountMenu({ showTrash = false }: { showTrash?: boolean
             </Link>
           </DropdownMenuItem>
         )}
+        <DropdownMenuItem asChild className={item}>
+          <Link href="/photos/settings">
+            <Settings className={icon} aria-hidden="true" />
+            Settings
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild className={item}>
           <Link href="/employee">
             <Receipt className={icon} aria-hidden="true" />

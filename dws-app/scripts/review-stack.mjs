@@ -54,7 +54,7 @@ const PROJECTS = [
   { key: 'bar', jobNumber: '3759', location: '3 Quay Street', name: 'Quay Street Bar Fit-Out' },
 ];
 const PHOTO_PROJECTS = 4;
-const TAG_SETS = [['professional'], ['shop drawing'], ['field dimension'], ['professional', 'field dimension']];
+const TAG_SETS = [['Photoshoot'], ['Shop'], ['Field'], ['Photoshoot', 'Field']];
 const THUMB_PX = 400;
 const PREVIEW_PX = 1600;
 const IMAGE_TYPES = { '.webp': 'image/webp', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png' };

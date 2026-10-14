@@ -24,6 +24,8 @@ import { photoName } from "@/lib/photos/format";
 import EditPhotoSheet from "@/components/photos/edit-photo-sheet";
 import PhotoInfo from "@/components/photos/photo-info";
 import { useFavorite } from "@/hooks/use-favorite";
+import { usePhotoSettings } from "@/lib/photos/api";
+import { DEFAULT_SLIDESHOW, slideshowOrder } from "@/lib/photos/settings";
 import SetProjectSheet from "@/components/photos/set-project-sheet";
 import SheetShell from "@/components/photos/sheet-shell";
 import {
@@ -57,10 +59,12 @@ import { videoSource } from "@/lib/photos/video-source";
 // (`yarl__immersive`, styled in globals.css). On desktop a click on the black
 // around the photo still closes the viewer while the controls are showing.
 //
-// Play runs a slideshow (4 s a photo, looping) of the photos only: while it
-// plays, the viewer's slides are the stills, never a video. It starts with
-// the controls hidden, and any tap pauses it and shows them. A page's header
-// Play button reaches it through <SlideshowLink>.
+// Play runs a looping slideshow of the photos only: while it plays, the
+// viewer's slides are the stills, never a video. How long each stays, and
+// whether they come in the grid's order or at random, is the person's own
+// setting (Settings page; usePhotoSettings). It starts with the controls
+// hidden, and any tap pauses it and shows them. A page's header Play button
+// reaches it through <SlideshowLink>.
 
 // Custom slide for videos this browser reports it can't decode: the poster
 // with a download card instead of a dead play button (rendered by
@@ -268,6 +272,7 @@ export default function PhotoLightbox({
   // True from Play until the slideshow stops: the slides are the stills only.
   const [slideshowActive, setSlideshowActive] = useState(false);
   const slideshowRef = useRef<SlideshowRef>(null);
+  const slideshowSettings = usePhotoSettings()?.slideshow ?? DEFAULT_SLIDESHOW;
 
   // The shell's drop intake treats an open desktop viewer as busy: a drop
   // would otherwise open the upload sheet over a layer still asserting
@@ -332,6 +337,21 @@ export default function PhotoLightbox({
   }, [photos, slides]);
   const hasStills = stillPhotos.length > 0;
 
+  // The order the stills play in: the grid's, or a random one drawn when Play
+  // is pressed and kept while it runs (stills that load meanwhile shuffle in
+  // behind). `playOrder[k]` is the still shown k-th; `playPosition[s]` the
+  // position of still s. Both are the identity when not shuffling.
+  const orderRef = useRef<number[]>([]);
+  const { playOrder, playPosition } = useMemo(() => {
+    const previous = slideshowActive ? orderRef.current : [];
+    const playOrder = slideshowOrder(stillSlides.length, slideshowSettings.shuffle, previous);
+    const playPosition: number[] = [];
+    playOrder.forEach((still, at) => { playPosition[still] = at; });
+    return { playOrder, playPosition };
+  }, [stillSlides.length, slideshowSettings.shuffle, slideshowActive]);
+  orderRef.current = playOrder;
+  const playSlides = useMemo(() => playOrder.map((still) => stillSlides[still]), [playOrder, stillSlides]);
+
   /** The first still at or after `from` in `photos`, wrapping; -1 if none. */
   const nextStill = useCallback(
     (from: number) => {
@@ -344,9 +364,10 @@ export default function PhotoLightbox({
     [photos.length, stillIndex]
   );
 
-  // While playing, YARL sees the stills; everywhere else, every photo.
-  const viewSlides = slideshowActive ? stillSlides : slides;
-  const viewIndex = slideshowActive ? Math.max(0, stillIndex[index] ?? 0) : index;
+  // While playing, YARL sees the stills in their playing order; everywhere
+  // else, every photo.
+  const viewSlides = slideshowActive ? playSlides : slides;
+  const viewIndex = slideshowActive ? Math.max(0, playPosition[stillIndex[index] ?? 0] ?? 0) : index;
 
   // Leaving a slide abandons any half-done edit on it.
   useEffect(() => {
@@ -362,15 +383,18 @@ export default function PhotoLightbox({
   }, [open]);
 
   // The slideshow (and the arrow keys) can run past the loaded pages: ask the
-  // grid for the next one a few photos before the end.
+  // grid for the next one a few photos before the end (of the playing order,
+  // while a slideshow runs).
+  const nearEnd = slideshowActive ? viewIndex >= viewSlides.length - 5 : index >= photos.length - 5;
   useEffect(() => {
-    if (open && onNearEnd && index >= photos.length - 5) onNearEnd();
-  }, [open, index, photos.length, onNearEnd]);
+    if (open && onNearEnd && nearEnd) onNearEnd();
+  }, [open, nearEnd, onNearEnd]);
 
   /** Play from the viewer's toolbar: from this photo, or the next still. */
   const playFromHere = () => {
     const from = nextStill(index);
     if (from === -1) return;
+    orderRef.current = []; // a fresh draw when shuffling
     setSlideshowActive(true);
     setChromeHidden(true);
     if (from !== index) onIndexChange(from);
@@ -383,6 +407,7 @@ export default function PhotoLightbox({
   startFromPageRef.current = () => {
     const first = nextStill(0);
     if (first === -1) return;
+    orderRef.current = [];
     setSlideshowActive(true);
     setChromeHidden(true);
     onIndexChange(first);
@@ -619,7 +644,7 @@ export default function PhotoLightbox({
     index: viewIndex,
     on: {
       view: ({ index: shown }: { index: number }) =>
-        onIndexChange(slideshowActive ? (stillPhotos[shown] ?? index) : shown),
+        onIndexChange(slideshowActive ? (stillPhotos[playOrder[shown] ?? -1] ?? index) : shown),
       // Stopped by a tap, or by YARL itself: back to every photo, controls up.
       slideshowStop: () => {
         setSlideshowActive(false);
@@ -633,7 +658,7 @@ export default function PhotoLightbox({
     // Edge to edge: no padding around the photo.
     carousel: { finite: false, padding: 0 },
     // Mounts playing when a page header's Play opened the viewer.
-    slideshow: { autoplay: slideshowActive, delay: 4000, ref: slideshowRef },
+    slideshow: { autoplay: slideshowActive, delay: slideshowSettings.delay_seconds * 1000, ref: slideshowRef },
     // Solid: the page behind a see-through viewer reads as clutter around the photo.
     styles: { container: { backgroundColor: "#000" } },
     render: {

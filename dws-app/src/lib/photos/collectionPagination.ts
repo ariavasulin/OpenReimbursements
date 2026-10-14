@@ -1,10 +1,11 @@
 /** Requests and rendering stay bounded even when an import creates thousands of collections. */
 export const COLLECTION_PAGE_SIZE = 200;
 
+/** Where a page ended: the last row's sort key (`number` for projects, `name` for albums) and id. */
 export interface CollectionCursor {
   id: string;
-  activity: string | null;
   number?: string;
+  name?: string;
 }
 
 export interface CollectionPage<Row> {

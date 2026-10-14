@@ -12,8 +12,9 @@ import { button, card, field, hint, label as labelClass } from './styles';
 // top-level folder with counts (plan § Screens, Decision 10). Built to stay usable at 5,000
 // rows: groups, open folders, and search results each use bounded pages.
 
-/** One review edit. `includeSubfolders` is how a choice on a folder reaches the folders inside it. */
-export type FolderPatch = { job?: ProjectRef | null; tags?: string[]; album_name?: string };
+/** One review edit. `includeSubfolders` is how a choice on a folder reaches the folders inside it.
+ *  `album_name`: a name, '' for the name from the folder's path, null for no album. */
+export type FolderPatch = { job?: ProjectRef | null; tags?: string[]; album_name?: string | null };
 const ROWS_PER_PAGE = 100;
 const plural = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
 
@@ -50,7 +51,7 @@ export default function FolderReview(props: FolderReviewProps) {
           <h2 id="your-folders" className="text-xl font-semibold">Your folders</h2>
           <p className={hint}>
             {props.editable
-              ? 'Nothing here is required. Before you start you can change an album’s name (leave it empty to use the folder’s name), and add a project or tags.'
+              ? 'Before you start, give each folder a project, and tags if you like. Turn on Make an album to put a folder’s photos in an album as well (its name starts as the folder’s).'
               : 'This is what was chosen for each folder. It cannot be changed once an import has started.'}
           </p>
         </div>
@@ -182,19 +183,30 @@ function Row({ source, row, ...props }: FolderReviewProps & { source: MigrationS
   const [name, setName] = useState(row.album_name ?? '');
   useEffect(() => { setName(row.album_name ?? ''); }, [row.album_name]);
   const where = row.folder === '' ? `Photos directly in ${source.label}` : row.folder.replaceAll('/', ' / ');
-  const album = row.album_name ?? source.label;
+  // An album is made only when asked (off by default); turning it on names it from the folder until renamed.
+  const makeAlbum = row.album_name !== null;
+  const album = row.album_name ?? (row.folder === '' ? source.label : row.folder.split('/').pop()!);
   const commit = () => { if (cleanAlbumName(name) !== (row.album_name ?? '')) props.onPatch(source, row.folder, false, { album_name: name }); };
+  const checkboxId = `make-album-${row.id}`;
   return (
     <div className="rounded-lg bg-[#262626] p-3" data-testid="folder-row">
       <p className="break-words text-base text-[#c4c4c4]"><span className="sr-only">Folder: </span>{where} · {plural(row.photo_count, 'photo')}</p>
       <div className="mt-2 grid gap-4 lg:grid-cols-3">
-        <label className="block"><span className={labelClass}>Album name</span>
-          {props.editable
-            ? <input aria-label={`Album name for ${where}`} value={name} maxLength={120} disabled={props.busy} className={`${field} mt-1`}
-                onChange={event => setName(event.target.value)} onBlur={commit}
-                onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
-            : <span className="mt-1 block break-words text-base text-white">{album}</span>}
-        </label>
+        <div>
+          <div className="flex min-h-11 items-center gap-2">
+            <input id={checkboxId} type="checkbox" checked={makeAlbum} disabled={!props.editable || props.busy}
+              className="h-5 w-5 accent-[#2680FC]" data-testid="make-album"
+              onChange={event => props.onPatch(source, row.folder, false, { album_name: event.target.checked ? '' : null })} />
+            <label htmlFor={checkboxId} className={labelClass}>Make an album</label>
+          </div>
+          {makeAlbum
+            ? props.editable
+              ? <input aria-label={`Album name for ${where}`} value={name} maxLength={120} disabled={props.busy} className={`${field} mt-1`}
+                  onChange={event => setName(event.target.value)} onBlur={commit}
+                  onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+              : <span className="mt-1 block break-words text-base text-white">{album}</span>
+            : <p className={`${hint} mt-1`}>{props.editable ? 'No album: the photos go to the project only.' : 'No album.'}</p>}
+        </div>
         <div><span className={labelClass}>Project</span>
           <div className="mt-1"><ProjectChoice request={props.request} value={row.jobs ?? null} disabled={!props.editable || props.busy}
             ariaLabel={`Project for ${album}`} onChange={job => props.onPatch(source, row.folder, false, { job })} /></div>

@@ -25,23 +25,28 @@ export function tagSuggestions(
   return out;
 }
 
-/** Always offered, even before any photo carries them (photo-albums Decision 5). */
-export const STARTER_TAGS = ["professional", "field dimension", "shop drawing"] as const;
+/**
+ * The default tags, offered even before any photo carries them. The live list
+ * is photo_settings.starter_tags (a photo admin edits it on the Settings page;
+ * usePhotoSettings reads it); this is what it holds on a fresh database and
+ * what the pickers use until it has loaded.
+ */
+export const DEFAULT_STARTER_TAGS = ["Shop", "Field", "Photoshoot"] as const;
 
 /** What a tag is, in one sentence, wherever tags are chosen. */
 export const TAG_EXPLAINER =
-  "A tag is a label you can filter by, like professional or shop drawing.";
+  "A tag is a label you can filter by, like Shop or Photoshoot.";
 
 const sameTag = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
 /**
- * Every tag the dropdown offers: the tags already in use plus the starter tags,
- * one spelling each (an existing spelling wins over a starter's), A to Z
+ * Every tag the dropdown offers: the tags already in use plus the default
+ * tags, one spelling each (an existing spelling wins over a default's), A to Z
  * ignoring case.
  */
-export function tagChoices(knownTags: string[]): string[] {
+export function tagChoices(knownTags: string[], starters: readonly string[] = DEFAULT_STARTER_TAGS): string[] {
   const out: string[] = [];
-  for (const tag of [...knownTags, ...STARTER_TAGS]) {
+  for (const tag of [...knownTags, ...starters]) {
     if (tag.trim() && !out.some((have) => sameTag(have, tag))) out.push(tag);
   }
   return out.sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));

@@ -57,6 +57,10 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
     const { data, error } = await f.admin.from('migration_items').select('*').eq('source_id', sourceId).eq('is_current', true).order('relative_path');
     expect(error).toBeNull(); return data as Item[];
   }
+  /** The review screen's "Make an album" on every row of a source (off by default since round three): '' derives the name from the path. */
+  async function albumsOn(sourceId: string) {
+    for (const row of await folders(sourceId)) if (row.album_name === null) await rpc('migration_folder_update', patch(sourceId, row.folder, { album_name: '' }));
+  }
   const patch = (sourceId: string, folder: string, p_patch: object, subfolders = false) =>
     ({ p_source: sourceId, p_folder: folder, p_subfolders: subfolders, p_patch });
   /** Hash, lease, and claim one item. Returns the claim outcome; `claimed` means bytes must upload. */
@@ -90,19 +94,29 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
   const membersOf = async (albumId: string) => (await f.sql.query('select photo_id from public.album_photos where album_id=$1 order by photo_id', [albumId])).rows.map(row => row.photo_id as string);
   const photoRow = async (id: string) => (await f.sql.query('select job_id,tags from public.photos where id=$1', [id])).rows[0] as { job_id: string | null; tags: string[] } | undefined;
 
-  describe('AC-16: a folder tree imports with no edits, one album per folder', () => {
-    it('derives one row per folder that directly holds an importable photo, named from its path', async () => {
+  describe('AC-16: a folder tree imports with "Make an album" on, one album per folder', () => {
+    it('derives one row per folder that directly holds an importable photo, with no album until asked, then named from its path', async () => {
       const id = await batch(); const s = await source(id, { label: 'Office  drive ' });
       await seal(s.id, [entry('site.jpg'), entry('Smith Residence/Finished/a.jpg'), entry('Smith Residence/Finished/b.jpg'),
         entry('Smith Residence/Before/c.jpg'), entry('Smith Residence/Before/Demo/d.jpg'),
         entry('Excluded/.picasa.ini', 'skipped_unsupported'), entry('Excluded/Thumbs.db', 'skipped_unsupported')]);
       expect(await folders(s.id)).toEqual([
-        expect.objectContaining({ folder: '', album_name: 'Office drive', photo_count: 1, album_id: null, job_id: null, tags: [] }),
-        expect.objectContaining({ folder: 'Smith Residence/Before', album_name: 'Smith Residence – Before', photo_count: 1 }),
-        expect.objectContaining({ folder: 'Smith Residence/Before/Demo', album_name: 'Smith Residence – Before – Demo', photo_count: 1 }),
-        expect.objectContaining({ folder: 'Smith Residence/Finished', album_name: 'Smith Residence – Finished', photo_count: 2 }),
+        expect.objectContaining({ folder: '', album_name: null, photo_count: 1, album_id: null, job_id: null, tags: [] }),
+        expect.objectContaining({ folder: 'Smith Residence/Before', album_name: null, photo_count: 1 }),
+        expect.objectContaining({ folder: 'Smith Residence/Before/Demo', album_name: null, photo_count: 1 }),
+        expect.objectContaining({ folder: 'Smith Residence/Finished', album_name: null, photo_count: 2 }),
       ]);
       // "Smith Residence" holds no photo directly and "Excluded" holds nothing importable: no rows, so no albums.
+      // Nothing to find the photos by: neither a project nor an album on any row.
+      expect(await refused('migration_batch_action', { p_batch: id, p_action: 'approve' })).toBe('invalid_input');
+      await albumsOn(s.id);
+      expect((await folders(s.id)).map(row => row.album_name)).toEqual(
+        ['Office drive', 'Smith Residence – Before', 'Smith Residence – Before – Demo', 'Smith Residence – Finished']);
+      // Off again: no album, and the derived name comes back when it is turned on once more.
+      await rpc('migration_folder_update', patch(s.id, 'Smith Residence/Finished', { album_name: null }));
+      expect((await folders(s.id)).find(row => row.folder === 'Smith Residence/Finished')!.album_name).toBeNull();
+      await rpc('migration_folder_update', patch(s.id, 'Smith Residence/Finished', { album_name: '' }));
+      expect((await folders(s.id)).find(row => row.folder === 'Smith Residence/Finished')!.album_name).toBe('Smith Residence – Finished');
     });
 
     it('keeps the end of a path too long for an album name', async () => {
@@ -115,9 +129,10 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
       expect(one).toHaveLength(120); expect(one.endsWith('…')).toBe(true);
     });
 
-    it('pressing Start with no edits imports every photo into its folder’s album, with no project', async () => {
+    it('pressing Start with only "Make an album" on imports every photo into its folder’s album, with no project', async () => {
       const id = await batch(); const s = await source(id);
       await seal(s.id, [entry('Tree/One/a.jpg'), entry('Tree/One/b.jpg'), entry('Tree/Two/Deep/c.jpg')]);
+      await albumsOn(s.id);
       // Nothing exists before the employee confirms, and nothing until a photo really lands.
       expect((await folders(s.id)).every(row => row.album_id === null)).toBe(true);
       await action(id, 'approve'); await action(id, 'resume');
@@ -140,6 +155,7 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
     it('pause and resume, a rescan, and a retry never make a second album for the same folder', async () => {
       const label = `Once ${randomUUID()}`; const id = await batch(); const s = await source(id, { label });
       await seal(s.id, [entry('a.jpg'), entry('b.jpg'), entry('c.jpg')]);
+      await albumsOn(s.id);
       await action(id, 'approve'); await action(id, 'resume');
       const [a, b, c] = await items(s.id);
       await commit(a);
@@ -199,6 +215,7 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
       const trashedBytes = randomBytes(8);
       await existingPhoto({ bytes: trashedBytes, jobId: jobA, trashed: true });
       await seal(s.id, [entry(`Skipped ${tag}/s.jpg`), entry(`Failed ${tag}/f.jpg`), entry(`Trashed ${tag}/t.jpg`), entry(`Kept ${tag}/k.jpg`)]);
+      await albumsOn(s.id);
       await action(id, 'approve'); await action(id, 'resume');
       const all = await items(s.id); const find = (prefix: string) => all.find(item => item.relative_path.startsWith(prefix))!;
       await rpc('migration_item_action', { p_item: find('Skipped').id, p_action: 'skip' });
@@ -222,6 +239,7 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
       const before = (await f.sql.query('select count(*)::int as n from public.photos')).rows[0].n as number;
       const id = await batch(); const s = await source(id);
       await seal(s.id, [entry(`Marketing ${tag}/one.jpg`), entry(`Marketing ${tag}/two.jpg`)]);
+      await albumsOn(s.id);
       await action(id, 'approve'); await action(id, 'resume');
       const [one, two] = await items(s.id);
       // Caught at claim, before any bytes move. The folder names no project, so nothing can conflict.
@@ -240,6 +258,7 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
       const tag = randomUUID(); const bytes = randomBytes(8); const original = await existingPhoto({ bytes, jobId: jobA, tags: ['kept'] });
       const id = await batch(); const s = await source(id);
       await seal(s.id, [entry(`Clash ${tag}/x.jpg`)]);
+      await albumsOn(s.id);
       await rpc('migration_folder_update', patch(s.id, `Clash ${tag}`, { job_id: jobB, tags: ['imported'] }));
       await action(id, 'approve'); await action(id, 'resume');
       expect((await claim((await items(s.id))[0], bytes)).claimed).toMatchObject({ status: 'duplicate_active', job_id: jobA });
@@ -290,6 +309,7 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
     it('renames one album, restores the default from a blank name, and never spreads a name', async () => {
       const id = await batch(); const s = await source(id);
       await seal(s.id, [entry('Smith/Finished/a.jpg'), entry('Smith/Before/b.jpg')]);
+      await albumsOn(s.id);
       await rpc('migration_folder_update', patch(s.id, 'Smith/Finished', { album_name: '  Smith   kitchen, done ' }));
       expect((await folders(s.id)).find(row => row.folder === 'Smith/Finished')!.album_name).toBe('Smith kitchen, done');
       await rpc('migration_folder_update', patch(s.id, 'Smith/Finished', { album_name: '   ' }));
@@ -325,6 +345,7 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
 
     it('rows freeze on approve: no edit, no suggestion, and no other writer can change them', async () => {
       const id = await batch(); const s = await source(id); const scanId = await seal(s.id, [entry('a/x.jpg')]);
+      await albumsOn(s.id);
       await action(id, 'approve');
       expect(await refused('migration_folder_update', patch(s.id, 'a', { tags: ['late'] }))).toBe('conflict');
       expect(await refused('migration_folder_suggest', { p_source: s.id, p_scan: scanId, p_rows: [{ folder: 'a', job_id: jobA }] })).toBe('conflict');
@@ -359,6 +380,7 @@ describe('folders import as albums (photo-albums AC-16, AC-17, AC-18, AC-7)', ()
 
     it('an imported photo takes its row’s project and tags, whatever the request says', async () => {
       const id = await batch(); const s = await source(id); await seal(s.id, [entry('Shop/x.jpg'), entry('Bare/y.jpg')]);
+      await albumsOn(s.id);
       await rpc('migration_folder_update', patch(s.id, 'Shop', { job_id: jobB, tags: ['shop drawing'] }));
       await action(id, 'approve'); await action(id, 'resume');
       const all = await items(s.id);

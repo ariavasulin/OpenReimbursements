@@ -2,7 +2,7 @@
 
 import { useId, useMemo, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { usePhotoTags } from "@/lib/photos/api";
+import { usePhotoStarterTags, usePhotoTags } from "@/lib/photos/api";
 import {
   appendResolvedTag,
   TAG_EXPLAINER,
@@ -38,11 +38,12 @@ export interface TagChoices {
 export function useTagChoices(enabled: boolean, jobId?: string | null): TagChoices {
   const { data: scopedTags } = usePhotoTags(enabled, jobId);
   const { data: everyTag } = usePhotoTags(enabled && Boolean(jobId), null);
+  const starters = usePhotoStarterTags();
   return useMemo(() => {
-    const choices = tagChoices(scopedTags ?? []);
+    const choices = tagChoices(scopedTags ?? [], starters);
     // Until every tag has arrived, the project's own are the spellings known.
-    return { choices, spellings: jobId && everyTag ? tagChoices(everyTag) : choices };
-  }, [scopedTags, everyTag, jobId]);
+    return { choices, spellings: jobId && everyTag ? tagChoices(everyTag, starters) : choices };
+  }, [scopedTags, everyTag, jobId, starters]);
 }
 
 interface TagDropdownProps {

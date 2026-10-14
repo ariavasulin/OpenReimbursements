@@ -3,6 +3,8 @@ import type { KeysetDirection } from "@/lib/keysetCursor";
 import { MAX_ARRANGE_PHOTOS } from "./apiShared";
 import type { PurgeMarked } from "./action-types";
 import type { PhotoPermissions } from "./permissions";
+import type { PhotoSettings, PhotoSettingsPatch } from "./settings";
+import { DEFAULT_STARTER_TAGS } from "./tags";
 import {
   keepPreviousData,
   useQuery,
@@ -131,6 +133,34 @@ export function invalidatePhotoActor(queryClient: QueryClient) {
   return queryClient.invalidateQueries({ queryKey: PHOTO_ACTOR_KEY });
 }
 
+/** The query key of the settings: the default tags and the person's slideshow setting. */
+export const PHOTO_SETTINGS_KEY = ["photo-settings"] as const;
+
+/**
+ * GET /api/photos/settings: the app-wide default tags and the signed-in
+ * person's slideshow setting. Undefined while loading; the pickers fall back
+ * to DEFAULT_STARTER_TAGS and the viewer to DEFAULT_SLIDESHOW until then.
+ */
+export function usePhotoSettings() {
+  return useQuery({
+    queryKey: PHOTO_SETTINGS_KEY,
+    queryFn: () => fetchJson<PhotoSettings>("/api/photos/settings", "Failed to load settings"),
+    staleTime: 60_000,
+  }).data;
+}
+
+/** The default tags every tag picker offers, as a photo admin set them. */
+export function usePhotoStarterTags(): readonly string[] {
+  return usePhotoSettings()?.starter_tags ?? DEFAULT_STARTER_TAGS;
+}
+
+/** PATCH /api/photos/settings; answers the whole settings object. The caller sets the query to it. */
+export function savePhotoSettings(patch: PhotoSettingsPatch): Promise<PhotoSettings> {
+  return fetchJson<PhotoSettings>("/api/photos/settings", "Could not save settings", {
+    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+  });
+}
+
 /** After an upload, edit, or delete: every photo-derived query refetches. */
 export function invalidatePhotoCaches(queryClient: QueryClient) {
   for (const key of [
@@ -210,7 +240,7 @@ export async function fetchAlbums(q = "", signal?: AbortSignal): Promise<PhotoAl
   });
 }
 
-/** Album cards, most recently added-to first. Shared by the list, rail, and pickers. */
+/** Album cards, by name A to Z. Shared by the list, rail, and pickers. */
 export function usePhotoAlbums(enabled: boolean, q = "") {
   return useQuery({
     queryKey: ["photo-albums", q],

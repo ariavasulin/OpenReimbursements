@@ -24,12 +24,13 @@ destination.
 The application organizes photos with three words. An **album** is like a
 folder, and a photo can be in more than one. A **project** is the job a photo
 belongs to, and it is optional. A **tag** is a label to filter by, such as
-`professional` or `shop drawing`.
+`Shop` or `Photoshoot`.
 
-Folders become albums. Every imported folder that directly holds photos becomes
-one album with the same name, taken from its path under the picked folder, so
-`Smith Residence/Finished` arrives as the album `Smith Residence – Finished`.
-The employee can find every folder again by name under Albums. Tell them this
+Folders do not become albums unless asked. On the review screen each imported
+folder that directly holds photos has a **Make an album** switch, off by default;
+turned on, the album takes its name from the folder's path under the picked
+folder, so `Smith Residence/Finished` arrives as `Smith Residence – Finished`.
+Without it the photos go to the folder's project only. Tell them this
 plainly when they ask where their folders will go. An `album_name` suggestion
 on a source names the album for photos sitting directly inside that picked
 folder; folders inside it keep the names of their paths.

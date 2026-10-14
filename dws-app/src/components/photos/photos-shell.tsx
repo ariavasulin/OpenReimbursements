@@ -30,7 +30,7 @@ import { usePhotoAlbum, usePhotoJobs } from "@/lib/photos/api";
 import { jobLabel } from "@/lib/photos/format";
 
 /** Pages that are a focused task, not browsing: no "+" button over them. */
-const NO_ADD_BUTTON = ["/photos/actions", "/photos/trash"];
+const NO_ADD_BUTTON = ["/photos/actions", "/photos/trash", "/photos/settings"];
 
 /**
  * The /photos frame: owns the session guard (hoisted out of the pages), the

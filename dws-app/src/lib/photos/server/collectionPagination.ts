@@ -4,10 +4,10 @@ import { COLLECTION_PAGE_SIZE, type CollectionCursor } from '../collectionPagina
 import { PhotoApiError } from './http';
 
 type Kind = 'albums' | 'jobs';
-const timestampSchema = z.string().datetime({ offset: true });
-const timestamp = (value: unknown): value is string => timestampSchema.safeParse(value).success;
+/** The sort key a page ended on: a project's number key, an album's name key, as SQL built it. */
+const sortKey = (value: unknown): value is string => z.string().max(1000).safeParse(value).success;
 
-/** Bind the opaque continuation to its collection and exact search, preserving PostgreSQL microseconds. */
+/** Bind the opaque continuation to its collection and exact search. */
 export function readCollectionPage(params: URLSearchParams, kind: Kind) {
   for (const key of ['q', 'cursor', 'limit']) {
     if (params.getAll(key).length > 1) throw new PhotoApiError('invalid_input');
@@ -26,8 +26,7 @@ export function readCollectionPage(params: URLSearchParams, kind: Kind) {
       const key = value.key;
       if (value.v !== 1 || value.kind !== kind || value.q !== q || !key ||
           typeof key.id !== 'string' || !isUuid(key.id) ||
-          !(timestamp(key.activity) || (kind === 'jobs' && key.activity === null)) ||
-          (kind === 'jobs' && (typeof key.number !== 'string' || key.number.length > 1000))) throw new Error();
+          !sortKey(kind === 'jobs' ? key.number : key.name)) throw new Error();
       cursor = key;
     } catch { throw new PhotoApiError('invalid_input'); }
   }

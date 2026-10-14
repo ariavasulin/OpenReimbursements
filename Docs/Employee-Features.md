@@ -190,6 +190,12 @@ existed keeps the receipts icon; remove it and add it again.
 
 ### Browsing
 
+**Projects** lists projects by job number, highest first, so the newest job is
+on top (a project made without a number gets a `P-` code and sits after the
+numbered ones). **Albums** lists albums by name, A to Z, with names that start
+with a number first. Neither list has a sort control. **Photos** stays by date
+taken, newest first.
+
 Every photo grid (Photos, a project, an album, search) has one toolbar row:
 **Filter**, **Group by**, and **Sort**.
 
@@ -206,7 +212,7 @@ Every photo grid (Photos, a project, an album, search) has one toolbar row:
   link keeps them.
 - **Search** splits what you type into words, and every word has to match a
   project number or name, an uploader name, a tag, or a photo's name. So
-  `3962 professional` finds photos in project 3962 tagged professional.
+  `3962 photoshoot` finds photos in project 3962 tagged Photoshoot.
 
 ### Favorites
 
@@ -237,6 +243,11 @@ photos it was given by mistake: Group by Tag, tick that tag's group header,
 press Tag, choose Remove tags, pick the tag, and press Remove tag. A single
 photo's tags are edited from **Edit tags** in its details.
 
+Every tag picker offers the tags already in use plus the **default tags**,
+**Shop**, **Field**, and **Photoshoot** to begin with; a photo admin can change
+that list on the Settings page. Typing a tag that matches one of them, ignoring
+case, stores that spelling.
+
 ### Download
 
 **Download** in the selection bar builds one zip in the browser. A confirmation
@@ -251,8 +262,26 @@ Photos open edge to edge. One tap or click hides every control (toolbar,
 counter, arrows, thumbnails, Details); another brings them back. On desktop,
 Details is an **i** button, off by default, and **Fullscreen** appears where the
 browser supports it. **Play** in the viewer or in a project, album, or search
-page header starts a slideshow of that page's photos in its current order: 4 s
-each, looping, photos only. Any tap pauses it.
+page header starts a slideshow of that page's photos, looping, photos only. Any
+tap pauses it. By default it runs in the page's order at 4 s a photo; the
+Settings page (account menu) has **Random order** and how long each photo
+stays, and that choice is yours alone, on every device you sign in on.
+
+### Settings
+
+**Settings** in the account menu. Everyone sets their own slideshow (random
+order, seconds a photo stays). Photo admins also edit the **default tags** the
+pickers offer; changing them never changes the tags photos already have.
+
+### Importing folders
+
+**Import folders** (the "+" menu, on a computer in Chrome or Edge) reads a
+folder and shows one row per folder that holds photos. Give each a project, and
+tags if you like. **Make an album** on a row is off by default: on, that folder's
+photos also go into an album named after the folder (rename it in the row). A
+folder needs a project or an album before the import can start. The file list
+shows 50 files at a time and stays on the page you are reading while the import
+runs.
 
 ### Arranging an album
 

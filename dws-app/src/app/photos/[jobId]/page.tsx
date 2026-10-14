@@ -19,7 +19,7 @@ import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoActor, usePhotoJob
 import { isPhotoAdmin } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
-const PINNED_TAG = "professional";
+const PINNED_TAG = "Photoshoot";
 
 /** One project. The URL is unchanged, so every link already sent keeps working. */
 export default function ProjectPage() {
@@ -134,10 +134,10 @@ function ProjectPageContent() {
       <PhotoBrowser
         scope={{ kind: "job", jobId }}
         // A project opens grouped by tag: that is how the office sorts a job's
-        // photos (shop drawings, install, professional). The first mode is the default.
+        // photos (Shop, Field, Photoshoot). The first mode is the default.
         groupModes={["tag", "date", "uploader", "type"] as const}
         pinnedTag={PINNED_TAG}
-        pinnedLabel="Professional Photography"
+        pinnedLabel="Photoshoot"
         empty={
           <EmptyState
             icon={<Briefcase className="h-7 w-7" aria-hidden="true" />}

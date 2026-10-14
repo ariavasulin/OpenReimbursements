@@ -12,8 +12,8 @@ const MAX_DELETED_JOBS = 500;
 
 // GET /api/photo-jobs?q= — job cards for the photos home screen and the
 // upload job dropdown: job number, name, photo count, up to 4 newest thumbs.
-// Ordered by most recent upload activity (jobs with photos first, newest
-// upload first; then job number descending).
+// Ordered by job number descending (the newest job on top; all-digit numbers
+// compare as numbers), with generated P-<n> codes after every numbered project.
 
 // GET /api/photo-jobs?deleted=1 — every project in Trash, newest deletion first,
 // for the Trash page: photo_count is what a restore brings back, and one past
@@ -30,10 +30,9 @@ export async function GET(request: Request) {
     }
     const supabase = await requirePhotoReader();
     const { q, limit, cursor } = readCollectionPage(params, 'jobs');
-    const { data, error } = await supabase.rpc('get_photo_job_summaries_page', {
+    const { data, error } = await supabase.rpc('get_photo_job_summaries_by_number_page', {
       search_query: escapeIlikeWildcards(q) || null, p_limit: limit,
-      p_after_activity: cursor?.activity ?? null, p_after_number: cursor?.number ?? null,
-      p_after_id: cursor?.id ?? null,
+      p_after_number: cursor?.number ?? null, p_after_id: cursor?.id ?? null,
     });
     if (error) throwPhotoDatabaseError(error);
     const page = data as CollectionPage<PhotoJobSummaryRow>;

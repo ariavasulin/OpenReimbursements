@@ -12,7 +12,8 @@ const RESTORE_DAYS = 30;
 const MAX_DELETED_ALBUMS = 500;
 
 // GET /api/photo-albums?q= — album cards: name, active-photo count, up to 4
-//     newest thumbnails, and who made it. Most recently added-to first. Mirrors GET /api/photo-jobs.
+//     newest thumbnails, and who made it. By name, A to Z (a number in a name
+//     compares as a number; names starting with a digit first). Mirrors GET /api/photo-jobs.
 // GET /api/photo-albums?deleted=1 — albums deleted in the last 30 days, newest
 //     deletion first, for the Trash page. Employees cannot read deleted albums
 //     through their own session, so this one goes through the verified actor.
@@ -31,9 +32,9 @@ export async function GET(request: Request) {
     }
     const session = await requirePhotoReader();
     const { q, limit, cursor } = readCollectionPage(params, 'albums');
-    const { data, error } = await session.rpc('get_photo_album_summaries_page', {
+    const { data, error } = await session.rpc('get_photo_album_summaries_by_name_page', {
       q: escapeIlikeWildcards(q) || null, p_limit: limit,
-      p_after_activity: cursor?.activity ?? null, p_after_id: cursor?.id ?? null,
+      p_after_name: cursor?.name ?? null, p_after_id: cursor?.id ?? null,
     });
     if (error) throwPhotoDatabaseError(error);
     const page = data as CollectionPage<PhotoAlbumSummaryRow>;

@@ -67,10 +67,10 @@ describe('MCP registry', () => {
     }
   });
 
-  it('tells the assistant that folders become albums, a project is optional, and tags can be set per folder', async () => {
+  it('tells the assistant that folders become albums only when asked, a project is optional, and tags can be set per folder', async () => {
     const { skills } = await import('./harness');
     const text = skills.photos.instructions;
-    for (const phrase of ['Folders become albums', 'A project is optional', 'Tags can be set per folder', 'need a project or an album']) expect(text, phrase).toContain(phrase);
+    for (const phrase of ['Folders do not become albums unless asked', 'Make an album', 'A project is optional', 'Tags can be set per folder', 'need a project or an album']) expect(text, phrase).toContain(phrase);
     // The sentence this plan replaces must be gone, not merely contradicted further down.
     expect(text).not.toContain('Every photo belongs to one project');
   });
