@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { usePhotosSearch } from "@/components/photos/photos-shell-context";
-import { usePhotoAlbums, usePhotoJobs } from "@/lib/photos/api";
+import { usePhotoAlbumSuggestions, usePhotoJobSuggestions } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { PHOTO_SEARCH_PATH, photoSearchHref } from "@/lib/photos/photo-link";
 
@@ -26,8 +26,10 @@ export default function SearchBox({ className = "" }: { className?: string }) {
   const [focused, setFocused] = useState(false);
 
   const active = focused && debouncedQuery.length > 0;
-  const { data: jobs } = usePhotoJobs(active, debouncedQuery);
-  const { data: albums } = usePhotoAlbums(active, debouncedQuery);
+  // Only the few rows the panel shows, in one small request each per typed
+  // prefix, not every match page after page.
+  const { data: jobs } = usePhotoJobSuggestions(active, debouncedQuery, SUGGESTION_LIMIT);
+  const { data: albums } = usePhotoAlbumSuggestions(active, debouncedQuery, SUGGESTION_LIMIT);
   const projectMatches = (jobs ?? []).slice(0, SUGGESTION_LIMIT);
   const albumMatches = (albums ?? []).slice(0, SUGGESTION_LIMIT);
 
