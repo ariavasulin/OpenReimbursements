@@ -53,16 +53,12 @@ async function makeImageDerivatives(
   }
 
   try {
-    const [thumb, preview] = await Promise.all([
-      scaleAndEncode(bitmap, THUMB_MAX_DIM),
-      scaleAndEncode(bitmap, PREVIEW_MAX_DIM),
-    ]);
-    if (!thumb || !preview) return null;
-    return { thumb, preview, durationSecs: null };
+    const sizes = await bothSizes(bitmap);
+    return sizes && { ...sizes, durationSecs: null };
   } catch {
     return null;
   } finally {
-    bitmap.close();
+    bitmap.close(); // already closed on the normal path; a second close is a no-op
   }
 }
 
@@ -142,12 +138,8 @@ async function makeVideoDerivatives(
     await seeked;
 
     bitmap = await createImageBitmap(video);
-    const [thumb, preview] = await Promise.all([
-      scaleAndEncode(bitmap, THUMB_MAX_DIM),
-      scaleAndEncode(bitmap, PREVIEW_MAX_DIM),
-    ]);
-    if (!thumb || !preview) return null;
-    return { thumb, preview, durationSecs: duration };
+    const sizes = await bothSizes(bitmap);
+    return sizes && { ...sizes, durationSecs: duration };
   } catch {
     return null;
   } finally {
@@ -157,13 +149,18 @@ async function makeVideoDerivatives(
   }
 }
 
-/** A 2D canvas of either kind, reduced to what encoding needs. */
+/** Anything a 2D canvas can draw from: the decoded frame, or another canvas. */
+type Drawable = ImageBitmap | OffscreenCanvas | HTMLCanvasElement;
+
+/** A 2D canvas of either kind, reduced to what drawing and encoding need. */
 interface Surface {
   /** The canvas class; which formats encode is a property of the class. */
   kind: object;
+  /** The canvas itself, for a smaller surface to draw from. */
+  canvas: OffscreenCanvas | HTMLCanvasElement;
   /** A same-kind canvas at another size (the 1x1 WebP probe). */
   sibling(width: number, height: number): Surface | null;
-  draw(bitmap: ImageBitmap): void;
+  draw(source: Drawable): void;
   encode(type: string): Promise<Blob | null>;
 }
 
@@ -174,8 +171,9 @@ function offscreenSurface(width: number, height: number): Surface | null {
   if (!ctx) return null;
   return {
     kind: OffscreenCanvas,
+    canvas,
     sibling: offscreenSurface,
-    draw: (bitmap) => ctx.drawImage(bitmap, 0, 0, width, height),
+    draw: (source) => ctx.drawImage(source, 0, 0, width, height),
     encode: (type) => canvas.convertToBlob({ type, quality: ENCODE_QUALITY }),
   };
 }
@@ -189,8 +187,9 @@ function elementSurface(width: number, height: number): Surface | null {
   if (!ctx) return null;
   return {
     kind: canvas.constructor,
+    canvas,
     sibling: elementSurface,
-    draw: (bitmap) => ctx.drawImage(bitmap, 0, 0, width, height),
+    draw: (source) => ctx.drawImage(source, 0, 0, width, height),
     encode: (type) =>
       new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, type, ENCODE_QUALITY)
@@ -219,25 +218,48 @@ function canEncodeWebp(surface: Surface): Promise<boolean> {
   return known;
 }
 
-/** Scale the bitmap so its longest side is at most maxDim (never upscale),
- * then encode it as WebP, or as JPEG where WebP is not available. The blob's
- * type is checked, never assumed: a browser that cannot encode the requested
- * type returns a PNG without saying so. Null when neither format came out:
- * the photo then gets its previews from the server renderer instead of a
- * multi-megabyte PNG being stored. */
-async function scaleAndEncode(
-  bitmap: ImageBitmap,
-  maxDim: number
-): Promise<Blob | null> {
-  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+/**
+ * The preview and the thumb from one decoded frame (UP-4). The preview is
+ * drawn from the full-size frame, which is closed straight after: a 48 MP
+ * photo decodes to ~190 MB, and freeing it before any encoding starts is what
+ * keeps a phone's tab alive. The thumb is then drawn from the 2048 px preview
+ * canvas rather than from the full frame again. Null when either size could
+ * not be made.
+ */
+async function bothSizes(
+  bitmap: ImageBitmap
+): Promise<{ thumb: Blob; preview: Blob } | null> {
+  const previewSurface = drawScaled(bitmap, PREVIEW_MAX_DIM);
+  bitmap.close();
+  if (!previewSurface) return null;
+  const thumbSurface = drawScaled(previewSurface.canvas, THUMB_MAX_DIM);
+  if (!thumbSurface) return null;
+  const [preview, thumb] = await Promise.all([
+    encode(previewSurface),
+    encode(thumbSurface),
+  ]);
+  return thumb && preview ? { thumb, preview } : null;
+}
+
+/** A new canvas holding `source` with its longest side at most maxDim
+ * (never upscaled). */
+function drawScaled(source: Drawable, maxDim: number): Surface | null {
+  const scale = Math.min(1, maxDim / Math.max(source.width, source.height));
+  const width = Math.max(1, Math.round(source.width * scale));
+  const height = Math.max(1, Math.round(source.height * scale));
 
   const surface =
     offscreenSurface(width, height) ?? elementSurface(width, height);
-  if (!surface) return null;
-  surface.draw(bitmap);
+  surface?.draw(source);
+  return surface;
+}
 
+/** WebP, or JPEG where WebP is not available. The blob's type is checked,
+ * never assumed: a browser that cannot encode the requested type returns a
+ * PNG without saying so. Null when neither format came out: the photo then
+ * gets its previews from the server renderer instead of a multi-megabyte PNG
+ * being stored. */
+async function encode(surface: Surface): Promise<Blob | null> {
   if (await canEncodeWebp(surface)) {
     const webp = await surface.encode("image/webp");
     if (webp?.type === "image/webp") return webp;

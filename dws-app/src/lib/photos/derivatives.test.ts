@@ -21,13 +21,25 @@ interface Encode {
   quality?: number;
 }
 
+/** What was drawn where, and what had been closed by then. */
+interface Draw {
+  target: FakeCanvas;
+  source: unknown;
+}
+
 /** Stub OffscreenCanvas. Every drawing canvas lands in `canvases` (the 1x1
- * WebP probe is left out so indexes stay thumb, preview) and every
- * encode in `encodes`. Like a real browser, a type it cannot encode comes
- * back as PNG; WebKit is `{ encodable: ["image/png", "image/jpeg"] }`. */
+ * WebP probe is left out so indexes stay preview, thumb), every draw in
+ * `draws`, and every encode in `encodes`. Like a real browser, a type it
+ * cannot encode comes back as PNG; WebKit is
+ * `{ encodable: ["image/png", "image/jpeg"] }`. */
 function installOffscreenCanvas(
   canvases: FakeCanvas[],
-  { encodable, encodes = [] }: { encodable?: string[]; encodes?: Encode[] } = {}
+  {
+    encodable,
+    encodes = [],
+    draws = [],
+    onEncode,
+  }: { encodable?: string[]; encodes?: Encode[]; draws?: Draw[]; onEncode?: () => void } = {}
 ) {
   class OffscreenCanvasMock {
     width: number;
@@ -38,9 +50,12 @@ function installOffscreenCanvas(
       if (width * height > 1) canvases.push(this);
     }
     getContext(kind: string) {
-      return kind === "2d" ? { drawImage: () => {} } : null;
+      return kind === "2d"
+        ? { drawImage: (source: unknown) => draws.push({ target: this, source }) }
+        : null;
     }
     async convertToBlob(options?: { type?: string; quality?: number }) {
+      if (this.width * this.height > 1) onEncode?.();
       const asked = options?.type ?? "image/png";
       const type = !encodable || encodable.includes(asked) ? asked : "image/png";
       encodes.push({ width: this.width, height: this.height, type: asked, quality: options?.quality });
@@ -59,22 +74,33 @@ function installCanvasMocks(bitmap: {
 }, encodable?: string[]) {
   const canvases: FakeCanvas[] = [];
   const encodes: Encode[] = [];
+  const draws: Draw[] = [];
+  const decoded: { width: number; height: number; close: ReturnType<typeof vi.fn> }[] = [];
+  /** Per encode: whether every decoded bitmap was already closed. */
+  const closedAtEncode: boolean[] = [];
 
   vi.stubGlobal(
     "createImageBitmap",
     vi.fn(async (_source: unknown, options?: ImageBitmapOptions) => {
       const rotated =
         bitmap.exifRotated && options?.imageOrientation === "from-image";
-      return {
+      const made = {
         width: rotated ? bitmap.height : bitmap.width,
         height: rotated ? bitmap.width : bitmap.height,
         close: vi.fn(),
       };
+      decoded.push(made);
+      return made;
     })
   );
-  installOffscreenCanvas(canvases, { encodable, encodes });
+  installOffscreenCanvas(canvases, {
+    encodable,
+    encodes,
+    draws,
+    onEncode: () => closedAtEncode.push(decoded.every((b) => b.close.mock.calls.length > 0)),
+  });
 
-  return { canvases, encodes };
+  return { canvases, encodes, draws, decoded, closedAtEncode };
 }
 
 afterEach(() => {
@@ -94,11 +120,34 @@ describe("makeDerivatives", () => {
     expect(result!.thumb.type).toBe("image/webp");
     expect(result!.preview.type).toBe("image/webp");
     // Longest side capped, aspect preserved.
-    expect(canvases[0]).toMatchObject({ width: THUMB_MAX_DIM, height: 480 });
-    expect(canvases[1]).toMatchObject({
+    expect(canvases[0]).toMatchObject({
       width: PREVIEW_MAX_DIM,
       height: 1536,
     });
+    expect(canvases[1]).toMatchObject({ width: THUMB_MAX_DIM, height: 480 });
+  });
+
+  it("decodes once: the thumb is drawn from the preview, after the full frame is freed", async () => {
+    const { canvases, draws, decoded, closedAtEncode } = installCanvasMocks({
+      width: 8000,
+      height: 6000,
+    });
+    const file = new File([new Uint8Array(8)], "48mp.jpg", {
+      type: "image/jpeg",
+    });
+
+    expect(await makeDerivatives(file)).not.toBeNull();
+
+    expect(decoded).toHaveLength(1);
+    // The full frame is drawn once, into the preview; the thumb's source is
+    // the preview canvas, not the full frame.
+    expect(draws.map((d) => [d.target, d.source])).toEqual([
+      [canvases[0], decoded[0]],
+      [canvases[1], canvases[0]],
+    ]);
+    // The ~190 MB decode is closed before any encoding begins.
+    expect(closedAtEncode.length).toBeGreaterThan(0);
+    expect(closedAtEncode.every(Boolean)).toBe(true);
   });
 
   it("keeps a rotated (portrait after EXIF orientation) photo portrait", async () => {
@@ -116,11 +165,11 @@ describe("makeDerivatives", () => {
     const result = await makeDerivatives(file);
 
     expect(result).not.toBeNull();
-    expect(canvases[0]).toMatchObject({ width: 480, height: THUMB_MAX_DIM });
-    expect(canvases[1]).toMatchObject({
+    expect(canvases[0]).toMatchObject({
       width: 1536,
       height: PREVIEW_MAX_DIM,
     });
+    expect(canvases[1]).toMatchObject({ width: 480, height: THUMB_MAX_DIM });
   });
 
   it("never upscales images smaller than the target", async () => {
@@ -132,8 +181,8 @@ describe("makeDerivatives", () => {
     const result = await makeDerivatives(file);
 
     expect(result).not.toBeNull();
-    expect(canvases[0]).toMatchObject({ width: 320, height: 240 }); // thumb
-    expect(canvases[1]).toMatchObject({ width: 320, height: 240 }); // preview
+    expect(canvases[0]).toMatchObject({ width: 320, height: 240 }); // preview
+    expect(canvases[1]).toMatchObject({ width: 320, height: 240 }); // thumb
   });
 
   it("falls back to JPEG at quality 0.8 where WebP comes back as PNG (WebKit)", async () => {
@@ -312,8 +361,8 @@ describe("makeDerivatives (video)", () => {
     expect(result!.preview.type).toBe("image/webp");
     expect(video.seekedTo).toBe(POSTER_SEEK_SECS);
     // 1920x1080 poster -> 640x360 thumb; preview is never upscaled.
-    expect(canvases[0]).toMatchObject({ width: THUMB_MAX_DIM, height: 360 });
-    expect(canvases[1]).toMatchObject({ width: 1920, height: 1080 });
+    expect(canvases[0]).toMatchObject({ width: 1920, height: 1080 });
+    expect(canvases[1]).toMatchObject({ width: THUMB_MAX_DIM, height: 360 });
     expect(revoked).toEqual(["blob:fake-video"]);
   });
 
