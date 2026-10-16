@@ -131,6 +131,15 @@ describe("cache patches", () => {
     expect(client.getQueryState(allKey)?.isInvalidated).toBe(true);
   });
 
+  it("an edited row with new tags also refreshes the tag menus, a renamed one does not", () => {
+    const client = new QueryClient();
+    client.setQueryData(photoKeys.tags(), ["Shop"]);
+    patchPhotoRows(client, [{ id: "a", display_name: "new" }]);
+    expect(client.getQueryState(photoKeys.tags())?.isInvalidated).toBe(false);
+    patchPhotoRows(client, [{ id: "a", tags: ["Deck"] }]);
+    expect(client.getQueryState(photoKeys.tags())?.isInvalidated).toBe(true);
+  });
+
   it("tags show at once, in the library's spelling", () => {
     const client = new QueryClient();
     client.setQueryData(allKey, gridOf(photo("a", { tags: ["Shop"] }), photo("b")));

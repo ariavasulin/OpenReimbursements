@@ -504,9 +504,10 @@ function staleGrids(queryClient: QueryClient) {
 }
 
 /**
- * Put rows the server sent back (a rename answers the whole row) into every
- * cached grid, search, and open photo, at once and without a refetch. Fields
- * a row does not carry (a favorite, a photo's albums) are kept.
+ * Put rows the server sent back (PATCH /api/photos/[id] answers the whole
+ * row, for a rename or the viewer's Edit) into every cached grid, search, and
+ * open photo, at once and without a refetch. Fields a row does not carry (a
+ * favorite, a photo's albums) are kept.
  */
 export function patchPhotoRows(queryClient: QueryClient, rows: readonly (Partial<PhotoRow> & { id: string })[]) {
   const byId = new Map(rows.map((row) => [row.id, row]));
@@ -519,6 +520,19 @@ export function patchPhotoRows(queryClient: QueryClient, rows: readonly (Partial
   }
   // A new name can join or leave a search; the next visit to it asks again.
   staleGrids(queryClient);
+  staleSelectAll(queryClient);
+  if (rows.some((row) => row.tags !== undefined)) refreshTagViews(queryClient);
+}
+
+/** After tags changed: grids filtered by a tag refetch where on screen, and the tag menus learn new tags. */
+function refreshTagViews(queryClient: QueryClient) {
+  for (const prefix of GRID_PREFIXES) {
+    void queryClient.invalidateQueries({
+      queryKey: [prefix],
+      predicate: (query) => listFiltersByTag(query.queryKey[2]) && !isSelectAllKey(query.queryKey),
+    });
+  }
+  void queryClient.invalidateQueries({ queryKey: photoKeys.allTags });
 }
 
 /**
@@ -545,20 +559,9 @@ export function patchPhotoTags(
   for (const id of ids) {
     queryClient.setQueryData<PhotoDetail>(photoKeys.detail(id), (photo) => photo && retag(photo));
   }
-  for (const prefix of GRID_PREFIXES) {
-    void queryClient.invalidateQueries({
-      queryKey: [prefix],
-      predicate: (query) => !isSelectAllKey(query.queryKey),
-      refetchType: "none",
-    });
-    void queryClient.invalidateQueries({
-      queryKey: [prefix],
-      predicate: (query) => listFiltersByTag(query.queryKey[2]) && !isSelectAllKey(query.queryKey),
-    });
-  }
+  staleGrids(queryClient);
   staleSelectAll(queryClient);
-  // The tag menus and suggestions: a new tag is offered from now on.
-  void queryClient.invalidateQueries({ queryKey: photoKeys.allTags });
+  refreshTagViews(queryClient);
 }
 
 /**
@@ -591,13 +594,19 @@ export function removePhotosFromLists(
 }
 
 /**
- * An album's order switched (arranged or by date): only that album's grid,
- * header, and card change, so only they refresh.
+ * One album changed and nothing else did: its order switched, or photos were
+ * added to it. Only that album's grid, header, and card refresh, plus the
+ * open Details of `photoIds` (which list their albums).
  */
-export function invalidateAlbumOrder(queryClient: QueryClient, albumId: string) {
-  void queryClient.invalidateQueries({ queryKey: ["photos", `album:${albumId}`] });
+export function invalidateAlbum(queryClient: QueryClient, albumId: string, photoIds: readonly string[] = []) {
+  void queryClient.invalidateQueries({
+    queryKey: ["photos", `album:${albumId}`],
+    predicate: (query) => !isSelectAllKey(query.queryKey),
+  });
+  staleSelectAll(queryClient);
   void queryClient.invalidateQueries({ queryKey: photoKeys.album(albumId) });
   void queryClient.invalidateQueries({ queryKey: photoKeys.allAlbums });
+  for (const id of photoIds) void queryClient.invalidateQueries({ queryKey: photoKeys.detail(id) });
 }
 
 // ---- Prefetching on intent -------------------------------------------------------

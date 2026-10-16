@@ -18,7 +18,7 @@ import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import {
   deleteAlbum,
-  invalidateAlbumOrder,
+  invalidateAlbum,
   invalidatePhotoCaches,
   renameAlbum,
   restoreAlbumOrder,
@@ -78,7 +78,7 @@ function AlbumPageContent() {
       current && { ...current, sort_mode: mode, has_custom_order: current.has_custom_order || mode === "custom" }
     );
     // Only this album's grid, header, and card show its order.
-    invalidateAlbumOrder(queryClient, albumId);
+    invalidateAlbum(queryClient, albumId);
   };
 
   const restoreCustom = async (name: string) => {
