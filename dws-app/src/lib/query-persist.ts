@@ -25,13 +25,13 @@ export const MAX_PERSISTED_GRIDS = 6;
  * (query-persist.test.ts checks them against it):
  * - the full project and album lists (the "" search prefix only; typed
  *   prefixes are throwaway),
- * - photo settings,
  * - one album's header,
  * - photo grids (["photos", scope, list params]), trimmed to their first
  *   page below.
- * Not saved: who the person is and what they may do ("photo-actor" — a stale
- * admin flag would draw the wrong buttons), searches, trash, details, and
- * every receipts query.
+ * Not saved: who the person is and what they may do ("photo-me" — a stale
+ * admin flag would draw the wrong buttons; the settings arrive in the same
+ * answer, so they are not saved either and show their defaults until it
+ * lands), searches, trash, details, and every receipts query.
  */
 export function shouldPersistQuery(queryKey: QueryKey): boolean {
   const [kind, arg] = queryKey;
@@ -39,8 +39,6 @@ export function shouldPersistQuery(queryKey: QueryKey): boolean {
     case "photo-jobs":
     case "photo-albums":
       return queryKey.length === 2 && arg === "";
-    case "photo-settings":
-      return queryKey.length === 1;
     case "photo-album":
       return typeof arg === "string" && arg.length > 0;
     case "photos":

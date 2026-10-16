@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { chipClass } from "@/components/photos/filter-bar";
 import { fieldClass } from "@/components/photos/date-range-fields";
 import { PAGE_TITLE_CLASS } from "@/components/photos/page-layout";
-import { PHOTO_SETTINGS_KEY, savePhotoSettings, usePhotoActor, usePhotoSettings } from "@/lib/photos/api";
+import { savePhotoSettings, setCachedPhotoSettings, usePhotoActor, usePhotoSettings } from "@/lib/photos/api";
 import { actionButton, actionPrimary } from "@/lib/photos/action-client";
 import { isPhotoAdmin } from "@/lib/photos/permissions";
 import { DEFAULT_SLIDESHOW, SLIDESHOW_DELAY_CHOICES, type PhotoSettingsPatch } from "@/lib/photos/settings";
@@ -32,7 +32,7 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       const next = await savePhotoSettings(patch);
-      queryClient.setQueryData(PHOTO_SETTINGS_KEY, next);
+      setCachedPhotoSettings(queryClient, next);
       toast.success(done);
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "Could not save settings");
