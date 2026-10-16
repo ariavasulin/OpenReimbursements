@@ -815,6 +815,17 @@ and retries it (5 s, 10 s, 20 s, 40 s, then every minute, sooner on the
 browser's `online` event or when the page returns to the front), up to 30
 minutes, before failing it. Only failures with no HTTP answer count as a
 dropped connection; a 503 (writes gated off) still fails the file at once.
+Offline, the cut-off try's lease release fails too, so the lease stays live for
+up to two minutes. The browser remembers that lease's generation and sends it
+to `begin` as `release_generation`; `begin` releases it
+(`retryable_failed`, `connection_lost`) before acquiring, so the retry starts
+at once. If the lease is still live anyway (that release missed, or the lost
+request was `begin` itself), `begin` answers `200` with
+`lease_busy: { retry_after_ms }` (read on the server's clock) instead of a
+409, and the tray waits that long and tries again, at most three times. Before
+each retry the browser reads one byte of the picked file; a file the phone can
+no longer read fails at once ("File can no longer be read — re-pick it")
+instead of holding the batch for 30 minutes.
 
 ## Repair sweep (`/api/photos/repair`)
 

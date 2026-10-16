@@ -90,6 +90,15 @@ export function isConnectionFailure(result: Pick<UploadResult, "status" | "retry
     (result.errorCode === "network_error" || result.errorCode === "storage_upload_failed");
 }
 
+/**
+ * An earlier try of this same upload still holds its lease: one cut off by a
+ * dropped connection before it could hand the lease back. Not a refusal; the
+ * lease runs out by `retryAt` and the upload can carry on then.
+ */
+export function isLeaseBusy(result: Pick<UploadResult, "status" | "errorCode" | "retryAt">): result is UploadResult & { retryAt: number } {
+  return result.status === "failed" && result.errorCode === "lease_busy" && typeof result.retryAt === "number";
+}
+
 export interface PhotoStorage {
   upload(
     path: string,
@@ -153,6 +162,9 @@ export interface UploadResult {
   twin?: FormatTwin;
   /** HTTP status of the failure, when a server answered. */
   errorStatus?: number;
+  /** The lease this try took and could not hand back: its release went down
+   *  with the connection. Pass it to the next try as `heldLease`. */
+  heldLease?: number;
 }
 
 /** What a row shows while it uploads: getting the file ready, sending bytes, saving the photo. */
@@ -329,10 +341,15 @@ export async function uploadOne(
     /** Takes the server-preview request instead of waiting for it, so the
      *  next file need not wait. Without it the request is awaited here. */
     deriveLater?: (photoId: string, derive: ServerDerive) => void;
+    /** The last try's `heldLease`. Begin hands it back before taking a new
+     *  one, so a retry after a dropped connection need not wait it out. */
+    heldLease?: number;
   } = {}
 ): Promise<UploadResult> {
   const warnings: string[] = [];
   let sidecarRetryAt: number | undefined;
+  // The failure answer, kept so the release below can add a lease it could not hand back.
+  let failure: UploadResult | undefined;
   if (opts.expectedSidecarName && !opts.sidecar) {
     warnings.push("Sidecar file was not reselected; the original is preserved.");
   }
@@ -399,6 +416,8 @@ export async function uploadOne(
     // be stored under it yet and the original-file check can be skipped. A
     // retry of the same identity (a lost response, a dropped connection) checks.
     let fresh = !unchanged;
+    // Only this same attempt's lease can be handed back.
+    let heldLease = unchanged ? opts.heldLease : undefined;
     let attempt: UploadAttempt;
     let acquired: AcquireUploadOutcome;
     let owner: UploadOwner;
@@ -412,9 +431,16 @@ export async function uploadOne(
         original_name: file.name, original_bytes: file.size, mime_type: classified.mime,
       };
       if (deps.begin) {
-        const beginInput: BeginUploadInput = { ...attemptInput, probe: !fresh };
+        const beginInput: BeginUploadInput = { ...attemptInput, probe: !fresh,
+          ...(heldLease !== undefined ? { release_generation: heldLease } : {}) };
+        heldLease = undefined;
         begun = await run(() => deps.begin!(beginInput, requestOptions));
         attempt = begun.attempt;
+        if (begun.lease_busy) {
+          throw new UploadRequestError("Waiting for an earlier try of this upload to time out.", {
+            code: "lease_busy", status: 409, retryable: true, retryAt: Date.now() + begun.lease_busy.retry_after_ms,
+          });
+        }
       } else {
         begun = undefined;
         attempt = await run(() => deps.createAttempt(attemptInput, requestOptions));
@@ -559,18 +585,22 @@ export async function uploadOne(
       retryAt: sidecarRetryAt,
     };
   } catch (error) {
-    return {
+    failure = {
       status: opts.signal?.aborted ? "cancelled" : "failed",
       error: error instanceof Error ? error.message : "Upload failed", warnings,
       ...retryDetails(error),
     };
+    return failure;
   } finally {
     clearTimeout(timer);
     opts.signal?.removeEventListener("abort", cancel);
     if (lease && !completed) {
       // Transport interruption remains retryable; explicit batch cancellation is server-owned.
       // No aborted signal: releasing a fenced lease must still be attempted.
-      await deps.releaseLease({ ...lease, status: "retryable_failed" }).catch(() => undefined);
+      const released = await deps.releaseLease({ ...lease, status: "retryable_failed" }).then(() => true, () => false);
+      // Offline, the release fails too and the lease stays live for up to two
+      // minutes. The next try hands it back as it begins (UP-3).
+      if (!released && failure) failure.heldLease = lease.lease_generation;
     }
   }
 }

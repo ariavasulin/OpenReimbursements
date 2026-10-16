@@ -349,8 +349,12 @@ until the tray is done: the screen stays on by itself where the browser allows
 it, but locking the phone or switching apps pauses the upload. If the
 connection drops (a basement, a dead spot), the tray says "Waiting for
 connection" and the batch carries on by itself when the signal comes back,
-picking up the same file; nothing needs to be re-picked. After 30 minutes
-without a connection that file fails and the rest go on. When several files
+picking up the same file; nothing needs to be re-picked (now and then it
+waits up to two more minutes while the server lets go of the interrupted try).
+After 30 minutes without a connection that file fails and the rest go on. If
+the phone can no longer read a picked file (an iPhone can drop it while the app
+sits in the background), that file fails at once with "File can no longer be
+read — re-pick it" and the rest go on. When several files
 failed, **Retry all** in the tray retries them in one tap.
 
 ### Other formats of the same photo

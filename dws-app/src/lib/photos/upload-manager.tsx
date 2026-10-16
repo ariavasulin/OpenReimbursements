@@ -45,6 +45,7 @@ const importEngine = () =>
     uploadSidecar: u.retrySidecar,
     prepareUpload: u.prepareUpload,
     isConnectionFailure: u.isConnectionFailure,
+    isLeaseBusy: u.isLeaseBusy,
     withoutPreviewNotes: u.withoutPreviewNotes,
     buildBrowserUploadDeps: b.buildBrowserUploadDeps,
     cancelBrowserUpload: b.cancelBrowserUpload,
@@ -65,6 +66,11 @@ export function preloadUploadEngine() {
 }
 
 const MANIFEST_KEY = "photos.upload-manifest";
+/** An earlier try's lease runs out within two minutes, so one wait is enough;
+ *  needing more means something else holds it, and the row fails with a retry. */
+const LEASE_WAITS = 3;
+/** Past the lease's end, so the next try finds it free. */
+const LEASE_GRACE_MS = 1_000;
 /** Server-made previews in flight at once; the rest wait their turn. */
 const SERVER_DERIVES_AT_ONCE = 2;
 
@@ -198,6 +204,35 @@ function waitForConnection(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** Wait `ms`, ending at once when `signal` aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    if (signal.aborted) return done();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/**
+ * Whether the picked file can still be read. A phone may revoke a picked file
+ * (iOS, after the page sat in the background); every try would then fail the
+ * same way and look like a dropped connection, holding the batch for half an
+ * hour. Reading one byte is local and costs no request.
+ */
+async function stillReadable(file: File): Promise<boolean> {
+  try {
+    await file.slice(0, 1).arrayBuffer();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Ask the screen to stay on while uploads run. Feature-detected: older Safari has no wake lock. */
 function useScreenWakeLock(on: boolean) {
   useEffect(() => {
@@ -258,12 +293,12 @@ export function UploadManagerProvider({
     dispatch(action);
   }, []);
   // A finished upload changes the grids, the project and album cards, and
-  // the tags; not Trash or the deleted lists. The one photo whose stored
-  // files changed (previews made, an XMP attached) also refreshes, in case
-  // it is open.
-  const refreshAfterUpload = useCallback((photoId?: string) => {
+  // the tags; not Trash or the deleted lists. The photos whose own record
+  // changed (previews made, an XMP attached, an existing photo added to the
+  // upload's albums) also refresh, in case one is open.
+  const refreshAfterUpload = useCallback((...photoIds: string[]) => {
     invalidateAfterUpload(queryClient);
-    if (photoId) void queryClient.invalidateQueries({ queryKey: photoKeys.detail(photoId) });
+    for (const photoId of photoIds) void queryClient.invalidateQueries({ queryKey: photoKeys.detail(photoId) });
   }, [queryClient]);
   const dropAhead = useCallback(() => {
     ahead.current?.controller.abort();
@@ -337,6 +372,8 @@ export function UploadManagerProvider({
       let any = false;
       let failed = 0;
       let duplicates = 0;
+      // The existing photos the duplicates matched: each may now be in this upload's albums.
+      const matched = new Set<string>();
       const processed = new Set<string>();
       const nextCandidate = (except?: string) => queueRef.current.items.find((candidate) =>
         candidate.status === "queued" && !processed.has(candidate.photoId) && candidate.photoId !== except) ?? null;
@@ -345,7 +382,7 @@ export function UploadManagerProvider({
       try {
         // Inside the try: if the upload code cannot be fetched, the file we
         // were on fails with a retry (below) instead of the queue sticking.
-        const { buildBrowserUploadDeps, prepareUpload, uploadOne, isConnectionFailure, withoutPreviewNotes } =
+        const { buildBrowserUploadDeps, prepareUpload, uploadOne, isConnectionFailure, isLeaseBusy, withoutPreviewNotes } =
           await loadEngine().catch(() => {
             throw new Error("the upload code did not load; check the connection");
           });
@@ -409,7 +446,7 @@ export function UploadManagerProvider({
             const controller = ready?.controller ?? new AbortController();
             const prepared = ready?.prepared ?? prepare(current, entry, controller);
             inFlight.current = { photoId: id, controller };
-            const attempt = () => uploadOne(
+            const attempt = (heldLease?: number) => uploadOne(
               entry.file,
               id,
               {
@@ -443,6 +480,7 @@ export function UploadManagerProvider({
                   if (stage === "sending") warmNext(id);
                 },
                 deriveLater: (photoId, derive) => deriveLater(id, photoId, derive),
+                heldLease,
               }
             );
             let result = await attempt();
@@ -450,12 +488,27 @@ export function UploadManagerProvider({
             // the batch on this file and try it again as the signal returns,
             // instead of failing it and every file after it in turn.
             const pausedAt = Date.now();
-            for (let wait = 1; isConnectionFailure(result) && !controller.signal.aborted && !unmounted.current
+            for (let wait = 1, leaseWaits = 0; !controller.signal.aborted && !unmounted.current
                 && Date.now() - pausedAt < Q.RECONNECT_GIVE_UP_MS; wait++) {
-              dispatch({ type: "stage", photoId: id, stage: "reconnecting" });
-              await waitForConnection(Q.reconnectDelay(wait), controller.signal);
+              if (isConnectionFailure(result)) {
+                dispatch({ type: "stage", photoId: id, stage: "reconnecting" });
+                await waitForConnection(Q.reconnectDelay(wait), controller.signal);
+              } else if (isLeaseBusy(result) && leaseWaits < LEASE_WAITS) {
+                // The try the connection cut off still holds its lease (its
+                // release was lost too). Wait for the lease to run out, then
+                // carry on, rather than failing the file.
+                leaseWaits += 1;
+                dispatch({ type: "stage", photoId: id, stage: "reconnecting" });
+                await pause(Math.max(0, result.retryAt - Date.now()) + LEASE_GRACE_MS, controller.signal);
+              } else {
+                break;
+              }
               if (controller.signal.aborted || unmounted.current) break;
-              result = await attempt();
+              if (!await stillReadable(entry.file)) {
+                result = { status: "failed", error: "File can no longer be read — re-pick it", warnings: result.warnings };
+                break;
+              }
+              result = await attempt(result.heldLease);
             }
             inFlight.current = null;
             if (unmounted.current) break;
@@ -472,6 +525,7 @@ export function UploadManagerProvider({
               any = true;
             } else if (result.status === "duplicate") {
               duplicates += 1;
+              if (result.canonicalPhotoId) matched.add(result.canonicalPhotoId);
             } else {
               failed += 1;
             }
@@ -506,7 +560,7 @@ export function UploadManagerProvider({
       }
       if (unmounted.current) return;
       // A duplicate may have been moved into this upload's album.
-      if (any || duplicates) refreshAfterUpload();
+      if (any || duplicates) refreshAfterUpload(...matched);
       if (failed) {
         toast.error(
           `${plural(failed, "upload")} needs attention — open the tray`

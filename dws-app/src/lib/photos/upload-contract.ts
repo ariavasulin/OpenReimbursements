@@ -38,6 +38,10 @@ export interface UploadAttempt extends UploadOwner {
 export interface BeginUploadInput extends CreateUploadAttemptInput {
   /** Check for an original a lost response may have left. False for a fresh identity: nothing can be there yet. */
   probe: boolean;
+  /** The lease an earlier try of this attempt took and could not hand back,
+   *  because its release went down with the connection. Begin releases it
+   *  first, so this try need not wait out the two-minute lease. */
+  release_generation?: number;
 }
 /** Each step is present only if the one before it let the upload go on. */
 export interface BeginUploadOutcome {
@@ -48,6 +52,12 @@ export interface BeginUploadOutcome {
   original?: OriginalUploadState | null;
   /** The stored original differs from this file: start a fresh attempt. */
   original_mismatch?: true;
+  /** Another try of this attempt still holds its lease (one whose release was
+   *  lost, or whose begin answer never arrived). Try again after this many
+   *  milliseconds, when the lease has run out. A field of its own, not an
+   *  `acquired` status, so a page loaded before this answer existed falls
+   *  back to the separate acquire route as it always did. */
+  lease_busy?: { retry_after_ms: number };
 }
 export interface UploadLease {
   status: 'acquired'; lease_generation: number; lease_expires_at: string;

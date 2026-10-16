@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTrailingThrottle, MigrationEngine, type MigrationEngineOptions } from './engine';
+import { createNewestAnswer, createTrailingThrottle, MigrationEngine, type MigrationEngineOptions } from './engine';
 import { retryDue, type MigrationItem, type MigrationRequest } from './client';
 import { uploadOne, type UploadDeps } from '../upload';
 import { UploadRequestError } from '../upload-http';
@@ -225,5 +225,23 @@ describe('import pace (UP-10)', () => {
       await vi.advanceTimersByTimeAsync(5_000);
       expect(work).toHaveBeenCalledOnce();
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('createNewestAnswer', () => {
+  it('drops an answer that lands after a newer one was shown', () => {
+    const order = createNewestAnswer();
+    const throttled = order.ticket(); // the per-file refresh, slow
+    const final = order.ticket(); // the run's last refresh
+    expect(order.fresh(final)).toBe(true);
+    expect(order.fresh(throttled)).toBe(false);
+  });
+
+  it('shows answers that land in order, and an older one while nothing newer has landed', () => {
+    const order = createNewestAnswer();
+    const first = order.ticket(); const second = order.ticket();
+    expect(order.fresh(first)).toBe(true);
+    expect(order.fresh(second)).toBe(true);
+    expect(order.fresh(second)).toBe(false);
   });
 });
