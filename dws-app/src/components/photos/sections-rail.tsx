@@ -5,7 +5,8 @@ import Link from "next/link";
 import { Trash2 } from "lucide-react";
 import { SECTIONS } from "@/components/photos/section-nav";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
-import { usePhotoAlbums, usePhotoJobs } from "@/lib/photos/api";
+import { usePrefetchOnIntent } from "@/hooks/use-prefetch-on-intent";
+import { usePhotoAlbums, usePhotoJobs, type CollectionTarget } from "@/lib/photos/api";
 import { DEFAULT_ALBUM_SORT, DEFAULT_JOB_SORT, parseAlbumSort, parseJobSort, sortAlbums, sortJobs } from "@/lib/photos/collection-sort";
 import { useCollectionSort } from "@/hooks/use-collection-sort";
 import { plural } from "@/lib/photos/format";
@@ -27,16 +28,21 @@ function RailRow({
   active,
   name,
   detail,
+  prefetch,
 }: {
   href: string;
   active: boolean;
   name: string;
   detail: string;
+  /** What the row opens, loaded on hover, focus, or touch, as on the list cards. */
+  prefetch: CollectionTarget;
 }) {
+  const intent = usePrefetchOnIntent(prefetch);
   return (
     <Link
       data-rail-row
       href={href}
+      {...intent}
       aria-current={active ? "page" : undefined}
       // Two lines, then cut; the full name is the tooltip and the page heading.
       title={name}
@@ -195,6 +201,7 @@ export default function SectionsRail() {
               active={album.id === activeAlbumId}
               name={album.name}
               detail={plural(album.photo_count, "photo")}
+              prefetch={{ kind: "album", id: album.id }}
             />
           ))}
         {section === "projects" &&
@@ -205,6 +212,7 @@ export default function SectionsRail() {
               active={job.id === activeJobId}
               name={job.name}
               detail={`Project #${job.job_number} · ${plural(job.photo_count, "photo")}`}
+              prefetch={{ kind: "job", id: job.id }}
             />
           ))}
         {list && pageCount > 1 && (

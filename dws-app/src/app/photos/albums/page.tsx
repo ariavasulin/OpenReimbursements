@@ -81,6 +81,7 @@ export default function AlbumsPage() {
             thumbPaths={album.thumb_paths}
             emptyText="No photos yet"
             selection={select.card(album.id)}
+            prefetch={{ kind: "album", id: album.id }}
           />
         ))}
       </div>
