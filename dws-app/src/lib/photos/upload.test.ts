@@ -6,7 +6,7 @@ import {
   LEASE_RENEW_MS,
   type UploadIdentity,
   type UploadDeps,
-  uploadOne, retrySidecar, prepareUpload, isConnectionFailure, withoutPreviewNotes,
+  uploadOne, retrySidecar, prepareUpload, isConnectionFailure, isLeaseBusy, withoutPreviewNotes,
 } from "./upload";
 import { METADATA_MAX_BYTES, DERIVATIVES_MAX_BYTES } from "./decode-limits";
 import { SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
@@ -1056,6 +1056,53 @@ describe("one request before the bytes (begin)", () => {
     expect(purged.begin).toHaveBeenCalledTimes(2);
     expect(vi.mocked(purged.begin!).mock.calls[1][0]).toMatchObject({ photo_id: identity!.photoId, probe: false });
     expect(identity!.photoId).not.toBe("photo-1");
+  });
+
+  it("reports a lease an earlier try still holds as a wait, not a refusal (UP-3)", async () => {
+    const { deps, uploads } = makeDeps();
+    withBegin(deps, () => ({ acquired: undefined, claimed: undefined, original: undefined, lease_busy: { retry_after_ms: 50_000 } }));
+    const file = makeFile("a.jpg", "image/jpeg");
+    const before = Date.now();
+    const result = await uploadOne(file, "photo-1", META, deps, undefined, { identity: await retriedIdentity(file) });
+    expect(result).toMatchObject({ status: "failed", errorCode: "lease_busy", retryable: true });
+    expect(isLeaseBusy(result)).toBe(true);
+    expect(isConnectionFailure(result)).toBe(false);
+    expect(result.retryAt! - before).toBeGreaterThanOrEqual(50_000);
+    expect(result.retryAt! - Date.now()).toBeLessThanOrEqual(50_000);
+    // It never had the lease, so it neither sends bytes nor releases anything.
+    expect(uploads).toEqual([]);
+    expect(deps.releaseLease).not.toHaveBeenCalled();
+    expect(deps.acquireLease).not.toHaveBeenCalled();
+  });
+
+  it("keeps a lease its lost release could not hand back, and the next try of the same attempt hands it back (UP-3)", async () => {
+    const { deps } = makeDeps({ throwAt: (path) => path.startsWith("originals/") });
+    withBegin(deps);
+    deps.releaseLease = vi.fn(async () => { throw new UploadRequestError("Upload connection interrupted.", { code: "network_error", retryable: true }); });
+    const file = makeFile("a.jpg", "image/jpeg");
+    let identity: UploadIdentity | undefined;
+    const dropped = await uploadOne(file, "photo-1", META, deps, undefined, { onIdentity: (value) => { identity = value; } });
+    expect(dropped).toMatchObject({ status: "failed", heldLease: 1 });
+
+    const { deps: next } = makeDeps();
+    withBegin(next);
+    expect((await uploadOne(file, "photo-1", META, next, undefined, { identity, heldLease: dropped.heldLease })).status).toBe("done");
+    expect(vi.mocked(next.begin!).mock.calls[0][0]).toMatchObject({ attempt_id: "photo-1", probe: true, release_generation: 1 });
+
+    // A changed file is a new attempt: the old lease is not its to hand back.
+    const { deps: other } = makeDeps();
+    withBegin(other);
+    await uploadOne(makeFile("a.jpg", "image/jpeg", 9), "photo-1", META, other, undefined, { identity, heldLease: 1 });
+    expect(vi.mocked(other.begin!).mock.calls[0][0]).not.toHaveProperty("release_generation");
+  });
+
+  it("holds no lease when the release went through", async () => {
+    const { deps } = makeDeps({ throwAt: (path) => path.startsWith("originals/") });
+    withBegin(deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    expect(result.status).toBe("failed");
+    expect(result.heldLease).toBeUndefined();
+    expect(deps.releaseLease).toHaveBeenCalledOnce();
   });
 
   it("refuses an attempt bound to other bytes before any lease or bytes", async () => {

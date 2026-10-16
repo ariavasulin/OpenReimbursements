@@ -209,6 +209,17 @@ export async function probeUploadOriginal(actor: PhotoActor, body: Body): Promis
   return { complete: true };
 }
 
+/** Upload leases last two minutes from their last renewal (photo_acquire_upload). */
+const UPLOAD_LEASE_MS = 120_000;
+
+/** Milliseconds until the attempt's current lease runs out, read on the server's clock so a phone's wrong clock cannot skew it. */
+async function leaseLeft(actor: PhotoActor, owner: Record<string, unknown>): Promise<number> {
+  const bound = await photoRpc(actor, 'photo_lock_upload', owner);
+  const left = Date.parse(bound?.lease_expires_at ?? '') - Date.now();
+  // Gone already (it ran out between the two calls): try again at once.
+  return Number.isFinite(left) ? Math.min(UPLOAD_LEASE_MS, Math.max(0, left)) : 0;
+}
+
 /**
  * One request for the steps every upload takes before its bytes move: create
  * (or replay) the attempt, take the lease, claim the content and, on a retry,
@@ -218,12 +229,29 @@ export async function probeUploadOriginal(actor: PhotoActor, body: Body): Promis
  * the browser decides exactly as it did with separate calls.
  */
 export async function beginUpload(actor: PhotoActor, body: Body): Promise<BeginUploadOutcome> {
+  const held = body.release_generation === undefined ? undefined : integer(body.release_generation, 1);
   const attempt = await createUploadAttempt(actor, body);
   // A replayed attempt with a result, or one bound to other bytes or another
   // project, goes no further: the browser reports it without a lease.
   if (attempt.result || attempt.content_sha256 !== body.content_sha256 || attempt.job_id !== (body.job_id ?? null)) return { attempt };
   const owner = { p_actor: actor.actorId, p_owner_kind: attempt.owner_kind, p_owner_id: attempt.owner_id };
-  const acquired = await photoRpc(actor, 'photo_acquire_upload', owner) as AcquireUploadOutcome;
+  // The browser's last try lost its connection before it could hand its lease
+  // back. Hand it back now (SQL checks it is this actor's lease and still that
+  // generation), so the lease below is free at once. A refusal means it had
+  // already run out or moved on; the acquire below says which.
+  if (held !== undefined) {
+    await photoRpc(actor, 'photo_release_upload', { ...owner, p_generation: held, p_status: 'retryable_failed', p_error_code: 'connection_lost' })
+      .catch(() => undefined);
+  }
+  const taken = await actor.db.rpc('photo_acquire_upload', owner);
+  // A live lease is not a conflict here: it is an earlier try of this same
+  // attempt that has not timed out (its release, or this request's own first
+  // answer, was lost). Say when it runs out, so the browser waits and carries
+  // on instead of failing the file. The lock read costs a database call only
+  // on this rare path.
+  if (taken.error?.message === 'lease_busy') return { attempt, lease_busy: { retry_after_ms: await leaseLeft(actor, owner) } };
+  if (taken.error) throwPhotoDatabaseError(taken.error);
+  const acquired = taken.data as AcquireUploadOutcome;
   if (acquired.status !== 'acquired') return { attempt, acquired: await describeUploadOutcome(actor, acquired) };
   const generation = { ...owner, p_generation: acquired.lease_generation };
   try {

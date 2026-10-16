@@ -124,6 +124,25 @@ describe('POST /api/photo-migrations/uploads/begin with real Auth, SQL and Stora
     expect(retried.claimed).toMatchObject({ status: 'claimed' });
   });
 
+  // UP-3: a dropped connection loses the browser's release, so the lease stays live for two minutes.
+  it('hands back the lease a lost release left, and reports a live one as a wait rather than a conflict', async () => {
+    const { body } = input();
+    const first = await ok(begin, body);
+    const held = lease(first).lease_generation;
+    const busy = await ok(begin, { ...body, probe: true });
+    expect(busy.acquired).toBeUndefined();
+    expect(busy.lease_busy!.retry_after_ms).toBeGreaterThan(60_000);
+    expect(busy.lease_busy!.retry_after_ms).toBeLessThanOrEqual(120_000);
+    const resumed = await ok(begin, { ...body, probe: true, release_generation: held });
+    expect(resumed.claimed).toMatchObject({ status: 'claimed' });
+    expect(lease(resumed).lease_generation).toBe(held + 1);
+    // An old generation hands nothing back: the live lease is someone else's now.
+    const stale = await ok(begin, { ...body, probe: true, release_generation: held });
+    expect(stale.lease_busy).toBeDefined();
+    expect((await call(begin, { ...body, release_generation: 'one' })).status).toBe(400);
+    await ok(release, { ...lease(resumed), status: 'retryable_failed' });
+  });
+
   it('keeps the same refusals as the separate routes', async () => {
     const { body } = input();
     expect((await call(begin, body, f.employeeA, 'https://attacker.example')).status).toBe(403);
