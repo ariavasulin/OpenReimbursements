@@ -280,7 +280,8 @@ export function filteredPhotos(
   filters: PhotoFilters,
   search: string[],
   columns: string,
-  options: { count?: 'exact' } = {}
+  // head: count only, no rows (GET /api/photos/ids?count=1).
+  options: { count?: 'exact'; head?: boolean } = {}
 ) {
   // The inner embed doubles as the `favorites` column the grid reads; listColumns leaves it out.
   if (filters.album && filters.favorites) columns = `${columns}, ${FAVORITES_FILTER}`;
