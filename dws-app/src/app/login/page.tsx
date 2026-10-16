@@ -11,6 +11,7 @@ import { ArrowRight } from "lucide-react";
 
 import { formatUSPhoneNumber } from '@/lib/phone';
 import { isPhotosHost } from '@/lib/cookieDomain';
+import { needsNameFor } from '@/lib/needs-name';
 
 /** Seconds before "Resend code" can be pressed (again). */
 const RESEND_WAIT_SECONDS = 30;
@@ -52,10 +53,7 @@ async function needsNamePrompt(user: {
     return error.code === 'PGRST116';
   }
 
-  const name = (profile.full_name ?? '').trim();
-  // Supabase stores phone without "+"; compare both forms
-  const phone = user.phone ?? '';
-  return !name || name === 'Employee' || name === phone || name === `+${phone}`;
+  return needsNameFor(profile.full_name, user.phone);
 }
 
 export default function LoginPage() {
@@ -86,10 +84,23 @@ export default function LoginPage() {
     return () => clearTimeout(timer);
   }, [resendIn]);
 
+  // While the code is being typed, fetch the page sign-in will open, so it
+  // is ready the moment the code checks out.
+  useEffect(() => {
+    if (otpSent) router.prefetch(getPostLoginPath());
+  }, [otpSent, router]);
+
   const mountedRef = useRef(true);
 
-  const routeSignedInUser = async (user: { id: string; phone?: string | null }) => {
-    const promptForName = await needsNamePrompt(user);
+  // A client-side navigation, not a full page load: the JS this page already
+  // loaded is reused, and the prefetched page opens at once.
+  // `knownNeedsName` comes from /api/auth/verify-otp when it answers it;
+  // otherwise the profile is read here.
+  const routeSignedInUser = async (
+    user: { id: string; phone?: string | null },
+    knownNeedsName?: boolean
+  ) => {
+    const promptForName = knownNeedsName ?? (await needsNamePrompt(user));
 
     if (!mountedRef.current) return;
 
@@ -98,7 +109,7 @@ export default function LoginPage() {
       setMessage(null);
       setLoading(false);
     } else {
-      window.location.replace(getPostLoginPath());
+      router.replace(getPostLoginPath());
     }
   };
 
@@ -206,9 +217,10 @@ export default function LoginPage() {
           setMessage('Login successful! Redirecting...');
 
           const signedInUser = data.user ?? data.session.user;
-          setTimeout(() => {
-            routeSignedInUser(signedInUser);
-          }, 500);
+          await routeSignedInUser(
+            signedInUser,
+            typeof data.needsName === 'boolean' ? data.needsName : undefined
+          );
 
         } else {
           setError('Received invalid session data. Please try again.');
@@ -243,7 +255,7 @@ export default function LoginPage() {
         throw new Error(data.error || 'Failed to save your name');
       }
 
-      window.location.replace(getPostLoginPath());
+      router.replace(getPostLoginPath());
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred';
       setError(errorMessage);
