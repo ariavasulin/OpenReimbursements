@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDownUp, BookImage, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -18,11 +18,13 @@ import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import {
   deleteAlbum,
+  invalidateAlbumOrder,
   invalidatePhotoCaches,
   renameAlbum,
   restoreAlbumOrder,
   setAlbumDateOrder,
   usePhotoActor,
+  photoKeys,
   usePhotoAlbum,
   type PhotoAlbumHeader,
   type PhotoSort,
@@ -60,20 +62,23 @@ function AlbumPageContent() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { openPicker } = usePhotosShell();
+  // Shown at once from the Albums list's card when that is cached (and says
+  // the album's order), so the grid below starts loading without waiting.
   const { data: album, error, isLoading } = usePhotoAlbum(albumId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [arranging, setArranging] = useState(false);
+  /** Arranging, from this order (null: not arranging). */
+  const [arranging, setArranging] = useState<PhotoSort | null>(null);
   const actor = usePhotoActor();
   const canDelete = album !== undefined && canDeleteAlbum(actor, album);
-  const viewSort = useSearchParams().get("sort");
 
   /** The album's mode as this page now knows it, ahead of the refetch. */
   const setMode = (mode: PhotoAlbumHeader["sort_mode"]) => {
-    queryClient.setQueryData<PhotoAlbumHeader>(["photo-album", albumId], (current) =>
+    queryClient.setQueryData<PhotoAlbumHeader>(photoKeys.album(albumId), (current) =>
       current && { ...current, sort_mode: mode, has_custom_order: current.has_custom_order || mode === "custom" }
     );
-    invalidatePhotoCaches(queryClient);
+    // Only this album's grid, header, and card show its order.
+    invalidateAlbumOrder(queryClient, albumId);
   };
 
   const restoreCustom = async (name: string) => {
@@ -115,7 +120,9 @@ function AlbumPageContent() {
       });
       return;
     }
-    setArranging(true);
+    // Read here rather than followed: the viewer rewrites the address on every swipe.
+    const viewSort = new URLSearchParams(window.location.search).get("sort");
+    setArranging(album.has_custom_order ? "custom" : viewSort === "asc" ? "asc" : "desc");
   };
 
   const remove = async () => {
@@ -160,15 +167,15 @@ function AlbumPageContent() {
     );
   }
 
-  if (album && arranging) {
+  if (album && arranging !== null) {
     return (
       <main className={PAGE_MAIN_CLASS}>
         <PhoneHeader back={{ href: "/photos/albums", label: "Albums" }} />
         <AlbumArrange
           album={album}
-          startSort={album.has_custom_order ? "custom" : viewSort === "asc" ? "asc" : "desc"}
+          startSort={arranging}
           onClose={(saved) => {
-            setArranging(false);
+            setArranging(null);
             if (!saved) return;
             setMode("custom");
             showAlbumOrder(albumId);
