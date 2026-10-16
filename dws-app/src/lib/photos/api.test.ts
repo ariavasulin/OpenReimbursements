@@ -189,10 +189,11 @@ describe("cache patches", () => {
 });
 
 describe("album header from its card", () => {
-  const card: PhotoAlbumSummary = {
+  // An older server's card, before the list carried the album's order.
+  const card = {
     id: "al", name: "Al", photo_count: 3, thumb_paths: [], created_at: "2026-10-01T00:00:00Z",
     created_by: "u1", latest_activity: null,
-  };
+  } as unknown as PhotoAlbumSummary;
 
   it("needs the album's order, or the grid would start in the wrong one", () => {
     expect(albumHeaderFromSummary(card)).toBeUndefined();
