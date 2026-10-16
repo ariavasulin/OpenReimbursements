@@ -231,7 +231,9 @@ export function useOpenLinkedPhoto({
     if (!firstPageLoaded || fetchingRef.current) return;
     fetchingRef.current = true;
     let cancelled = false;
-    fetchPhotoDetail(deepLinkId)
+    // A re-run (the next page landed) starts over: the old request is dropped, not left to finish.
+    const abort = new AbortController();
+    fetchPhotoDetail(deepLinkId, abort.signal)
       .then((photo) => {
         if (cancelled) return;
         if (isOpenable(photo)) {
@@ -253,6 +255,7 @@ export function useOpenLinkedPhoto({
     return () => {
       cancelled = true;
       fetchingRef.current = false;
+      abort.abort();
     };
   }, [deepLinkId, photos, firstPageLoaded, isLightboxOpen]);
 }
