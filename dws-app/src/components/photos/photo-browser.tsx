@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import dynamic from "next/dynamic";
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import BrowseToolbar from "@/components/photos/browse-toolbar";
-import type { FilterChoices } from "@/components/photos/filter-bar";
+import { useProjectFilterLabel, type FilterChoices } from "@/components/photos/filter-bar";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
 import PhotoGrid, { type GridSelection } from "@/components/photos/photo-grid";
 import SelectionBar from "@/components/photos/selection-bar";
@@ -17,20 +17,19 @@ import {
   usePhotoDeepLink,
 } from "@/hooks/use-photo-deep-link";
 import {
-  fetchPhotoIds,
-  fetchPhotosPage,
   invalidatePhotoCaches,
+  photoCountOptions,
+  photoIdsOptions,
+  photoListOptions,
+  photoListParams,
+  scopeKey,
   usePhotoDetail,
-  usePhotoJobs,
   usePhotoTags,
+  WAITING_FOR_CONNECTION,
+  type PhotoListScope,
   type PhotoSort,
 } from "@/lib/photos/api";
-import {
-  activeFilterCount,
-  groupFilters,
-  NO_PROJECT_VALUE,
-  withFilterParams,
-} from "@/lib/photos/browse-state";
+import { activeFilterCount, groupFilters } from "@/lib/photos/browse-state";
 import {
   accumulateSeenOptions,
   emptySeenOptions,
@@ -38,14 +37,13 @@ import {
   toUploaderOptions,
   type SeenOptions,
 } from "@/lib/photos/filter-options";
-import { jobLabel, NO_PROJECT } from "@/lib/photos/format";
 import {
   groupPhotos,
   openableInDisplayOrder,
   type GroupBy,
   type PhotoGroup,
 } from "@/lib/photos/group";
-import type { PhotoAlbumRef, PhotoRow } from "@/lib/photos/types";
+import type { PhotoRow } from "@/lib/photos/types";
 import { cn } from "@/lib/utils";
 
 // The one photo grid screen, shared by Photos (every photo), an album, a
@@ -61,11 +59,8 @@ const PhotoLightbox = dynamic(() => import("@/components/photos/photo-lightbox")
   loading: () => null,
 });
 
-export type BrowserScope =
-  | { kind: "all" }
-  | { kind: "album"; album: PhotoAlbumRef }
-  | { kind: "job"; jobId: string }
-  | { kind: "search"; q: string };
+/** What this grid lists. The query keys and fetchers live in api.ts, so a prefetch names the same cache entry. */
+export type BrowserScope = PhotoListScope;
 
 /** What a page's summary line can say about the loaded results. */
 export interface BrowserSummary {
@@ -99,25 +94,10 @@ interface PhotoBrowserProps {
 
 const DEFAULT_MODES = ["date", "tag", "uploader", "type"] as const;
 
-function scopeParams(scope: BrowserScope): URLSearchParams {
-  const params = new URLSearchParams();
-  if (scope.kind === "album") params.set("album", scope.album.id);
-  if (scope.kind === "job") params.set("job", scope.jobId);
-  if (scope.kind === "search") params.set("q", scope.q);
-  return params;
-}
-
-const scopeKey = (scope: BrowserScope) =>
-  scope.kind === "album"
-    ? `album:${scope.album.id}`
-    : scope.kind === "job"
-      ? `job:${scope.jobId}`
-      : scope.kind === "search"
-        ? `search:${scope.q}`
-        : "all";
+const albumNameOf = (scope: BrowserScope) => (scope.kind === "album" ? scope.album.name : null);
 
 export default function PhotoBrowser({
-  scope,
+  scope: scopeProp,
   empty,
   groupModes = DEFAULT_MODES,
   summary,
@@ -126,6 +106,14 @@ export default function PhotoBrowser({
   albumOrder,
 }: PhotoBrowserProps) {
   const queryClient = useQueryClient();
+  // Pages build `scope` inline, a new object on every render. Hold one copy
+  // while it names the same grid (and album name), so the memos below and the
+  // selection bar's props stay the same between renders.
+  const [heldScope, setHeldScope] = useState(scopeProp);
+  const sameScope =
+    scopeKey(heldScope) === scopeKey(scopeProp) && albumNameOf(heldScope) === albumNameOf(scopeProp);
+  const scope = sameScope ? heldScope : scopeProp;
+  if (!sameScope) setHeldScope(scopeProp);
   // Project is a filter where the page is not already one project or album.
   const projectFilter = scope.kind === "all" || scope.kind === "search";
   const {
@@ -152,34 +140,23 @@ export default function PhotoBrowser({
   );
   const key = scopeKey(scope);
   const enabled = scope.kind !== "search" || scope.q.length > 0;
-  // "photos" / "photo-search" are the prefixes invalidatePhotoCaches refreshes.
-  const prefix = scope.kind === "search" ? "photo-search" : "photos";
-  // Exactly what the grid lists, for GET /api/photos and /ids alike.
-  const scopeQuery = scopeParams(scope).toString();
-  const listParams = useMemo(
-    () => withFilterParams(new URLSearchParams(scopeQuery), filters, sort),
-    [scopeQuery, filters, sort]
-  );
-  const listKey = listParams.toString();
+  // Exactly what the grid lists, for GET /api/photos and its count and ids.
+  const listParams = useMemo(() => photoListParams(scope, filters, sort), [scope, filters, sort]);
 
   const {
     data,
     error,
     isLoading,
+    fetchStatus,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
     isFetchNextPageError,
     isPlaceholderData,
   } = useInfiniteQuery({
-    queryKey: [prefix, key, listKey],
-    queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams(listKey);
-      if (pageParam) params.set("cursor", pageParam);
-      return fetchPhotosPage(params);
-    },
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    // The same key and fetcher a project card's prefetch uses, so a hover's
+    // head start is this grid's first page.
+    ...photoListOptions(scope, filters, sort),
     enabled,
     // A new sort or filter keeps the grid and toolbar on screen (dimmed) until
     // its first page lands, so the chip just used keeps focus. Only within the
@@ -192,6 +169,9 @@ export default function PhotoBrowser({
     () => data?.pages.flatMap((page) => page.photos) ?? [],
     [data]
   );
+  // Built once per page of photos, not on every tick: the shared-project
+  // check below and the selection bar's Trash count look photos up by id.
+  const photosById = useMemo(() => new Map(photos.map((photo) => [photo.id, photo])), [photos]);
 
   // Every uploader and tag the loaded pages have shown, for the filter menus;
   // kept across filter changes. A new album, project, or search is a new
@@ -221,44 +201,31 @@ export default function PhotoBrowser({
     scope.kind === "all" ? "" : scope.kind === "job" ? scope.jobId : null;
   const { data: knownTags } = usePhotoTags(knownTagScope !== null, knownTagScope);
   const tagOptions = useMemo(() => toTagOptions(seen, knownTags ?? []), [seen, knownTags]);
-  const { data: jobs } = usePhotoJobs(projectFilter);
-  const projectOptions = useMemo(
-    () =>
-      projectFilter
-        ? [
-            { value: NO_PROJECT_VALUE, label: NO_PROJECT },
-            ...(jobs ?? [])
-              .filter((job) => job.photo_count > 0)
-              .map((job) => ({ value: job.id, label: jobLabel(job) })),
-          ]
-        : null,
-    [jobs, projectFilter]
-  );
+  // The project list (every project, page after page) loads only when someone
+  // opens the Project filter; until then the chosen project's chip names it
+  // from that one project's read.
+  const projectLabel = useProjectFilterLabel(projectFilter ? filters.project : null);
   const choices = useMemo<FilterChoices>(
-    () => ({ projects: projectOptions, uploaders: uploaderOptions, tags: tagOptions }),
-    [projectOptions, uploaderOptions, tagOptions]
+    () => ({
+      projects: projectFilter ? [] : null,
+      lazyProjects: projectFilter,
+      projectLabel,
+      uploaders: uploaderOptions,
+      tags: tagOptions,
+    }),
+    [projectFilter, projectLabel, uploaderOptions, tagOptions]
   );
 
-  // GET /api/photos/ids answers, shared by "Select all" and the group ticks;
-  // under the grid's own prefix, so an edit that refreshes the grid refreshes them.
-  const idsQuery = useCallback(
-    (params: URLSearchParams) => ({
-      queryKey: [prefix, key, params.toString(), "ids"],
-      queryFn: () => fetchPhotoIds(params),
-      staleTime: 30_000,
-    }),
-    [prefix, key]
-  );
+  // A group tick's ids (GET /api/photos/ids for the group's filters), keyed
+  // under the grid, so an edit that changes the grid marks them stale too.
   const groupIds = useCallback(
     (group: PhotoGroup) => {
       const narrowed = groupFilters(group, filters);
       return narrowed
-        ? queryClient.fetchQuery(
-            idsQuery(withFilterParams(new URLSearchParams(scopeQuery), narrowed, sort))
-          )
+        ? queryClient.fetchQuery(photoIdsOptions(scope, photoListParams(scope, narrowed, sort)))
         : null;
     },
-    [queryClient, idsQuery, filters, sort, scopeQuery]
+    [queryClient, scope, filters, sort]
   );
 
   // An arranged album is one list in its own order: grouping would reshuffle it.
@@ -275,11 +242,17 @@ export default function PhotoBrowser({
     groups,
     groupIds
   );
-  // Every match, once something is selected: the bar offers "Select all M".
-  const allMatches = useQuery({
-    ...idsQuery(listParams),
+  // Once something is selected the bar offers "Select all M": only the count
+  // is asked for now (one small request); the ids (up to 5,000) are fetched
+  // when the link is clicked.
+  const matchCount = useQuery({
+    ...photoCountOptions(scope, listParams),
     enabled: enabled && selectedIds.size > 0,
   });
+  const loadAllMatches = useCallback(
+    () => queryClient.fetchQuery(photoIdsOptions(scope, listParams)),
+    [queryClient, scope, listParams]
+  );
   // Another album, project, or search is another screen, so its selection goes.
   // Changing a filter keeps it: that is how photos from two projects get picked
   // for one album — filter to the first, tick, filter to the second, tick.
@@ -290,15 +263,14 @@ export default function PhotoBrowser({
   const sharedJobId = useMemo(() => {
     if (selectedIds.size === 0) return null;
     if (scope.kind === "job") return scope.jobId;
-    const byId = new Map(photos.map((photo) => [photo.id, photo]));
     let shared: string | null = null;
     for (const id of selectedIds) {
-      const jobId = byId.get(id)?.job_id ?? null;
+      const jobId = photosById.get(id)?.job_id ?? null;
       if (jobId === null || (shared !== null && shared !== jobId)) return null;
       shared = jobId;
     }
     return shared;
-  }, [photos, selectedIds, scope]);
+  }, [photosById, selectedIds, scope]);
 
   // The viewer flips through the set as displayed: grouped order, images and
   // videos with previews only (file tiles download instead). A photo opened
@@ -421,6 +393,12 @@ export default function PhotoBrowser({
         />
       )}
       {enabled && isLoading && <StatusLine>Loading photos...</StatusLine>}
+      {/* Offline, the first page waits rather than failing (and isLoading is
+          false): say so, instead of a blank page. It asks again when the
+          connection is back. */}
+      {enabled && fetchStatus === "paused" && data === undefined && (
+        <StatusLine>{WAITING_FOR_CONNECTION}</StatusLine>
+      )}
       {/* A failed next page is the sentinel's to report (it keeps the loaded
           grid and offers retry); the banner is for the first page only. */}
       {error && !isFetchNextPageError && (
@@ -475,9 +453,12 @@ export default function PhotoBrowser({
         inFavorites={filters.favorites}
         limitMessage={limitMessage}
         photos={photos}
-        listQuery={listKey}
+        photosById={photosById}
         sharedJobId={sharedJobId}
-        allMatches={allMatches.data}
+        // Not while the previous filter's photos are still on screen (dimmed):
+        // their ticks and the new filter's count do not describe one list.
+        matchCount={isPlaceholderData ? undefined : matchCount.data}
+        loadAllMatches={loadAllMatches}
         onSelectAll={selectAll}
       />
 

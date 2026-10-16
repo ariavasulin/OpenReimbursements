@@ -48,6 +48,6 @@ export interface BulkSheetProps {
   open: boolean;
   onOpenChange(open: boolean): void;
   photoIds: string[];
-  /** The change is saved: refresh the grids and clear the selection. */
+  /** The change is saved and the sheet has updated the cache for it: clear the selection. */
   onDone(): void;
 }

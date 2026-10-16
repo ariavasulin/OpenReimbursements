@@ -126,8 +126,11 @@ view is in `Employee-Features.md` § DWS Photos.
   (`src/lib/photos/server/list-filters.ts`). `from`/`to` are zoned ISO instants
   the browser computes in its own local time; the server never picks a
   timezone. `q` is split into words (at most 8) and every word must match.
-- **Select all** calls `GET /api/photos/ids`, which walks the match server-side
-  1,000 rows at a time and stops at 5,000 (`truncated: true`). The selection
+- **Select all**: while photos are selected, the bar asks only
+  `GET /api/photos/ids?count=1` for its "Select all M" label (one cheap count).
+  The ids themselves are fetched when the link is clicked: `GET /api/photos/ids`
+  walks the match server-side 1,000 rows at a time and stops at 5,000
+  (`truncated: true`). The selection
   cap is 5,000 (`MAX_SELECTION_PHOTOS`); the action batch accepts it as one
   request, while the tag, album, and purge routes keep 500 per request and the
   client chunks. Trash and its Undo from the selection bar and the viewer go

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import SheetShell from "@/components/photos/sheet-shell";
 import TagDropdown, { useTagChoices } from "@/components/photos/tag-dropdown";
-import { bulkTagPhotos, invalidatePhotoCaches } from "@/lib/photos/api";
+import { bulkTagPhotos, invalidatePhotoCaches, patchPhotoTags } from "@/lib/photos/api";
 import { PartialBulkError, sumCounts } from "@/lib/photos/chunks";
 import { formatCount, plural } from "@/lib/photos/format";
 import { appendResolvedTag } from "@/lib/photos/tags";
@@ -53,6 +53,11 @@ function BulkTagSheet({
         (sent, total) => `${removing ? "Untagging" : "Tagging"} ${plural(total, "photo")}… ${formatCount(sent)} done`
       );
       const result = sumCounts(results, ["updated", "skipped", "missing"]);
+      // The answer is counts only. When every photo took the change, apply it
+      // to the cached rows ourselves; when some were skipped or gone, which
+      // ones is unknown, so everything refreshes.
+      if (result.skipped + result.missing > 0) invalidatePhotoCaches(queryClient);
+      else patchPhotoTags(queryClient, photoIds, removing ? { remove: pending } : { add: pending });
       const detail = [
         result.skipped > 0 && `${plural(result.skipped, "photo")} skipped: a photo can hold 20 tags`,
         result.missing > 0 && `${plural(result.missing, "photo")} no longer available`,
