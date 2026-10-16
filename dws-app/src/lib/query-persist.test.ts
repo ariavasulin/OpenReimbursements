@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DehydratedState } from "@tanstack/react-query";
 import type { PersistedClient } from "@tanstack/react-query-persist-client";
-import { PHOTO_ACTOR_KEY, PHOTO_SETTINGS_KEY } from "@/lib/photos/api";
+import { PHOTO_ACTOR_KEY, PHOTO_SETTINGS_KEY, photoKeys } from "@/lib/photos/api";
 import {
   MAX_PERSISTED_GRIDS,
   createUserPersister,
@@ -69,6 +69,26 @@ describe("which queries are saved on the device", () => {
     expect(shouldPersistQuery(["photo-album", ""])).toBe(false);
     expect(shouldPersistQuery(["receipts"])).toBe(false);
     expect(shouldPersistQuery(["photos", "all", "sort=newest", "ids"])).toBe(false);
+  });
+
+  it("agrees with the keys api.ts builds, so a change to the key factory shows up here", () => {
+    const all = { kind: "all" } as const;
+    const album = { kind: "album", album: { id: "a1", name: "Kitchen" } } as const;
+    expect(shouldPersistQuery(photoKeys.jobs())).toBe(true);
+    expect(shouldPersistQuery(photoKeys.albums())).toBe(true);
+    expect(shouldPersistQuery(photoKeys.album("a1"))).toBe(true);
+    expect(shouldPersistQuery(photoKeys.list(all, "sort=asc"))).toBe(true);
+    expect(shouldPersistQuery(photoKeys.list(album, "album=a1"))).toBe(true);
+
+    expect(shouldPersistQuery(photoKeys.jobs("36"))).toBe(false);
+    expect(shouldPersistQuery(photoKeys.jobSuggestions("", 5))).toBe(false);
+    expect(shouldPersistQuery(photoKeys.albumSuggestions("", 25))).toBe(false);
+    expect(shouldPersistQuery(photoKeys.ids(all, ""))).toBe(false);
+    expect(shouldPersistQuery(photoKeys.count(all, ""))).toBe(false);
+    expect(shouldPersistQuery(photoKeys.list({ kind: "search", q: "deck" }, "q=deck"))).toBe(false);
+    expect(shouldPersistQuery(photoKeys.detail("p1"))).toBe(false);
+    expect(shouldPersistQuery(photoKeys.tags())).toBe(false);
+    expect(shouldPersistQuery(photoKeys.trash)).toBe(false);
   });
 });
 
