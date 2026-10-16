@@ -261,6 +261,8 @@ export default function MultiShotCamera({
                   key={shot.file.name}
                   src={shot.previewUrl}
                   alt={`Shot ${shots.length - lastShots.length + index + 1}`}
+                  // A full-size shot in a 44px square: decode it off the main thread.
+                  decoding="async"
                   className="-ml-3.5 h-11 w-11 rounded-lg border-2 border-[#222222] object-cover first:ml-0"
                 />
               ))}

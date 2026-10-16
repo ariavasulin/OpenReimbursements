@@ -209,6 +209,29 @@ describe("actual Supabase SDK Storage adapter with injected network", () => {
     expect(observedSignal?.aborted).toBe(true);
   });
 
+  it("serves every upload from one client, each with its own signal and status, and never sends the call tag", async () => {
+    const { storage, fetch } = sdk();
+    const first = new AbortController();
+    const second = new AbortController();
+    let releaseFirst!: () => void;
+    fetch.mockImplementationOnce((_url, init) => new Promise((resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      releaseFirst = () => resolve(Response.json({ Id: "photo", Key: PATH }));
+    })).mockResolvedValueOnce(Response.json({ statusCode: "503", message: "Busy" }, { status: 503, headers: { "Retry-After": "5" } }));
+    const one = storage.upload(`${PATH}.thumb`, FILE, { signal: first.signal });
+    const two = storage.upload(`${PATH}.preview`, FILE, { signal: second.signal });
+    await expect(two).resolves.toMatchObject({ error: { status: 503, retryAfter: "5" } });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    const [firstInit, secondInit] = fetch.mock.calls.map(([, init]) => init!);
+    expect(firstInit.signal).toBe(first.signal);
+    expect(secondInit.signal).toBe(second.signal);
+    for (const init of [firstInit, secondInit]) {
+      expect([...new Headers(init.headers).keys()].some((name) => name.startsWith("x-photos"))).toBe(false);
+    }
+    releaseFirst();
+    await expect(one).resolves.toEqual({ error: null });
+  });
+
   it("wires actual SDK errors through the shared retry/auth policy", async () => {
     const { storage: raw, fetch, getAccessToken } = sdk();
     fetch.mockResolvedValueOnce(Response.json({ message: "JWT expired", statusCode: "401" }, { status: 401 }))

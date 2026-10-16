@@ -15,7 +15,8 @@ import { supabase } from '@/lib/supabaseClient';
 import { buildBrowserUploadDeps } from '@/lib/photos/upload-browser';
 import { createUploadRequest } from '@/lib/photos/upload-http';
 import type { UploadAttempt } from '@/lib/photos/upload-contract';
-import { MigrationEngine } from '@/lib/photos/migration/engine';
+import { createTrailingThrottle, MigrationEngine } from '@/lib/photos/migration/engine';
+import { createProgressGate } from '@/lib/photos/upload-queue';
 import { directorySource, filesSource, type DirectoryHandle, type LocalSource } from '@/lib/photos/migration/inventory';
 import { folderOf, isInsideFolder, type MigrationFolder } from '@/lib/photos/migration/folders';
 import { scanMigrationSource } from '@/lib/photos/migration/scan';
@@ -33,6 +34,8 @@ const size = (bytes: number) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` 
 const plural = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
 const refreshAuth = async () => { const { data, error } = await supabase.auth.refreshSession(); return !error && !!data.session; };
 type Mode = 'migrate_photos' | 'add_photos';
+/** How often a running import reloads its counts and file list. */
+const MIGRATION_REFRESH_MS = 2_500;
 type SettledFolder = Partial<Pick<MigrationFolder, 'job_id' | 'jobs' | 'tags' | 'album_name' | 'album_id' | 'albums'>>;
 
 export default function MigratePage() {
@@ -275,18 +278,33 @@ export default function MigratePage() {
 
   const makeEngine = (id: string, savedFolders = folders, keepFormatTwins = keepFormats) => {
     const uploadRequest = createUploadRequest({ refreshAuth });
+    // A refresh reads the batch's counts and a page of files. After every file
+    // that was a reload per file; now the finished files of the last couple of
+    // seconds share one, and the run's end always gets its own.
+    const refreshSoon = createTrailingThrottle(async () => {
+      invalidatePhotoCaches(queryClient);
+      await refresh(id, cursorRef.current, false);
+    }, MIGRATION_REFRESH_MS);
+    // Byte ticks re-render this whole page: a few a second per file is plenty.
+    const showProgress = createProgressGate();
     return new MigrationEngine({ batchId: id, uploaderId: userId, sources, folders: savedFolders,
       localSources: localSources.current, request, deps: buildBrowserUploadDeps(), keepFormatTwins,
       prepare: (input, options) => uploadRequest<UploadAttempt>('prepare', input, options),
       onChange: async completedItemId => {
-        invalidatePhotoCaches(queryClient);
         setProgress(current => {
           if (!completedItemId) return {};
           const next = { ...current }; delete next[completedItemId]; return next;
         });
-        await refresh(id, cursorRef.current, !completedItemId);
+        if (completedItemId) { refreshSoon.schedule(); return; }
+        refreshSoon.cancel();
+        invalidatePhotoCaches(queryClient);
+        await refresh(id, cursorRef.current, true);
       },
-      onProgress: (itemId, sent, total) => setProgress(current => ({ ...current, [itemId]: [sent, total] })),
+      // The photo's tile gets its preview: let the photo pages fetch it.
+      onPreviewsMade: () => refreshSoon.schedule(),
+      onProgress: (itemId, sent, total) => {
+        if (showProgress(itemId, sent, total)) setProgress(current => ({ ...current, [itemId]: [sent, total] }));
+      },
     });
   };
 

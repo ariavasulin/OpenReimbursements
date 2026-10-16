@@ -8,9 +8,11 @@ export type UploadItem = Pick<
   QueueItem,
   "name" | "status" | "sentBytes" | "size" | "error" | "warnings"
 > &
-  Partial<Pick<QueueItem, "albumIds">>;
+  Partial<Pick<QueueItem, "albumIds" | "stage">>;
 
 export interface UploadRow {
+  /** Stable per file (the queue's photoId), so a removed row never hands its state to the next. */
+  key: string;
   item: UploadItem;
   actions?: ReactNode;
 }
@@ -63,10 +65,18 @@ function statusLabel(item: UploadItem): string {
     case "queued":
       return "Waiting";
     case "uploading":
-      return item.sentBytes > 0
-        ? `${formatBytes(item.sentBytes)} / ${formatBytes(item.size)}`
-        : "Uploading...";
+      return uploadingLabel(item);
   }
+}
+
+/** Which step an uploading file is on, so a small photo never sits at "0%" looking stuck. */
+export function uploadingLabel(item: Pick<UploadItem, "stage" | "sentBytes" | "size">): string {
+  if (item.stage === "reconnecting") return "Waiting for connection...";
+  if (item.stage === "finishing") return "Finishing...";
+  if (item.sentBytes > 0 && item.sentBytes < item.size) return `${formatBytes(item.sentBytes)} / ${formatBytes(item.size)}`;
+  if (item.stage === "sending") return "Sending...";
+  if (item.stage === "preparing") return "Preparing...";
+  return "Uploading...";
 }
 
 function percent(item: UploadItem): number {
@@ -78,12 +88,12 @@ function percent(item: UploadItem): number {
 export default function UploadProgress({ rows }: { rows: UploadRow[] }) {
   return (
     <div className="mb-3.5 flex max-h-48 flex-col gap-1.5 overflow-y-auto">
-      {rows.map(({ item, actions }, index) => {
+      {rows.map(({ key, item, actions }) => {
         const value = percent(item);
         const colors = STATUS_COLORS[item.status];
         return (
           <div
-            key={index}
+            key={key}
             className={`rounded-lg border px-3 py-2 ${
               item.status === "failed"
                 ? "border-red-500/70 bg-red-500/10"

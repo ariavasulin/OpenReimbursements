@@ -676,12 +676,16 @@ would become visible or hard-deletable.
 ## Previews made on the server (`POST /api/photos/<id>/derive`)
 
 The uploader's browser makes each photo's thumbnail and preview while it
-uploads, for images up to 24 MB that it can decode. For anything else — a HEIC
-picked on a desktop browser, a TIFF or RAW, an image over 24 MB, a video the
-browser cannot play — the upload client asks the server for them as soon as the
-row is in, through this route, with the same renderers the nightly sweep uses
-(sharp; Supabase image transforms for HEIC; ffmpeg for a video poster). So a
-60 MB TIFF has a preview when the tray says done, not the next morning. Any
+uploads, for images up to 24 MB and 40 megapixels (read from the file header)
+that it can decode. For anything else — a HEIC picked on a desktop browser, a
+TIFF or RAW, an image over 24 MB or 40 MP, a video the browser cannot play —
+the upload client asks the server for them as soon as the row is in, through
+this route, which uses the same renderers the nightly sweep uses (sharp;
+Supabase image transforms for HEIC; ffmpeg for a video poster). The request
+runs in the background, two at a time per tab (the folder import too), so the
+next file does not wait for it; the tray row's "Previews…" note clears when it
+lands. So a 60 MB TIFF has a preview minutes after upload, not the next
+morning. Any
 signed-in employee may call it for any active photo: it fills only an empty
 slot at that photo's fixed derived keys. A refusal (a RAW, a HEIC over 25 MB,
 an image over 250 MB) answers `thumb_path: null` with the reason and changes
@@ -746,6 +750,27 @@ that still has the one-hour cache (same bytes, new cache header), so the whole
 existing library, not only new uploads, loads from the phone's cache on a
 revisit. On 2026-10-16 that was 2,844 more files; it downloads and re-uploads
 each one once, which counts against the Supabase egress quota.
+
+## Upload requests (`/api/photo-migrations/uploads/*`)
+
+An ordinary upload makes one `POST .../uploads/begin` before its bytes: it runs
+`photo_create_upload_attempt`, `photo_acquire_upload`, `photo_claim_content`
+and, only when the browser is retrying an identity it recorded earlier, the
+original-file check (renew, lock, Storage size), in that order, behind one
+actor check. A fresh attempt skips the original check: nothing can be stored
+under a new photo id yet. If a step after the lease fails, the route releases
+the lease (`retryable_failed`, `claim_failed`) before answering, so the
+browser's automatic retry can take a new one. The separate `attempt`,
+`acquire`, `claim` and `original` routes stay: the folder import still uses
+them (its attempts come from `prepare`), and a tab loaded before a deploy keeps
+working. Then come the bytes, then `POST /api/photos` (finalize), which checks
+the original's size alongside the derived files'.
+
+When the connection drops mid-batch, the tray holds the batch on the same file
+and retries it (5 s, 10 s, 20 s, 40 s, then every minute, sooner on the
+browser's `online` event or when the page returns to the front), up to 30
+minutes, before failing it. Only failures with no HTTP answer count as a
+dropped connection; a 503 (writes gated off) still fails the file at once.
 
 ## Repair sweep (`/api/photos/repair`)
 

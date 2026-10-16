@@ -10,7 +10,7 @@ import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
 import UploadProgress, { type UploadRow } from "@/components/photos/upload-progress";
 import { plural } from "@/lib/photos/format";
 import { photoPath } from "@/lib/photos/photo-link";
-import type { QueueItem } from "@/lib/photos/upload-queue";
+import { retryableNow, type QueueItem } from "@/lib/photos/upload-queue";
 
 // The always-visible upload status bar. On the photos pages the shell places it
 // in its floating column, above the phone tab bar; a page with no shell
@@ -22,6 +22,9 @@ function summary(items: QueueItem[], active: boolean): string {
   if (count(["cancelling"])) return "Removing upload...";
   if (count(["cancel_pending"])) return `${plural(count(["cancel_pending"]), "removal")} pending`;
   if (active) {
+    if (items.some((i) => i.status === "uploading" && i.stage === "reconnecting")) {
+      return "Waiting for connection — uploads carry on by themselves";
+    }
     const settled = count(["done", "duplicate", "failed", "job_conflict", "restore_required", "waiting_claim", "format_twin"]);
     return `Uploading ${Math.min(settled + 1, items.length)} of ${items.length}`;
   }
@@ -82,6 +85,8 @@ export default function UploadTray({
   const settledOnly = items.every(
     (i) => (i.status === "done" && !i.sidecarRetry) || i.status === "duplicate"
   );
+  // One tap for a batch that failed together (the connection dropped for good).
+  const retryable = retryableNow({ items }, now);
 
   const handleRepicked = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = readInputFiles(event.target);
@@ -128,6 +133,7 @@ export default function UploadTray({
       );
     }
     return {
+      key: item.photoId,
       item,
       actions: primary ? (
         <>
@@ -199,6 +205,12 @@ export default function UploadTray({
           >
             <span className="min-w-0 break-words text-sm font-semibold text-white">
               {summary(items, active)}
+              {/* The page must stay open: a phone that locks or switches apps pauses it. */}
+              {active && (
+                <span className="block text-xs font-normal text-[#b4b4b4]">
+                  Keep DWS Photos open while uploading
+                </span>
+              )}
             </span>
             {expanded ? (
               <ChevronDown className="h-4 w-4 shrink-0 text-[#a0a0a0]" />
@@ -206,6 +218,16 @@ export default function UploadTray({
               <ChevronUp className="h-4 w-4 shrink-0 text-[#a0a0a0]" />
             )}
           </button>
+          {retryable > 1 && (
+            <button
+              type="button"
+              onClick={() => manager.retryAll()}
+              className="flex min-h-11 shrink-0 items-center gap-1 px-3 text-sm font-semibold text-[#8bbaff] hover:text-white"
+            >
+              <RotateCw className="h-3.5 w-3.5" />
+              Retry all
+            </button>
+          )}
           {settledOnly && (
             <button
               type="button"

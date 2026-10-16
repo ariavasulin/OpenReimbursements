@@ -2,7 +2,7 @@ import 'server-only';
 import { isDeepStrictEqual } from 'node:util';
 import { cleanTags, isSha256 } from '../apiShared';
 import { CAPTURED_AT_SOURCES, PHOTO_KINDS } from '../types';
-import type { CanonicalUploadOutcome, UploadOwner, UploadAttempt, OriginalUploadState } from '../upload-contract';
+import type { AcquireUploadOutcome, BeginUploadOutcome, CanonicalUploadOutcome, ClaimUploadOutcome, UploadOwner, UploadAttempt, OriginalUploadState } from '../upload-contract';
 import type { PhotoActor } from './authority';
 import { photoId } from './reads';
 import { PhotoApiError, throwPhotoDatabaseError, photoRpc } from './http';
@@ -144,10 +144,16 @@ export async function finalizeUpload(actor: PhotoActor, body: Body): Promise<Can
     outcome = await photoRpc(actor, 'photo_finalize_upload', { ...args, p_photo: bound.finalize_payload });
     warnings = bound.warnings;
   } else {
-    if (await objectSize(actor, bound.original_path) !== Number(bound.original_bytes)) throw new PhotoApiError('conflict');
     const photo = { ...requested, request: requested, warnings: [...requested.warnings] as string[] };
     const fields = ['thumb_path', 'preview_path', 'sidecar_path'] as const;
-    const sizes = await Promise.allSettled(fields.map(field => photo[field] === null ? null : objectSize(actor, photo[field] as string)));
+    // The original and the derived files are checked at once: four Storage
+    // reads in one wait instead of two. Neither check throws (objectSize
+    // answers null), so a refused original still refuses before any write.
+    const [originalSize, sizes] = await Promise.all([
+      objectSize(actor, bound.original_path),
+      Promise.allSettled(fields.map(field => photo[field] === null ? null : objectSize(actor, photo[field] as string))),
+    ]);
+    if (originalSize !== Number(bound.original_bytes)) throw new PhotoApiError('conflict');
     for (const [index, field] of fields.entries()) {
       const size = sizes[index];
       if (size.status === 'rejected') throw size.reason;
@@ -201,4 +207,48 @@ export async function probeUploadOriginal(actor: PhotoActor, body: Body): Promis
   }
   if (data.size !== Number(bound.original_bytes)) throw new OriginalUploadMismatch();
   return { complete: true };
+}
+
+/**
+ * One request for the steps every upload takes before its bytes move: create
+ * (or replay) the attempt, take the lease, claim the content and, on a retry,
+ * check for an original a lost response left behind. The SQL functions run in
+ * the same order the separate routes run them; this only saves the phone a
+ * round trip (and an actor check) per step. Each step's answer is returned so
+ * the browser decides exactly as it did with separate calls.
+ */
+export async function beginUpload(actor: PhotoActor, body: Body): Promise<BeginUploadOutcome> {
+  const attempt = await createUploadAttempt(actor, body);
+  // A replayed attempt with a result, or one bound to other bytes or another
+  // project, goes no further: the browser reports it without a lease.
+  if (attempt.result || attempt.content_sha256 !== body.content_sha256 || attempt.job_id !== (body.job_id ?? null)) return { attempt };
+  const owner = { p_actor: actor.actorId, p_owner_kind: attempt.owner_kind, p_owner_id: attempt.owner_id };
+  const acquired = await photoRpc(actor, 'photo_acquire_upload', owner) as AcquireUploadOutcome;
+  if (acquired.status !== 'acquired') return { attempt, acquired: await describeUploadOutcome(actor, acquired) };
+  const generation = { ...owner, p_generation: acquired.lease_generation };
+  try {
+    const claimed = await photoRpc(actor, 'photo_claim_content', generation) as ClaimUploadOutcome;
+    if (claimed.status === 'waiting_claim') return { attempt, acquired, claimed };
+    if (claimed.status !== 'claimed') return { attempt, acquired, claimed: await describeUploadOutcome(actor, claimed) };
+    // A fresh identity has nothing stored yet, so the browser skips the check;
+    // a server that bound another photo id checks anyway.
+    if (body.probe !== true && attempt.photo_id === body.photo_id) return { attempt, acquired, claimed, original: null };
+    try {
+      const original = await probeUploadOriginal(actor, {
+        owner_kind: attempt.owner_kind, owner_id: attempt.owner_id,
+        lease_generation: acquired.lease_generation, claim_generation: claimed.claim_generation,
+      });
+      return { attempt, acquired, claimed, original };
+    } catch (error) {
+      if (error instanceof OriginalUploadMismatch) return { attempt, acquired, claimed, original_mismatch: true };
+      throw error;
+    }
+  } catch (error) {
+    // The browser never learned this lease, so it cannot release it. Release
+    // it here, so the automatic retry of this request can take a new one
+    // instead of waiting two minutes for it to expire.
+    await photoRpc(actor, 'photo_release_upload', { ...generation, p_status: 'retryable_failed', p_error_code: 'claim_failed' })
+      .catch(() => undefined);
+    throw error;
+  }
 }

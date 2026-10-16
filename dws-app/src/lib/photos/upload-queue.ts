@@ -3,7 +3,7 @@
 // network.
 
 import { classifyFile } from "./classify";
-import type { BatchMeta, UploadIdentity } from "./upload";
+import type { BatchMeta, UploadIdentity, UploadStage } from "./upload";
 import type { CancelUploadInput, CancelUploadOutcome, FormatTwin } from "./upload-contract";
 
 export type QueueStatus =
@@ -22,6 +22,9 @@ export type QueueStatus =
   | "cancel_pending"
   | "interrupted";
 
+/** An uploading row's step; "reconnecting" while the batch waits out a dropped connection. */
+export type QueueStage = UploadStage | "reconnecting";
+
 export interface QueueItem {
   photoId: string;
   /** The project, or null when the upload names only albums. */
@@ -36,6 +39,8 @@ export interface QueueItem {
   enqueuedAt: number;
   status: QueueStatus;
   sentBytes: number;
+  /** While uploading: what the file is doing. Never persisted. */
+  stage?: QueueStage;
   error?: string;
   canonicalPhotoId?: string;
   /** Null when the existing photo has no project. */
@@ -67,7 +72,7 @@ export interface Queue {
   files: Map<string, PairedFile>;
 }
 
-export type Persisted = Omit<QueueItem, "status" | "sentBytes"> & {
+export type Persisted = Omit<QueueItem, "status" | "sentBytes" | "stage"> & {
   status: "interrupted" | "done" | "cancel_pending";
 };
 
@@ -116,9 +121,18 @@ const patch = (q: Queue, photoId: string, p: Partial<QueueItem>): Queue => ({
 });
 
 export const start = (q: Queue, id: string) =>
-  patch(q, id, { status: "uploading", sentBytes: 0, error: undefined, retryAt: undefined });
+  patch(q, id, { status: "uploading", stage: "preparing", sentBytes: 0, error: undefined, retryAt: undefined });
+/** Only an uploading row has a stage; a late report for a settled row changes nothing. A new try starts its bytes from zero. */
+export const setStage = (q: Queue, id: string, stage: QueueStage) =>
+  q.items.find((item) => item.photoId === id)?.status !== "uploading" ? q
+    : patch(q, id, stage === "preparing" ? { stage, sentBytes: 0 } : { stage });
 export const progress = (q: Queue, id: string, sentBytes: number) =>
   patch(q, id, { sentBytes });
+/** Keep only the warnings `keep` passes (the server made a row's previews, so its note is gone). */
+export const keepWarnings = (q: Queue, id: string, keep: (warning: string) => boolean) => {
+  const item = q.items.find((candidate) => candidate.photoId === id);
+  return !item?.warnings?.some((warning) => !keep(warning)) ? q : patch(q, id, { warnings: item.warnings.filter(keep) });
+};
 export const fail = (q: Queue, id: string, error: string) =>
   patch(q, id, { status: "failed", error });
 export const recordOutcome = (
@@ -136,6 +150,44 @@ export const rememberIdentity = (q: Queue, id: string, uploadIdentity: UploadIde
 export const retry = (q: Queue, id: string, now = Date.now()) =>
   isRemoving(q.items.find((item) => item.photoId === id)) || (q.items.find((item) => item.photoId === id)?.retryAt ?? 0) > now ? q :
     patch(q, id, { status: q.files.has(id) ? "queued" : "interrupted", error: undefined, retryAt: undefined });
+
+/** Every failed row that may be retried now, in one tap. Rows that need a decision first (a move, a restore, a format twin) are left alone. */
+export const retryAll = (q: Queue, now = Date.now()) =>
+  q.items.filter((item) => item.status === "failed" || item.status === "waiting_claim")
+    .reduce((queue, item) => retry(queue, item.photoId, now), q);
+/** Rows Retry all would retry now. */
+export const retryableNow = (q: Pick<Queue, "items">, now = Date.now()) =>
+  q.items.filter((item) => (item.status === "failed" || item.status === "waiting_claim") && (item.retryAt ?? 0) <= now).length;
+
+/** First wait after a dropped connection, doubling to the cap: 5 s, 10 s, 20 s, 40 s, then every minute. */
+export const RECONNECT_FIRST_DELAY_MS = 5_000;
+export const RECONNECT_MAX_DELAY_MS = 60_000;
+/** After this long without a connection the file fails as before and the batch moves on. */
+export const RECONNECT_GIVE_UP_MS = 30 * 60_000;
+export const reconnectDelay = (attempt: number) =>
+  Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_FIRST_DELAY_MS * 2 ** Math.max(0, attempt - 1));
+
+/**
+ * Byte progress arrives on every network event, tens a second on a big file,
+ * and each one re-rendered the tray. Let a tick through only when the whole
+ * percent moved and at least `minIntervalMs` passed, plus the first and the
+ * last, so a row updates about four times a second at most.
+ */
+export function createProgressGate(minIntervalMs = 250, now: () => number = Date.now) {
+  const last = new Map<string, { percent: number; at: number }>();
+  return (id: string, sent: number, total: number): boolean => {
+    if (sent >= total) {
+      last.delete(id);
+      return true;
+    }
+    const percent = total > 0 ? Math.floor((sent / total) * 100) : 0;
+    const previous = last.get(id);
+    const time = now();
+    if (previous && (percent === previous.percent || time - previous.at < minIntervalMs)) return false;
+    last.set(id, { percent, at: time });
+    return true;
+  };
+}
 
 export const isRemoving = (item?: Pick<QueueItem, "status">) => item?.status === "cancelling" || item?.status === "cancel_pending";
 export const beginRemoval = (q: Queue, id: string) => patch(q, id, {
@@ -211,7 +263,7 @@ export function toManifest(q: Queue, now: number): Persisted[] {
           i.status === "interrupted") &&
         now - i.enqueuedAt < MANIFEST_TTL_MS)
     )
-    .map(({ sentBytes, ...i }) => ({ ...i,
+    .map(({ sentBytes, stage, ...i }) => ({ ...i,
       status: isRemoving(i) ? "cancel_pending" as const : i.sidecarRetry && (i.status === "done" || i.status === "retrying_sidecar") ? "done" as const : "interrupted" as const,
     }));
 }
