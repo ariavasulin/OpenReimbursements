@@ -314,11 +314,76 @@ Three migrations, applied to production on 2026-10-14 before the deploy:
 p_on)`, behind the `writes` gate. A favorite is personal: the table's row rule
 shows a person only their own rows, so `GET /api/photos` embedding
 `favorites:photo_favorites(user_id)` through the employee's session returns
-`[]` or `[{user_id: me}]` per photo, and `favorites=1` inner-joins to list only
+`[]` or `[{user_id: me}]` per photo, and `favorites=1` reads the
+`photo_favorite_photos` view (since `20261016140400`) to list only
 theirs: the Favorites chip in every grid, kept in the URL as `favorites=1`
 (`/photos/favorites` redirects there). `POST /api/photos/favorites { photo_ids,
 on }` adds or removes up to 500 at once. Rows cascade with the photo's permanent deletion and with the user.
 Apply the migration before the deploy that ships it (additive only).
+
+## Server and database speedups (performance round 1, 2026-10-16)
+
+One migration, `20261016140400_photo_perf_server_reads.sql`. Apply it to
+production BEFORE the deploy, with `-f` like any transactional file. It only
+adds things or keeps their shape, so the app that is live in between keeps
+working. What it adds, and what reads it:
+
+- `photo_actor_context(p_actor)` (service role only). Every write and every
+  upload step checks who is asking. That check is now Auth's `getUser` plus this
+  one read, instead of `getUser` plus three reads one after another (profile,
+  `photo_require_actor`, release gates). The refusals are the same, in the same
+  order: no live profile is 403, a deleted or banned Auth user is 401, a closed
+  gate is 503.
+- `get_photo_me()` (signed-in sessions). Answers `GET /api/photos/me`
+  (`{ actor, settings }`), and also `GET /api/photos/actor` and
+  `GET /api/photos/settings`. Who is asking comes from the database-verified
+  token, so these reads no longer call the Auth server.
+- `get_photo_album_cards(q)`. Album cards in one pass over each album's photos,
+  with `created_by`, `sort_mode` and `has_custom_order` added.
+  `get_photo_album_summaries_by_name_page` (what `GET /api/photo-albums` calls)
+  now reads it, so the album list makes one database call.
+  `get_photo_album_summaries` keeps its six columns and reads it too.
+- `photo_favorite_photos` view. `favorites=1` starts from the reader's own
+  favorites. In the same way, `album=…` now always reads `album_photo_order`,
+  date order included. Both used to walk the whole library newest first. The
+  favorites row rule is now `user_id = (select auth.uid())`, which shows the
+  same rows.
+- Index `photos_active_job_created` on `photos(job_id, created_at desc)
+  include (thumb_path) where deleted_at is null`, for the Projects list. It is
+  built without CONCURRENTLY, which briefly holds writes to `photos`: well under
+  a second at today's size. If `photos` has grown past about 100k rows, run that
+  one statement by itself with CONCURRENTLY instead (see
+  `supabase/migrations/README.md`).
+
+`album_photo_order` and `photo_favorite_photos` both copy the `photos` column
+list at the moment they were created. A new column on `photos` that a list needs
+must be added to both views.
+
+App-side changes that go with the migration:
+
+- **Region.** `vercel.json` pins functions to `cle1` (Cleveland, AWS us-east-2),
+  the same region as the database. They used to run in `iad1` (Washington DC).
+  After the deploy, check that a response's `x-vercel-id` reads
+  `sfo1::cle1::…`. The Hobby plan allows one region. If the dashboard's
+  Functions region setting disagrees, `vercel.json` wins on the next deploy.
+- **Paged lists.** A next-page cursor on `GET /api/photos` and
+  `/api/photos/ids` also bounds the sort column (`captured_at <=` the cursor
+  value, or `>=` for oldest first). That lets Postgres start each page from the
+  index instead of re-reading every row before it.
+- **One response shape.** `GET /api/photos`, `/api/photos/ids` and
+  `/api/photo-tags` now answer like every other photo route: `no-store`, and
+  errors as `{ error: { code, message, retryable } }` with no database text.
+- **ffmpeg for posters.** `/api/photos/[id]/derive` now ships with the ffmpeg
+  binary (about 45 MB more in that one function). A video poster the browser
+  could not make now appears right after the upload, not after the 09:00 UTC
+  sweep.
+- **Image allow-list.** `next/image` only optimizes
+  `/storage/v1/object/public/receipt-images/**`. Photos never went through it.
+  The old pattern let anyone spend the image-optimization quota on any photo.
+
+To check the album list after applying (read-only):
+`explain (analyze, buffers) select * from public.get_photo_album_summaries_by_name_page(null, 200, null, null);`
+run as a signed-in role. Compare it with the audit's 20,074 buffers.
 
 ## Share links (`/s/<token>`)
 
@@ -615,7 +680,9 @@ nothing; the sweep decides later whether the row becomes a file tile. On
 success it also removes the upload's "Previews skipped…" note from
 `upload_warnings`. It needs `photo_writes_enabled`, not `repair_enabled`, and
 has the same 300-second limit as the sweep. If it fails (offline, a timeout),
-the upload still completes and the sweep fills the preview that night.
+the upload still completes and the sweep fills the preview that night. Like the
+sweep, it ships with the ffmpeg binary (`outputFileTracingIncludes` in
+`next.config.ts`), so a video poster can be made here too.
 
 ## Thumbnail format and caching (performance round 1, 2026-10)
 

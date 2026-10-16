@@ -66,7 +66,12 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
       where n.nspname='public' and r.rolname in ('anon','authenticated')
         and (p.proname like 'photo\\_%' escape '\\' or p.proname='consume_dws_handoff')`);
     expect(functions.rows.length).toBeGreaterThan(10);
-    for (const row of functions.rows) expect(row.executable, `${row.rolname} ${row.signature}`).toBe(false);
+    // Two pure sort-key helpers the list pages call through the employee's session (20261014120000).
+    const clientHelpers = ['photo_sort_key(text)', 'photo_job_number_key(text)'];
+    for (const row of functions.rows) {
+      const expected = row.rolname === 'authenticated' && clientHelpers.includes(row.signature);
+      expect(row.executable, `${row.rolname} ${row.signature}`).toBe(expected);
+    }
     for (const client of [f.anon, f.employeeA.client, f.administrator.client]) {
       const response = await client.rpc('consume_dws_handoff', {
         p_token_digest: '0'.repeat(64), p_actor: f.employeeA.id, p_script: 'remove_photos',
@@ -97,10 +102,14 @@ describe('the real database authority boundary (AC-2, AC-8, AC-9, AC-14)', () =>
     expect(rule.rows.map(row => row.proname)).toEqual([
       'photo_apply_action', 'photo_approve_action', 'photo_can_trash', 'photo_delete_album', 'photo_delete_job',
       'photo_materialize_action', 'photo_purge_authorize_delete', 'photo_purge_finish', 'photo_purge_pending', 'photo_purge_request',
+      // Only a photo admin may change the default tags (20261014120100).
+      'photo_set_starter_tags',
     ]);
     const flag = await f.sql.query(`select p.proname from pg_proc p
       where p.pronamespace='public'::regnamespace and p.prosrc ~ 'photo_admin' and p.prosrc !~ 'photo_actor_is_admin' order by 1`);
-    expect(flag.rows.map(row => row.proname)).toEqual(['photo_actor_is_admin']);
+    // get_photo_me and photo_actor_context only report the flag to the app (which offers or hides
+    // buttons); they decide nothing. Every refusal still goes through photo_actor_is_admin.
+    expect(flag.rows.map(row => row.proname)).toEqual(['get_photo_me', 'photo_actor_context', 'photo_actor_is_admin']);
     // Internal helpers: no client and not even the service role calls them directly.
     for (const role of ['anon', 'authenticated', 'service_role']) {
       const helpers = await f.sql.query(`select bool_or(has_function_privilege($1, p.oid, 'EXECUTE')) as allowed from pg_proc p

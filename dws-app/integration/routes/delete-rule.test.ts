@@ -16,6 +16,8 @@ vi.mock('next/headers', async () => {
 });
 
 import { GET as actorRoute } from '@/app/api/photos/actor/route';
+import { GET as meRoute } from '@/app/api/photos/me/route';
+import { GET as settingsRoute } from '@/app/api/photos/settings/route';
 import { GET as ownership } from '@/app/api/photos/[id]/ownership/route';
 import { DELETE as trashPhoto } from '@/app/api/photos/[id]/route';
 import { GET as getAlbum, DELETE as deleteAlbum } from '@/app/api/photo-albums/[id]/route';
@@ -75,6 +77,30 @@ describe('photo admins and the delete rule, through the routes', () => {
     expect((await call(patchUser, 'PATCH', `/api/admin/users/${f.employeeB.id}`, f.administrator, { photo_admin: 'yes' }, f.employeeB.id)).status).toBe(400);
     expect((await call(actorRoute, 'GET', '/api/photos/actor', f.administrator)).body.photo_admin).toBe(false);
     expect((await call(actorRoute, 'GET', '/api/photos/actor', f.photoAdmin)).body).toEqual({ user_id: f.photoAdmin.id, photo_admin: true });
+  });
+
+  it('GET /api/photos/me answers what /actor and /settings answer, in one request, and 401 without a sign-in', async () => {
+    const me = await call(meRoute, 'GET', '/api/photos/me', f.photoAdmin);
+    expect(me.status).toBe(200);
+    expect(me.body).toEqual({
+      actor: (await call(actorRoute, 'GET', '/api/photos/actor', f.photoAdmin)).body,
+      settings: (await call(settingsRoute, 'GET', '/api/photos/settings', f.photoAdmin)).body,
+    });
+    expect(me.body.actor).toEqual({ user_id: f.photoAdmin.id, photo_admin: true });
+    expect(me.body.settings).toMatchObject({ starter_tags: expect.any(Array), slideshow: { shuffle: false, delay_seconds: 4 } });
+    // A deactivated account is not a photo admin, as before.
+    await f.sql.query('update public.user_profiles set deleted_at=now() where user_id=$1', [f.photoAdmin.id]);
+    try {
+      expect((await call(meRoute, 'GET', '/api/photos/me', f.photoAdmin)).body.actor.photo_admin).toBe(false);
+    } finally {
+      await f.sql.query('update public.user_profiles set deleted_at=null where user_id=$1', [f.photoAdmin.id]);
+    }
+    const anonymous = { ...f.photoAdmin, cookies: [] };
+    for (const [handler, path] of [[meRoute, '/api/photos/me'], [actorRoute, '/api/photos/actor'], [settingsRoute, '/api/photos/settings']] as const) {
+      const refused = await call(handler, 'GET', path, anonymous);
+      expect(refused.status, path).toBe(401);
+      expect(refused.body.error.code, path).toBe('unauthenticated');
+    }
   });
 
   it('AC-2: ownership reports the real can_trash, and the one-photo trash route obeys it', async () => {

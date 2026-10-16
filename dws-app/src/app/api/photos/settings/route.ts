@@ -1,6 +1,7 @@
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { requirePhotoActor } from '@/lib/photos/server/authority';
 import { onlyKeys } from '@/lib/photos/server/actions';
+import { readPhotoMe } from '@/lib/photos/server/me';
 import { PhotoApiError, photoJson, photoRoute, photoRpc, readPhotoJson, throwPhotoDatabaseError } from '@/lib/photos/server/http';
 import { cleanTags } from '@/lib/photos/apiShared';
 import { SLIDESHOW_DELAY_CHOICES, type PhotoSettings } from '@/lib/photos/settings';
@@ -10,14 +11,10 @@ import { SLIDESHOW_DELAY_CHOICES, type PhotoSettings } from '@/lib/photos/settin
  * { starter_tags, slideshow: { shuffle, delay_seconds } }. starter_tags is the
  * app-wide default tag list (photo_settings); slideshow is the signed-in
  * person's own. A read: it answers while photo writes are switched off.
+ * GET /api/photos/me answers this and the permissions together.
  */
 export async function GET() {
-  return photoRoute(async () => {
-    const session = await createSupabaseServerClient();
-    const { data, error } = await session.auth.getUser();
-    if (error || !data.user || data.user.is_anonymous) throw new PhotoApiError('unauthenticated');
-    return photoJson(await readSettings(session, data.user.id));
-  });
+  return photoRoute(async () => photoJson((await readPhotoMe()).settings));
 }
 
 /**

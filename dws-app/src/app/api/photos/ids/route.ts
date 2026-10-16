@@ -1,10 +1,10 @@
-import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { MAX_SELECTION_PHOTOS } from '@/lib/photos/apiShared';
+import { invalidFilter, photoJson, photoRoute, throwPhotoDatabaseError } from '@/lib/photos/server/http';
+import { requirePhotoReader } from '@/lib/photos/server/reads';
 import {
-  afterFilter,
   filteredPhotos,
   parsePhotoFilters,
+  pastPosition,
   resolveSearch,
   rowPosition,
   sortColumn,
@@ -22,20 +22,11 @@ import {
 const PAGE = 1000;
 
 export async function GET(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return photoRoute(async () => {
+    const supabase = await requirePhotoReader();
+    const filters = parsePhotoFilters(new URL(request.url).searchParams);
+    if (typeof filters === 'string') return invalidFilter(filters);
 
-  const filters = parsePhotoFilters(new URL(request.url).searchParams);
-  if (typeof filters === 'string') {
-    return NextResponse.json({ error: filters }, { status: 400 });
-  }
-
-  try {
     const search = await resolveSearch(supabase, filters);
     const ids: string[] = [];
     let total: number | null = null;
@@ -47,9 +38,8 @@ export async function GET(request: Request) {
       const size = Math.min(PAGE, MAX_SELECTION_PHOTOS - ids.length);
       const counting: { count?: 'exact' } = total === null ? { count: 'exact' } : {};
       const base = filteredPhotos(supabase, filters, search, columns, counting).limit(size);
-      const after = last && afterFilter(filters, rowPosition(filters, last));
-      const { data, error, count } = await (after ? base.or(after) : base);
-      if (error) throw new Error(error.message);
+      const { data, error, count } = await (last ? pastPosition(base, filters, rowPosition(filters, last)) : base);
+      if (error) throwPhotoDatabaseError(error);
       const rows = (data ?? []) as unknown as KeysetRow[];
       if (total === null) total = count ?? rows.length;
       ids.push(...rows.map((row) => row.id));
@@ -57,11 +47,6 @@ export async function GET(request: Request) {
       if (rows.length < size) break;
     }
     const matched = total ?? ids.length;
-    return NextResponse.json({ ids, total: matched, truncated: matched > ids.length });
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Listing failed' },
-      { status: 500 }
-    );
-  }
+    return photoJson({ ids, total: matched, truncated: matched > ids.length });
+  });
 }

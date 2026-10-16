@@ -1,17 +1,17 @@
 import { requirePhotoActor } from '@/lib/photos/server/authority';
-import { photoJson, photoRoute, readPhotoJson } from '@/lib/photos/server/http';
+import { invalidFilter, photoJson, photoRoute, readPhotoJson, throwPhotoDatabaseError } from '@/lib/photos/server/http';
+import { requirePhotoReader } from '@/lib/photos/server/reads';
 import { finalizeUpload } from '@/lib/photos/server/uploads';
-import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
 import { FAVORITES_EMBED, PHOTO_COLUMNS, PHOTOS_PAGE_SIZE } from '@/lib/photos/apiShared';
 import { type PhotoRow } from '@/lib/photos/types';
 import { parseLimit } from '@/lib/keysetCursor';
 import {
-  afterFilter,
   decodePhotoCursor,
   encodePhotoCursor,
   filteredPhotos,
+  listColumns,
   parsePhotoFilters,
+  pastPosition,
   resolveSearch,
   type KeysetRow,
 } from '@/lib/photos/server/list-filters';
@@ -25,72 +25,40 @@ import {
 //      the reverse: 400). `sort=custom` without `album` is 400. With no filter it lists
 //      every photo (the Photos screen). The filters, and how they combine,
 //      are documented in lib/photos/server/list-filters.ts, which
-//      GET /api/photos/ids shares.
+//      GET /api/photos/ids shares. Answers no-store, per user (photoJson), and
+//      a failure as { error: { code, message } } without database text.
 // POST /api/photos — finalize an upload: insert the row for files the browser
 //      already put in storage. The row existing is what makes a photo "in".
 
 const MAX_LIMIT = 200;
 
 export async function GET(request: Request) {
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return photoRoute(async () => {
+    const supabase = await requirePhotoReader();
+    const params = new URL(request.url).searchParams;
+    const filters = parsePhotoFilters(params);
+    if (typeof filters === 'string') return invalidFilter(filters);
+    const limit = parseLimit(params.get('limit'), PHOTOS_PAGE_SIZE, MAX_LIMIT);
+    if (limit === null) return invalidFilter('Invalid limit');
+    const rawCursor = params.get('cursor');
+    const cursor = rawCursor ? decodePhotoCursor(filters, rawCursor) : null;
+    if (rawCursor && !cursor) return invalidFilter('Invalid cursor');
 
-  const params = new URL(request.url).searchParams;
-  const filters = parsePhotoFilters(params);
-  if (typeof filters === 'string') {
-    return NextResponse.json({ error: filters }, { status: 400 });
-  }
-  const limit = parseLimit(params.get('limit'), PHOTOS_PAGE_SIZE, MAX_LIMIT);
-  if (limit === null) {
-    return NextResponse.json({ error: 'Invalid limit' }, { status: 400 });
-  }
-  const rawCursor = params.get('cursor');
-  const cursor = rawCursor ? decodePhotoCursor(filters, rawCursor) : null;
-  if (rawCursor && !cursor) {
-    return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
-  }
+    const search = await resolveSearch(supabase, filters);
+    // The reader's own favorite on each row; the position only for custom order's cursor.
+    const columns = listColumns(filters, PHOTO_COLUMNS, FAVORITES_EMBED);
+    const base = filteredPhotos(supabase, filters, search, columns).limit(limit + 1);
+    const { data, error } = await (cursor ? pastPosition(base, filters, cursor) : base);
+    if (error) throwPhotoDatabaseError(error);
 
-  let search: string[];
-  try {
-    search = await resolveSearch(supabase, filters);
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Search failed' },
-      { status: 500 }
-    );
-  }
-
-  // The reader's own favorite on each row; the favorites filter brings its own embed.
-  const columns = [PHOTO_COLUMNS, filters.custom ? 'album_position' : null, filters.favorites ? null : FAVORITES_EMBED]
-    .filter(Boolean).join(', ');
-  let query = filteredPhotos(supabase, filters, search, columns).limit(limit + 1);
-  if (cursor) {
-    // Separate or() calls are ANDed by PostgREST, so this composes with the filters.
-    query = query.or(afterFilter(filters, cursor));
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const rows = (data ?? []) as unknown as (PhotoRow & KeysetRow & { albums?: unknown })[];
-  const page = rows.slice(0, limit);
-  const last = page[page.length - 1];
-  const nextCursor = rows.length > limit ? encodePhotoCursor(filters, last) : null;
-  // The join column only served the album filter, and the position only the
-  // cursor; a list row carries neither.
-  for (const row of rows) {
-    delete row.albums;
-    delete row.album_position;
-  }
-
-  return NextResponse.json({ success: true, photos: page, nextCursor });
+    const rows = (data ?? []) as unknown as (PhotoRow & KeysetRow)[];
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    const nextCursor = rows.length > limit ? encodePhotoCursor(filters, last) : null;
+    // The position only served the cursor; a list row does not carry it.
+    for (const row of rows) delete row.album_position;
+    return photoJson({ success: true, photos: page, nextCursor });
+  });
 }
 
 export async function POST(request: Request) {

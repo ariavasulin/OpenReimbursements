@@ -5,7 +5,7 @@ import type { PhotoAlbumSummary, PhotoJobSummary } from "./types";
 const job = (id: string, job_number: string, name: string, latest_activity: string | null = null, photo_count = 0): PhotoJobSummary =>
   ({ id, job_number, name, location: null, photo_count, thumb_paths: [], latest_activity });
 const album = (id: string, name: string, extra: Partial<PhotoAlbumSummary> = {}): PhotoAlbumSummary =>
-  ({ id, name, photo_count: 0, thumb_paths: [], created_at: "2026-01-01T00:00:00Z", created_by: null, latest_activity: null, ...extra });
+  ({ id, name, photo_count: 0, thumb_paths: [], created_at: "2026-01-01T00:00:00Z", created_by: null, latest_activity: null, sort_mode: "date", has_custom_order: false, ...extra });
 
 describe("the Projects and Albums Sort chip", () => {
   it("reads the URL value and falls back to each page's default", () => {
