@@ -6,8 +6,10 @@ import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@t
 import BrowseToolbar from "@/components/photos/browse-toolbar";
 import { useProjectFilterLabel, type FilterChoices } from "@/components/photos/filter-bar";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
+import { LoadBoundary, retryableLoader } from "@/components/photos/load-boundary";
 import PhotoGrid, { type GridSelection } from "@/components/photos/photo-grid";
 import SelectionBar from "@/components/photos/selection-bar";
+import { useSlideshowStart } from "@/components/photos/slideshow-link";
 import StatusLine from "@/components/photos/status-line";
 import { useBrowseState } from "@/hooks/use-browse-state";
 import { usePhotoSelection } from "@/hooks/use-photo-selection";
@@ -53,10 +55,12 @@ import { cn } from "@/lib/utils";
 // The viewer (YARL and its plugins, about 50 KB gzipped) is not needed to draw
 // the grid, so it is its own chunk, fetched after the first page of photos
 // has landed (see viewerWanted below) instead of before the page can paint.
-const PhotoLightbox = dynamic(() => import("@/components/photos/photo-lightbox"), {
-  ssr: false,
-  loading: () => null,
-});
+// A failed download leaves the grid up and the next tap tries again
+// (LoadBoundary, retryableLoader).
+const PhotoLightbox = dynamic(
+  retryableLoader(() => import("@/components/photos/photo-lightbox")),
+  { ssr: false, loading: () => null }
+);
 
 /** What this grid lists. The query keys and fetchers live in api.ts, so a prefetch names the same cache entry. */
 export type BrowserScope = PhotoListScope;
@@ -302,14 +306,19 @@ export default function PhotoBrowser({
     lightboxProps,
   } = useLightboxByPhotoId(openablePhotos);
 
+  // The page header's Play button: shown as soon as the grid has a still,
+  // without waiting for the viewer's code. It opens the viewer, which plays.
+  const { autoplay, autoplayStarted } = useSlideshowStart(openablePhotos, setOpenPhotoId, lightboxOpen);
+
   // Mount the viewer once the first page is in and the browser is idle, or
-  // sooner if a tile is pressed or a photo opens (a `?photo=` link). Mounted
-  // early, it is ready by the first tap, and it registers the page header's
-  // Play button, which appears with it.
+  // sooner if a tile is pressed or a photo opens (a `?photo=` link, Play).
+  // Mounted early, it is ready by the first tap.
   const firstPageLoaded = (data?.pages.length ?? 0) > 0;
   const [viewerWanted, setViewerWanted] = useState(false);
+  // Its download failed: no more tries until someone opens a photo.
+  const [viewerFailed, setViewerFailed] = useState(false);
   useEffect(() => {
-    if (viewerWanted || !firstPageLoaded) return;
+    if (viewerWanted || viewerFailed || !firstPageLoaded) return;
     if (typeof window.requestIdleCallback === "function") {
       const id = window.requestIdleCallback(() => setViewerWanted(true), { timeout: 2000 });
       return () => window.cancelIdleCallback(id);
@@ -317,8 +326,16 @@ export default function PhotoBrowser({
     // Safari has no requestIdleCallback.
     const timer = setTimeout(() => setViewerWanted(true), 500);
     return () => clearTimeout(timer);
-  }, [viewerWanted, firstPageLoaded]);
+  }, [viewerWanted, viewerFailed, firstPageLoaded]);
   const wantViewer = useCallback(() => setViewerWanted(true), []);
+  // The grid stays; the viewer unmounts, and the next open mounts it afresh,
+  // which downloads it again. Only an open the person asked for is reported.
+  const viewerLoadFailed = useCallback(() => {
+    setViewerFailed(true);
+    setViewerWanted(false);
+    setOpenPhotoId(null);
+    autoplayStarted();
+  }, [setOpenPhotoId, autoplayStarted]);
   // Once opened it stays mounted, so closing plays its close animation.
   if (lightboxOpen && !viewerWanted) setViewerWanted(true);
 
@@ -462,10 +479,14 @@ export default function PhotoBrowser({
       />
 
       {(viewerWanted || lightboxOpen) && (
-        <PhotoLightbox
-          {...lightboxProps}
-          onNearEnd={loadMore}
-        />
+        <LoadBoundary notify={lightboxOpen} onError={viewerLoadFailed}>
+          <PhotoLightbox
+            {...lightboxProps}
+            onNearEnd={loadMore}
+            autoplay={autoplay}
+            onAutoplayStarted={autoplayStarted}
+          />
+        </LoadBoundary>
       )}
     </>
   );

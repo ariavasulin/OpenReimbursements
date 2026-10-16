@@ -21,7 +21,9 @@ import NewJobForm from '@/components/photos/new-job-form';
 // the verb and Cancel. Detail about a photo that changed underneath you appears
 // only when that has actually happened.
 
-const PAGE_SIZE = 50;
+// The most a batch page or one apply call takes (the routes' cap), so Apply on
+// a big batch makes as few round trips as it can.
+const PAGE_SIZE = 100;
 /** `?destination=none` and the form's "No project" choice. */
 const NO_PROJECT_VALUE = 'none';
 const danger = `${button} border-transparent bg-red-600 text-white hover:bg-red-700`;
