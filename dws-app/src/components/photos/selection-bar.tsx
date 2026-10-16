@@ -1,8 +1,7 @@
 "use client";
 
-import { runPhotoAction } from "@/lib/photos/trash-now";
-
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,25 +18,22 @@ import {
   Heart,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import AlbumField from "@/components/photos/album-field";
 import { PHOTOS_FLOATING_SLOT_ID, usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
 import SetProjectSheet from "@/components/photos/set-project-sheet";
 import SheetShell from "@/components/photos/sheet-shell";
-import TagDropdown, { useTagChoices } from "@/components/photos/tag-dropdown";
+import AddToAlbumSheet from "@/components/photos/selection/add-to-album-sheet";
+import BulkTagSheet from "@/components/photos/selection/bulk-tag-sheet";
+import { errorText, sendInSlices, sliceError } from "@/components/photos/selection/bulk-feedback";
 import { useDesktop } from "@/hooks/use-desktop";
-import { useMobile } from "@/hooks/use-mobile";
 import {
   addPhotosToAlbum,
-  bulkTagPhotos,
-  fetchJson,
   invalidatePhotoCaches,
   PHOTO_ACTOR_KEY,
   removePhotosFromAlbum,
@@ -45,7 +41,7 @@ import {
   usePhotoActor,
   usePhotoDetail,
   type PhotoIdsAnswer, setFavorites, patchFavorites } from "@/lib/photos/api";
-import { MAX_BULK_PHOTOS, MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
+import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { inChunks, MAX_ACTION_RUN_PHOTOS, PartialBulkError, sumCounts } from "@/lib/photos/chunks";
 import { formatCount, photoName, plural } from "@/lib/photos/format";
 import { MAX_SELECTION } from "@/lib/photos/selection";
@@ -55,28 +51,30 @@ import {
   selectionActions,
   type SelectionActionKey,
 } from "@/lib/photos/selection-actions";
-import { appendResolvedTag } from "@/lib/photos/tags";
 import { trashActionLabel, trashableIds } from "@/lib/photos/permissions";
+import { runPhotoAction } from "@/lib/photos/trash-now";
 import type { PhotoAlbumRef, PhotoRow } from "@/lib/photos/types";
-import {
-  findRows,
-  formatDownloadSize,
-  isLargeDownload,
-  selectionBytes,
-  zipFileName,
-  type ZipRow,
-} from "@/lib/photos/zip-download";
-import { openZipTarget, saveZip, ZipEmptyError, zipBuildsInMemory, type ZipTarget } from "@/lib/photos/zip-save";
+import type { ZipRow } from "@/lib/photos/zip-download";
+
+// The zip code (client-zip) loads when Download is first chosen, or on idle
+// once a selection starts (below), not with the grid.
+const loadDownloadSheet = () => import("@/components/photos/selection/download-sheet");
+const DownloadSheet = dynamic(loadDownloadSheet, { ssr: false });
 
 // The bar that appears once photos are selected: the count, "Select all" when
 // more photos match than are selected, and what can be done with them. Add to
 // album, Tag, and Remove from album act at once (they only add or take away a
 // label, and are easy to undo); their routes take 500 photos a request, so a
-// bigger selection goes in slices under one progress toast. Set project and
-// Trash open the confirm page with exactly the selected photos, as one batch —
-// for Trash, the ones this person may delete (trashableIds), so the button
-// never promises what the server will refuse. Download confirms the count and
-// size, then saves every selected original as one zip (lib/photos/zip-download.ts).
+// bigger selection goes in slices under one progress toast. Trash acts at once
+// too, on the photos this person may delete (trashableIds), so the button
+// never promises what the server will refuse; the server runs it, 1,000 photos
+// a request, and the toast offers Undo. Set project opens the confirm page
+// with exactly the selected photos, as one batch. Download confirms the count
+// and size, then saves every selected original as one zip
+// (selection/download-sheet.tsx).
+//
+// Each pop-up lives in its own file under selection/ and is mounted the first
+// time it opens (then kept, so it can animate closed), not on every tick.
 //
 // Layout. Desktop: one row — clear and the count on the left, the actions in
 // one fixed order on the right, Trash last behind a divider. Actions that do
@@ -119,40 +117,6 @@ const plainTone = "text-white hover:bg-white/10 active:bg-white/15";
 const trashTone = "text-red-200 hover:bg-red-500/15 active:bg-red-500/20";
 const menuItem =
   "flex min-h-11 cursor-pointer items-center gap-3 px-3 text-base text-white focus:bg-[#3e3e3e] focus:text-white";
-const primaryButton =
-  "h-auto min-h-11 w-full bg-[#2680FC] py-2.5 text-base text-white hover:bg-[#1a6fd8]";
-
-const errorText = (reason: unknown, fallback: string) =>
-  reason instanceof Error ? reason.message : fallback;
-
-/**
- * Send a bulk change in slices the route accepts. Past one slice, one toast
- * counts up while it runs; the caller's outcome toast replaces it (`toastId`).
- * A failure part way says how far it got: the slices sent are saved, and the
- * same change again finishes the rest.
- */
-async function sendInSlices<T>(
-  ids: string[],
-  call: (chunk: string[]) => Promise<T>,
-  progress: (done: number, total: number) => string
-): Promise<{ results: T[]; toastId: string | number | undefined }> {
-  const toastId = ids.length > MAX_BULK_PHOTOS ? toast.loading(progress(0, ids.length)) : undefined;
-  try {
-    const results = await inChunks(ids, call, (done, total) => {
-      if (toastId !== undefined && done < total) toast.loading(progress(done, total), { id: toastId });
-    });
-    return { results, toastId };
-  } catch (reason) {
-    if (toastId !== undefined) toast.dismiss(toastId);
-    throw reason;
-  }
-}
-
-/** A failed bulk change in words; a partial one says how many were done. */
-const sliceError = (reason: unknown, fallback: string, done: (count: string) => string) =>
-  reason instanceof PartialBulkError
-    ? `${done(`${formatCount(reason.done)} of ${plural(reason.total, "photo")}`)}, then it stopped: ${reason.message.replace(/[.!?]?$/, ".")} Try again to finish.`
-    : errorText(reason, fallback);
 
 /**
  * Trash and its Undo while they run: "Moving 3 photos to Trash…", and past one
@@ -161,7 +125,7 @@ const sliceError = (reason: unknown, fallback: string, done: (count: string) => 
 const runProgress = (verb: string, where: string, sent: number, total: number) =>
   `${verb} ${plural(total, "photo")}${where ? ` ${where}` : ""}…${total > MAX_ACTION_RUN_PHOTOS ? ` ${formatCount(sent)} done` : ""}`;
 
-type SheetKey ="album" | "tag" | "project" | "rename" | "download" | "more";
+type SheetKey = "album" | "tag" | "project" | "rename" | "download" | "more";
 type Measured = { available: number; widths: Partial<Record<SelectionActionKey | "more", number>> };
 
 const MIXED_TRASH_TAIL = " you can delete";
@@ -182,13 +146,16 @@ export default function SelectionBar({
   const { setSelecting } = usePhotosShell();
   const actor = usePhotoActor();
   const count = selectedIds.size;
-  const ids = [...selectedIds];
+  // One copy per selection change, so the pop-ups' props stay the same between ticks.
+  const ids = useMemo(() => [...selectedIds], [selectedIds]);
   const trashable = useMemo(() => trashableIds(actor, selectedIds, photos), [actor, photos, selectedIds]);
   const trashLabel = trashActionLabel(trashable.length, count);
   // "Select all" while some match that are not selected and there is room.
   const selectAllLabel = useMemo(() => {
     if (!allMatches || count >= MAX_SELECTION) return null;
-    if (allMatches.ids.every((id) => selectedIds.has(id))) return null;
+    // More matches than selected photos: some match is certainly not selected,
+    // without walking up to 5,000 ids on every tick.
+    if (allMatches.ids.length <= count && allMatches.ids.every((id) => selectedIds.has(id))) return null;
     return allMatches.truncated
       ? `Select all ${formatCount(allMatches.ids.length)} (of ${formatCount(allMatches.total)})`
       : `Select all ${formatCount(allMatches.total)}`;
@@ -196,6 +163,20 @@ export default function SelectionBar({
 
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [sheet, setSheet] = useState<SheetKey | null>(null);
+  // Pop-ups opened during this selection. One is mounted when it first opens
+  // and kept until the selection ends, so it can animate closed; the others
+  // are never mounted, and cost nothing on a tick.
+  const [opened, setOpened] = useState<ReadonlySet<SheetKey>>(() => new Set());
+  const openSheet = useCallback((key: SheetKey) => {
+    setOpened((previous) => (previous.has(key) ? previous : new Set(previous).add(key)));
+    setSheet(key);
+  }, []);
+  const mounted = (key: SheetKey) => sheet === key || opened.has(key);
+  // Each pop-up's open/close handler, the same function every render.
+  const sheetChange = useMemo(() => {
+    const handler = (key: SheetKey) => (open: boolean) => setSheet(open ? key : null);
+    return { album: handler("album"), tag: handler("tag"), project: handler("project"), rename: handler("rename"), download: handler("download"), more: handler("more") };
+  }, []);
   const [menuOpen, setMenuOpen] = useState(false);
   // Rename needs the one selected photo's current name.
   const { data: only, error: onlyError } = usePhotoDetail(sheet === "rename" && count === 1 ? ids[0] : null);
@@ -213,11 +194,21 @@ export default function SelectionBar({
   useEffect(() => {
     if (selecting) void queryClient.refetchQueries({ queryKey: PHOTO_ACTOR_KEY, stale: true });
   }, [selecting, queryClient]);
+  // A selection that ends takes its pop-ups with it. One that starts fetches
+  // the Download pop-up's code a moment later, so it opens at once when asked.
+  useEffect(() => {
+    if (!selecting) {
+      setOpened((previous) => (previous.size === 0 ? previous : new Set()));
+      return;
+    }
+    const timer = setTimeout(() => void loadDownloadSheet(), 1000);
+    return () => clearTimeout(timer);
+  }, [selecting]);
 
-  const done = () => {
+  const done = useCallback(() => {
     invalidatePhotoCaches(queryClient);
     onClear();
-  };
+  }, [queryClient, onClear]);
 
   // Esc clears the selection, as it would close any other transient layer —
   // unless a pop-up or the More menu is open, which Esc closes instead.
@@ -351,8 +342,8 @@ export default function SelectionBar({
   };
 
   const actions: Record<SelectionActionKey, { label: string; icon: LucideIcon; run(): void; testId?: string }> = {
-    download: { label: "Download", icon: Download, run: () => setSheet("download"), testId: "selection-download" },
-    album: { label: "Add to album", icon: BookImage, run: () => setSheet("album") },
+    download: { label: "Download", icon: Download, run: () => openSheet("download"), testId: "selection-download" },
+    album: { label: "Add to album", icon: BookImage, run: () => openSheet("album") },
     remove: {
       label: "Remove from album",
       icon: BookMinus,
@@ -361,7 +352,7 @@ export default function SelectionBar({
         void removeFromAlbum();
       },
     },
-    tag: { label: "Tag", icon: Tag, run: () => setSheet("tag") },
+    tag: { label: "Tag", icon: Tag, run: () => openSheet("tag") },
     favorite: {
       label: inFavorites ? "Unfavorite" : "Favorite",
       icon: Heart,
@@ -370,8 +361,8 @@ export default function SelectionBar({
         void favoriteAll();
       },
     },
-    project: { label: "Set project", icon: Briefcase, run: () => setSheet("project") },
-    rename: { label: "Rename", icon: TextCursorInput, run: () => setSheet("rename") },
+    project: { label: "Set project", icon: Briefcase, run: () => openSheet("project") },
+    rename: { label: "Rename", icon: TextCursorInput, run: () => openSheet("rename") },
   };
   const keys = selectionActions({ inAlbum: Boolean(album), count });
   const keysSignature = keys.join(" ");
@@ -572,7 +563,7 @@ export default function SelectionBar({
           const { label, icon, run, testId } = actions[key];
           return phoneButton(key, label, icon, run, { testId });
         })}
-        {fit.more.length > 0 && phoneButton("more", "More", MoreHorizontal, () => setSheet("more"), { popup: true })}
+        {fit.more.length > 0 && phoneButton("more", "More", MoreHorizontal, () => openSheet("more"), { popup: true })}
         {trashLabel && (
           <>
             {(fit.shown.length > 0 || fit.more.length > 0) && divider}
@@ -611,455 +602,73 @@ export default function SelectionBar({
         slot
       )}
 
-      <SheetShell open={sheet === "more"} onOpenChange={(open) => setSheet(open ? "more" : null)} title={`More for ${plural(count, "photo")}`}>
-        <div className="-mx-2 flex flex-col">
-          {fit.more.map((key) => {
-            const { label, icon: Icon, run, testId } = actions[key];
-            return (
-              <button
-                key={key}
-                type="button"
-                data-testid={testId}
-                disabled={busy}
-                onClick={run}
-                className={`flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-base text-white hover:bg-white/10 active:bg-white/15 disabled:opacity-50 ${focusRing}`}
-              >
-                <Icon className="h-5 w-5 shrink-0 text-[#b4b4b4]" aria-hidden="true" />
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </SheetShell>
-
-      <AddToAlbumSheet
-        open={sheet === "album"}
-        onOpenChange={(open) => setSheet(open ? "album" : null)}
-        photoIds={ids}
-        onDone={done}
-      />
-      <BulkTagSheet
-        open={sheet === "tag"}
-        onOpenChange={(open) => setSheet(open ? "tag" : null)}
-        photoIds={ids}
-        jobId={sharedJobId}
-        onDone={done}
-      />
-      <RenameSheet
-        open={sheet === "rename"}
-        onOpenChange={(open) => setSheet(open ? "rename" : null)}
-        title="Rename photo"
-        nameLabel="Photo name"
-        name={only ? photoName(only) ?? "" : ""}
-        allowEmpty
-        maxLength={MAX_PHOTO_NAME_LENGTH}
-        hint="Leave it empty to go back to the automatic name."
-        loading={!only && !onlyError}
-        loadError={onlyError ? "Could not load this photo's name. Close and try again." : undefined}
-        onSave={async (name) => {
-          await renamePhoto(ids[0], name);
-          toast.success(name.trim() ? "Photo renamed" : "Name set back to the automatic name");
-          done();
-        }}
-      />
-      <SetProjectSheet
-        open={sheet === "project"}
-        onOpenChange={(open) => setSheet(open ? "project" : null)}
-        photoIds={ids}
-        onContinue={onClear}
-      />
-      <DownloadSheet
-        open={sheet === "download"}
-        onOpenChange={(open) => setSheet(open ? "download" : null)}
-        photoIds={ids}
-        loaded={photos}
-        albumName={album?.name}
-        onStarted={onClear}
-      />
-    </>
-  );
-}
-
-interface BulkSheetProps {
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  photoIds: string[];
-  /** The change is saved: refresh the grids and clear the selection. */
-  onDone(): void;
-}
-
-function AddToAlbumSheet({ open, onOpenChange, photoIds, onDone }: BulkSheetProps) {
-  const queryClient = useQueryClient();
-  const inputId = useId();
-  const [albums, setAlbums] = useState<PhotoAlbumRef[]>([]);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (open) setAlbums([]);
-  }, [open]);
-
-  const save = async () => {
-    if (albums.length === 0 || busy) return;
-    setBusy(true);
-    try {
-      for (const album of albums) {
-        const { results, toastId } = await sendInSlices(
-          photoIds,
-          (chunk) => addPhotosToAlbum(album.id, chunk),
-          (sent, total) => `Adding ${plural(total, "photo")} to “${album.name}”… ${formatCount(sent)} done`
-        );
-        const result = sumCounts(results, ["added", "already", "missing"]);
-        const detail = [
-          result.already > 0 && `${plural(result.already, "photo")} already there`,
-          result.missing > 0 && `${plural(result.missing, "photo")} no longer available`,
-        ].filter(Boolean).join(" · ");
-        toast.success(`Added ${plural(result.added, "photo")} to “${album.name}”`, {
-          id: toastId,
-          description: detail || undefined,
-          // Undo takes the photos out again, so it is only offered when that
-          // cannot remove one that was in the album before.
-          action:
-            result.already === 0
-              ? {
-                  label: "Undo",
-                  onClick: () =>
-                    void inChunks(photoIds, (chunk) => removePhotosFromAlbum(album.id, chunk))
-                      .then(() => invalidatePhotoCaches(queryClient))
-                      .catch((reason) => toast.error(errorText(reason, "Could not undo that."))),
-                }
-              : undefined,
-        });
-      }
-      onOpenChange(false);
-      onDone();
-    } catch (reason) {
-      toast.error(sliceError(reason, "Failed to add to the album", (n) => `Added ${n}`));
-      if (reason instanceof PartialBulkError) invalidatePhotoCaches(queryClient);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <SheetShell
-      open={open}
-      onOpenChange={(next) => {
-        if (!next && busy) return;
-        onOpenChange(next);
-      }}
-      title={`Add ${plural(photoIds.length, "photo")} to an album`}
-      footer={
-        <Button onClick={() => void save()} disabled={busy || albums.length === 0} className={primaryButton} size="lg">
-          {busy ? "Adding..." : "Add to album"}
-        </Button>
-      }
-    >
-      <label htmlFor={inputId} className="mb-1.5 block text-sm font-medium text-[#d0d0d0]">
-        Album
-      </label>
-      <AlbumField inputId={inputId} value={albums} onChange={setAlbums} enabled={open} disabled={busy} />
-      <p className="mt-2 text-sm text-[#b4b4b4]">
-        An album is like a folder. A photo can be in more than one, and it stays in its project.
-      </p>
-    </SheetShell>
-  );
-}
-
-function BulkTagSheet({
-  open,
-  onOpenChange,
-  photoIds,
-  jobId,
-  onDone,
-}: BulkSheetProps & { jobId: string | null }) {
-  const queryClient = useQueryClient();
-  const inputId = useId();
-  const choices = useTagChoices(open, jobId);
-  const [tags, setTags] = useState<string[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Add is the usual job; Remove is how a tag given to the wrong photos comes
-  // off them all at once (group by Tag, tick the group, Tag, Remove).
-  const [mode, setMode] = useState<"add" | "remove">("add");
-
-  useEffect(() => {
-    if (open) {
-      setTags([]);
-      setInput("");
-      setMode("add");
-    }
-  }, [open]);
-
-  const pending = appendResolvedTag(tags, input, choices.spellings);
-  const removing = mode === "remove";
-
-  const save = async () => {
-    if (pending.length === 0 || busy) return;
-    setBusy(true);
-    try {
-      const { results, toastId } = await sendInSlices(
-        photoIds,
-        (chunk) => bulkTagPhotos(chunk, removing ? { remove: pending } : { add: pending }),
-        (sent, total) => `${removing ? "Untagging" : "Tagging"} ${plural(total, "photo")}… ${formatCount(sent)} done`
-      );
-      const result = sumCounts(results, ["updated", "skipped", "missing"]);
-      const detail = [
-        result.skipped > 0 && `${plural(result.skipped, "photo")} skipped: a photo can hold 20 tags`,
-        result.missing > 0 && `${plural(result.missing, "photo")} no longer available`,
-      ].filter(Boolean).join(" · ");
-      toast.success(
-        removing
-          ? `Removed ${pending.join(", ")} from ${plural(result.updated, "photo")}`
-          : `Tagged ${plural(result.updated, "photo")} ${pending.join(", ")}`,
-        { id: toastId, description: detail || undefined }
-      );
-      onOpenChange(false);
-      onDone();
-    } catch (reason) {
-      toast.error(sliceError(reason, removing ? "Failed to remove the tags" : "Failed to tag the photos", (n) => `${removing ? "Untagged" : "Tagged"} ${n}`));
-      if (reason instanceof PartialBulkError) invalidatePhotoCaches(queryClient);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const modeButton = (value: "add" | "remove", label: string) => (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={mode === value}
-      disabled={busy}
-      onClick={() => setMode(value)}
-      className={`min-h-11 flex-1 rounded-lg px-3 text-base font-medium ${
-        mode === value ? "bg-[#2680FC] text-white" : "bg-[#3a3a3a] text-[#d0d0d0] hover:bg-[#454545]"
-      }`}
-    >
-      {label}
-    </button>
-  );
-
-  return (
-    <SheetShell
-      open={open}
-      onOpenChange={(next) => {
-        if (!next && busy) return;
-        onOpenChange(next);
-      }}
-      title={`Tag ${plural(photoIds.length, "photo")}`}
-      footer={
-        <Button onClick={() => void save()} disabled={busy || pending.length === 0} className={primaryButton} size="lg">
-          {busy ? "Saving..." : `${removing ? "Remove" : "Add"} ${pending.length > 1 ? "tags" : "tag"}`}
-        </Button>
-      }
-    >
-      <div role="radiogroup" aria-label="Add or remove" className="mb-3 flex gap-2">
-        {modeButton("add", "Add tags")}
-        {modeButton("remove", "Remove tags")}
-      </div>
-      <label htmlFor={inputId} className="mb-1.5 block text-sm font-medium text-[#d0d0d0]">
-        {removing ? "Tags to remove" : "Tags to add"}
-      </label>
-      <TagDropdown
-        inputId={inputId}
-        tags={tags}
-        onChange={setTags}
-        input={input}
-        onInputChange={setInput}
-        choices={choices}
-        disabled={busy}
-      />
-    </SheetShell>
-  );
-}
-
-/** Up to ten names, then "and N more". */
-function nameList(names: readonly string[]): string {
-  const shown = names.slice(0, 10).join(", ");
-  return names.length > 10 ? `${shown}, and ${formatCount(names.length - 10)} more` : shown;
-}
-
-/** POST /api/photos/rows for Download: the zip fields of up to 500 selected photos the grid has not loaded. */
-async function lookupZipRows(ids: string[], signal?: AbortSignal): Promise<ZipRow[]> {
-  const answer = await fetchJson<{ photos: ZipRow[] }>("/api/photos/rows", "Could not look up the photos", {
-    method: "POST",
-    credentials: "same-origin",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ photo_ids: ids }),
-    signal,
-  });
-  return answer.photos;
-}
-
-/**
- * Fetch and save the zip under one toast that counts up, then says how it went.
- * A zip missing any photo is reported as an error naming them, never as done.
- */
-async function runDownload(rows: ZipRow[], target: ZipTarget) {
-  const total = rows.length;
-  const counting = (done: number) => `Downloading ${plural(total, "photo")}… ${formatCount(done)} done`;
-  const toastId = toast.loading(counting(0), { description: "Keep this page open until the zip is saved." });
-  // Leaving the page would lose the zip; the browser asks first.
-  const stay = (event: BeforeUnloadEvent) => event.preventDefault();
-  window.addEventListener("beforeunload", stay);
-  const keep = { duration: Infinity, action: { label: "OK", onClick: () => {} } };
-  try {
-    const { failed } = await saveZip(rows, target, ({ done }) => {
-      if (done < total) toast.loading(counting(done), { id: toastId });
-    });
-    if (failed.length === 0) {
-      toast.success(`Downloaded ${plural(total, "photo")}`, { id: toastId, description: "Saved as one zip file." });
-    } else {
-      toast.error(`The zip is missing ${formatCount(failed.length)} of ${plural(total, "photo")}`, {
-        id: toastId,
-        description: `These could not be downloaded: ${nameList(failed)}. Select them and try again.`,
-        ...keep,
-      });
-    }
-  } catch (reason) {
-    toast.error(reason instanceof ZipEmptyError ? "None of the photos could be downloaded" : "The download stopped", {
-      id: toastId,
-      description:
-        reason instanceof ZipEmptyError
-          ? `Could not download: ${nameList(reason.failed)}. No zip was saved.`
-          : `${errorText(reason, "Something went wrong.")} The zip was not finished. Try again.`,
-      ...keep,
-    });
-  } finally {
-    window.removeEventListener("beforeunload", stay);
-  }
-}
-
-type DownloadPlan =
-  | { state: "loading" }
-  | { state: "error"; message: string }
-  | { state: "ready"; rows: ZipRow[]; missing: number; bytes: number; unknown: number };
-
-function DownloadSheet({
-  open,
-  onOpenChange,
-  photoIds,
-  loaded,
-  albumName,
-  onStarted,
-}: {
-  open: boolean;
-  onOpenChange(open: boolean): void;
-  photoIds: string[];
-  loaded: readonly ZipRow[];
-  albumName?: string;
-  /** The download is under way (its toast reports it): the selection can go. */
-  onStarted(): void;
-}) {
-  const isPhone = useMobile();
-  const [plan, setPlan] = useState<DownloadPlan>({ state: "loading" });
-  const [attempt, setAttempt] = useState(0);
-  const [starting, setStarting] = useState(false);
-
-  // Closing forgets the last answer, so reopening never shows a stale total.
-  useEffect(() => {
-    if (open) setStarting(false);
-    else setPlan({ state: "loading" });
-  }, [open]);
-
-  // Sizes and names for every selected photo, including ones not loaded yet.
-  // Looked up again only if the selection grows while the sheet is open (a
-  // group tick's answer arriving late).
-  const wanted = photoIds.length;
-  useEffect(() => {
-    if (!open || wanted === 0) return;
-    // Closing the sheet (or the selection changing) stops lookups still running.
-    const controller = new AbortController();
-    setPlan({ state: "loading" });
-    findRows(photoIds, loaded, lookupZipRows, controller.signal)
-      .then(({ rows, missing }) => {
-        if (!controller.signal.aborted) setPlan({ state: "ready", rows, missing: missing.length, ...selectionBytes(rows) });
-      })
-      .catch((reason) => {
-        if (!controller.signal.aborted) setPlan({ state: "error", message: errorText(reason, "Could not get the photos ready.") });
-      });
-    return () => controller.abort();
-    // The ids are read as of the change in count; the loaded rows only save
-    // requests, so a new page arriving need not restart this.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, wanted, attempt]);
-
-  const start = async () => {
-    if (plan.state !== "ready" || plan.rows.length === 0 || starting) return;
-    setStarting(true);
-    // The save dialog must open straight from the click, before anything else waits.
-    const target = await openZipTarget(zipFileName(new Date(), albumName));
-    if (!target) {
-      setStarting(false);
-      return;
-    }
-    onOpenChange(false);
-    onStarted();
-    void runDownload(plan.rows, target);
-  };
-
-  const ready = plan.state === "ready" ? plan : null;
-  // Without a save dialog the whole zip is held in memory first, and a phone
-  // can run out of it far below 2 GB; the warning comes much sooner there.
-  const inMemory = open && zipBuildsInMemory();
-  const large = ready !== null && isLargeDownload(ready.bytes, inMemory);
-
-  return (
-    <SheetShell
-      open={open}
-      onOpenChange={onOpenChange}
-      title={`Download ${plural(photoIds.length, "photo")}`}
-      footer={
-        <Button
-          onClick={() => void start()}
-          disabled={!ready || ready.rows.length === 0 || starting}
-          className={primaryButton}
-          size="lg"
-        >
-          {large ? "Download anyway" : "Download"}
-        </Button>
-      }
-    >
-      <div className="space-y-3 text-sm text-[#d0d0d0]">
-        {plan.state === "loading" && <p role="status">Working out the size…</p>}
-        {plan.state === "error" && (
-          <div role="alert" className="space-y-2">
-            <p className="text-red-200">{plan.message}</p>
-            <Button variant="outline" className="min-h-11" onClick={() => setAttempt((n) => n + 1)}>
-              Try again
-            </Button>
+      {mounted("more") && (
+        <SheetShell open={sheet === "more"} onOpenChange={sheetChange.more} title={`More for ${plural(count, "photo")}`}>
+          <div className="-mx-2 flex flex-col">
+            {fit.more.map((key) => {
+              const { label, icon: Icon, run, testId } = actions[key];
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  data-testid={testId}
+                  disabled={busy}
+                  onClick={run}
+                  className={`flex min-h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-base text-white hover:bg-white/10 active:bg-white/15 disabled:opacity-50 ${focusRing}`}
+                >
+                  <Icon className="h-5 w-5 shrink-0 text-[#b4b4b4]" aria-hidden="true" />
+                  {label}
+                </button>
+              );
+            })}
           </div>
-        )}
-        {ready && (
-          <p data-testid="download-total" className="text-base text-white">
-            {ready.rows.length === 0
-              ? "None of these photos are available any more."
-              : `${plural(ready.rows.length, "photo")} in one zip file, ${ready.unknown > 0 ? "at least " : ""}${formatDownloadSize(ready.bytes)}.`}
-          </p>
-        )}
-        {ready && ready.missing > 0 && ready.rows.length > 0 && (
-          <p>
-            {plural(ready.missing, "photo")} {ready.missing === 1 ? "is" : "are"} no longer available (trashed or
-            deleted) and will be left out.
-          </p>
-        )}
-        {large && (
-          <p
-            role="alert"
-            data-testid="download-size-warning"
-            className="rounded-lg border border-amber-300/40 bg-amber-300/10 px-3 py-2 text-amber-200"
-          >
-            {!inMemory
-              ? "This is over 2 GB. It can take a long time and may not finish. Downloading fewer photos at a time is safer."
-              : isPhone
-                ? "This phone may run out of memory before the zip is saved, and then nothing is saved. Select fewer photos and download them in a few parts."
-                : "This browser holds the whole zip in memory before saving it, and may run out. Select fewer photos and download them in a few parts, or use Chrome or Edge, which save as they go."}
-          </p>
-        )}
-        {isPhone && <p data-testid="download-phone-note">Large downloads work best on a computer.</p>}
-        {ready && ready.rows.length > 0 && (
-          <p className="text-[#b4b4b4]">Each photo keeps its name and its original file, at full quality.</p>
-        )}
-      </div>
-    </SheetShell>
+        </SheetShell>
+      )}
+
+      {mounted("album") && (
+        <AddToAlbumSheet open={sheet === "album"} onOpenChange={sheetChange.album} photoIds={ids} onDone={done} />
+      )}
+      {mounted("tag") && (
+        <BulkTagSheet
+          open={sheet === "tag"}
+          onOpenChange={sheetChange.tag}
+          photoIds={ids}
+          jobId={sharedJobId}
+          onDone={done}
+        />
+      )}
+      {mounted("rename") && (
+        <RenameSheet
+          open={sheet === "rename"}
+          onOpenChange={sheetChange.rename}
+          title="Rename photo"
+          nameLabel="Photo name"
+          name={only ? photoName(only) ?? "" : ""}
+          allowEmpty
+          maxLength={MAX_PHOTO_NAME_LENGTH}
+          hint="Leave it empty to go back to the automatic name."
+          loading={!only && !onlyError}
+          loadError={onlyError ? "Could not load this photo's name. Close and try again." : undefined}
+          onSave={async (name) => {
+            await renamePhoto(ids[0], name);
+            toast.success(name.trim() ? "Photo renamed" : "Name set back to the automatic name");
+            done();
+          }}
+        />
+      )}
+      {mounted("project") && (
+        <SetProjectSheet open={sheet === "project"} onOpenChange={sheetChange.project} photoIds={ids} onContinue={onClear} />
+      )}
+      {mounted("download") && (
+        <DownloadSheet
+          open={sheet === "download"}
+          onOpenChange={sheetChange.download}
+          photoIds={ids}
+          loaded={photos}
+          albumName={album?.name}
+          onStarted={onClear}
+        />
+      )}
+    </>
   );
 }
