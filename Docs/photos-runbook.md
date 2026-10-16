@@ -130,12 +130,21 @@ view is in `Employee-Features.md` § DWS Photos.
   1,000 rows at a time and stops at 5,000 (`truncated: true`). The selection
   cap is 5,000 (`MAX_SELECTION_PHOTOS`); the action batch accepts it as one
   request, while the tag, album, and purge routes keep 500 per request and the
-  client chunks. No SQL cap changed. Lower `MAX_SELECTION_PHOTOS` if `/ids`
+  client chunks. Trash and its Undo from the selection bar and the viewer go
+  through `POST /api/photos/bulk` (`src/lib/photos/server/bulk.ts`), 1,000
+  photos a request (`MAX_ACTION_RUN_PHOTOS`): the server creates, materializes,
+  approves and applies one ordinary batch per request with the same SQL
+  functions as the confirm page, so each slice is one `photo_action_batches`
+  row like before. Photos that are gone or that the person may not trash are
+  left out and counted, never asked about; a photo already in Trash is skipped. No SQL cap changed. Lower `MAX_SELECTION_PHOTOS` if `/ids`
   ever times out.
 - **Zip download is built in the browser** from the public originals
   (`client-zip`, store-only). Without `showSaveFilePicker` (Safari, Firefox,
-  iPhone) the zip is held in memory, which is what the 2 GB warning is for;
-  there is no hard cap. A failed original is left out and named in the toast.
+  iPhone) the zip is held in memory, so the confirm warns above 400 MB there
+  (`ZIP_WARN_BYTES_IN_MEMORY`) and above 2 GB where it streams to disk; there
+  is no hard cap. Sizes and names of selected photos the grid has not loaded
+  come from `POST /api/photos/rows` (500 ids a request). A failed original is
+  left out and named in the toast.
 - **Album order.** Migration `20261012223043_album_custom_order.sql` adds
   `album_photos.position` and `albums.sort_mode` (`date` | `custom`),
   `photo_album_reorder` (full order, or `null` to return to date order while

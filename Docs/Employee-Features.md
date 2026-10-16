@@ -238,7 +238,9 @@ the current filters, loaded or not, up to 5,000 ("Select all 5,000 (of M)" past
 that). A group header's tick selects the whole group the same way. Tag and
 Add to album work in slices of 500 behind one progress toast; Set project goes
 through the confirmation page as one batch, and Trash moves the photos at once
-with an Undo.
+with an Undo. Trash (and its Undo) shows one toast while it runs, counting up
+for selections over 1,000; if it stops part way, the toast says how many were
+moved and the selection stays, so pressing Trash again finishes the rest.
 
 **Tag** has two modes, **Add tags** and **Remove tags**. To take a tag off
 photos it was given by mistake: Group by Tag, tick that tag's group header,
@@ -253,8 +255,11 @@ case, stores that spelling.
 ### Download
 
 **Download** in the selection bar builds one zip in the browser. A confirmation
-shows the count and total size first, warns above 2 GB, and on a phone says
-large downloads work best on a computer. Entries are named with each photo's
+shows the count and total size first and warns when it is large: above 2 GB in
+Chrome and Edge on a computer (they save the zip as it is built), above 400 MB
+everywhere else (phones, Safari, Firefox), because there the whole zip is held
+in memory first and a phone can run out of it and save nothing. On a phone it
+also says large downloads work best on a computer. Entries are named with each photo's
 display name plus its original extension; duplicates get " (2)", " (3)". If any
 photo could not be fetched, the toast names it and never calls the zip complete.
 
