@@ -33,6 +33,15 @@ export function photoJson(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * A 400 for a malformed list filter, cursor or limit, in photoRoute's error shape
+ * but keeping the parser's own message ("Invalid cursor", "sort=custom needs an
+ * album"): those are fixed strings from list-filters.ts, never database text.
+ */
+export function invalidFilter(message: string): Response {
+  return photoJson({ error: { code: 'invalid_input', message, retryable: false } }, 400);
+}
+
 /** No database messages, tokens, or arbitrary upstream errors cross this boundary. */
 export async function photoRoute(work: () => Promise<Response>): Promise<Response> {
   try {
@@ -98,6 +107,8 @@ export function throwPhotoDatabaseError(error: { code?: string; message?: string
   const message = error.message;
   if (message === 'invalid_input') throw new PhotoApiError('invalid_input');
   if (message === 'invalid_actor') throw new PhotoApiError('unauthenticated');
+  // PostgREST refused the session's token (bad signature, expired, malformed): a sign-in problem.
+  if (error.code === 'PGRST301' || error.code === 'PGRST302' || error.code === 'PGRST303') throw new PhotoApiError('unauthenticated');
   for (const code of ['handoff_expired', 'new_folders_require_review', 'job_number_taken', 'job_in_trash', 'job_number_reserved', 'photo_name_invalid'] as const) {
     if (message === code) throw new PhotoApiError(code);
   }

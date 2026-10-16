@@ -127,7 +127,7 @@ describe('album custom order routes (W2-E: AC-16)', () => {
     await json(await call(listPhotos, `/api/photos?album=${a}&limit=1&cursor=${custom.nextCursor}`), 400);
     await json(await call(listPhotos, `/api/photos?album=${a}&sort=custom&limit=1&cursor=${dated.nextCursor}`), 400);
     await json(await call(listPhotos, `/api/photos?album=${a}&sort=asc&limit=1&cursor=${custom.nextCursor}`), 400);
-    expect((await json(await call(listPhotos, '/api/photos?sort=custom'), 400)).error).toMatch(/album/);
+    expect((await json(await call(listPhotos, '/api/photos?sort=custom'), 400)).error.message).toMatch(/album/);
     await json(await call(listIds, '/api/photos/ids?sort=custom'), 400);
     await json(await call(listPhotos, `/api/photos?album=${a}&sort=custom`, { actor: null }), 401);
   });

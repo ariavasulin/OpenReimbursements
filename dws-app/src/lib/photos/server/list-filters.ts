@@ -17,8 +17,8 @@
 //   sort      asc | desc (default desc), on (captured_at, id); or `custom` with
 //             `album`: the album's arranged order, (album_position, id) ascending,
 //             read from the album_photo_order view
-//   favorites `1`: only the signed-in person's favorites (an inner join to
-//             photo_favorites, whose row rule shows only their rows)
+//   favorites `1`: only the signed-in person's favorites (the
+//             photo_favorite_photos view, which holds only their rows)
 // Filters combine with AND.
 //
 // A cursor names the order it continues: [captured_at, id] for date order, and
@@ -153,6 +153,31 @@ export const rowPosition = (filters: PhotoFilters, row: KeysetRow): KeysetPositi
 export const afterFilter = (filters: PhotoFilters, position: KeysetPosition) =>
   keysetOrFilter(sortColumn(filters), position.key, 'id', position.id, filters.direction);
 
+/**
+ * The plain bound that goes with afterFilter: the sort column at or past the
+ * cursor's value. It selects nothing afterFilter does not already allow, but
+ * Postgres cannot start an index scan from an or(); from this it can, so a deep
+ * page reads about one page of rows instead of every row before it.
+ */
+export const afterBound = (filters: PhotoFilters, position: KeysetPosition) => ({
+  column: sortColumn(filters),
+  operator: filters.direction === 'asc' ? 'gte' : 'lte',
+  value: position.key,
+});
+
+/** The part of a PostgREST query pastPosition needs. */
+interface FilterableQuery<Q> {
+  or(filters: string): Q;
+  filter(column: string, operator: string, value: unknown): Q;
+}
+
+/** `query` continued strictly past `position`: afterFilter, plus afterBound for the index. */
+export function pastPosition<Q extends FilterableQuery<Q>>(query: Q, filters: PhotoFilters, position: KeysetPosition): Q {
+  const bound = afterBound(filters, position);
+  // Separate or() calls are ANDed by PostgREST, so this composes with the filters.
+  return query.or(afterFilter(filters, position)).filter(bound.column, bound.operator, bound.value);
+}
+
 // --- file type ---------------------------------------------------------------
 
 const nameEndsIn = (extensions: string[]) =>
@@ -217,13 +242,38 @@ export async function resolveSearch(supabase: ServerClient, filters: PhotoFilter
 // --- query -------------------------------------------------------------------
 
 /**
- * Active photos matching `filters`, in the walk's order, selecting `columns`.
- * `search` is resolveSearch's output for the same filters. The album filter is an
- * inner join through album_photos to albums, read with the employee's session: a
- * deleted album is hidden by its row rule, so it lists nothing. Callers drop the
- * joined `albums` column before responding. Custom order reads the
- * album_photo_order view instead (photo columns plus album_id and
- * album_position, under the same row rules), so the same filters apply as they are.
+ * Where a list reads its rows. Each source starts from the smallest set that
+ * can match, so the cost follows the album or the favorites, not the library:
+ *   album      the album_photo_order view (an album's active photos with their
+ *              place in its custom order), for date order too. Read through
+ *              PostgREST's old `albums!inner` join, a small album walked every
+ *              photo in the library looking for matches.
+ *   favorites  the photo_favorite_photos view (the reader's own favorites).
+ *   otherwise  photos.
+ * Both views are SECURITY INVOKER and read with the employee's session, so the
+ * photos, album_photos and albums row rules still apply (a deleted album lists
+ * nothing). Album and favorites together read the album and keep only the
+ * favorites through an inner embed, whose row rule shows only the reader's own.
+ */
+export const photoSource = (filters: PhotoFilters) =>
+  filters.album ? 'album_photo_order' : filters.favorites ? 'photo_favorite_photos' : 'photos';
+
+/** Album plus favorites keeps only the reader's favorites with this inner embed. */
+const FAVORITES_FILTER = 'favorites:photo_favorites!inner(user_id)';
+
+/**
+ * The columns GET /api/photos selects: `columns`, `album_position` for custom
+ * order (the cursor needs it), and the reader's own favorite on each row from
+ * `embed` (FAVORITES_EMBED), unless filteredPhotos already brings that column.
+ */
+export const listColumns = (filters: PhotoFilters, columns: string, embed: string) =>
+  [columns, filters.custom ? 'album_position' : null, filters.album && filters.favorites ? null : embed]
+    .filter(Boolean).join(', ');
+
+/**
+ * Active photos matching `filters`, in the walk's order, selecting `columns`
+ * from photoSource. `search` is resolveSearch's output for the same filters.
+ * Every filter applies the same way to each source.
  */
 export function filteredPhotos(
   supabase: ServerClient,
@@ -232,22 +282,17 @@ export function filteredPhotos(
   columns: string,
   options: { count?: 'exact' } = {}
 ) {
+  // The inner embed doubles as the `favorites` column the grid reads; listColumns leaves it out.
+  if (filters.album && filters.favorites) columns = `${columns}, ${FAVORITES_FILTER}`;
   const ascending = filters.direction === 'asc';
-  // Favorites: an inner join keeps only photos with a favorites row the reader
-  // may see, which the row rule makes their own. The embed doubles as the
-  // `favorites` column the grid reads, so a caller must not add it again.
-  if (filters.favorites) columns = `${columns}, favorites:photo_favorites!inner(user_id)`;
-  let query = (filters.custom
-    ? supabase.from('album_photo_order').select(columns, options).eq('album_id', filters.album!)
-    : supabase.from('photos').select(filters.album ? `${columns}, albums!inner(id)` : columns, options)
-  )
+  let query = supabase.from(photoSource(filters)).select(columns, options)
     .is('deleted_at', null)
     .order(sortColumn(filters), { ascending })
     .order('id', { ascending });
 
+  if (filters.album) query = query.eq('album_id', filters.album);
   if (filters.job) query = query.eq('job_id', filters.job);
   if (filters.noProject) query = query.is('job_id', null);
-  if (filters.album && !filters.custom) query = query.eq('albums.id', filters.album);
   if (filters.uploader) query = query.eq('uploader_id', filters.uploader);
   for (const tag of filters.tags) query = query.contains('tags', [tag]);
   if (filters.type) query = query.or(fileTypeFilter(filters.type));

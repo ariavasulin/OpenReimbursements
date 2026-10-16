@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  afterBound,
   afterFilter,
   decodePhotoCursor,
   encodePhotoCursor,
   fileTypeFilter,
+  listColumns,
   MAX_SEARCH_WORDS,
   parsePhotoFilters,
+  pastPosition,
+  photoSource,
   searchWords,
   type PhotoFilters,
 } from "./list-filters";
@@ -61,6 +65,48 @@ describe("custom order (sort=custom)", () => {
   it("continues past (album_position, id) ascending", () => {
     expect(afterFilter(custom, { key: "2", id })).toBe(`album_position.gt.2,and(album_position.eq.2,id.gt.${id})`);
     expect(afterFilter(dated, { key: capturedAt, id })).toBe(`captured_at.lt.${capturedAt},and(captured_at.eq.${capturedAt},id.lt.${id})`);
+  });
+
+  it("bounds the sort column too, so the index has a place to start", () => {
+    expect(afterBound(dated, { key: capturedAt, id })).toEqual({ column: "captured_at", operator: "lte", value: capturedAt });
+    expect(afterBound(parse("sort=asc") as PhotoFilters, { key: capturedAt, id }))
+      .toEqual({ column: "captured_at", operator: "gte", value: capturedAt });
+    expect(afterBound(custom, { key: "Infinity", id })).toEqual({ column: "album_position", operator: "gte", value: "Infinity" });
+  });
+
+  it("continues a query with both the or() and the bound", () => {
+    const calls: unknown[][] = [];
+    const query = {
+      or(filter: string) { calls.push(["or", filter]); return query; },
+      filter(column: string, operator: string, value: unknown) { calls.push(["filter", column, operator, value]); return query; },
+    };
+    expect(pastPosition(query, dated, { key: capturedAt, id })).toBe(query);
+    expect(calls).toEqual([
+      ["or", afterFilter(dated, { key: capturedAt, id })],
+      ["filter", "captured_at", "lte", capturedAt],
+    ]);
+  });
+});
+
+describe("where a list reads from", () => {
+  const filters = (query: string) => parse(query) as PhotoFilters;
+
+  it("starts from the album or the favorites, not the whole library", () => {
+    expect(photoSource(filters(""))).toBe("photos");
+    expect(photoSource(filters(`job=${id}&tags=a`))).toBe("photos");
+    expect(photoSource(filters(`album=${id}`))).toBe("album_photo_order");
+    expect(photoSource(filters(`album=${id}&sort=custom`))).toBe("album_photo_order");
+    expect(photoSource(filters("favorites=1"))).toBe("photo_favorite_photos");
+    // Album plus favorites: the album bounds the read; the favorites embed filters it.
+    expect(photoSource(filters(`album=${id}&favorites=1`))).toBe("album_photo_order");
+  });
+
+  it("selects the position only for custom order, and the favorites embed once", () => {
+    const embed = "favorites:photo_favorites(user_id)";
+    expect(listColumns(filters(""), "id", embed)).toBe(`id, ${embed}`);
+    expect(listColumns(filters("favorites=1"), "id", embed)).toBe(`id, ${embed}`);
+    expect(listColumns(filters(`album=${id}&sort=custom`), "id", embed)).toBe(`id, album_position, ${embed}`);
+    expect(listColumns(filters(`album=${id}&favorites=1`), "id", embed)).toBe("id");
   });
 });
 
