@@ -221,6 +221,12 @@ export const photoKeys = {
   trash: ["photo-trash"] as const,
   deletedAlbums: ["photo-albums-deleted"] as const,
   deletedJobs: ["photo-jobs-deleted"] as const,
+  /**
+   * The signed-in person's permissions and settings, read together from GET
+   * /api/photos/me. Never saved on the device: it carries the admin flag
+   * (see query-persist.ts).
+   */
+  me: ["photo-me"] as const,
 };
 
 /** A key's last part names a "Select all" answer: ids or their count. */
@@ -335,16 +341,36 @@ export function usePhotoJobSuggestions(enabled: boolean, q: string, limit: numbe
   });
 }
 
-/** Any cached list's card for this project: the Projects list, the rail, a search. */
-function jobFromLists(queryClient: QueryClient, jobId: string): PhotoJobSummary | undefined {
-  const exact = queryClient.getQueryData<PhotoJobSummary[]>(photoKeys.jobs(""));
-  const hit = exact?.find((job) => job.id === jobId);
-  if (hit) return hit;
-  for (const [, jobs] of queryClient.getQueriesData<PhotoJobSummary[]>({ queryKey: photoKeys.allJobs })) {
-    const found = Array.isArray(jobs) ? jobs.find((job) => job.id === jobId) : undefined;
-    if (found) return found;
+/** A card found in a cached list, with when that list was read (0 once it is marked stale). */
+interface ListSeed<T> {
+  data: T;
+  updatedAt: number;
+}
+
+/**
+ * The first card `pick` finds in the cached lists under `prefix`, for seeding
+ * a one-item query with initialData. The list's read time comes along, so the
+ * item counts as exactly as fresh as the list it came from: a fresh list costs
+ * no request, a stale one is asked again. A list an edit marked stale passes
+ * that on (time 0), so the item is asked again too.
+ */
+function seedFromLists<T>(
+  queryClient: QueryClient,
+  prefix: QueryKey,
+  pick: (rows: unknown[]) => T | undefined
+): ListSeed<T> | undefined {
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: prefix })) {
+    const rows = query.state.data;
+    const data = Array.isArray(rows) ? pick(rows) : undefined;
+    if (data !== undefined) return { data, updatedAt: query.state.isInvalidated ? 0 : query.state.dataUpdatedAt };
   }
   return undefined;
+}
+
+/** Any cached list's card for this project: the Projects list, the rail, a search. */
+function jobFromLists(queryClient: QueryClient, jobId: string): ListSeed<PhotoJobSummary> | undefined {
+  const pick = (rows: unknown[]) => (rows as PhotoJobSummary[]).find((job) => job.id === jobId);
+  return seedFromLists(queryClient, photoKeys.jobs(""), pick) ?? seedFromLists(queryClient, photoKeys.allJobs, pick);
 }
 
 /**
@@ -365,15 +391,22 @@ export async function fetchJob(jobId: string, signal?: AbortSignal): Promise<Pho
  * any list already in cache (opened from Projects, the rail, or search), and
  * otherwise read by itself, so the header never waits for every project.
  * `data` is null once the server says the project is not there.
+ *
+ * The list's card is the query's initial data, not a placeholder: a card from
+ * a fresh list needs no request at all, and a read that fails on a weak
+ * signal keeps the card (a placeholder would vanish, taking the header's
+ * name, Share and Play with it).
  */
 export function usePhotoJob(jobId: string | null) {
   const queryClient = useQueryClient();
+  const seed = () => (jobId === null ? undefined : jobFromLists(queryClient, jobId));
   return useQuery<PhotoJobSummary | null>({
     queryKey: photoKeys.job(jobId ?? ""),
     queryFn: ({ signal }) => fetchJob(jobId!, signal),
     enabled: jobId !== null,
     staleTime: 60_000,
-    placeholderData: () => (jobId === null ? undefined : jobFromLists(queryClient, jobId)),
+    initialData: () => seed()?.data,
+    initialDataUpdatedAt: () => seed()?.updatedAt,
   });
 }
 
@@ -386,48 +419,61 @@ export function usePhotoTags(enabled: boolean, jobId?: string | null) {
   });
 }
 
-/** The query key of the signed-in person's photo permissions. */
-export const PHOTO_ACTOR_KEY = ["photo-actor"] as const;
+/**
+ * The key to refresh for the permissions (the selection bar re-asks before a
+ * trash). They share photoKeys.me with the settings: one request answers both.
+ */
+export const PHOTO_ACTOR_KEY = photoKeys.me;
+
+/** GET /api/photos/me: what GET /api/photos/actor and /settings answer, in one request. */
+export interface PhotoMe {
+  actor: PhotoPermissions;
+  settings: PhotoSettings;
+}
 
 /**
- * The signed-in employee's photo permissions (GET /api/photos/actor), for
- * showing Trash, Delete forever, Empty trash, and project or album Delete only
- * where they will work. Undefined while loading: callers show nothing they
- * cannot yet promise. The server checks every write regardless.
+ * The one read behind usePhotoActor and usePhotoSettings (audit DB-5): a cold
+ * open makes one request for both instead of two.
  *
  * Coming back to the tab asks again only once the answer is 30 seconds old,
- * not on every app switch (audit DB-5): the "Photo admin" box changes rarely,
- * the Users page refreshes it when it saves, and a button shown by mistake
- * only leads to the server's refusal.
+ * not on every app switch: the "Photo admin" box changes rarely, the Users
+ * page refreshes it when it saves, and a button shown by mistake only leads to
+ * the server's refusal.
  */
-export function usePhotoActor() {
-  return useQuery({
-    queryKey: PHOTO_ACTOR_KEY,
-    queryFn: ({ signal }) =>
-      fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions", { signal }),
+function photoMeOptions() {
+  return queryOptions({
+    queryKey: photoKeys.me,
+    queryFn: ({ signal }) => fetchJson<PhotoMe>("/api/photos/me", "Failed to load your permissions", { signal }),
     staleTime: 30_000,
-  }).data;
+  });
+}
+
+// Module-level, so each hook's `select` is the same function on every render.
+const selectActor = (me: PhotoMe) => me.actor;
+const selectSettings = (me: PhotoMe) => me.settings;
+
+/**
+ * The signed-in employee's photo permissions, for showing Trash, Delete
+ * forever, Empty trash, and project or album Delete only where they will
+ * work. Undefined while loading: callers show nothing they cannot yet
+ * promise. The server checks every write regardless.
+ */
+export function usePhotoActor(): PhotoPermissions | undefined {
+  return useQuery({ ...photoMeOptions(), select: selectActor }).data;
 }
 
 /** After the Users page saves someone's role or "Photo admin" box: the next screen asks again. */
 export function invalidatePhotoActor(queryClient: QueryClient) {
-  return queryClient.invalidateQueries({ queryKey: PHOTO_ACTOR_KEY });
+  return queryClient.invalidateQueries({ queryKey: photoKeys.me });
 }
 
-/** The query key of the settings: the default tags and the person's slideshow setting. */
-export const PHOTO_SETTINGS_KEY = ["photo-settings"] as const;
-
 /**
- * GET /api/photos/settings: the app-wide default tags and the signed-in
- * person's slideshow setting. Undefined while loading; the pickers fall back
- * to DEFAULT_STARTER_TAGS and the viewer to DEFAULT_SLIDESHOW until then.
+ * The app-wide default tags and the signed-in person's slideshow setting.
+ * Undefined while loading; the pickers fall back to DEFAULT_STARTER_TAGS and
+ * the viewer to DEFAULT_SLIDESHOW until then.
  */
-export function usePhotoSettings() {
-  return useQuery({
-    queryKey: PHOTO_SETTINGS_KEY,
-    queryFn: ({ signal }) => fetchJson<PhotoSettings>("/api/photos/settings", "Failed to load settings", { signal }),
-    staleTime: 60_000,
-  }).data;
+export function usePhotoSettings(): PhotoSettings | undefined {
+  return useQuery({ ...photoMeOptions(), select: selectSettings }).data;
 }
 
 /** The default tags every tag picker offers, as a photo admin set them. */
@@ -435,11 +481,24 @@ export function usePhotoStarterTags(): readonly string[] {
   return usePhotoSettings()?.starter_tags ?? DEFAULT_STARTER_TAGS;
 }
 
-/** PATCH /api/photos/settings; answers the whole settings object. The caller sets the query to it. */
+/** PATCH /api/photos/settings; answers the whole settings object. The caller passes it to setCachedPhotoSettings. */
 export function savePhotoSettings(patch: PhotoSettingsPatch): Promise<PhotoSettings> {
   return fetchJson<PhotoSettings>("/api/photos/settings", "Could not save settings", {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
   });
+}
+
+/**
+ * Show the settings a save answered everywhere at once, keeping the cached
+ * permissions. With nothing cached yet (the save beat the first read), the
+ * read is asked again instead.
+ */
+export function setCachedPhotoSettings(queryClient: QueryClient, settings: PhotoSettings) {
+  if (queryClient.getQueryData(photoKeys.me) === undefined) {
+    void queryClient.invalidateQueries({ queryKey: photoKeys.me });
+    return;
+  }
+  queryClient.setQueryData<PhotoMe>(photoKeys.me, (me) => me && { ...me, settings });
 }
 
 // ---- Keeping the cache true after a change ------------------------------------------
@@ -489,18 +548,52 @@ export function invalidateAfterUpload(queryClient: QueryClient) {
   refreshPrefixes(queryClient, [...GRID_PREFIXES, ...COLLECTION_PREFIXES, "photo-tags"]);
 }
 
-/** Every cached grid and search page list, each row passed through `edit` (null takes the row out). */
+/**
+ * Every cached grid and search page list, each row passed through `edit` (null
+ * takes the row out). A grid still loading gets the same edit when its answer
+ * lands (see editWhenFetchLands).
+ */
 function editCachedGrids(
   queryClient: QueryClient,
   edit: (photo: PhotoRow, queryKey: QueryKey) => PhotoRow | null
 ) {
   for (const prefix of GRID_PREFIXES) {
-    for (const [queryKey, data] of queryClient.getQueriesData({ queryKey: [prefix] })) {
-      if (!isCachedGrid(data)) continue;
-      const next = editGrid(data, (photo) => edit(photo, queryKey));
-      if (next !== data) queryClient.setQueryData(queryKey, next);
+    for (const query of queryClient.getQueryCache().findAll({ queryKey: [prefix] })) {
+      if (isSelectAllKey(query.queryKey)) continue;
+      const editRows = (photo: PhotoRow) => edit(photo, query.queryKey);
+      const data = query.state.data;
+      if (isCachedGrid(data)) {
+        const next = editGrid(data, editRows);
+        if (next !== data) queryClient.setQueryData(query.queryKey, next);
+      }
+      if (query.state.fetchStatus === "fetching") editWhenFetchLands(queryClient, query, editRows);
     }
   }
+}
+
+/**
+ * A grid whose fetch is under way was asked before this edit. When it lands it
+ * would put the old rows back over the patch (an infinite query rebuilds every
+ * page from the data it started with) and mark the grid fresh: a trashed photo
+ * would come back, a new tag vanish. So the edit is applied again to what lands,
+ * and the grid is marked stale again for its next visit. Edits are safe to
+ * repeat, so an answer that already had the change is left as it is. Cancelling
+ * and asking again would instead walk every loaded page once more.
+ */
+function editWhenFetchLands(queryClient: QueryClient, query: Query, editRows: (photo: PhotoRow) => PhotoRow | null) {
+  const stop = queryClient.getQueryCache().subscribe((event) => {
+    if (event.query !== query) return;
+    if (event.type === "removed") return stop();
+    // A write by hand while the fetch runs leaves it fetching; wait for the end.
+    if (event.type !== "updated" || query.state.fetchStatus !== "idle") return;
+    stop();
+    if (event.action.type !== "success") return;
+    const data = query.state.data;
+    if (!isCachedGrid(data)) return;
+    const next = editGrid(data, editRows);
+    if (next !== data) queryClient.setQueryData(query.queryKey, next);
+    void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true, refetchType: "none" });
+  });
 }
 
 /** Grids and searches marked stale, refetched on their next visit, not now. */
@@ -630,17 +723,26 @@ export type CollectionTarget = { kind: "job"; id: string } | { kind: "album"; id
  */
 export function prefetchCollection(queryClient: QueryClient, target: CollectionTarget) {
   if (target.kind === "job") {
-    void queryClient.prefetchInfiniteQuery(photoListOptions({ kind: "job", jobId: target.id }, NO_FILTERS, "desc"));
+    prefetchGrid(queryClient, photoListOptions({ kind: "job", jobId: target.id }, NO_FILTERS, "desc"));
     return;
   }
   void queryClient.prefetchQuery(photoAlbumOptions(target.id));
-  const header = albumFromLists(queryClient, target.id);
+  const header = albumFromLists(queryClient, target.id)?.data;
   if (header) {
     const scope: PhotoListScope = { kind: "album", album: { id: header.id, name: header.name } };
-    void queryClient.prefetchInfiniteQuery(
-      photoListOptions(scope, NO_FILTERS, header.sort_mode === "custom" ? "custom" : "desc")
-    );
+    prefetchGrid(queryClient, photoListOptions(scope, NO_FILTERS, header.sort_mode === "custom" ? "custom" : "desc"));
   }
+}
+
+/**
+ * A grid's first page, only when the grid has nothing cached. A cached grid
+ * already paints at once, and prefetching a stale one would download every
+ * page it holds again, one after another (after any edit marks all grids
+ * stale, that is every grid): the page reconciles it itself when it opens.
+ */
+function prefetchGrid(queryClient: QueryClient, options: ReturnType<typeof photoListOptions>) {
+  if (queryClient.getQueryState(options.queryKey)?.data !== undefined) return;
+  void queryClient.prefetchInfiniteQuery(options);
 }
 
 /** A job as the create/rename routes return it. */
@@ -763,9 +865,7 @@ export interface PhotoAlbumHeader {
  * them there is no header to show early: the page's Sort default depends on
  * the order, and guessing it would load the grid in the wrong one first.
  */
-export function albumHeaderFromSummary(
-  album: PhotoAlbumSummary & Partial<Pick<PhotoAlbumHeader, "sort_mode" | "has_custom_order">>
-): PhotoAlbumHeader | undefined {
+export function albumHeaderFromSummary(album: PhotoAlbumSummary): PhotoAlbumHeader | undefined {
   if ((album.sort_mode !== "date" && album.sort_mode !== "custom") || typeof album.has_custom_order !== "boolean") {
     return undefined;
   }
@@ -780,13 +880,17 @@ export function albumHeaderFromSummary(
   };
 }
 
-/** Any cached album list's card for this album, as a header (see albumHeaderFromSummary). */
-function albumFromLists(queryClient: QueryClient, albumId: string): PhotoAlbumHeader | undefined {
-  for (const [, albums] of queryClient.getQueriesData<PhotoAlbumSummary[]>({ queryKey: photoKeys.allAlbums })) {
-    const found = Array.isArray(albums) ? albums.find((album) => album.id === albumId) : undefined;
-    if (found) return albumHeaderFromSummary(found);
-  }
-  return undefined;
+/**
+ * Any cached album list's card for this album, as a header (see
+ * albumHeaderFromSummary). A card that cannot be a header (its order unknown)
+ * gives none: the album's own read is waited for.
+ */
+function albumFromLists(queryClient: QueryClient, albumId: string): ListSeed<PhotoAlbumHeader> | undefined {
+  const seed = seedFromLists(queryClient, photoKeys.allAlbums, (rows) =>
+    (rows as PhotoAlbumSummary[]).find((album) => album.id === albumId)
+  );
+  const header = seed && albumHeaderFromSummary(seed.data);
+  return header && { data: header, updatedAt: seed.updatedAt };
 }
 
 /** The album header read (GET /api/photo-albums/[id]), shared by the page and a card's prefetch. */
@@ -809,14 +913,18 @@ export function photoAlbumOptions(albumId: string) {
 /**
  * One album's header. Opened from the Albums list or the rail, it shows at
  * once from that list's card, so the grid starts loading in the same moment
- * instead of one round trip later; the album's own read then confirms it.
+ * instead of one round trip later. The card is the query's initial data, as
+ * fresh as its list (see usePhotoJob): a fresh list costs no request, and an
+ * older one is confirmed by the album's own read.
  */
 export function usePhotoAlbum(albumId: string, enabled = true) {
   const queryClient = useQueryClient();
+  const seed = () => albumFromLists(queryClient, albumId);
   return useQuery({
     ...photoAlbumOptions(albumId),
     enabled,
-    placeholderData: () => albumFromLists(queryClient, albumId),
+    initialData: () => seed()?.data,
+    initialDataUpdatedAt: () => seed()?.updatedAt,
   });
 }
 

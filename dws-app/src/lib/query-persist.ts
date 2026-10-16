@@ -25,13 +25,13 @@ export const MAX_PERSISTED_GRIDS = 6;
  * (query-persist.test.ts checks them against it):
  * - the full project and album lists (the "" search prefix only; typed
  *   prefixes are throwaway),
- * - photo settings,
  * - one album's header,
  * - photo grids (["photos", scope, list params]), trimmed to their first
  *   page below.
- * Not saved: who the person is and what they may do ("photo-actor" — a stale
- * admin flag would draw the wrong buttons), searches, trash, details, and
- * every receipts query.
+ * Not saved: who the person is and what they may do ("photo-me" — a stale
+ * admin flag would draw the wrong buttons; the settings arrive in the same
+ * answer, so they are not saved either and show their defaults until it
+ * lands), searches, trash, details, and every receipts query.
  */
 export function shouldPersistQuery(queryKey: QueryKey): boolean {
   const [kind, arg] = queryKey;
@@ -39,8 +39,6 @@ export function shouldPersistQuery(queryKey: QueryKey): boolean {
     case "photo-jobs":
     case "photo-albums":
       return queryKey.length === 2 && arg === "";
-    case "photo-settings":
-      return queryKey.length === 1;
     case "photo-album":
       return typeof arg === "string" && arg.length > 0;
     case "photos":
@@ -130,7 +128,9 @@ export interface UserPersister extends Persister {
  * device could be shown the first one's lists:
  * - every save records `currentUserId()` as the owner (no one signed in: no save),
  * - a restore hands back the cache only when `sessionUserId()` is that owner,
- *   and deletes it otherwise; what it hands back is marked stale,
+ *   and deletes it when it names someone else or no one; when it throws (the
+ *   sign-in could not be checked) the cache is skipped this time but kept;
+ *   what it hands back is marked stale,
  * - saves are batched: at most one write per `throttleMs`.
  */
 export function createUserPersister({
@@ -143,7 +143,10 @@ export function createUserPersister({
   storage: BlobStorage;
   /** Who is signed in now, as the auth listener last saw it. */
   currentUserId(): string | null | undefined;
-  /** Who is signed in, asked of the auth client (may refresh the token). */
+  /**
+   * Who is signed in, asked of the auth client (may refresh the token). Null
+   * only for a sure "no one"; throws when it could not tell.
+   */
   sessionUserId(): Promise<string | null>;
   throttleMs?: number;
   /** A device whose storage never answers must not hold up every query. */
@@ -185,6 +188,7 @@ export function createUserPersister({
       try {
         userId = await sessionUserId();
       } catch {
+        // Could not tell who is signed in: start cold, but keep the cache for next time.
         return undefined;
       }
       if (!userId || blob.owner !== userId) {

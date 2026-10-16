@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DehydratedState } from "@tanstack/react-query";
 import type { PersistedClient } from "@tanstack/react-query-persist-client";
-import { PHOTO_ACTOR_KEY, PHOTO_SETTINGS_KEY, photoKeys } from "@/lib/photos/api";
+import { photoKeys } from "@/lib/photos/api";
 import {
   MAX_PERSISTED_GRIDS,
   createUserPersister,
@@ -51,18 +51,18 @@ const client = (queries: DehydratedQuery[]): PersistedClient => ({
 });
 
 describe("which queries are saved on the device", () => {
-  it("saves the full project and album lists, settings, album headers and grids", () => {
+  it("saves the full project and album lists, album headers and grids", () => {
     expect(shouldPersistQuery(["photo-jobs", ""])).toBe(true);
     expect(shouldPersistQuery(["photo-albums", ""])).toBe(true);
-    expect(shouldPersistQuery(PHOTO_SETTINGS_KEY)).toBe(true);
     expect(shouldPersistQuery(["photo-album", "a1"])).toBe(true);
     expect(shouldPersistQuery(["photos", "all", "sort=newest"])).toBe(true);
   });
 
-  it("leaves out typed prefixes, the actor, searches, trash and receipts", () => {
+  it("leaves out typed prefixes, the permissions and settings, searches, trash and receipts", () => {
     expect(shouldPersistQuery(["photo-jobs", "36"])).toBe(false);
     expect(shouldPersistQuery(["photo-albums", "kit"])).toBe(false);
-    expect(shouldPersistQuery(PHOTO_ACTOR_KEY)).toBe(false);
+    // Carries the admin flag: a stale one would draw the wrong buttons.
+    expect(shouldPersistQuery(photoKeys.me)).toBe(false);
     expect(shouldPersistQuery(["photo-search", "q", "q=kitchen"])).toBe(false);
     expect(shouldPersistQuery(["photo-trash"])).toBe(false);
     expect(shouldPersistQuery(["photo-detail", "p1"])).toBe(false);
@@ -192,6 +192,20 @@ describe("the per-person persister", () => {
     session = null;
     expect(await make().restoreClient()).toBeUndefined();
     expect(stored).toBeUndefined();
+  });
+
+  it("keeps the cache when the sign-in could not be checked", async () => {
+    stored = { owner: "alice", client: client([grid("a", 1)]) };
+    const persister = createUserPersister({
+      storage,
+      currentUserId: () => owner,
+      sessionUserId: async () => {
+        throw new Error("Failed to fetch");
+      },
+    });
+    expect(await persister.restoreClient()).toBeUndefined();
+    expect(storage.del).not.toHaveBeenCalled();
+    expect(stored?.owner).toBe("alice");
   });
 
   it("restores once per page load", async () => {

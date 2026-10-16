@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { InfiniteQueryObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   albumHeaderFromSummary,
   fetchJob,
@@ -223,5 +223,104 @@ describe("album header from its card", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(requested).toContain("/api/photos?album=al&sort=custom");
     expect(client.getQueryData(["photos", "album:al", "album=al&sort=custom"])).toBeDefined();
+  });
+});
+
+describe("a patch made while a grid is loading", () => {
+  const scope = { kind: "all" } as const;
+  const key = photoKeys.list(scope, "");
+  const page = (...ids: string[]) => ({ photos: ids.map((id) => photo(id)), nextCursor: null });
+
+  /** A grid fetch that waits until `land` is called, counting its requests. */
+  function slowGrid() {
+    const calls: unknown[] = [];
+    let land: (value: ReturnType<typeof page>) => void = () => undefined;
+    const queryFn = vi.fn(({ pageParam }: { pageParam: unknown }) => {
+      calls.push(pageParam);
+      return new Promise<ReturnType<typeof page>>((resolve) => (land = resolve));
+    });
+    return { calls, queryFn, land: (value: ReturnType<typeof page>) => land(value) };
+  }
+
+  it("keeps a trash made during a refetch that started before it, without asking again", async () => {
+    const client = new QueryClient();
+    client.setQueryData(key, gridOf(photo("a"), photo("b")));
+    const slow = slowGrid();
+    const refetch = client.fetchInfiniteQuery({
+      queryKey: key, queryFn: slow.queryFn, initialPageParam: null as string | null,
+      getNextPageParam: () => null, staleTime: 0,
+    });
+    await vi.waitFor(() => expect(slow.calls).toHaveLength(1));
+
+    removePhotosFromLists(client, ["a"]);
+    expect(idsOf(client, key)).toEqual(["b"]);
+    // The server answers as it was before the trash.
+    slow.land(page("a", "b"));
+    await refetch;
+
+    expect(idsOf(client, key)).toEqual(["b"]);
+    expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(slow.calls).toHaveLength(1);
+  });
+
+  it("keeps a new tag when the next page lands after it", async () => {
+    const client = new QueryClient();
+    client.setQueryData(key, { pages: [{ photos: [photo("a")], nextCursor: "c1" }], pageParams: [null] });
+    const slow = slowGrid();
+    const observer = new InfiniteQueryObserver(client, {
+      queryKey: key, queryFn: slow.queryFn, initialPageParam: null as string | null,
+      getNextPageParam: (last: { nextCursor: string | null }) => last.nextCursor, staleTime: Infinity,
+    });
+    const stop = observer.subscribe(() => undefined);
+    const more = observer.fetchNextPage();
+    await vi.waitFor(() => expect(slow.calls).toEqual(["c1"]));
+
+    patchPhotoTags(client, ["a", "b"], { add: ["Deck"] });
+    slow.land(page("b"));
+    await more;
+
+    const rows = client.getQueryData<CachedGrid>(key)!.pages.flatMap((p) => p.photos);
+    expect(rows.map((row) => [row.id, row.tags])).toEqual([["a", ["Deck"]], ["b", ["Deck"]]]);
+    expect(slow.calls).toEqual(["c1"]);
+    stop();
+  });
+
+  it("applies the patch to a grid's first load that was already on its way", async () => {
+    const client = new QueryClient();
+    const slow = slowGrid();
+    const first = client.fetchInfiniteQuery({
+      queryKey: key, queryFn: slow.queryFn, initialPageParam: null as string | null, getNextPageParam: () => null,
+    });
+    await vi.waitFor(() => expect(slow.calls).toHaveLength(1));
+    removePhotosFromLists(client, ["a"]);
+    slow.land(page("a", "b"));
+    await first;
+    expect(idsOf(client, key)).toEqual(["b"]);
+  });
+});
+
+describe("prefetching a card's grid", () => {
+  it("leaves a cached grid alone even when an edit marked it stale", async () => {
+    const client = new QueryClient();
+    const jobGrid = photoListOptions({ kind: "job", jobId: "j1" }, NO_FILTERS, "desc");
+    client.setQueryData(jobGrid.queryKey, {
+      pages: [{ photos: [photo("a")], nextCursor: "c1" }, { photos: [photo("b")], nextCursor: null }],
+      pageParams: [null, "c1"],
+    });
+    patchPhotoTags(client, ["a"], { add: ["Deck"] });
+    expect(client.getQueryState(jobGrid.queryKey)?.isInvalidated).toBe(true);
+    const requested: string[] = [];
+    globalThis.fetch = vi.fn(async (input) => {
+      requested.push(String(input));
+      return Response.json({ photos: [], nextCursor: null });
+    });
+
+    prefetchCollection(client, { kind: "job", id: "j1" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requested).toEqual([]);
+
+    prefetchCollection(client, { kind: "job", id: "j2" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requested).toEqual(["/api/photos?job=j2"]);
   });
 });

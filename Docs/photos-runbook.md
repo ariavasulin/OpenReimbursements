@@ -326,12 +326,15 @@ Three migrations, applied to production on 2026-10-14 before the deploy:
 
 - **Saved query cache.** The browser keeps some photo lists in IndexedDB
   (database `dws-query-cache`, key `photos-query-cache`): the full project and
-  album lists, photo settings, album headers, and the first page of the 6 most
-  recently loaded grids. Not kept: permissions (`photo-actor`), searches,
-  trash, photo details, anything from Receipts. Logic:
+  album lists, album headers, and the first page of the 6 most recently
+  loaded grids. Not kept: permissions and settings (`photo-me`, one answer
+  that carries the admin flag), searches, trash, photo details, anything from
+  Receipts. Logic:
   `src/lib/query-persist.ts`; wiring: `src/components/providers/query-provider.tsx`.
 - It belongs to one person: each save records the user id, and a restore is
-  refused (and deleted) unless the signed-in session is the same person.
+  refused (and deleted) when the signed-in session is someone else or no one.
+  When the session cannot be checked (the token refresh failed on a weak
+  signal), that launch starts cold and the saved cache is kept.
   Sign-out and any change of signed-in person delete it.
 - It expires after 7 days and is thrown away by every deploy (the buster is
   the commit sha, `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`, which Vercel exposes
@@ -384,8 +387,9 @@ working. What it adds, and what reads it:
   order: no live profile is 403, a deleted or banned Auth user is 401, a closed
   gate is 503.
 - `get_photo_me()` (signed-in sessions). Answers `GET /api/photos/me`
-  (`{ actor, settings }`), and also `GET /api/photos/actor` and
-  `GET /api/photos/settings`. Who is asking comes from the database-verified
+  (`{ actor, settings }`), which the app reads once for both its permission
+  checks and its settings, and also `GET /api/photos/actor` and
+  `GET /api/photos/settings` (no longer read by the app). Who is asking comes from the database-verified
   token, so these reads no longer call the Auth server.
 - `get_photo_album_cards(q)`. Album cards in one pass over each album's photos,
   with `created_by`, `sort_mode` and `has_custom_order` added.

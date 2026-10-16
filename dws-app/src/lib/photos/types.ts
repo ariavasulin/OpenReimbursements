@@ -82,8 +82,9 @@ export interface PhotoAlbumSummaryRow {
   thumbs: string[] | null;
   created_at: string;
   created_by: string | null;
-  sort_mode: "date" | "custom";
-  has_custom_order: boolean;
+  /** Both missing from a database without get_photo_album_cards' order columns. */
+  sort_mode?: "date" | "custom";
+  has_custom_order?: boolean;
 }
 
 /** One album card: name, active-photo count, up to 4 newest thumbnails. */
@@ -102,10 +103,12 @@ export interface PhotoAlbumSummary {
    * The album page's order, as GET /api/photo-albums/[id] reports it: an album
    * opened from a list can start loading its photos before its own header
    * arrives. `custom` while it shows its arranged order, else `date`.
+   * Missing when the database did not say (an older one): the order is then
+   * unknown, and the page waits for its own header (albumHeaderFromSummary).
    */
-  sort_mode: "date" | "custom";
-  /** An arranged order is saved (kept when the album goes back to date order). */
-  has_custom_order: boolean;
+  sort_mode?: "date" | "custom";
+  /** An arranged order is saved (kept when the album goes back to date order). Missing as sort_mode is. */
+  has_custom_order?: boolean;
 }
 
 /** An album row as the create, rename, delete, and restore routes return it. */
