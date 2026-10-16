@@ -33,7 +33,6 @@ import {
   PHOTOS_SCROLLPORT_ID,
   usePhotosShell,
 } from "@/components/photos/photos-shell-context";
-import { useRegisterSlideshow } from "@/components/photos/slideshow-link";
 import { TOAST_REGION_ID } from "@/lib/toast-region";
 import type { PhotoRow } from "@/lib/photos/types";
 import { videoSource } from "@/lib/photos/video-source";
@@ -65,7 +64,8 @@ import { videoSource } from "@/lib/photos/video-source";
 // whether they come in the grid's order or at random, is the person's own
 // setting (Settings page; usePhotoSettings). It starts with the controls
 // hidden, and any tap pauses it and shows them. A page's header Play button
-// reaches it through <SlideshowLink>.
+// opens the viewer with `autoplay` (the grid registers it with
+// <SlideshowLink>, so it shows before this file has downloaded).
 
 // Custom slide for videos this browser reports it can't decode: the poster
 // with a download card instead of a dead play button (rendered by
@@ -285,6 +285,10 @@ interface PhotoLightboxProps {
   /** The viewer is a few photos from the end of `photos`: load more if there are more. */
   onNearEnd?(): void;
   onClose(): void;
+  /** Opened by the page header's Play: play from the photo shown, controls hidden. */
+  autoplay?: boolean;
+  /** The slideshow `autoplay` asked for has started. */
+  onAutoplayStarted?(): void;
 }
 
 export default function PhotoLightbox({
@@ -294,6 +298,8 @@ export default function PhotoLightbox({
   onIndexChange,
   onNearEnd,
   onClose,
+  autoplay = false,
+  onAutoplayStarted,
 }: PhotoLightboxProps) {
   const isDesktop = useDesktop();
   const { setViewerOpen } = usePhotosShell();
@@ -454,19 +460,18 @@ export default function PhotoLightbox({
     slideshowRef.current?.play();
   };
 
-  // Play from a page header: open on the first still and play, controls
-  // hidden. Opening mounts the slideshow with `autoplay` already true.
-  const startFromPageRef = useRef<() => void>(() => {});
-  startFromPageRef.current = () => {
-    const first = nextStill(0);
-    if (first === -1) return;
-    orderRef.current = [];
+  // Play from a page header: the grid opens this on its first still with
+  // `autoplay`. Set while rendering, not in an effect, so the render that
+  // opens the viewer mounts YARL's slideshow with its `autoplay` already true
+  // (it reads that once, on opening).
+  if (autoplay && open && !slideshowActive && hasStills) {
+    orderRef.current = []; // a fresh draw when shuffling
     setSlideshowActive(true);
     setChromeHidden(true);
-    onIndexChange(first);
-  };
-  const startFromPage = useCallback(() => startFromPageRef.current(), []);
-  useRegisterSlideshow(hasStills ? startFromPage : null);
+  }
+  useEffect(() => {
+    if (autoplay && open) onAutoplayStarted?.();
+  }, [autoplay, open, onAutoplayStarted]);
 
   // The fixed fullscreen row (portalled to <body>) and the info panel.
   const wrapperRef = useRef<HTMLDivElement>(null);
