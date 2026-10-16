@@ -82,13 +82,19 @@ describe("fetchJob", () => {
     expect(await fetchJob("j1")).toBeNull();
   });
 
-  it("finds the project in the full list when the one-project read is not deployed (405)", async () => {
-    globalThis.fetch = vi.fn(async (input) =>
-      String(input).startsWith("/api/photo-jobs/")
-        ? new Response(null, { status: 405 })
-        : Response.json({ jobs: [job], nextCursor: null })
-    );
+  it("reads the one project by itself, never the full list", async () => {
+    const requested: string[] = [];
+    globalThis.fetch = vi.fn(async (input) => {
+      requested.push(String(input));
+      return Response.json({ success: true, job });
+    });
     expect(await fetchJob("j1")).toEqual(job);
+    expect(requested).toEqual(["/api/photo-jobs/j1"]);
+  });
+
+  it("passes any other failure on, so the header shows an error rather than 'not here'", async () => {
+    globalThis.fetch = vi.fn(async () => Response.json({ error: "Down" }, { status: 500 }));
+    await expect(fetchJob("j1")).rejects.toMatchObject({ status: 500 });
   });
 });
 

@@ -21,8 +21,8 @@ export const PERSIST_BUSTER = `v1:${process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SH
 export const MAX_PERSISTED_GRIDS = 6;
 
 /**
- * Which queries are saved. These mirror the keys in lib/photos/api.ts and
- * photo-browser.tsx (query-persist.test.ts checks the shared constants):
+ * Which queries are saved. These mirror photoKeys in lib/photos/api.ts
+ * (query-persist.test.ts checks them against it):
  * - the full project and album lists (the "" search prefix only; typed
  *   prefixes are throwaway),
  * - photo settings,

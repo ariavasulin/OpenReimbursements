@@ -296,13 +296,24 @@ export async function fetchTags(jobId?: string, signal?: AbortSignal): Promise<s
   return data.tags;
 }
 
+/**
+ * Every project matching `q` (all of them for ""), as one cache entry. Shared
+ * by usePhotoJobs and by code that needs the list outside a component (the
+ * import page looking up a suggested project number).
+ */
+export function photoJobsOptions(q = "") {
+  return queryOptions({
+    queryKey: photoKeys.jobs(q),
+    queryFn: ({ signal }) => fetchJobs(q, signal),
+    staleTime: 60_000,
+  });
+}
+
 /** All jobs (unfiltered), for job pickers. Shares a cache entry across sheets. */
 export function usePhotoJobs(enabled: boolean, q = "") {
   return useQuery({
-    queryKey: photoKeys.jobs(q),
-    queryFn: ({ signal }) => fetchJobs(q, signal),
+    ...photoJobsOptions(q),
     enabled,
-    staleTime: 60_000,
     // Each debounced prefix is a cold key; keep the list the user is reading
     // (and the rail's active row) on screen until the new one lands.
     placeholderData: keepPreviousData,
@@ -345,10 +356,6 @@ export async function fetchJob(jobId: string, signal?: AbortSignal): Promise<Pho
     return (await fetchJson<{ job: PhotoJobSummary }>(jobUrl(jobId), "Failed to load the project", { signal })).job;
   } catch (error) {
     if (error instanceof FetchJsonError && (error.status === 404 || error.status === 400)) return null;
-    // A deploy without the one-project read answers 405: find it in the full list, as before.
-    if (error instanceof FetchJsonError && error.status === 405) {
-      return (await fetchJobs("", signal)).find((job) => job.id === jobId) ?? null;
-    }
     throw error;
   }
 }
@@ -388,9 +395,10 @@ export const PHOTO_ACTOR_KEY = ["photo-actor"] as const;
  * where they will work. Undefined while loading: callers show nothing they
  * cannot yet promise. The server checks every write regardless.
  *
- * The "Photo admin" box can be ticked in another tab, or for this person by
- * someone else, so coming back to the tab asks again even inside the 30
- * seconds — a one-row read — rather than keep offering yesterday's controls.
+ * Coming back to the tab asks again only once the answer is 30 seconds old,
+ * not on every app switch (audit DB-5): the "Photo admin" box changes rarely,
+ * the Users page refreshes it when it saves, and a button shown by mistake
+ * only leads to the server's refusal.
  */
 export function usePhotoActor() {
   return useQuery({
@@ -398,7 +406,6 @@ export function usePhotoActor() {
     queryFn: ({ signal }) =>
       fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions", { signal }),
     staleTime: 30_000,
-    refetchOnWindowFocus: "always",
   }).data;
 }
 
