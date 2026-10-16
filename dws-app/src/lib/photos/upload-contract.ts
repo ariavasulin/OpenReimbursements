@@ -29,6 +29,26 @@ export interface UploadAttempt extends UploadOwner {
   original_path: string; thumb_path: string; preview_path: string; sidecar_path: string;
   result: CanonicalUploadOutcome | null;
 }
+/**
+ * POST /api/photo-migrations/uploads/begin: attempt, lease, claim and (on a
+ * retry) the original-file check in one request, in the same order the
+ * separate routes run them. Ordinary uploads only; the importer keeps its own
+ * prepare step.
+ */
+export interface BeginUploadInput extends CreateUploadAttemptInput {
+  /** Check for an original a lost response may have left. False for a fresh identity: nothing can be there yet. */
+  probe: boolean;
+}
+/** Each step is present only if the one before it let the upload go on. */
+export interface BeginUploadOutcome {
+  attempt: UploadAttempt;
+  acquired?: AcquireUploadOutcome;
+  claimed?: ClaimUploadOutcome;
+  /** Null when the check was not asked for. */
+  original?: OriginalUploadState | null;
+  /** The stored original differs from this file: start a fresh attempt. */
+  original_mismatch?: true;
+}
 export interface UploadLease {
   status: 'acquired'; lease_generation: number; lease_expires_at: string;
 }

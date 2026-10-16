@@ -6,13 +6,19 @@ import {
   LEASE_RENEW_MS,
   type UploadIdentity,
   type UploadDeps,
-  uploadOne, retrySidecar,
+  uploadOne, retrySidecar, prepareUpload, isConnectionFailure, withoutPreviewNotes,
 } from "./upload";
 import { METADATA_MAX_BYTES, DERIVATIVES_MAX_BYTES } from "./decode-limits";
 import { SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
 import { RESUMABLE_THRESHOLD_BYTES, TUS_CHUNK_BYTES } from "./upload-tus";
-import { FORMAT_TWIN_WINDOW_MS, type CanonicalUploadOutcome, type FinalizeUploadInput, type FormatTwin, type FormatTwinQuery } from "./upload-contract";
+import { FORMAT_TWIN_WINDOW_MS, type BeginUploadInput, type BeginUploadOutcome, type CanonicalUploadOutcome, type FinalizeUploadInput, type FormatTwin, type FormatTwinQuery } from "./upload-contract";
 import { makeDeps, makeFile, META, CAPTURED, sanitizeFilename, storagePaths, sha256, type Recorded } from "./__fixtures__/upload";
+
+/** The identity a first try recorded for this file, so the next call is a retry of it. */
+const retriedIdentity = async (file: File): Promise<UploadIdentity> => ({
+  attemptId: "photo-1", photoId: "photo-1", contentSha256: await sha256(file),
+  sourceSignature: JSON.stringify([file.name, file.size, file.lastModified, file.type]),
+});
 
 describe("uploadOne", () => {
   it("uploads the original FIRST, then derivatives, then POSTs the row", async () => {
@@ -269,8 +275,10 @@ describe("canonical hash/attempt/claim/finalize contract", () => {
   });
   it.each(["hash", "createAttempt", "acquireLease", "claimContent", "probeOriginal"] as const)("sends no bytes when %s fails", async (step) => {
     const { deps, uploads } = makeDeps();
+    const file = makeFile("a.jpg", "image/jpeg");
     deps[step] = vi.fn(async () => { throw new Error(`${step} unavailable`); });
-    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    // The original-file check runs only on a retry of a recorded identity.
+    const result = await uploadOne(file, "photo-1", META, deps, undefined, step === "probeOriginal" ? { identity: await retriedIdentity(file) } : {});
     expect(result).toMatchObject({ status: "failed", error: `${step} unavailable` });
     expect(uploads).toEqual([]);
     expect(deps.resumableUpload).not.toHaveBeenCalled();
@@ -807,7 +815,8 @@ describe("retry metadata survives the upload orchestrator", () => {
     deps.probeOriginal = vi.fn(async () => { throw new UploadRequestError("Start a fresh attempt", {
       code: "conflict", status: 409, retryable: false, newAttemptRequired: true,
     }); });
-    expect(await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).toMatchObject({
+    const file = makeFile("a.jpg", "image/jpeg");
+    expect(await uploadOne(file, "photo-1", META, deps, undefined, { identity: await retriedIdentity(file) })).toMatchObject({
       status: "failed", retryable: false, newAttemptRequired: true, errorCode: "conflict",
     });
     expect(uploads).toEqual([]);
@@ -929,5 +938,219 @@ describe("previews made on the server", () => {
     fileDeps.deriveOnServer = deps.deriveOnServer;
     await uploadOne(makeFile("notes.pdf", "application/pdf"), "photo-2", META, fileDeps);
     expect(deps.deriveOnServer).not.toHaveBeenCalled();
+  });
+});
+
+describe("one request before the bytes (begin)", () => {
+  const withBegin = (deps: UploadDeps, answer?: (input: BeginUploadInput) => Partial<BeginUploadOutcome>) => {
+    deps.begin = vi.fn(async (input: BeginUploadInput) => {
+      const attempt = await deps.createAttempt(input);
+      const base: BeginUploadOutcome = {
+        attempt,
+        acquired: { status: "acquired", lease_generation: 1, lease_expires_at: "2026-09-07T00:02:00Z" },
+        claimed: { status: "claimed", claim_generation: 2, lease_expires_at: "2026-09-07T00:02:00Z" },
+        original: input.probe ? { complete: false } : null,
+      };
+      return { ...base, ...answer?.(input) };
+    });
+    // Only begin may reach the server for these steps.
+    deps.acquireLease = vi.fn(async () => { throw new Error("acquire called"); });
+    deps.claimContent = vi.fn(async () => { throw new Error("claim called"); });
+    deps.probeOriginal = vi.fn(async () => { throw new Error("probe called"); });
+    return deps;
+  };
+
+  it("makes one begin call instead of four, and skips the original check for a fresh identity", async () => {
+    const { deps, finalized } = makeDeps();
+    withBegin(deps);
+    const result = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    expect(result.status).toBe("done");
+    expect(deps.begin).toHaveBeenCalledOnce();
+    expect(vi.mocked(deps.begin!).mock.calls[0][0]).toMatchObject({ attempt_id: "photo-1", photo_id: "photo-1", probe: false });
+    expect(finalized[0]).toMatchObject({ lease_generation: 1, claim_generation: 2 });
+  });
+
+  it("asks begin to check the original on a retry and trusts a complete one", async () => {
+    const { deps, uploads } = makeDeps();
+    withBegin(deps, () => ({ original: { complete: true } }));
+    const file = makeFile("a.jpg", "image/jpeg");
+    const result = await uploadOne(file, "photo-1", META, deps, undefined, { identity: await retriedIdentity(file) });
+    expect(result.status).toBe("done");
+    expect(vi.mocked(deps.begin!).mock.calls[0][0].probe).toBe(true);
+    expect(uploads.every((entry) => entry.path.startsWith("derived/"))).toBe(true);
+  });
+
+  it("turns a stored-original mismatch into the fresh-attempt remedy and releases the lease", async () => {
+    const { deps, uploads } = makeDeps();
+    withBegin(deps, () => ({ original: undefined, original_mismatch: true }));
+    const file = makeFile("a.jpg", "image/jpeg");
+    expect(await uploadOne(file, "photo-1", META, deps, undefined, { identity: await retriedIdentity(file) })).toMatchObject({
+      status: "failed", retryable: false, newAttemptRequired: true, errorCode: "conflict", errorStatus: 409,
+    });
+    expect(uploads).toEqual([]);
+    expect(deps.releaseLease).toHaveBeenCalledWith({ owner_kind: "ordinary", owner_id: "photo-1", lease_generation: 1, status: "retryable_failed" });
+  });
+
+  it("reports a contended claim from begin and releases the lease it was given", async () => {
+    const { deps, uploads } = makeDeps();
+    withBegin(deps, () => ({ claimed: { status: "waiting_claim", lease_expires_at: "2026-09-07T00:02:00Z" }, original: undefined }));
+    expect(await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).toMatchObject({ status: "waiting_claim", retryable: true });
+    expect(uploads).toEqual([]);
+    expect(deps.releaseLease).toHaveBeenCalledWith({ owner_kind: "ordinary", owner_id: "photo-1", lease_generation: 1, status: "retryable_failed" });
+  });
+
+  it("reports an existing photo from begin without a lease, and resets a purged canonical once", async () => {
+    const { deps } = makeDeps();
+    withBegin(deps, () => ({ acquired: { status: "duplicate_active", photo_id: "existing", job_id: META.jobId }, claimed: undefined, original: undefined }));
+    expect(await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).toMatchObject({ status: "duplicate", canonicalPhotoId: "existing" });
+    expect(deps.releaseLease).not.toHaveBeenCalled();
+
+    const { deps: purged } = makeDeps();
+    let first = true;
+    withBegin(purged, () => {
+      if (!first) return {};
+      first = false;
+      return { acquired: { status: "duplicate_trashed", photo_id: "gone", job_id: META.jobId, new_attempt_required: true }, claimed: undefined, original: undefined };
+    });
+    let identity: UploadIdentity | undefined;
+    expect((await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, purged, undefined, { onIdentity: (value) => { identity = value; } })).status).toBe("done");
+    expect(purged.begin).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(purged.begin!).mock.calls[1][0]).toMatchObject({ photo_id: identity!.photoId, probe: false });
+    expect(identity!.photoId).not.toBe("photo-1");
+  });
+
+  it("refuses an attempt bound to other bytes before any lease or bytes", async () => {
+    const { deps, uploads } = makeDeps();
+    withBegin(deps, () => ({ acquired: undefined, claimed: undefined, original: undefined }));
+    const create = deps.createAttempt;
+    deps.createAttempt = vi.fn(async (input) => ({ ...(await create(input)), content_sha256: "b".repeat(64) }));
+    expect(await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).toMatchObject({ status: "failed", error: "Upload attempt does not match this file and job" });
+    expect(uploads).toEqual([]);
+    expect(deps.releaseLease).not.toHaveBeenCalled();
+  });
+});
+
+describe("the original-file check without begin", () => {
+  it("is skipped for a fresh identity and made for a retry of a recorded one", async () => {
+    const { deps } = makeDeps();
+    const file = makeFile("a.jpg", "image/jpeg");
+    await uploadOne(file, "photo-1", META, deps);
+    expect(deps.probeOriginal).not.toHaveBeenCalled();
+    await uploadOne(file, "photo-1", META, deps, undefined, { identity: await retriedIdentity(file) });
+    expect(deps.probeOriginal).toHaveBeenCalledOnce();
+  });
+
+  it("is made when the server bound another photo id than the fresh one (the importer)", async () => {
+    const { deps } = makeDeps();
+    const create = deps.createAttempt;
+    deps.createAttempt = vi.fn(async (input) => ({ ...(await create(input)), photo_id: "server-photo" }));
+    await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    expect(deps.probeOriginal).toHaveBeenCalledOnce();
+  });
+});
+
+describe("preparing a file ahead of its upload", () => {
+  it("uses a warmed preparation of the same file, hashing and decoding it only once across tries", async () => {
+    const { deps } = makeDeps();
+    const makeDerivatives = vi.fn(deps.makeDerivatives!);
+    deps.makeDerivatives = makeDerivatives;
+    const file = makeFile("a.jpg", "image/jpeg");
+    const prepared = prepareUpload(file, deps);
+    prepared.warm();
+    await vi.waitFor(() => expect(makeDerivatives).toHaveBeenCalledOnce());
+    expect(deps.hash).toHaveBeenCalledOnce();
+    deps.storage.upload = vi.fn(async () => ({ error: { message: "offline", code: "storage_upload_failed", retryable: true } }));
+    const failed = await uploadOne(file, "photo-1", META, deps, undefined, { prepared });
+    expect(failed).toMatchObject({ status: "failed", errorCode: "storage_upload_failed", retryable: true });
+    const { deps: fresh } = makeDeps();
+    deps.storage = fresh.storage;
+    expect((await uploadOne(file, "photo-1", META, deps, undefined, { prepared })).status).toBe("done");
+    expect(deps.hash).toHaveBeenCalledOnce();
+    expect(makeDerivatives).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a preparation made from another file", async () => {
+    const { deps, finalized } = makeDeps();
+    const other = prepareUpload(makeFile("other.jpg", "image/jpeg", 9), deps);
+    await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps, undefined, { prepared: other });
+    expect(finalized[0]).toMatchObject({ original_name: "a.jpg", original_bytes: 4 });
+  });
+
+  it("does not decode previews for a duplicate unless warmed", async () => {
+    const { deps } = makeDeps();
+    deps.makeDerivatives = vi.fn();
+    deps.claimContent = vi.fn(async () => ({ status: "duplicate_active" as const, photo_id: "existing", job_id: META.jobId }));
+    expect((await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps)).status).toBe("duplicate");
+    expect(deps.makeDerivatives).not.toHaveBeenCalled();
+  });
+});
+
+describe("stages and server previews in the background", () => {
+  it("reports preparing, sending, then finishing", async () => {
+    const { deps } = makeDeps();
+    const stages: string[] = [];
+    await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps, undefined, { onStage: (stage) => stages.push(stage) });
+    expect(stages).toEqual(["preparing", "sending", "finishing"]);
+  });
+
+  it("hands the server-preview request to deriveLater instead of waiting for it", async () => {
+    const { deps } = makeDeps({ noDerivatives: true });
+    let finish!: () => void;
+    deps.deriveOnServer = vi.fn(() => new Promise<{ thumb_path: string | null }>((resolve) => { finish = () => resolve({ thumb_path: "t" }); }));
+    const later = vi.fn();
+    const result = await uploadOne(makeFile("IMG_1.heic", "image/heic"), "photo-1", META, deps, undefined, { deriveLater: later });
+    expect(result.status).toBe("done");
+    // Done before the server answered; the note stays until the caller clears it.
+    expect(result.warnings).toEqual(["Previews could not be generated; the original is preserved."]);
+    expect(later).toHaveBeenCalledWith("photo-1", expect.any(Function));
+    const made = later.mock.calls[0][1]();
+    finish();
+    await expect(made).resolves.toEqual({ thumb_path: "t" });
+    expect(deps.deriveOnServer).toHaveBeenCalledWith("photo-1");
+  });
+
+  it("drops only the preview notes once previews exist", () => {
+    expect(withoutPreviewNotes(["Previews skipped to limit browser decoding memory use.", "Thumbnail upload failed; the original is preserved."]))
+      .toEqual(["Thumbnail upload failed; the original is preserved."]);
+  });
+});
+
+describe("pixel limit for browser previews", () => {
+  it("leaves a photo over the pixel limit to the server, even under the file-size limit", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.makeDerivatives = vi.fn();
+    deps.deriveOnServer = vi.fn(async () => ({ thumb_path: "derived/u/photo-1_thumb.webp" }));
+    // A JPEG header saying 8064 x 6048 (48.8 MP) in a tiny file.
+    const bytes = new Uint8Array(32);
+    bytes.set([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 6048 >> 8, 6048 & 0xff, 8064 >> 8, 8064 & 0xff], 0);
+    const file = new File([bytes], "big.jpg", { type: "image/jpeg", lastModified: 0 });
+    const result = await uploadOne(file, "photo-1", META, deps);
+    expect(result.status).toBe("done");
+    expect(deps.makeDerivatives).not.toHaveBeenCalled();
+    expect(finalized[0].warnings).toContain("Previews skipped to limit browser decoding memory use.");
+    expect(deps.deriveOnServer).toHaveBeenCalledOnce();
+  });
+});
+
+describe("connection failures", () => {
+  it.each([
+    [{ status: "failed", retryable: true, errorCode: "network_error" }, true],
+    [{ status: "failed", retryable: true, errorCode: "storage_upload_failed" }, true],
+    [{ status: "failed", retryable: true, errorCode: "storage_upload_failed", errorStatus: 503 }, false],
+    [{ status: "failed", retryable: true, errorCode: "temporarily_unavailable", errorStatus: 503 }, false],
+    [{ status: "failed", retryable: true, errorCode: "network_error", retryAt: 60_000 }, false],
+    [{ status: "failed", retryable: false, errorCode: "network_error" }, false],
+    [{ status: "waiting_claim", retryable: true }, false],
+  ] as const)("%j is a dropped connection: %s", (result, expected) => {
+    expect(isConnectionFailure(result)).toBe(expected);
+  });
+
+  it("carries the HTTP status of a refusal and none for a network error", async () => {
+    const { deps } = makeDeps();
+    deps.claimContent = vi.fn(async () => { throw new UploadRequestError("Upload connection interrupted.", { code: "network_error", retryable: true }); });
+    const dropped = await uploadOne(makeFile("a.jpg", "image/jpeg"), "photo-1", META, deps);
+    expect(dropped).toMatchObject({ status: "failed", errorCode: "network_error", retryable: true });
+    expect(dropped.errorStatus).toBeUndefined();
+    expect(isConnectionFailure(dropped)).toBe(true);
   });
 });
