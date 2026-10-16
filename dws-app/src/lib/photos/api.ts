@@ -2,35 +2,108 @@ import { collectPages, COLLECTION_PAGE_SIZE } from "./collectionPagination";
 import type { KeysetDirection } from "@/lib/keysetCursor";
 import { MAX_ARRANGE_PHOTOS } from "./apiShared";
 import type { PurgeMarked } from "./action-types";
+import { NO_FILTERS, withFilterParams, type BrowseFilters } from "./browse-state";
+import { applyTagChange, editGrid, isCachedGrid, listFiltersByTag } from "./cache-patch";
 import type { PhotoPermissions } from "./permissions";
 import type { PhotoSettings, PhotoSettingsPatch } from "./settings";
 import { DEFAULT_STARTER_TAGS } from "./tags";
 import {
+  infiniteQueryOptions,
   keepPreviousData,
+  queryOptions,
   useQuery,
+  useQueryClient,
+  type Query,
   type QueryClient,
+  type QueryKey,
 } from "@tanstack/react-query";
 import type {
   PhotoAlbum,
+  PhotoAlbumRef,
   PhotoAlbumSummary,
   PhotoDetail,
   PhotoJobSummary,
   PhotoRow,
 } from "./types";
 
-/** fetch + JSON; a non-OK response throws the server's `error` message. */
+// ---- Fetching -----------------------------------------------------------------
+
+/** A read gives up after this long: a phone on a stalled connection otherwise waits forever. */
+export const READ_TIMEOUT_MS = 20_000;
+
+/** What a failed or stalled connection reads as, instead of the browser's "Failed to fetch". */
+export const NO_CONNECTION_MESSAGE = "No connection — check your signal and try again";
+
+/** What a list shows while React Query holds its request until the phone is back online. */
+export const WAITING_FOR_CONNECTION = "Waiting for connection...";
+
+/** A non-OK answer, with its HTTP status so a caller can tell "not found" from a failure. */
+export class FetchJsonError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+/**
+ * The caller's signal plus a READ_TIMEOUT_MS deadline, as one signal. Built by
+ * hand rather than with AbortSignal.any/timeout, which iPhones before iOS 17.4
+ * do not have. `done()` stops the clock once the body is read.
+ */
+function readDeadline(outer: AbortSignal | null | undefined) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, READ_TIMEOUT_MS);
+  const forward = () => controller.abort(outer?.reason);
+  if (outer?.aborted) forward();
+  else outer?.addEventListener("abort", forward, { once: true });
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    done: () => {
+      clearTimeout(timer);
+      outer?.removeEventListener("abort", forward);
+    },
+  };
+}
+
+/**
+ * fetch + JSON; a non-OK response throws the server's `error` message (as a
+ * FetchJsonError carrying the status). A dropped or stalled connection throws
+ * NO_CONNECTION_MESSAGE; a cancel by the caller's own signal is passed on as it is.
+ *
+ * Only GET reads time out. This also carries writes (trash, tags, a purge call
+ * that runs up to 60 seconds), and giving up on a write the server may still
+ * finish would report a failure for a change that happened.
+ */
 export async function fetchJson<T>(
   url: string,
   fallbackMessage: string,
   init?: RequestInit
 ): Promise<T> {
-  const response = await fetch(url, init);
-  if (!response.ok) {
-    const data = await response.json().catch(() => null);
-    const message = typeof data?.error === "string" ? data.error : data?.error?.message;
-    throw new Error(typeof message === "string" ? message : `${fallbackMessage} (${response.status})`);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const deadline = method === "GET" ? readDeadline(init?.signal) : null;
+  try {
+    const response = await fetch(url, deadline ? { ...init, signal: deadline.signal } : init);
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      const message = typeof data?.error === "string" ? data.error : data?.error?.message;
+      throw new FetchJsonError(
+        typeof message === "string" ? message : `${fallbackMessage} (${response.status})`,
+        response.status
+      );
+    }
+    return (await response.json()) as T;
+  } catch (error) {
+    if (init?.signal?.aborted) throw error;
+    // fetch rejects with a TypeError when the network is down or drops mid-way.
+    if (deadline?.timedOut() || error instanceof TypeError) throw new Error(NO_CONNECTION_MESSAGE);
+    throw error;
+  } finally {
+    deadline?.done();
   }
-  return (await response.json()) as T;
 }
 
 /**
@@ -45,8 +118,8 @@ export interface PhotosPage {
   nextCursor: string | null;
 }
 
-export function fetchPhotosPage(params: URLSearchParams): Promise<PhotosPage> {
-  return fetchJson<PhotosPage>(`/api/photos?${params}`, "Failed to load photos");
+export function fetchPhotosPage(params: URLSearchParams, signal?: AbortSignal): Promise<PhotosPage> {
+  return fetchJson<PhotosPage>(`/api/photos?${params}`, "Failed to load photos", { signal });
 }
 
 /**
@@ -60,9 +133,140 @@ export interface PhotoIdsAnswer {
   truncated: boolean;
 }
 
-export function fetchPhotoIds(params: URLSearchParams): Promise<PhotoIdsAnswer> {
-  return fetchJson<PhotoIdsAnswer>(`/api/photos/ids?${params}`, "Could not select those photos");
+export function fetchPhotoIds(params: URLSearchParams, signal?: AbortSignal): Promise<PhotoIdsAnswer> {
+  return fetchJson<PhotoIdsAnswer>(`/api/photos/ids?${params}`, "Could not select those photos", { signal });
 }
+
+/**
+ * How many photos the same parameters list, for the "Select all N" label:
+ * GET /api/photos/ids with `count=1`, which answers the count without walking
+ * every id. (A server that does not know `count=1` sends the ids too; the
+ * total is read the same way.)
+ */
+export async function fetchPhotoCount(params: URLSearchParams, signal?: AbortSignal): Promise<number> {
+  const counting = new URLSearchParams(params);
+  counting.set("count", "1");
+  const { total } = await fetchJson<{ total: number }>(
+    `/api/photos/ids?${counting}`, "Could not count those photos", { signal }
+  );
+  return total;
+}
+
+// ---- Query keys ------------------------------------------------------------------
+
+/** What one photo grid lists: every photo, an album, a project, or a search. */
+export type PhotoListScope =
+  | { kind: "all" }
+  | { kind: "album"; album: PhotoAlbumRef }
+  | { kind: "job"; jobId: string }
+  | { kind: "search"; q: string };
+
+/** A search grid's pages live under their own prefix; every other grid's under "photos". */
+const gridPrefix = (scope: PhotoListScope) => (scope.kind === "search" ? "photo-search" : "photos");
+
+/** One grid's place in the cache: a new album, project, or search is a new screen. */
+export const scopeKey = (scope: PhotoListScope): string =>
+  scope.kind === "album"
+    ? `album:${scope.album.id}`
+    : scope.kind === "job"
+      ? `job:${scope.jobId}`
+      : scope.kind === "search"
+        ? `search:${scope.q}`
+        : "all";
+
+/** The scope as GET /api/photos parameters (the filters are added by withFilterParams). */
+export function scopeParams(scope: PhotoListScope): URLSearchParams {
+  const params = new URLSearchParams();
+  if (scope.kind === "album") params.set("album", scope.album.id);
+  if (scope.kind === "job") params.set("job", scope.jobId);
+  if (scope.kind === "search") params.set("q", scope.q);
+  return params;
+}
+
+/** Exactly what a grid lists, for GET /api/photos and /ids alike. */
+export function photoListParams(scope: PhotoListScope, filters: BrowseFilters, sort: PhotoSort): URLSearchParams {
+  return withFilterParams(scopeParams(scope), filters, sort);
+}
+
+/**
+ * Every photo query key, in one place, so a fetch, a prefetch, and an edit
+ * that updates the cache all name the same entry. `listKey` is a grid's list
+ * parameters as a string (photoListParams(...).toString()).
+ */
+export const photoKeys = {
+  /** Every grid and search page list, and their "Select all" answers. */
+  grids: ["photos"] as const,
+  searches: ["photo-search"] as const,
+  list: (scope: PhotoListScope, listKey: string) => [gridPrefix(scope), scopeKey(scope), listKey] as const,
+  /** Under the grid's own prefix, so an edit that refreshes the grid reaches them. */
+  ids: (scope: PhotoListScope, listKey: string) => [gridPrefix(scope), scopeKey(scope), listKey, "ids"] as const,
+  count: (scope: PhotoListScope, listKey: string) => [gridPrefix(scope), scopeKey(scope), listKey, "count"] as const,
+  detail: (photoId: string | null) => ["photo-detail", photoId] as const,
+  details: ["photo-detail"] as const,
+  /** Project cards. Each search prefix is its own entry. */
+  jobs: (q = "") => ["photo-jobs", q] as const,
+  allJobs: ["photo-jobs"] as const,
+  /** The first few project matches, for the search box. */
+  jobSuggestions: (q: string, limit: number) => ["photo-jobs", q, `first:${limit}`] as const,
+  job: (jobId: string) => ["photo-job", jobId] as const,
+  jobHeaders: ["photo-job"] as const,
+  albums: (q = "") => ["photo-albums", q] as const,
+  allAlbums: ["photo-albums"] as const,
+  albumSuggestions: (q: string, limit: number) => ["photo-albums", q, `first:${limit}`] as const,
+  album: (albumId: string) => ["photo-album", albumId] as const,
+  albumHeaders: ["photo-album"] as const,
+  /** One project's tags in use, or every tag (""). */
+  tags: (jobId?: string | null) => ["photo-tags", jobId || ""] as const,
+  allTags: ["photo-tags"] as const,
+  trash: ["photo-trash"] as const,
+  deletedAlbums: ["photo-albums-deleted"] as const,
+  deletedJobs: ["photo-jobs-deleted"] as const,
+};
+
+/** A key's last part names a "Select all" answer: ids or their count. */
+const isSelectAllKey = (queryKey: QueryKey) => {
+  const last = queryKey[queryKey.length - 1];
+  return last === "ids" || last === "count";
+};
+
+/**
+ * One grid's pages: its key and fetcher, shared by the grid itself and the
+ * prefetch a project card starts when the pointer reaches it. The grid adds
+ * its own `enabled` and `placeholderData`.
+ */
+export function photoListOptions(scope: PhotoListScope, filters: BrowseFilters, sort: PhotoSort) {
+  const listKey = photoListParams(scope, filters, sort).toString();
+  return infiniteQueryOptions({
+    queryKey: photoKeys.list(scope, listKey),
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams(listKey);
+      if (pageParam) params.set("cursor", pageParam);
+      return fetchPhotosPage(params, signal);
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage: PhotosPage) => lastPage.nextCursor,
+  });
+}
+
+/** Every id one grid (or one group of it: narrowed `params`) lists, for "Select all" and a group tick. */
+export function photoIdsOptions(scope: PhotoListScope, params: URLSearchParams) {
+  return queryOptions({
+    queryKey: photoKeys.ids(scope, params.toString()),
+    queryFn: ({ signal }) => fetchPhotoIds(params, signal),
+    staleTime: 30_000,
+  });
+}
+
+/** How many photos one grid lists: all the "Select all N" label needs until it is clicked. */
+export function photoCountOptions(scope: PhotoListScope, params: URLSearchParams) {
+  return queryOptions({
+    queryKey: photoKeys.count(scope, params.toString()),
+    queryFn: ({ signal }) => fetchPhotoCount(params, signal),
+    staleTime: 30_000,
+  });
+}
+
+// ---- Projects -------------------------------------------------------------------
 
 export async function fetchJobs(q = "", signal?: AbortSignal): Promise<PhotoJobSummary[]> {
   return collectPages(async (cursor) => {
@@ -75,11 +279,19 @@ export async function fetchJobs(q = "", signal?: AbortSignal): Promise<PhotoJobS
   });
 }
 
-export async function fetchTags(jobId?: string): Promise<string[]> {
+/** The first `limit` projects matching `q`, in one request (no paging on). */
+export async function fetchJobsPage(q: string, limit: number, signal?: AbortSignal): Promise<PhotoJobSummary[]> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  const data = await fetchJson<{ jobs: PhotoJobSummary[] }>(`/api/photo-jobs?${params}`, "Failed to load jobs", { signal });
+  return data.jobs;
+}
+
+export async function fetchTags(jobId?: string, signal?: AbortSignal): Promise<string[]> {
   const params = jobId ? `?job=${encodeURIComponent(jobId)}` : "";
   const data = await fetchJson<{ tags: string[] }>(
     `/api/photo-tags${params}`,
-    "Failed to load tags"
+    "Failed to load tags",
+    { signal }
   );
   return data.tags;
 }
@@ -87,7 +299,7 @@ export async function fetchTags(jobId?: string): Promise<string[]> {
 /** All jobs (unfiltered), for job pickers. Shares a cache entry across sheets. */
 export function usePhotoJobs(enabled: boolean, q = "") {
   return useQuery({
-    queryKey: ["photo-jobs", q],
+    queryKey: photoKeys.jobs(q),
     queryFn: ({ signal }) => fetchJobs(q, signal),
     enabled,
     staleTime: 60_000,
@@ -97,11 +309,72 @@ export function usePhotoJobs(enabled: boolean, q = "") {
   });
 }
 
+/**
+ * The search box's project matches: at most `limit` of them, in one small
+ * request per typed prefix, instead of every match page after page. Ask for
+ * one more than you show to know whether there are more.
+ */
+export function usePhotoJobSuggestions(enabled: boolean, q: string, limit: number) {
+  return useQuery({
+    queryKey: photoKeys.jobSuggestions(q, limit),
+    queryFn: ({ signal }) => fetchJobsPage(q, limit, signal),
+    enabled,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Any cached list's card for this project: the Projects list, the rail, a search. */
+function jobFromLists(queryClient: QueryClient, jobId: string): PhotoJobSummary | undefined {
+  const exact = queryClient.getQueryData<PhotoJobSummary[]>(photoKeys.jobs(""));
+  const hit = exact?.find((job) => job.id === jobId);
+  if (hit) return hit;
+  for (const [, jobs] of queryClient.getQueriesData<PhotoJobSummary[]>({ queryKey: photoKeys.allJobs })) {
+    const found = Array.isArray(jobs) ? jobs.find((job) => job.id === jobId) : undefined;
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * GET /api/photo-jobs/[id]: one active project as its card shows it. Null when
+ * it is deleted or unknown (404), or the id is not one (400).
+ */
+export async function fetchJob(jobId: string, signal?: AbortSignal): Promise<PhotoJobSummary | null> {
+  try {
+    return (await fetchJson<{ job: PhotoJobSummary }>(jobUrl(jobId), "Failed to load the project", { signal })).job;
+  } catch (error) {
+    if (error instanceof FetchJsonError && (error.status === 404 || error.status === 400)) return null;
+    // A deploy without the one-project read answers 405: find it in the full list, as before.
+    if (error instanceof FetchJsonError && error.status === 405) {
+      return (await fetchJobs("", signal)).find((job) => job.id === jobId) ?? null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * One project for its page header and the shell's label. Shown at once from
+ * any list already in cache (opened from Projects, the rail, or search), and
+ * otherwise read by itself, so the header never waits for every project.
+ * `data` is null once the server says the project is not there.
+ */
+export function usePhotoJob(jobId: string | null) {
+  const queryClient = useQueryClient();
+  return useQuery<PhotoJobSummary | null>({
+    queryKey: photoKeys.job(jobId ?? ""),
+    queryFn: ({ signal }) => fetchJob(jobId!, signal),
+    enabled: jobId !== null,
+    staleTime: 60_000,
+    placeholderData: () => (jobId === null ? undefined : jobFromLists(queryClient, jobId)),
+  });
+}
+
 /** Tags in use, for tag suggestions: one project's when `jobId` is given, else every tag. */
 export function usePhotoTags(enabled: boolean, jobId?: string | null) {
   return useQuery({
-    queryKey: ["photo-tags", jobId || ""],
-    queryFn: () => fetchTags(jobId || undefined),
+    queryKey: photoKeys.tags(jobId),
+    queryFn: ({ signal }) => fetchTags(jobId || undefined, signal),
     enabled,
   });
 }
@@ -122,7 +395,8 @@ export const PHOTO_ACTOR_KEY = ["photo-actor"] as const;
 export function usePhotoActor() {
   return useQuery({
     queryKey: PHOTO_ACTOR_KEY,
-    queryFn: () => fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions"),
+    queryFn: ({ signal }) =>
+      fetchJson<PhotoPermissions>("/api/photos/actor", "Failed to load your permissions", { signal }),
     staleTime: 30_000,
     refetchOnWindowFocus: "always",
   }).data;
@@ -144,7 +418,7 @@ export const PHOTO_SETTINGS_KEY = ["photo-settings"] as const;
 export function usePhotoSettings() {
   return useQuery({
     queryKey: PHOTO_SETTINGS_KEY,
-    queryFn: () => fetchJson<PhotoSettings>("/api/photos/settings", "Failed to load settings"),
+    queryFn: ({ signal }) => fetchJson<PhotoSettings>("/api/photos/settings", "Failed to load settings", { signal }),
     staleTime: 60_000,
   }).data;
 }
@@ -161,13 +435,204 @@ export function savePhotoSettings(patch: PhotoSettingsPatch): Promise<PhotoSetti
   });
 }
 
-/** After an upload, edit, or delete: every photo-derived query refetches. */
+// ---- Keeping the cache true after a change ------------------------------------------
+//
+// Refetching is what makes an edit slow: TanStack refetches every loaded page
+// of a grid one after another and shows none of them until the last lands, so
+// a person 20 pages deep waits for 20 requests to see one tag. So an edit
+// patches the cached rows itself (the change shows at once), then marks the
+// grids stale without refetching them: the next visit to a grid reconciles it
+// with the server. The broad refreshes are kept for what a patch cannot work
+// out in the browser: uploads, a new or renamed or deleted project or album,
+// restores, and any answer that says some photos were skipped or missing.
+
+/** Mark the "Select all" answers stale without asking again: the next click asks fresh. */
+function staleSelectAll(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ predicate: (query) => isSelectAllKey(query.queryKey), refetchType: "none" });
+}
+
+/** Refresh the given prefixes as on-screen queries need; "Select all" answers only go stale. */
+function refreshPrefixes(queryClient: QueryClient, prefixes: readonly string[]) {
+  const named = (query: Query) => prefixes.includes(query.queryKey[0] as string);
+  void queryClient.invalidateQueries({ predicate: (query) => named(query) && !isSelectAllKey(query.queryKey) });
+  staleSelectAll(queryClient);
+}
+
+const COLLECTION_PREFIXES = ["photo-jobs", "photo-job", "photo-albums", "photo-album"] as const;
+const GRID_PREFIXES = ["photos", "photo-search"] as const;
+
+/**
+ * Everything photo-derived refetches (what is on screen at once, the rest on
+ * its next visit). For a change a patch cannot describe: a project or album
+ * created, renamed, or deleted, a restore, a move, a partial bulk failure.
+ * Prefer the targeted helpers below for edits to photos.
+ */
 export function invalidatePhotoCaches(queryClient: QueryClient) {
-  for (const key of [
-    "photos", "photo-jobs", "photo-tags", "photo-search", "photo-trash",
-    "photo-albums", "photo-album", "photo-detail", "photo-albums-deleted", "photo-jobs-deleted",
-  ]) {
-    queryClient.invalidateQueries({ queryKey: [key] });
+  refreshPrefixes(queryClient, [
+    ...GRID_PREFIXES, ...COLLECTION_PREFIXES, "photo-tags", "photo-trash",
+    "photo-detail", "photo-albums-deleted", "photo-jobs-deleted",
+  ]);
+}
+
+/**
+ * After an upload finishes: the grids, project and album cards, and tags.
+ * Not Trash, the deleted lists, or open photos, which a new photo cannot change.
+ */
+export function invalidateAfterUpload(queryClient: QueryClient) {
+  refreshPrefixes(queryClient, [...GRID_PREFIXES, ...COLLECTION_PREFIXES, "photo-tags"]);
+}
+
+/** Every cached grid and search page list, each row passed through `edit` (null takes the row out). */
+function editCachedGrids(
+  queryClient: QueryClient,
+  edit: (photo: PhotoRow, queryKey: QueryKey) => PhotoRow | null
+) {
+  for (const prefix of GRID_PREFIXES) {
+    for (const [queryKey, data] of queryClient.getQueriesData({ queryKey: [prefix] })) {
+      if (!isCachedGrid(data)) continue;
+      const next = editGrid(data, (photo) => edit(photo, queryKey));
+      if (next !== data) queryClient.setQueryData(queryKey, next);
+    }
+  }
+}
+
+/** Grids and searches marked stale, refetched on their next visit, not now. */
+function staleGrids(queryClient: QueryClient) {
+  for (const prefix of GRID_PREFIXES) {
+    void queryClient.invalidateQueries({ queryKey: [prefix], refetchType: "none" });
+  }
+}
+
+/**
+ * Put rows the server sent back (PATCH /api/photos/[id] answers the whole
+ * row, for a rename or the viewer's Edit) into every cached grid, search, and
+ * open photo, at once and without a refetch. Fields a row does not carry (a
+ * favorite, a photo's albums) are kept.
+ */
+export function patchPhotoRows(queryClient: QueryClient, rows: readonly (Partial<PhotoRow> & { id: string })[]) {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  editCachedGrids(queryClient, (photo) => {
+    const row = byId.get(photo.id);
+    return row ? { ...photo, ...row } : photo;
+  });
+  for (const row of rows) {
+    queryClient.setQueryData<PhotoDetail>(photoKeys.detail(row.id), (photo) => photo && { ...photo, ...row });
+  }
+  // A new name can join or leave a search; the next visit to it asks again.
+  staleGrids(queryClient);
+  staleSelectAll(queryClient);
+  if (rows.some((row) => row.tags !== undefined)) refreshTagViews(queryClient);
+}
+
+/** After tags changed: grids filtered by a tag refetch where on screen, and the tag menus learn new tags. */
+function refreshTagViews(queryClient: QueryClient) {
+  for (const prefix of GRID_PREFIXES) {
+    void queryClient.invalidateQueries({
+      queryKey: [prefix],
+      predicate: (query) => listFiltersByTag(query.queryKey[2]) && !isSelectAllKey(query.queryKey),
+    });
+  }
+  void queryClient.invalidateQueries({ queryKey: photoKeys.allTags });
+}
+
+/**
+ * A bulk Tag or Untag, shown at once in every cached grid and open photo.
+ * Pass what was sent to POST /api/photos/tags. A grid filtered by a tag is
+ * refetched when on screen, since photos may have joined or left it. When the
+ * answer says some photos were skipped or missing, call invalidatePhotoCaches
+ * instead: the browser cannot tell which.
+ */
+export function patchPhotoTags(
+  queryClient: QueryClient,
+  photoIds: readonly string[],
+  change: { add?: readonly string[]; remove?: readonly string[] }
+) {
+  const ids = new Set(photoIds);
+  // The server stores a new tag in the library's spelling; the cached list of every tag knows most of them.
+  const spellings = queryClient.getQueryData<string[]>(photoKeys.tags()) ?? [];
+  const retag = <T extends PhotoRow>(photo: T): T => {
+    if (!ids.has(photo.id)) return photo;
+    const tags = applyTagChange(photo.tags, change, spellings);
+    return tags === null || tags === photo.tags ? photo : { ...photo, tags };
+  };
+  editCachedGrids(queryClient, retag);
+  for (const id of ids) {
+    queryClient.setQueryData<PhotoDetail>(photoKeys.detail(id), (photo) => photo && retag(photo));
+  }
+  staleGrids(queryClient);
+  staleSelectAll(queryClient);
+  refreshTagViews(queryClient);
+}
+
+/**
+ * Photos that left some grids: trashed (every grid), or taken out of one
+ * album (`fromAlbumId`: that album's grid only). They go from the cached
+ * pages at once; the project and album cards, whose counts and thumbnails
+ * changed, refresh where on screen. When the answer says some photos were
+ * skipped or missing, call invalidatePhotoCaches instead.
+ */
+export function removePhotosFromLists(
+  queryClient: QueryClient,
+  photoIds: readonly string[],
+  options: { fromAlbumId?: string } = {}
+) {
+  const ids = new Set(photoIds);
+  const albumScope = options.fromAlbumId === undefined ? null : `album:${options.fromAlbumId}`;
+  editCachedGrids(queryClient, (photo, queryKey) =>
+    ids.has(photo.id) && (albumScope === null || queryKey[1] === albumScope) ? null : photo
+  );
+  staleGrids(queryClient);
+  staleSelectAll(queryClient);
+  // An open photo's Details lists its albums; a trashed one is gone (404) on its next read.
+  for (const id of ids) void queryClient.invalidateQueries({ queryKey: photoKeys.detail(id) });
+  if (albumScope === null) {
+    refreshPrefixes(queryClient, [...COLLECTION_PREFIXES, "photo-trash"]);
+  } else {
+    void queryClient.invalidateQueries({ queryKey: photoKeys.album(options.fromAlbumId!) });
+    void queryClient.invalidateQueries({ queryKey: photoKeys.allAlbums });
+  }
+}
+
+/**
+ * One album changed and nothing else did: its order switched, or photos were
+ * added to it. Only that album's grid, header, and card refresh, plus the
+ * open Details of `photoIds` (which list their albums).
+ */
+export function invalidateAlbum(queryClient: QueryClient, albumId: string, photoIds: readonly string[] = []) {
+  void queryClient.invalidateQueries({
+    queryKey: ["photos", `album:${albumId}`],
+    predicate: (query) => !isSelectAllKey(query.queryKey),
+  });
+  staleSelectAll(queryClient);
+  void queryClient.invalidateQueries({ queryKey: photoKeys.album(albumId) });
+  void queryClient.invalidateQueries({ queryKey: photoKeys.allAlbums });
+  for (const id of photoIds) void queryClient.invalidateQueries({ queryKey: photoKeys.detail(id) });
+}
+
+// ---- Prefetching on intent -------------------------------------------------------
+
+/** A project or album card the pointer or a finger has just reached. */
+export type CollectionTarget = { kind: "job"; id: string } | { kind: "album"; id: string };
+
+/**
+ * Start loading what opening this card will show, a moment before the tap:
+ * a project's first grid page (a fresh project page has no filters and the
+ * newest first), or an album's header, plus its first page when the album
+ * card says which order the album shows. Already-fresh data is not asked for
+ * again. Call on hover, focus, or touch, never because a card is on screen.
+ */
+export function prefetchCollection(queryClient: QueryClient, target: CollectionTarget) {
+  if (target.kind === "job") {
+    void queryClient.prefetchInfiniteQuery(photoListOptions({ kind: "job", jobId: target.id }, NO_FILTERS, "desc"));
+    return;
+  }
+  void queryClient.prefetchQuery(photoAlbumOptions(target.id));
+  const header = albumFromLists(queryClient, target.id);
+  if (header) {
+    const scope: PhotoListScope = { kind: "album", album: { id: header.id, name: header.name } };
+    void queryClient.prefetchInfiniteQuery(
+      photoListOptions(scope, NO_FILTERS, header.sort_mode === "custom" ? "custom" : "desc")
+    );
   }
 }
 
@@ -221,9 +686,11 @@ export interface DeletedJob {
 }
 
 /** `truncated` when there were more deleted projects than the list returns. */
-export function fetchDeletedJobs(): Promise<{ jobs: DeletedJob[]; truncated: boolean }> {
+export function fetchDeletedJobs(
+  { signal }: { signal?: AbortSignal } = {}
+): Promise<{ jobs: DeletedJob[]; truncated: boolean }> {
   return fetchJson<{ jobs: DeletedJob[]; truncated: boolean }>(
-    "/api/photo-jobs?deleted=1", "Failed to load deleted projects", { cache: "no-store" }
+    "/api/photo-jobs?deleted=1", "Failed to load deleted projects", { cache: "no-store", signal }
   );
 }
 
@@ -240,11 +707,29 @@ export async function fetchAlbums(q = "", signal?: AbortSignal): Promise<PhotoAl
   });
 }
 
+/** The first `limit` albums matching `q`, in one request (no paging on). */
+export async function fetchAlbumsPage(q: string, limit: number, signal?: AbortSignal): Promise<PhotoAlbumSummary[]> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  const data = await fetchJson<{ albums: PhotoAlbumSummary[] }>(`/api/photo-albums?${params}`, "Failed to load albums", { signal });
+  return data.albums;
+}
+
 /** Album cards, by name A to Z. Shared by the list, rail, and pickers. */
 export function usePhotoAlbums(enabled: boolean, q = "") {
   return useQuery({
-    queryKey: ["photo-albums", q],
+    queryKey: photoKeys.albums(q),
     queryFn: ({ signal }) => fetchAlbums(q, signal),
+    enabled,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** The search box's album matches: at most `limit`, in one small request (see usePhotoJobSuggestions). */
+export function usePhotoAlbumSuggestions(enabled: boolean, q: string, limit: number) {
+  return useQuery({
+    queryKey: photoKeys.albumSuggestions(q, limit),
+    queryFn: ({ signal }) => fetchAlbumsPage(q, limit, signal),
     enabled,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
@@ -265,19 +750,66 @@ export interface PhotoAlbumHeader {
   has_custom_order: boolean;
 }
 
-export function usePhotoAlbum(albumId: string, enabled = true) {
-  return useQuery({
-    enabled,
-    queryKey: ["photo-album", albumId],
-    queryFn: async () =>
+/**
+ * An album card as its page's header, when the card carries the album's
+ * order (the album list sends `sort_mode` and `has_custom_order`). Without
+ * them there is no header to show early: the page's Sort default depends on
+ * the order, and guessing it would load the grid in the wrong one first.
+ */
+export function albumHeaderFromSummary(
+  album: PhotoAlbumSummary & Partial<Pick<PhotoAlbumHeader, "sort_mode" | "has_custom_order">>
+): PhotoAlbumHeader | undefined {
+  if ((album.sort_mode !== "date" && album.sort_mode !== "custom") || typeof album.has_custom_order !== "boolean") {
+    return undefined;
+  }
+  return {
+    id: album.id,
+    name: album.name,
+    photo_count: album.photo_count,
+    created_at: album.created_at,
+    created_by: album.created_by ?? "",
+    sort_mode: album.sort_mode,
+    has_custom_order: album.has_custom_order,
+  };
+}
+
+/** Any cached album list's card for this album, as a header (see albumHeaderFromSummary). */
+function albumFromLists(queryClient: QueryClient, albumId: string): PhotoAlbumHeader | undefined {
+  for (const [, albums] of queryClient.getQueriesData<PhotoAlbumSummary[]>({ queryKey: photoKeys.allAlbums })) {
+    const found = Array.isArray(albums) ? albums.find((album) => album.id === albumId) : undefined;
+    if (found) return albumHeaderFromSummary(found);
+  }
+  return undefined;
+}
+
+/** The album header read (GET /api/photo-albums/[id]), shared by the page and a card's prefetch. */
+export function photoAlbumOptions(albumId: string) {
+  return queryOptions({
+    queryKey: photoKeys.album(albumId),
+    queryFn: async ({ signal }) =>
       (
         await fetchJson<{ album: PhotoAlbumHeader }>(
           `/api/photo-albums/${encodeURIComponent(albumId)}`,
-          "Failed to load the album"
+          "Failed to load the album",
+          { signal }
         )
       ).album,
     // A deleted album is a 404; asking three more times only delays saying so.
     retry: false,
+  });
+}
+
+/**
+ * One album's header. Opened from the Albums list or the rail, it shows at
+ * once from that list's card, so the grid starts loading in the same moment
+ * instead of one round trip later; the album's own read then confirms it.
+ */
+export function usePhotoAlbum(albumId: string, enabled = true) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    ...photoAlbumOptions(albumId),
+    enabled,
+    placeholderData: () => albumFromLists(queryClient, albumId),
   });
 }
 
@@ -290,11 +822,12 @@ export interface DeletedAlbum {
   restore_before: string;
 }
 
-export async function fetchDeletedAlbums(): Promise<DeletedAlbum[]> {
+/** Takes the query's context, so it can be a queryFn as it is and still be cancelled. */
+export async function fetchDeletedAlbums({ signal }: { signal?: AbortSignal } = {}): Promise<DeletedAlbum[]> {
   const data = await fetchJson<{ albums: DeletedAlbum[] }>(
     "/api/photo-albums?deleted=1",
     "Failed to load deleted albums",
-    { cache: "no-store" }
+    { cache: "no-store", signal }
   );
   return data.albums;
 }
@@ -377,15 +910,12 @@ export function setFavorites(photoIds: string[], on: boolean) {
  */
 export function patchFavorites(queryClient: QueryClient, photoIds: readonly string[], me: string, on: boolean) {
   const ids = new Set(photoIds);
-  const patch = (photo: PhotoRow): PhotoRow =>
+  const patch = <T extends PhotoRow>(photo: T): T =>
     ids.has(photo.id) ? { ...photo, favorites: on ? [{ user_id: me }] : [] } : photo;
-  for (const prefix of ["photos", "photo-search"]) {
-    queryClient.setQueriesData<{ pages: PhotosPage[]; pageParams: unknown[] }>({ queryKey: [prefix] }, (data) =>
-      data && { ...data, pages: data.pages.map((page) => ({ ...page, photos: page.photos.map(patch) })) }
-    );
-  }
+  // Grid pages only: the same prefixes hold "Select all" answers, which have no rows.
+  editCachedGrids(queryClient, patch);
   for (const id of ids) {
-    queryClient.setQueryData<PhotoDetail>(["photo-detail", id], (photo) => photo && (patch(photo) as PhotoDetail));
+    queryClient.setQueryData<PhotoDetail>(photoKeys.detail(id), (photo) => photo && patch(photo));
   }
   void queryClient.invalidateQueries({
     predicate: (query) => typeof query.queryKey[2] === "string" && query.queryKey[2].includes("favorites=1"),
@@ -411,18 +941,19 @@ export function bulkTagPhotos(photoIds: string[], change: { add?: string[]; remo
 }
 
 /** One active photo with its albums. Throws when it is trashed or unknown (404). */
-export async function fetchPhotoDetail(photoId: string): Promise<PhotoDetail> {
+export async function fetchPhotoDetail(photoId: string, signal?: AbortSignal): Promise<PhotoDetail> {
   const data = await fetchJson<{ photo: PhotoDetail }>(
     `/api/photos/${encodeURIComponent(photoId)}`,
-    "Photo not found"
+    "Photo not found",
+    { signal }
   );
   return data.photo;
 }
 
 export function usePhotoDetail(photoId: string | null) {
   return useQuery({
-    queryKey: ["photo-detail", photoId],
-    queryFn: () => fetchPhotoDetail(photoId!),
+    queryKey: photoKeys.detail(photoId),
+    queryFn: ({ signal }) => fetchPhotoDetail(photoId!, signal),
     enabled: photoId !== null,
     retry: false,
   });

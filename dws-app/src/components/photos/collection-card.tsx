@@ -1,10 +1,12 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type PointerEvent, type ReactNode } from "react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { useDesktop } from "@/hooks/use-desktop";
 import { useLongPress } from "@/hooks/use-long-press";
 import { Tick } from "@/components/photos/photo-grid";
+import { prefetchCollection, type CollectionTarget } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { publicUrl } from "@/lib/photos/urls";
 import { cn } from "@/lib/utils";
@@ -18,6 +20,39 @@ export interface CardSelection {
   selecting: boolean;
   /** `range`: shift was held, so select from the last tick to this card. */
   onToggle(options: { range: boolean }): void;
+}
+
+/** A mouse resting this long on a card is heading for it; one sweeping past is not. */
+const HOVER_INTENT_MS = 80;
+
+/**
+ * Starts loading what a card opens as soon as someone shows they mean to open
+ * it: a mouse resting on it, keyboard focus, or a finger touching down (about
+ * 100 ms before the tap ends). Never just because the card is on screen.
+ */
+function usePrefetchOnIntent(target: CollectionTarget | undefined) {
+  const queryClient = useQueryClient();
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancel = () => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  useEffect(() => cancel, []);
+  if (!target) return {};
+  const now = () => {
+    cancel();
+    prefetchCollection(queryClient, target);
+  };
+  return {
+    onPointerEnter: (event: PointerEvent) => {
+      if (event.pointerType !== "mouse") return;
+      cancel();
+      timer.current = setTimeout(now, HOVER_INTENT_MS);
+    },
+    onPointerLeave: cancel,
+    onFocus: now,
+    onTouchStart: now,
+  };
 }
 
 /**
@@ -36,6 +71,7 @@ export default function CollectionCard({
   thumbPaths,
   emptyText,
   selection,
+  prefetch,
 }: {
   href: string;
   name: string;
@@ -46,8 +82,11 @@ export default function CollectionCard({
   thumbPaths: string[];
   emptyText: string;
   selection?: CardSelection;
+  /** What opening the card shows, loaded on hover, focus, or touch. */
+  prefetch?: CollectionTarget;
 }) {
   const isDesktop = useDesktop();
+  const intent = usePrefetchOnIntent(prefetch);
   const { handlers: pressHandlers, takeHold } = useLongPress(
     selection && !isDesktop ? () => selection.onToggle({ range: false }) : null
   );
@@ -132,6 +171,7 @@ export default function CollectionCard({
         <Link
           href={href}
           title={name}
+          {...intent}
           onClick={(event) => {
             // As on a photo tile, shift-click selects rather than opening.
             if (!selection || !event.shiftKey) return;
