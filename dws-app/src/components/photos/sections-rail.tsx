@@ -69,19 +69,26 @@ export default function SectionsRail() {
   // The list page's Sort chip (its `?sort=`) orders the rail too, so the two agree.
   const [jobSort] = useCollectionSort(parseJobSort, DEFAULT_JOB_SORT);
   const [albumSort] = useCollectionSort(parseAlbumSort, DEFAULT_ALBUM_SORT);
-  const jobs = useMemo(() => ({ ...jobsQuery, data: jobsQuery.data && sortJobs(jobsQuery.data, jobSort) }), [jobsQuery, jobSort]);
-  const albums = useMemo(() => ({ ...albumsQuery, data: albumsQuery.data && sortAlbums(albumsQuery.data, albumSort) }), [albumsQuery, albumSort]);
-  const list = section === "projects" ? jobs : section === "albums" ? albums : null;
+  // Keyed on the data itself, not the query result: that is a new object every
+  // render, so a memo on it never hit and the lists re-sorted on every render.
+  // Reading only the fields used here also keeps react-query from re-rendering
+  // the rail on fetch-status changes it does not draw.
+  const jobsData = jobsQuery.data;
+  const albumsData = albumsQuery.data;
+  const jobs = useMemo(() => jobsData && sortJobs(jobsData, jobSort), [jobsData, jobSort]);
+  const albums = useMemo(() => albumsData && sortAlbums(albumsData, albumSort), [albumsData, albumSort]);
+  const list = section === "projects" ? jobsQuery : section === "albums" ? albumsQuery : null;
   const [pages, setPages] = useState({ albums: 0, projects: 0 });
   const collection = section === "albums" ? "albums" : "projects";
-  const pageCount = Math.max(1, Math.ceil((list?.data?.length ?? 0) / RAIL_PAGE_SIZE));
+  const listLength = (section === "projects" ? jobs : section === "albums" ? albums : undefined)?.length ?? 0;
+  const pageCount = Math.max(1, Math.ceil(listLength / RAIL_PAGE_SIZE));
   const page = Math.min(pages[collection], pageCount - 1);
   const start = page * RAIL_PAGE_SIZE;
-  const visibleAlbums = albums.data?.slice(start, start + RAIL_PAGE_SIZE);
-  const visibleJobs = jobs.data?.slice(start, start + RAIL_PAGE_SIZE);
+  const visibleAlbums = albums?.slice(start, start + RAIL_PAGE_SIZE);
+  const visibleJobs = jobs?.slice(start, start + RAIL_PAGE_SIZE);
   // Keep the open collection visible even when a deep link lands beyond this page.
-  const pinnedAlbum = albums.data?.find(album => album.id === activeAlbumId && !visibleAlbums?.some(row => row.id === album.id));
-  const pinnedJob = jobs.data?.find(job => job.id === activeJobId && !visibleJobs?.some(row => row.id === job.id));
+  const pinnedAlbum = albums?.find(album => album.id === activeAlbumId && !visibleAlbums?.some(row => row.id === album.id));
+  const pinnedJob = jobs?.find(job => job.id === activeJobId && !visibleJobs?.some(row => row.id === job.id));
 
   // ArrowUp/ArrowDown move focus between rows without scrolling the rail;
   // rows are <Link>s so Enter-to-open is native.
@@ -173,10 +180,10 @@ export default function SectionsRail() {
           </div>
         )}
 
-        {section === "albums" && albums.data?.length === 0 && (
+        {section === "albums" && albums?.length === 0 && (
           <RailStatus>No albums yet.</RailStatus>
         )}
-        {section === "projects" && jobs.data?.length === 0 && (
+        {section === "projects" && jobs?.length === 0 && (
           <RailStatus>No projects yet.</RailStatus>
         )}
 

@@ -57,26 +57,35 @@ const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const recentFirst = (a: string | null, b: string | null) =>
   a === b ? 0 : a === null ? 1 : b === null ? -1 : compare(b, a);
 
+// Each sort works out every row's keys once, then sorts on them: building
+// them inside the comparator ran the regexes about n·log n times, 5-8 ms for
+// 3,000 projects on every sort.
+
 export function sortJobs(jobs: readonly PhotoJobSummary[], sort: JobSort): PhotoJobSummary[] {
-  const byId = (a: PhotoJobSummary, b: PhotoJobSummary) => compare(a.id, b.id);
-  const order: Record<JobSort, (a: PhotoJobSummary, b: PhotoJobSummary) => number> = {
-    number: (a, b) => compare(jobNumberKey(b.job_number), jobNumberKey(a.job_number)) || byId(a, b),
-    name: (a, b) => compare(nameKey(a.name), nameKey(b.name)) || byId(a, b),
+  const rows = jobs.map((job) => ({ job, number: jobNumberKey(job.job_number), name: nameKey(job.name) }));
+  type Row = (typeof rows)[number];
+  const byId = (a: Row, b: Row) => compare(a.job.id, b.job.id);
+  const byNumber = (a: Row, b: Row) => compare(b.number, a.number);
+  const order: Record<JobSort, (a: Row, b: Row) => number> = {
+    number: (a, b) => byNumber(a, b) || byId(a, b),
+    name: (a, b) => compare(a.name, b.name) || byId(a, b),
     recent: (a, b) =>
-      recentFirst(a.latest_activity, b.latest_activity) ||
-      compare(jobNumberKey(b.job_number), jobNumberKey(a.job_number)) || byId(a, b),
+      recentFirst(a.job.latest_activity, b.job.latest_activity) || byNumber(a, b) || byId(a, b),
   };
-  return [...jobs].sort(order[sort]);
+  return rows.sort(order[sort]).map((row) => row.job);
 }
 
 export function sortAlbums(albums: readonly PhotoAlbumSummary[], sort: AlbumSort): PhotoAlbumSummary[] {
-  const byId = (a: PhotoAlbumSummary, b: PhotoAlbumSummary) => compare(a.id, b.id);
-  const byName = (a: PhotoAlbumSummary, b: PhotoAlbumSummary) => compare(nameKey(a.name), nameKey(b.name)) || byId(a, b);
-  const order: Record<AlbumSort, (a: PhotoAlbumSummary, b: PhotoAlbumSummary) => number> = {
+  const rows = albums.map((album) => ({ album, name: nameKey(album.name) }));
+  type Row = (typeof rows)[number];
+  const byName = (a: Row, b: Row) => compare(a.name, b.name) || compare(a.album.id, b.album.id);
+  const order: Record<AlbumSort, (a: Row, b: Row) => number> = {
     name: byName,
     // An album nothing was added to yet counts from when it was made, as the server did.
-    recent: (a, b) => recentFirst(a.latest_activity ?? a.created_at, b.latest_activity ?? b.created_at) || byName(a, b),
-    count: (a, b) => b.photo_count - a.photo_count || byName(a, b),
+    recent: (a, b) =>
+      recentFirst(a.album.latest_activity ?? a.album.created_at, b.album.latest_activity ?? b.album.created_at) ||
+      byName(a, b),
+    count: (a, b) => b.album.photo_count - a.album.photo_count || byName(a, b),
   };
-  return [...albums].sort(order[sort]);
+  return rows.sort(order[sort]).map((row) => row.album);
 }
