@@ -79,6 +79,18 @@ describe("repair image transforms", () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
+  it("labels each transform render with the type the endpoint answered", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("webp", { headers: { "content-type": "image/webp" } })));
+    const { admin, upload } = fixture();
+    await expect(fillImageDerivatives(admin, row)).resolves.toEqual({ ok: true });
+    expect(upload).toHaveBeenCalledTimes(2);
+    for (const [, body, options] of upload.mock.calls as [string, Blob, object][]) {
+      expect(body).toBeInstanceOf(Blob);
+      expect(body.type).toBe("image/webp");
+      expect(options).toMatchObject({ contentType: "image/webp" });
+    }
+  });
+
   it.each([false, true])("waits for both concurrent uploads before settling (first upload fails: %s)", async (fails) => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("webp", { headers: { "content-type": "image/webp" } })));
     const { admin, upload, update } = fixture();
@@ -162,8 +174,11 @@ describe("sharp renders what the browser and the transform endpoint would not", 
     expect(made["derived/employee/photo_thumb.webp"]).toMatchObject({ format: "webp", width: 640, height: 427 });
     expect(made["derived/employee/photo_preview.webp"]).toMatchObject({ format: "webp", width: 2048, height: 1365 });
     expect(update).toHaveBeenCalledOnce();
-    // Write-once keys: a year of caching, labelled with the real format.
-    for (const [, , options] of upload.mock.calls) {
+    // Write-once keys: a year of caching, labelled with the real format. The
+    // label Storage keeps is the Blob's own type (storage-js sends a Blob as
+    // a multipart part and ignores contentType), so assert the body.
+    for (const [, body, options] of upload.mock.calls as [string, Blob, object][]) {
+      expect(body.type).toBe("image/webp");
       expect(options).toMatchObject({ contentType: "image/webp", cacheControl: "31536000", upsert: true });
     }
   });
