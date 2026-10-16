@@ -1,19 +1,26 @@
 'use client';
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import type { MigrationRequest } from '@/lib/photos/migration/client';
+import { usePhotoJobs } from '@/lib/photos/api';
+import { filterJobs } from '@/lib/photos/job-filter';
 import { chooserButton, field } from './styles';
 
 // Choose a project, or "No project", for one import row or for a whole folder of rows.
 // Closed, it is a single button, so a list of thousands of folders stays light; open, it
 // searches projects by number or name. A project is optional (plan Decision 1).
+//
+// Every chooser on the page, and the rest of Photos, share one cached list of projects
+// (audit CODE-2): the first one opened loads it, and the rest open at once and search it
+// as you type, with no request per keystroke. The office has a few dozen projects.
+
+/** Projects listed at once; typing narrows the list. */
+export const PROJECTS_SHOWN = 50;
 
 export type ProjectRef = { id: string; job_number: string; name: string };
 export const projectLabel = (project: ProjectRef) => `${project.job_number} · ${project.name}`;
 
 interface ProjectChoiceProps {
-  request: MigrationRequest;
   /** The current project; null is "No project". `undefined` means "several different ones". */
   value: ProjectRef | null | undefined;
   onChange(project: ProjectRef | null): void;
@@ -22,26 +29,19 @@ interface ProjectChoiceProps {
   disabled?: boolean;
 }
 
-export default function ProjectChoice({ request, value, onChange, ariaLabel, disabled }: ProjectChoiceProps) {
+export default function ProjectChoice({ value, onChange, ariaLabel, disabled }: ProjectChoiceProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [projects, setProjects] = useState<ProjectRef[]>([]);
-  const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const search = useRef<HTMLInputElement>(null);
   const opener = useRef<HTMLButtonElement>(null);
   const listId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    setState('loading');
-    const timer = setTimeout(() => {
-      request<{ jobs: ProjectRef[] }>(`jobs?limit=50&q=${encodeURIComponent(query.trim())}`, undefined, { signal: controller.signal })
-        .then(result => { setProjects(result.jobs); setState('ready'); })
-        .catch(() => { if (!controller.signal.aborted) setState('failed'); });
-    }, query ? 200 : 0);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [open, query, request]);
+  const jobs = usePhotoJobs(open);
+  const state = jobs.data ? 'ready' : jobs.isError ? 'failed' : 'loading';
+  // Best match first: a project number, then words of a name (the search box's rules).
+  const projects = useMemo(
+    () => filterJobs(jobs.data ?? [], query, PROJECTS_SHOWN).map(({ id, job_number, name }): ProjectRef => ({ id, job_number, name })),
+    [jobs.data, query]
+  );
   useEffect(() => { if (open) search.current?.focus(); }, [open]);
 
   const close = () => { setOpen(false); setQuery(''); opener.current?.focus(); };
@@ -77,7 +77,7 @@ export default function ProjectChoice({ request, value, onChange, ariaLabel, dis
           <p className="px-3 py-2 text-base text-[#c4c4c4]" role="status">
             {state === 'loading' ? 'Looking for projects…' : state === 'failed' ? 'Projects could not be loaded. Close this and try again.'
               : projects.length === 0 ? (query.trim() ? `No project matches “${query.trim()}”.` : 'There are no projects yet.')
-              : projects.length === 50 ? 'Showing the first 50. Type to narrow the list.' : ''}
+              : projects.length === PROJECTS_SHOWN ? `Showing the first ${PROJECTS_SHOWN}. Type to narrow the list.` : ''}
           </p>
         </div>
       )}

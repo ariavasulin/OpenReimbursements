@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { fetchTags, invalidatePhotoCaches } from '@/lib/photos/api';
+import { invalidatePhotoCaches, photoJobsOptions, usePhotoJobs, usePhotoTags } from '@/lib/photos/api';
 import SheetShell from '@/components/photos/sheet-shell';
 import NewJobForm from '@/components/photos/new-job-form';
 import FolderReview, { type FolderPatch } from '@/components/photos/migrate/folder-review';
@@ -37,6 +37,7 @@ type Mode = 'migrate_photos' | 'add_photos';
 /** How often a running import reloads its counts and file list. */
 const MIGRATION_REFRESH_MS = 2_500;
 type SettledFolder = Partial<Pick<MigrationFolder, 'job_id' | 'jobs' | 'tags' | 'album_name' | 'album_id' | 'albums'>>;
+const NO_TAGS: string[] = [];
 
 export default function MigratePage() {
   const queryClient = useQueryClient();
@@ -61,10 +62,8 @@ export default function MigratePage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [userId, setUserId] = useState('');
-  const [knownTags, setKnownTags] = useState<string[]>([]);
   const [canPickFolders, setCanPickFolders] = useState(true);
   const [creatingFor, setCreatingFor] = useState<string | null>(null); // a picked folder's id, or 'loose'
-  const [projects, setProjects] = useState<ProjectRef[]>([]);
   // The loose-photos form. It exists before any file is chosen, so hints can pre-fill it.
   const [looseJob, setLooseJob] = useState<ProjectRef | null>(null);
   const [looseAlbum, setLooseAlbum] = useState<AlbumValue>({ kind: 'none' });
@@ -103,11 +102,13 @@ export default function MigratePage() {
     return { view: nextView, sources: nextSources, folders: nextFolders };
   }, [request]);
 
+  /** The project a suggested number names, from the projects list every chooser on the page shares (audit CODE-2). */
   const findProject = useCallback(async (jobNumber: string | undefined): Promise<ProjectRef | null> => {
     if (!jobNumber) return null;
-    const { jobs } = await request<{ jobs: ProjectRef[] }>(`jobs?limit=100&q=${encodeURIComponent(jobNumber)}`);
-    return jobs.find(job => job.job_number === jobNumber) ?? null;
-  }, [request]);
+    const jobs = await queryClient.fetchQuery(photoJobsOptions());
+    const job = jobs.find(candidate => candidate.job_number === jobNumber);
+    return job ? { id: job.id, job_number: job.job_number, name: job.name } : null;
+  }, [queryClient]);
 
   useEffect(() => {
     if (initStarted.current) return;
@@ -117,7 +118,6 @@ export default function MigratePage() {
       const { data } = await supabase.auth.getUser();
       if (!data.user) { window.location.replace(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`); return; }
       setUserId(data.user.id);
-      void fetchTags().then(setKnownTags).catch(() => undefined);
       const params = new URLSearchParams(window.location.search);
       const script = params.get('script_name') ?? params.get('script') ?? params.get('mode');
       const chosenMode: Mode = script === 'add_photos' ? 'add_photos' : 'migrate_photos';
@@ -271,11 +271,6 @@ export default function MigratePage() {
     if (change.album) void saveFolders(looseSource, '', false, change.album.kind === 'existing' ? { album_id: change.album.id } : { album_name: change.album.kind === 'new' ? change.album.name : null });
   };
 
-  const openNewProject = async (target: string) => {
-    setCreatingFor(target);
-    const { jobs } = await request<{ jobs: ProjectRef[] }>('jobs?limit=100'); setProjects(jobs);
-  };
-
   const makeEngine = (id: string, savedFolders = folders, keepFormatTwins = keepFormats) => {
     const uploadRequest = createUploadRequest({ refreshAuth });
     // A refresh reads the batch's counts and a page of files. After every file
@@ -359,6 +354,11 @@ export default function MigratePage() {
   const status = view?.batch.status ?? 'draft';
   const owner = view?.can_mutate ?? true;
   const editable = owner && status === 'draft' && !preparing;
+  // From the cache Photos already shares: every tag for the tag fields while choices can still
+  // be made, and every project for "Make a new project" to warn about one that already exists.
+  // Off while an import runs, so its refreshes do not reload them every few seconds.
+  const knownTags = usePhotoTags(editable).data ?? NO_TAGS;
+  const allProjects = usePhotoJobs(creatingFor !== null).data;
   const terminal = status === 'completed' || status === 'cancelled';
   const totals = view?.counts ?? {};
   const byStatus = (totals.by_status ?? {}) as Record<string, number>;
@@ -390,8 +390,8 @@ export default function MigratePage() {
   );
 
   const newProject = (target: string, suggestedName: string, onDone: (project: ProjectRef) => void) => creatingFor === target
-    ? <div className="mt-3"><NewJobForm jobs={projects} initialName={suggestedName} onCancel={() => setCreatingFor(null)} onDone={project => { onDone(project); setCreatingFor(null); }} /></div>
-    : <button type="button" className={`${quietButton} mt-2`} onClick={() => void openNewProject(target).catch(report)}>
+    ? <div className="mt-3"><NewJobForm jobs={allProjects ?? []} initialName={suggestedName} onCancel={() => setCreatingFor(null)} onDone={project => { onDone(project); setCreatingFor(null); }} /></div>
+    : <button type="button" className={`${quietButton} mt-2`} onClick={() => setCreatingFor(target)}>
         {suggestedName ? `Make a new project “${suggestedName}”` : 'Make a new project'}</button>;
 
   const looseForm = (
@@ -406,7 +406,7 @@ export default function MigratePage() {
       </label>
       <p className={hint} data-testid="loose-rule">Pick a project, an album, or both.</p>
       <div><span className={labelClass}>Project <span className="font-normal text-[#c4c4c4]">(optional)</span></span>
-        <div className="mt-1"><ProjectChoice request={request} value={looseJob} disabled={!editable} ariaLabel="Project for these photos" onChange={job => editLoose({ job })} /></div>
+        <div className="mt-1"><ProjectChoice value={looseJob} disabled={!editable} ariaLabel="Project for these photos" onChange={job => editLoose({ job })} /></div>
         {editable && newProject('loose', looseJob ? '' : suggestionFor('')?.new_project_name ?? '', project => editLoose({ job: project }))}
       </div>
       <div><label className={labelClass} htmlFor="loose-album">Album <span className="font-normal text-[#c4c4c4]">(optional)</span></label>
@@ -452,7 +452,7 @@ export default function MigratePage() {
       {error && !looseOpen && <p role="alert" className="rounded-lg border border-red-900 bg-red-950/40 p-4 text-base text-red-200">{error}</p>}
       <p role="status" aria-live="polite" className={hint}>{busy ? message || 'Working…' : message}{saving > 0 && ' Saving…'}</p>
 
-      <FolderReview request={request} sources={sources} folders={folders} editable={editable} knownTags={knownTags} busy={busy || running}
+      <FolderReview sources={sources} folders={folders} editable={editable} knownTags={knownTags} busy={busy || running}
         isConnected={id => localSources.current.has(id) && readThisVisit.current.has(id)}
         onReconnect={owner && !running && status !== 'cancelled' && canPickFolders ? source => void act(() => chooseFolder(source)) : undefined}
         onPatch={patchFolders}
