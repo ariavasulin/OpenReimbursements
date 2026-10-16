@@ -10,5 +10,8 @@ export function mapAlbumSummary(row: PhotoAlbumSummaryRow): PhotoAlbumSummary {
     created_at: row.created_at,
     created_by: row.created_by ?? null,
     latest_activity: row.latest_added ?? null,
+    // An older database row has neither; date order is every album's default.
+    sort_mode: row.sort_mode === "custom" ? "custom" : "date",
+    has_custom_order: row.has_custom_order === true,
   };
 }

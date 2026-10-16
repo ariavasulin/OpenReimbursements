@@ -111,8 +111,11 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
     const prefix = `album-pages-${randomUUID()}%_`;
     const inserted = await f.sql.query(`insert into public.albums(name,created_by,created_at)
       select $1 || n::text,$2::uuid,'2040-01-01T00:00:00.000001Z'::timestamptz
-      from generate_series(1,1203) n returning id`, [prefix, f.employeeA.id]);
+      from generate_series(1,1203) n returning id,name`, [prefix, f.employeeA.id]);
     const ids = inserted.rows.map(row => row.id as string);
+    // The list is by name, and a number in a name compares as a number: ...1, ...2, ..., ...1203.
+    const byName = [...inserted.rows].sort((a, b) => Number(a.name.slice(prefix.length)) - Number(b.name.slice(prefix.length)))
+      .map(row => row.id as string);
     madeAlbums.push(...ids);
     const unrelated = await album(prefix.replace('%_', 'XX'));
     const originalFetch = globalThis.fetch;
@@ -128,7 +131,7 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
     });
     try {
       const rows = await fetchAlbums(prefix);
-      expect(rows.map(row => row.id)).toEqual([...ids].sort());
+      expect(rows.map(row => row.id)).toEqual(byName);
       expect(sizes).toEqual([200, 200, 200, 200, 200, 200, 3]);
       const first = await json(await call(listAlbums, `/api/photo-albums?q=${encodeURIComponent(prefix)}&limit=1`));
       expect(first.nextCursor).toBeTypeOf('string');
@@ -231,7 +234,8 @@ describe('album, bulk tag, optional project, and photo link routes (photo-albums
       const cards = await json(await call(listAlbums, `/api/photo-albums?q=${unique}`, { actor: f.employeeB }));
       expect(cards.albums).toHaveLength(2);
       expect(cards.albums.find((card: { id: string }) => card.id === id)).toEqual({ id, name: `Marketing ${unique}`, photo_count: 1,
-        thumb_paths: [`derived/${f.employeeA.id}/${inAlbum}_thumb.webp`], created_at: created.album.created_at, created_by: f.employeeA.id });
+        thumb_paths: [`derived/${f.employeeA.id}/${inAlbum}_thumb.webp`], created_at: created.album.created_at, created_by: f.employeeA.id,
+        latest_activity: expect.any(String), sort_mode: 'date', has_custom_order: false });
 
       // Employee B renames employee A's album; a photo admin deletes it.
       const renamed = await json(await call(patchAlbum, `/api/photo-albums/${id}`, { method: 'PATCH', body: { name: `Renamed ${unique}` }, id, actor: f.employeeB }));

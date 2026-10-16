@@ -12,8 +12,10 @@ const RESTORE_DAYS = 30;
 const MAX_DELETED_ALBUMS = 500;
 
 // GET /api/photo-albums?q= — album cards: name, active-photo count, up to 4
-//     newest thumbnails, and who made it. By name, A to Z (a number in a name
-//     compares as a number; names starting with a digit first). Mirrors GET /api/photo-jobs.
+//     newest thumbnails, who made it, and its order (sort_mode, has_custom_order,
+//     as GET /api/photo-albums/[id] reports them), all from one RPC call. By name,
+//     A to Z (a number in a name compares as a number; names starting with a
+//     digit first). Mirrors GET /api/photo-jobs.
 // GET /api/photo-albums?deleted=1 — albums deleted in the last 30 days, newest
 //     deletion first, for the Trash page. Employees cannot read deleted albums
 //     through their own session, so this one goes through the verified actor.
@@ -37,13 +39,10 @@ export async function GET(request: Request) {
       p_after_name: cursor?.name ?? null, p_after_id: cursor?.id ?? null,
     });
     if (error) throwPhotoDatabaseError(error);
+    // Each row carries who made the album (so the list offers Delete only where it
+    // will work) and its order (so its page can start loading photos at once).
     const page = data as CollectionPage<PhotoAlbumSummaryRow>;
-    // Who made each album, so the list offers Delete only where it will work.
-    const ids = page.rows.map(row => row.id);
-    const makers = ids.length ? await session.from('albums').select('id,created_by').in('id', ids) : { data: [], error: null };
-    if (makers.error) throwPhotoDatabaseError(makers.error);
-    const madeBy = new Map((makers.data ?? []).map(row => [row.id, row.created_by as string]));
-    return photoJson({ success: true, albums: page.rows.map(row => mapAlbumSummary({ ...row, created_by: madeBy.get(row.id) ?? null })),
+    return photoJson({ success: true, albums: page.rows.map(mapAlbumSummary),
       nextCursor: collectionNextCursor('albums', q, page.next_cursor) });
   });
 }
