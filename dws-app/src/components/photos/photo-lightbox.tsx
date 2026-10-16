@@ -285,12 +285,6 @@ interface PhotoLightboxProps {
   /** The viewer is a few photos from the end of `photos`: load more if there are more. */
   onNearEnd?(): void;
   onClose(): void;
-  /**
-   * No longer called: the viewer's edits, renames, and trash put their result
-   * into the cached lists themselves (audit CODE-1). Kept optional only until
-   * the grid stops passing it.
-   */
-  onChanged?(): void;
 }
 
 export default function PhotoLightbox({

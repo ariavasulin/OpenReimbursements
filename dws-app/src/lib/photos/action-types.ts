@@ -14,7 +14,8 @@ export interface ActionPhoto {
 }
 export interface PhotoActionBatch {
   id: string; created_by: string; origin: 'ui' | 'ordinary' | 'mcp'; action: PhotoAction;
-  selector: PhotoSelector; destination_job_id: string | null;
+  /** Only on the create request; answers leave it out, because it can hold thousands of ids. */
+  selector?: PhotoSelector; destination_job_id: string | null;
   destination_job: PhotoRow['job'];
   status: 'draft'|'approved'|'running'|'interrupted'|'completed'|'cancelled';
   approved_by: string|null; approved_at: string|null; created_at:string; updated_at:string;
@@ -33,6 +34,8 @@ export interface UnresolvedPhotoReference {
 }
 export interface PhotoActionBatchResponse {
   batch:PhotoActionBatch; items:PhotoActionItem[]; total:number; can_mutate:boolean;
+  /** Materialize answers only: how many photos the selection names, for the progress line. */
+  selection_size?:number|null;
   unresolved:UnresolvedPhotoReference[];
 }
 export interface TrashPhoto extends ActionPhoto {can_restore:boolean;canonical_photo:ActionPhoto|null;remedy:string|null}

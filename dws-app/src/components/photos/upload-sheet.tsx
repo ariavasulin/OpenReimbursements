@@ -9,7 +9,7 @@ import PhotoMetaFields, {
   type PhotoMeta,
 } from "@/components/photos/photo-meta-fields";
 import BatchPreview from "@/components/photos/batch-preview";
-import { useUploadActions } from "@/lib/photos/upload-manager";
+import { preloadUploadEngine, useUploadActions } from "@/lib/photos/upload-manager";
 import { useTagChoices } from "@/components/photos/tag-dropdown";
 import { addTagToMeta, appendResolvedTag, resolveTag } from "@/lib/photos/tags";
 import type { UploadTarget } from "@/hooks/use-capture-batch";
@@ -68,6 +68,11 @@ export default function UploadSheet({
   const previewsRef = useRef<(string | null)[]>([]);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
+  // The upload code loads on first use; fetching it as the sheet opens hides
+  // that round trip, so the first picked file starts sending at once.
+  useEffect(() => {
+    if (open) preloadUploadEngine();
+  }, [open]);
   // Reset per new batch.
   useEffect(() => {
     if (open) {

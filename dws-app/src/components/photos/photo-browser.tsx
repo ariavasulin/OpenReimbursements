@@ -17,7 +17,6 @@ import {
   usePhotoDeepLink,
 } from "@/hooks/use-photo-deep-link";
 import {
-  invalidatePhotoCaches,
   photoCountOptions,
   photoIdsOptions,
   photoListOptions,
@@ -466,7 +465,6 @@ export default function PhotoBrowser({
         <PhotoLightbox
           {...lightboxProps}
           onNearEnd={loadMore}
-          onChanged={() => invalidatePhotoCaches(queryClient)}
         />
       )}
     </>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { invalidatePhotoCaches, photoJobsOptions, usePhotoJobs, usePhotoTags } from '@/lib/photos/api';
+import { invalidateAfterUpload, photoJobsOptions, usePhotoJobs, usePhotoTags } from '@/lib/photos/api';
 import SheetShell from '@/components/photos/sheet-shell';
 import NewJobForm from '@/components/photos/new-job-form';
 import FolderReview, { type FolderPatch } from '@/components/photos/migrate/folder-review';
@@ -277,7 +277,7 @@ export default function MigratePage() {
     // that was a reload per file; now the finished files of the last couple of
     // seconds share one, and the run's end always gets its own.
     const refreshSoon = createTrailingThrottle(async () => {
-      invalidatePhotoCaches(queryClient);
+      invalidateAfterUpload(queryClient);
       await refresh(id, cursorRef.current, false);
     }, MIGRATION_REFRESH_MS);
     // Byte ticks re-render this whole page: a few a second per file is plenty.
@@ -292,7 +292,7 @@ export default function MigratePage() {
         });
         if (completedItemId) { refreshSoon.schedule(); return; }
         refreshSoon.cancel();
-        invalidatePhotoCaches(queryClient);
+        invalidateAfterUpload(queryClient);
         await refresh(id, cursorRef.current, true);
       },
       // The photo's tile gets its preview: let the photo pages fetch it.

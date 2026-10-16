@@ -162,7 +162,7 @@ export function useLightboxByPhotoId(openablePhotos: PhotoRow[]) {
     openPhotoId: isOpen ? openPhotoId : null,
     setOpenPhotoId,
     isOpen,
-    /** Spread into <PhotoLightbox>; the page adds its own `onChanged`. */
+    /** Spread into <PhotoLightbox>. */
     lightboxProps: {
       photos: openablePhotos,
       open: isOpen,
