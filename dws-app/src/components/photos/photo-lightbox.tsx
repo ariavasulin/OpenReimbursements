@@ -285,8 +285,12 @@ interface PhotoLightboxProps {
   /** The viewer is a few photos from the end of `photos`: load more if there are more. */
   onNearEnd?(): void;
   onClose(): void;
-  /** Fired after a successful edit or delete so grids refetch. */
-  onChanged(): void;
+  /**
+   * No longer called: the viewer's edits, renames, and trash put their result
+   * into the cached lists themselves (audit CODE-1). Kept optional only until
+   * the grid stops passing it.
+   */
+  onChanged?(): void;
 }
 
 export default function PhotoLightbox({
@@ -296,7 +300,6 @@ export default function PhotoLightbox({
   onIndexChange,
   onNearEnd,
   onClose,
-  onChanged,
 }: PhotoLightboxProps) {
   const isDesktop = useDesktop();
   const { setViewerOpen } = usePhotosShell();
@@ -684,7 +687,6 @@ export default function PhotoLightbox({
         photo={photo ?? null}
         open={editing}
         onOpenChange={setEditing}
-        onSaved={onChanged}
       />
       <SetProjectSheet
         photoIds={photo ? [photo.id] : []}
@@ -873,7 +875,7 @@ export default function PhotoLightbox({
                   onEdit={startEdit}
                   onSetProject={startSetProject}
                   onNavigate={onClose}
-                  onTrashed={() => { onClose(); onChanged?.(); }}
+                  onTrashed={onClose}
                 />
               </aside>
             )}
@@ -940,7 +942,7 @@ export default function PhotoLightbox({
             onEdit={startEdit}
             onSetProject={startSetProject}
             onNavigate={onClose}
-            onTrashed={() => { onClose(); onChanged?.(); }}
+            onTrashed={onClose}
           />
         )}
       </SheetShell>

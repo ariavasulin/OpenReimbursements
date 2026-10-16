@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import SheetShell from "@/components/photos/sheet-shell";
@@ -10,7 +11,7 @@ import PhotoMetaFields, {
 } from "@/components/photos/photo-meta-fields";
 import { useTagChoices } from "@/components/photos/tag-dropdown";
 import { appendResolvedTag } from "@/lib/photos/tags";
-import { fetchJson } from "@/lib/photos/api";
+import { fetchJson, patchPhotoRows } from "@/lib/photos/api";
 import type { PhotoRow } from "@/lib/photos/types";
 
 // "Edit tags": tags save here. Changing the project is its own action in the
@@ -20,8 +21,11 @@ interface EditPhotoSheetProps {
   photo: PhotoRow | null;
   open: boolean;
   onOpenChange(open: boolean): void;
-  /** Fired after a successful save, before the sheet closes. */
-  onSaved(): void;
+  /**
+   * Fired after a successful save, before the sheet closes. The sheet has
+   * already put the saved row into every cached list, so this need not refresh.
+   */
+  onSaved?(): void;
 }
 
 export default function EditPhotoSheet({
@@ -32,6 +36,7 @@ export default function EditPhotoSheet({
 }: EditPhotoSheetProps) {
   const [meta, setMeta] = useState<PhotoMeta>(EMPTY_META);
   const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
   const choices = useTagChoices(open, photo?.job_id);
 
   // Seed from the photo each time the sheet opens on one.
@@ -52,15 +57,19 @@ export default function EditPhotoSheet({
     }
     setBusy(true);
     try {
-      await fetchJson(`/api/photos/${photo.id}`, "Saving failed", {
+      const answer = await fetchJson<{ photo: PhotoRow }>(`/api/photos/${photo.id}`, "Saving failed", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tags: appendResolvedTag(meta.tags, meta.tagInput, choices.spellings),
         }),
       });
+      // PATCH answers the whole saved row: every cached grid and the open photo
+      // show the new tags at once, and tag-filtered grids and tag menus refresh
+      // (CODE-1), instead of refetching every loaded page of every grid.
+      patchPhotoRows(queryClient, [answer.photo]);
       toast.success("Photo updated");
-      onSaved();
+      onSaved?.();
       onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Saving failed");
