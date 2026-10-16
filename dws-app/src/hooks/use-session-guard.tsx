@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { clearPersistedQueries } from "@/lib/query-persist-browser";
 
 /**
  * Session-only guard (no role gate): redirects to /login?next=<path and query>
@@ -60,8 +61,11 @@ export function useSessionGuard(_path?: string): boolean {
 /**
  * The auth cookie is apex-scoped (e.g. .dws-receipts.com), so this signs out of
  * Receipts too — intended: one account. The session guard handles the redirect.
+ * The photo lists saved on this device go first: the redirect is a full page
+ * load, which could cut off a delete started after it.
  */
 export async function signOut(): Promise<void> {
+  await clearPersistedQueries();
   await supabase.auth.signOut();
 }
 
