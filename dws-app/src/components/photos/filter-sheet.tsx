@@ -4,7 +4,13 @@ import { useId, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import DateRangeFields, { fieldClass } from "@/components/photos/date-range-fields";
-import { chipClass, FILE_TYPE_OPTIONS, type FilterChoices, FavoritesChip } from "@/components/photos/filter-bar";
+import {
+  chipClass,
+  FavoritesChip,
+  FILE_TYPE_OPTIONS,
+  useProjectFilterOptions,
+  type FilterChoices,
+} from "@/components/photos/filter-bar";
 import SheetShell from "@/components/photos/sheet-shell";
 import { activeFilterCount, type BrowseFilters } from "@/lib/photos/browse-state";
 import type { FilterOption } from "@/lib/photos/filter-options";
@@ -33,37 +39,51 @@ function OptionSelect({
   label,
   anyLabel,
   value,
+  valueLabel,
   options,
+  loading = null,
   onChange,
 }: {
   label: string;
   anyLabel: string;
   value: string | null;
+  /** How the chosen value reads when `options` does not hold it (yet). */
+  valueLabel?: string | null;
   options: FilterOption[];
+  /** The options are on their way: what to say under the field meanwhile. */
+  loading?: string | null;
   onChange(value: string | null): void;
 }) {
   const known = value === null || options.some((option) => option.value === value);
   return (
-    <div className="relative">
-      <select
-        aria-label={label}
-        value={value ?? ""}
-        onChange={(event) => onChange(event.target.value || null)}
-        className={cn(fieldClass, "truncate pr-10")}
-      >
-        <option value="">{anyLabel}</option>
-        {!known && value !== null && <option value={value}>{label}</option>}
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        className="pointer-events-none absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#b4b4b4]"
-        aria-hidden="true"
-      />
-    </div>
+    <>
+      <div className="relative">
+        <select
+          aria-label={label}
+          aria-busy={loading ? true : undefined}
+          value={value ?? ""}
+          onChange={(event) => onChange(event.target.value || null)}
+          className={cn(fieldClass, "truncate pr-10")}
+        >
+          <option value="">{anyLabel}</option>
+          {!known && value !== null && <option value={value}>{valueLabel ?? label}</option>}
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+        <ChevronDown
+          className="pointer-events-none absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[#b4b4b4]"
+          aria-hidden="true"
+        />
+      </div>
+      {loading && (
+        <p role="status" className="mt-1.5 text-sm text-[#b4b4b4]">
+          {loading}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -89,6 +109,9 @@ export default function FilterSheet({
 }) {
   const id = useId();
   const count = activeFilterCount(filters);
+  // Where the project list loads on demand, it loads while this pop-up is open.
+  const lazyOptions = useProjectFilterOptions(open && Boolean(choices.lazyProjects));
+  const projectOptions = choices.lazyProjects ? lazyOptions ?? [] : choices.projects;
   // Tags from the URL that no loaded photo shows yet still get their chip.
   const tagOptions = [
     ...filters.tags
@@ -125,13 +148,15 @@ export default function FilterSheet({
         </div>
       }
     >
-      {choices.projects && (
+      {projectOptions && (
         <Section title="Project" id={`${id}-project`}>
           <OptionSelect
             label="Project"
             anyLabel="Any project"
             value={filters.project}
-            options={choices.projects}
+            valueLabel={choices.projectLabel}
+            options={projectOptions}
+            loading={choices.lazyProjects && lazyOptions === undefined ? "Loading projects..." : null}
             onChange={(project) => onChange({ project })}
           />
         </Section>
