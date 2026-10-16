@@ -50,6 +50,18 @@ export default function SharedGallery({ token, first }: { token: string; first: 
   useEffect(() => { if (open !== null && open >= photos.length - 3) void loadMore(); }, [open, photos.length, loadMore]);
 
   const current = open === null ? null : photos[open];
+  // The preview of the photo on screen has arrived: its thumbnail behind it can go.
+  const [shownId, setShownId] = useState<string | null>(null);
+  // Fetch the previews either side ahead, so Next and Previous land on a photo, not black.
+  useEffect(() => {
+    if (open === null) return;
+    for (const near of [photos[open - 1], photos[open + 1]]) {
+      if (!near?.preview_url || near.kind === 'video') continue;
+      const image = new Image();
+      image.referrerPolicy = 'no-referrer';
+      image.src = near.preview_url;
+    }
+  }, [open, photos]);
   // Hidden controls fade and leave the pointer's and Tab's reach (visibility), like the app's viewer.
   const chrome = `transition-[opacity,visibility] duration-200 ${chromeHidden ? 'invisible opacity-0' : ''}`;
   return (
@@ -88,13 +100,15 @@ export default function SharedGallery({ token, first }: { token: string; first: 
         <div role="dialog" aria-modal="true" aria-label={`${current.kind === 'video' ? 'Video' : 'Photo'} ${open + 1} of ${first.count}`} className="fixed inset-0 z-50 bg-black">
           {/* Edge to edge: the photo takes the whole screen, and the bar and arrows sit over it.
               A tap anywhere but a control or a playing video toggles them. */}
-          <div className="absolute inset-0 flex items-center justify-center" data-testid="shared-stage"
+          {/* While the preview downloads, the grid's thumbnail (already loaded) stands in for it, contain-fit like the preview. */}
+          <div className="absolute inset-0 flex items-center justify-center bg-contain bg-center bg-no-repeat" data-testid="shared-stage"
+            style={current.kind !== 'video' && current.thumb_url && current.preview_url && shownId !== current.id ? { backgroundImage: `url("${current.thumb_url}")` } : undefined}
             onClick={event => { if (!(event.target instanceof Element) || !event.target.closest('button, a, video')) setChromeHidden(hidden => !hidden); }}>
             {current.kind === 'video' && current.video_url
               ? <video key={current.id} src={current.video_url} poster={current.preview_url ?? undefined} controls playsInline className="max-h-full max-w-full" />
               : current.preview_url
                 // eslint-disable-next-line @next/next/no-img-element -- see above
-                ? <img key={current.id} src={current.preview_url} alt="" referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain" />
+                ? <img key={current.id} src={current.preview_url} alt="" referrerPolicy="no-referrer" onLoad={() => setShownId(current.id)} className="max-h-full max-w-full object-contain" />
                 : <p className="px-4 text-base text-[#c4c4c4]">No preview for this one. You can still download it.</p>}
             <button type="button" aria-label="Previous" disabled={open === 0} onClick={() => step(-1)} className={`${iconButton} ${chrome} absolute left-2 top-1/2 -translate-y-1/2`}><ChevronLeft className="h-6 w-6" aria-hidden /></button>
             <button type="button" aria-label="Next" disabled={open >= photos.length - 1} onClick={() => step(1)} className={`${iconButton} ${chrome} absolute right-2 top-1/2 -translate-y-1/2`}><ChevronRight className="h-6 w-6" aria-hidden /></button>
