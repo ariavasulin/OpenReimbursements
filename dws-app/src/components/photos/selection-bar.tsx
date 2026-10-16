@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   BookImage,
   BookMinus,
@@ -58,7 +58,7 @@ import {
   type SelectionActionKey,
 } from "@/lib/photos/selection-actions";
 import { trashActionLabel, trashableIds } from "@/lib/photos/permissions";
-import { runPhotoAction } from "@/lib/photos/trash-now";
+import { runPhotoAction, type PhotoActionResult } from "@/lib/photos/trash-now";
 import type { PhotoAlbumRef, PhotoRow } from "@/lib/photos/types";
 import type { ZipRow } from "@/lib/photos/zip-download";
 
@@ -126,6 +126,21 @@ const plainTone = "text-white hover:bg-white/10 active:bg-white/15";
 const trashTone = "text-red-200 hover:bg-red-500/15 active:bg-red-500/20";
 const menuItem =
   "flex min-h-11 cursor-pointer items-center gap-3 px-3 text-base text-white focus:bg-[#3e3e3e] focus:text-white";
+
+/**
+ * The cached grids after a bulk Trash. The photos the server moved leave at
+ * once. When it moved fewer than were sent, some of the rest may be gone
+ * already (trashed or deleted by someone else) and would stay on screen as
+ * tiles that no longer exist, so every grid also asks the server again.
+ */
+export function afterTrash(
+  queryClient: QueryClient,
+  sent: number,
+  result: PhotoActionResult
+): void {
+  removePhotosFromLists(queryClient, result.photoIds);
+  if (result.photoIds.length < sent) invalidatePhotoCaches(queryClient);
+}
 
 /**
  * Trash and its Undo while they run: "Moving 3 photos to Trash…", and past one
@@ -261,9 +276,7 @@ function SelectionBar({
         if (sent < total) toast.loading(runProgress("Moving", "to Trash", sent, total), { id: toastId });
       });
       onClear();
-      // Only the photos the server moved leave the cached grids; the ones it
-      // left out are untouched. No grid re-downloads its pages.
-      removePhotosFromLists(queryClient, result.photoIds);
+      afterTrash(queryClient, trashable.length, result);
       const moved = result.photoIds.length;
       const notes = [
         result.leftOut > 0 && `${plural(result.leftOut, "photo")} left out: not yours to delete.`,
