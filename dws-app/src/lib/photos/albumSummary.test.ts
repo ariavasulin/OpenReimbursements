@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mapAlbumSummary } from "./albumSummary";
+import { albumHeaderFromSummary } from "./api";
+import type { PhotoAlbumSummaryRow } from "./types";
 
 describe("mapAlbumSummary", () => {
   const row = {
@@ -19,5 +21,14 @@ describe("mapAlbumSummary", () => {
     expect(mapAlbumSummary({ ...row, sort_mode: "custom", has_custom_order: true }))
       .toMatchObject({ sort_mode: "custom", has_custom_order: true });
     expect(mapAlbumSummary({ ...row, has_custom_order: true })).toMatchObject({ sort_mode: "date", has_custom_order: true });
+  });
+  it("leaves the order out when an older database row lacks it, so the page does not guess it", () => {
+    const older: PhotoAlbumSummaryRow = { ...row };
+    delete older.sort_mode;
+    delete older.has_custom_order;
+    const card = mapAlbumSummary(older);
+    expect(card).not.toHaveProperty("sort_mode");
+    expect(card).not.toHaveProperty("has_custom_order");
+    expect(albumHeaderFromSummary(card)).toBeUndefined();
   });
 });

@@ -10,8 +10,10 @@ export function mapAlbumSummary(row: PhotoAlbumSummaryRow): PhotoAlbumSummary {
     created_at: row.created_at,
     created_by: row.created_by ?? null,
     latest_activity: row.latest_added ?? null,
-    // An older database row has neither; date order is every album's default.
-    sort_mode: row.sort_mode === "custom" ? "custom" : "date",
-    has_custom_order: row.has_custom_order === true,
+    // Passed on only when the database sent them. Guessing "date" for an
+    // older row would start an arranged album's grid in the wrong order; left
+    // out, the album page waits for its own header instead.
+    ...(row.sort_mode === "date" || row.sort_mode === "custom" ? { sort_mode: row.sort_mode } : {}),
+    ...(typeof row.has_custom_order === "boolean" ? { has_custom_order: row.has_custom_order } : {}),
   };
 }
