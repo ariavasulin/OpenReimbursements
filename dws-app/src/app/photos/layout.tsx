@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { preconnect } from "react-dom";
+import { QueryProvider } from "@/components/providers/query-provider";
 import PhotosShell from "@/components/photos/photos-shell";
 import { PageSkeleton } from "@/components/photos/shell-skeleton";
 import UploadShell from "@/components/photos/upload-shell";
@@ -37,11 +38,15 @@ export default function PhotosLayout({
   // would open a connection they cannot use.
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (supabaseUrl) preconnect(supabaseUrl);
+  // The query cache is mounted here, not in the root layout, so the public
+  // share page does not ship it.
   return (
-    <UploadShell tray={false}>
-      <PhotosShell>
-        <Suspense fallback={<PageSkeleton />}>{children}</Suspense>
-      </PhotosShell>
-    </UploadShell>
+    <QueryProvider>
+      <UploadShell tray={false}>
+        <PhotosShell>
+          <Suspense fallback={<PageSkeleton />}>{children}</Suspense>
+        </PhotosShell>
+      </UploadShell>
+    </QueryProvider>
   );
 }

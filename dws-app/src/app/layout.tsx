@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import "@/lib/local-storage-polyfill";
 import "./globals.css";
-import { QueryProvider } from "@/components/providers/query-provider";
 import { Toaster as SonnerToaster } from "sonner";
 import { TOAST_REGION_ID } from "@/lib/toast-region";
 
@@ -40,7 +39,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} antialiased overflow-hidden`}
       >
-        <QueryProvider>{children}</QueryProvider>
+        {/*
+          No QueryProvider here: each signed-in area's layout mounts it, so the
+          public share page does not ship it. The toaster stays: the photo
+          viewer exempts it from inert by being a direct <body> child.
+        */}
+        {children}
         {/*
           One app-wide mount; every surface calls toast(). The wrapper carries
           the id because sonner's own [data-sonner-toaster] sits on an inner
