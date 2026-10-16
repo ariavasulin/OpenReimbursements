@@ -188,6 +188,9 @@ const Tile = memo(function Tile({
             src={publicUrl(photo.thumb_path)}
             alt={photoName(photo) ?? ""}
             loading="lazy"
+            // Decode off the main thread, so a fast scroll does not stall on
+            // dozens of thumbnails decoding at once.
+            decoding="async"
             draggable={false}
             className={cn(
               "h-full w-full object-cover transition-transform",

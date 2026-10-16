@@ -10,7 +10,9 @@ import type { SharedPage, SharedPhoto } from '@/lib/photos/server/sharing';
 // only what /api/share/<token> returns. Same dark palette and compact square grid as the app.
 
 const plural = (count: number, one: string) => `${count.toLocaleString()} ${count === 1 ? one : `${one}s`}`;
-const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+// Built once: toLocaleDateString builds a new formatter on every call, once per photo here.
+const DAY = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+const day = (iso: string) => DAY.format(new Date(iso));
 const iconButton = 'inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2680FC] disabled:opacity-30';
 
 export default function SharedGallery({ token, first }: { token: string; first: SharedPage }) {

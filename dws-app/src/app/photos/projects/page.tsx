@@ -80,6 +80,7 @@ export default function ProjectsPage() {
             thumbPaths={job.thumb_paths}
             emptyText={job.location ? `${job.location} · No photos yet` : "No photos yet"}
             selection={select.card(job.id)}
+            prefetch={{ kind: "job", id: job.id }}
           />
         ))}
       </div>

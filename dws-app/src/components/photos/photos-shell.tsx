@@ -27,7 +27,7 @@ import {
   useSetPhotosQuery,
   type PhotosShellValue,
 } from "@/components/photos/photos-shell-context";
-import { usePhotoAlbum, usePhotoJobs } from "@/lib/photos/api";
+import { usePhotoAlbum, usePhotoJob } from "@/lib/photos/api";
 import { jobLabel } from "@/lib/photos/format";
 
 // The pop-ups behind "+" load as their own chunks, not with the first page:
@@ -110,13 +110,13 @@ function PhotosShellFrame({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [ready]);
 
-  // For the drop overlay's label and the upload pop-up's pre-fill. Both are
-  // deduped by react-query with the open page's identical query. The list
-  // holds active projects only, so a deleted project's page is never an
-  // upload target.
-  const { data: jobsForLabel } = usePhotoJobs(ready && activeJobId !== null);
-  const activeJob = jobsForLabel?.find((job) => job.id === activeJobId);
-  const deadJob = activeJobId !== null && jobsForLabel !== undefined && !activeJob;
+  // For the drop overlay's label and the upload pop-up's pre-fill. Both share
+  // the project page's own one-project query, so opening a project never
+  // waits on (or downloads) every project. Only active projects are found:
+  // `null` means deleted or unknown, so that page is never an upload target.
+  const { data: activeJobData } = usePhotoJob(ready ? activeJobId : null);
+  const activeJob = activeJobData ?? undefined;
+  const deadJob = activeJobId !== null && activeJobData === null;
   const { data: activeAlbum } = usePhotoAlbum(
     activeAlbumId ?? "",
     ready && activeAlbumId !== null
