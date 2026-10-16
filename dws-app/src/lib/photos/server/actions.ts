@@ -44,8 +44,18 @@ export function validateSelector(value: unknown): PhotoSelector {
  * it read it themselves: materializeAction whole, the rest one reference at a time.
  */
 export type StoredActionBatch = Omit<PhotoActionBatch, 'selector'>;
-/** What the batch routes answer: the batch without its selector (see StoredActionBatch). */
-export type ActionBatchAnswer = Omit<PhotoActionBatchResponse, 'batch'> & { batch: StoredActionBatch };
+/**
+ * Compatibility stub for one release; delete it (and `selector` below) next round.
+ * A confirm page whose script loaded before this deploy reads
+ * `'photos' in next.batch.selector` on every materialize answer, and `in` throws
+ * on undefined. Vercel Hobby has no skew protection, so an open Set project or
+ * Trash page would fail with a script error. An empty object makes that old code
+ * read "0 wanted" and show "Getting the photo ready…" instead; the current page
+ * uses `selection_size` and never reads this.
+ */
+const LEGACY_SELECTOR_STUB: Record<string, never> = Object.freeze({});
+/** What the batch routes answer: the batch without its selector (see StoredActionBatch), plus the stub above. */
+export type ActionBatchAnswer = Omit<PhotoActionBatchResponse, 'batch'> & { batch: StoredActionBatch & { selector: Record<string, never> } };
 /**
  * POST .../materialize also says how many references the selection names (null
  * for a whole project), so the confirm page can show "N of M" without the selector.
@@ -130,7 +140,7 @@ export async function readActionBatch(actor:PhotoActor,id:string,origin:string,o
     // One match this person may not trash (an assistant's list can name anyone's photo): ask to leave it out.
     else if(batch.action==='trash'&&!mayTrash(actor,result.candidates[0])) unresolved.push({reference_index:index,reference:ref,reason:'forbidden',...result});
   }
-  return {batch,items:(selected.data??[]).map(row=>({...row,photo:byId.get(row.photo_id)??null})) as PhotoActionBatchResponse['items'],total:selected.count??0,can_mutate,unresolved};
+  return {batch:{...batch,selector:LEGACY_SELECTOR_STUB},items:(selected.data??[]).map(row=>({...row,photo:byId.get(row.photo_id)??null})) as PhotoActionBatchResponse['items'],total:selected.count??0,can_mutate,unresolved};
 }
 export async function materializeAction(actor:PhotoActor,id:string,origin:string,body:Record<string,unknown>):Promise<MaterializeAnswer> {
   onlyKeys(body,['choices']);

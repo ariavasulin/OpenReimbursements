@@ -120,10 +120,11 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   const d=await draft('move',{photos:[{job_number:j.number,original_filename:'file.jpg'}]},j.id);
   const unresolved=await json(await call(materialize,d.batch.id,{}));expect(unresolved.unresolved[0].total).toBe(2);expect(unresolved.total).toBe(0);
   // No response repeats the selection (VIEW-1): materialize says its size, and a page read or the
-  // candidates route reads the one reference it needs.
-  expect(unresolved.batch).not.toHaveProperty('selector');expect(unresolved.selection_size).toBe(1);
+  // candidates route reads the one reference it needs. `selector:{}` is a one-release stub so a
+  // confirm page loaded before the deploy does not throw (actions.ts LEGACY_SELECTOR_STUB).
+  expect(unresolved.batch.selector).toEqual({});expect(unresolved.selection_size).toBe(1);
   const page=await json(await call(read,d.batch.id,undefined,f.employeeA,'GET'));
-  expect(page.batch).not.toHaveProperty('selector');expect(page.unresolved[0]).toMatchObject({reference_index:0,reason:'ambiguous',total:2});
+  expect(page.batch.selector).toEqual({});expect(page.unresolved[0]).toMatchObject({reference_index:0,reason:'ambiguous',total:2});
   expect((await json(await call(candidates,d.batch.id,undefined,f.employeeA,'GET','?reference_index=0'))).total).toBe(2);
   await json(await call(candidates,d.batch.id,undefined,f.employeeA,'GET','?reference_index=1'),400);
   await json(await call(candidates,d.batch.id,undefined,f.employeeA,'GET','?reference_index=x'),400);

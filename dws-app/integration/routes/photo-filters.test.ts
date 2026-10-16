@@ -330,7 +330,8 @@ describe('photo filters, search words, and select-all ids (W2-A: AC-10, AC-11, A
         const created = await json(await call(createBatch, '/api/photo-actions/batches', { body: { action: 'trash', selector: { photos: refs(count) } } }));
         madeBatches.push(created.batch.id);
         // Stored whole, but not sent back: a response never repeats the selection (VIEW-1).
-        expect(created.batch).not.toHaveProperty('selector');
+        // Only the one-release compatibility stub, never the 5,000 references.
+        expect(created.batch.selector).toEqual({});
         const stored = await f.sql.query("select jsonb_array_length(selector->'photos') as n from public.photo_action_batches where id=$1", [created.batch.id]);
         expect(stored.rows[0].n).toBe(count);
       }
