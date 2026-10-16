@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import AlbumField from "@/components/photos/album-field";
 import SheetShell from "@/components/photos/sheet-shell";
-import { addPhotosToAlbum, invalidatePhotoCaches, removePhotosFromAlbum } from "@/lib/photos/api";
+import { addPhotosToAlbum, invalidateAlbum, invalidatePhotoCaches, removePhotosFromAlbum } from "@/lib/photos/api";
 import { inChunks, PartialBulkError, sumCounts } from "@/lib/photos/chunks";
 import { formatCount, plural } from "@/lib/photos/format";
 import type { PhotoAlbumRef } from "@/lib/photos/types";
@@ -36,6 +36,10 @@ function AddToAlbumSheet({ open, onOpenChange, photoIds, onDone }: BulkSheetProp
           (sent, total) => `Adding ${plural(total, "photo")} to “${album.name}”… ${formatCount(sent)} done`
         );
         const result = sumCounts(results, ["added", "already", "missing"]);
+        // Only this album's grid, header, and card changed. A photo that went
+        // missing (trashed meanwhile) means other lists are stale too.
+        if (result.missing > 0) invalidatePhotoCaches(queryClient);
+        else invalidateAlbum(queryClient, album.id, photoIds);
         const detail = [
           result.already > 0 && `${plural(result.already, "photo")} already there`,
           result.missing > 0 && `${plural(result.missing, "photo")} no longer available`,

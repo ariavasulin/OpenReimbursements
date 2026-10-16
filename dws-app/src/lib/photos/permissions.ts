@@ -31,24 +31,29 @@ export function canTrashPhoto(
     uploaded > now - OWN_UPLOAD_TRASH_DAYS * 86_400_000;
 }
 
+/** What canTrashPhoto reads from a loaded photo. */
+type TrashCheckRow = { id: string; uploader_id: string; created_at: string };
+
 /**
  * The selected photos Trash takes, in selection order. An admin: every one.
  * Anyone else: each loaded photo canTrashPhoto allows, plus every selected photo
  * not loaded yet (from "Select all" or a group tick past the loaded pages) —
  * the confirm page lists any of those the server refuses, and SQL decides.
  * Nothing before the permissions load. `loaded` may hold a photo twice (tag
- * groups); each selected id counts once.
+ * groups); each selected id counts once. A caller that already keeps the
+ * loaded photos by id passes that map, so a tick does not rebuild one.
  */
 export function trashableIds(
   actor: PhotoPermissions | null | undefined,
   selectedIds: Iterable<string>,
-  loaded: readonly { id: string; uploader_id: string; created_at: string }[],
+  loaded: readonly TrashCheckRow[] | ReadonlyMap<string, TrashCheckRow>,
   now = Date.now(),
 ): string[] {
   if (!actor) return [];
   const ids = [...new Set(selectedIds)];
   if (isPhotoAdmin(actor)) return ids;
-  const byId = new Map(loaded.map((photo) => [photo.id, photo]));
+  const byId: ReadonlyMap<string, TrashCheckRow> =
+    loaded instanceof Map ? loaded : new Map((loaded as readonly TrashCheckRow[]).map((photo) => [photo.id, photo]));
   return ids.filter((id) => {
     const photo = byId.get(id);
     return photo === undefined || canTrashPhoto(actor, photo, now);

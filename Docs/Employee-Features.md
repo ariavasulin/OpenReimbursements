@@ -241,7 +241,8 @@ photo when it is deleted forever.
 Long-press (phone) or click the tick (desktop) to start a selection. The bar
 reads "N selected · Select all M"; **Select all** picks every photo that matches
 the current filters, loaded or not, up to 5,000 ("Select all 5,000 (of M)" past
-that). A group header's tick selects the whole group the same way. Tag and
+that); it spins for a moment while it fetches them, and if every match is
+already selected a click simply adds nothing. A group header's tick selects the whole group the same way. Tag and
 Add to album work in slices of 500 behind one progress toast; Set project goes
 through the confirmation page as one batch, and Trash moves the photos at once
 with an Undo. Trash (and its Undo) shows one toast while it runs, counting up

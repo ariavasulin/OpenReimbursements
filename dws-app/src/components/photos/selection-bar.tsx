@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -16,6 +16,7 @@ import {
   X,
   type LucideIcon,
   Heart,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -35,16 +36,21 @@ import { useDesktop } from "@/hooks/use-desktop";
 import {
   addPhotosToAlbum,
   invalidatePhotoCaches,
+  patchFavorites,
+  patchPhotoRows,
   PHOTO_ACTOR_KEY,
   removePhotosFromAlbum,
+  removePhotosFromLists,
   renamePhoto,
+  setFavorites,
   usePhotoActor,
   usePhotoDetail,
-  type PhotoIdsAnswer, setFavorites, patchFavorites } from "@/lib/photos/api";
+  type PhotoIdsAnswer,
+} from "@/lib/photos/api";
 import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { inChunks, MAX_ACTION_RUN_PHOTOS, PartialBulkError, sumCounts } from "@/lib/photos/chunks";
 import { formatCount, photoName, plural } from "@/lib/photos/format";
-import { MAX_SELECTION } from "@/lib/photos/selection";
+import { selectAllLabel as selectAllText } from "@/lib/photos/select-all";
 import {
   desktopActions,
   phoneActions,
@@ -92,19 +98,22 @@ interface SelectionBarProps {
   inFavorites?: boolean;
   /** A tick was refused at the selection limit, or "Select all" matched more than it holds. */
   limitMessage: string | null;
-  /** The loaded photos, so Trash can count which selected ones this person may
-   *  delete, and Download has their sizes and names without asking again. */
-  photos: readonly (ZipRow & Pick<PhotoRow, "uploader_id" | "created_at">)[];
-  /** No longer read: Download now looks up unloaded photos by id
-   *  (POST /api/photos/rows). Optional so PhotoBrowser can stop passing it. */
-  listQuery?: string;
+  /** The loaded photos, so Download has their sizes and names without asking again. */
+  photos: readonly ZipRow[];
+  /** The same photos by id, kept by the grid between ticks, so Trash can count
+   *  which selected ones this person may delete without building a map per tick. */
+  photosById: ReadonlyMap<string, BarPhoto>;
   /** The one project every selected photo is in, so Tag suggests that
    *  project's tags; null when they differ or have none (every tag). */
   sharedJobId: string | null;
-  /** Every photo the grid's filters match (GET /api/photos/ids), once known. */
-  allMatches?: PhotoIdsAnswer;
+  /** How many photos the grid's filters match, once known: "Select all M". */
+  matchCount?: number;
+  /** Every id the grid's filters match (GET /api/photos/ids), fetched on a "Select all" click. */
+  loadAllMatches(): Promise<PhotoIdsAnswer>;
   onSelectAll(answer: PhotoIdsAnswer): void;
 }
+
+type BarPhoto = Pick<PhotoRow, "id" | "uploader_id" | "created_at">;
 
 const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-white";
 /** A desktop action: icon and label in one line. Also the measuring copies' class, so widths match. */
@@ -130,15 +139,21 @@ type Measured = { available: number; widths: Partial<Record<SelectionActionKey |
 
 const MIXED_TRASH_TAIL = " you can delete";
 
-export default function SelectionBar({
+// Memoized: the grid re-renders on a viewer swipe or a fetch-status flip,
+// which changes nothing here.
+export default memo(SelectionBar);
+
+function SelectionBar({
   selectedIds,
   onClear,
   album,
   inFavorites = false,
   limitMessage,
   photos,
+  photosById,
   sharedJobId,
-  allMatches,
+  matchCount,
+  loadAllMatches,
   onSelectAll,
 }: SelectionBarProps) {
   const queryClient = useQueryClient();
@@ -148,18 +163,31 @@ export default function SelectionBar({
   const count = selectedIds.size;
   // One copy per selection change, so the pop-ups' props stay the same between ticks.
   const ids = useMemo(() => [...selectedIds], [selectedIds]);
-  const trashable = useMemo(() => trashableIds(actor, selectedIds, photos), [actor, photos, selectedIds]);
+  const trashable = useMemo(() => trashableIds(actor, selectedIds, photosById), [actor, photosById, selectedIds]);
   const trashLabel = trashActionLabel(trashable.length, count);
-  // "Select all" while some match that are not selected and there is room.
-  const selectAllLabel = useMemo(() => {
-    if (!allMatches || count >= MAX_SELECTION) return null;
-    // More matches than selected photos: some match is certainly not selected,
-    // without walking up to 5,000 ids on every tick.
-    if (allMatches.ids.length <= count && allMatches.ids.every((id) => selectedIds.has(id))) return null;
-    return allMatches.truncated
-      ? `Select all ${formatCount(allMatches.ids.length)} (of ${formatCount(allMatches.total)})`
-      : `Select all ${formatCount(allMatches.total)}`;
-  }, [allMatches, count, selectedIds]);
+  // "Select all" while some match that are not selected and there is room,
+  // from a count; the ids themselves are fetched on the click.
+  const selectAllLabel = useMemo(
+    () => selectAllText(selectedIds, matchCount, photosById),
+    [selectedIds, matchCount, photosById]
+  );
+  const [selectingAll, setSelectingAll] = useState(false);
+  // The latest count, read after the ids arrive: a selection cleared while
+  // they were on their way stays cleared.
+  const countRef = useRef(count);
+  countRef.current = count;
+  const selectAllMatches = async () => {
+    if (selectingAll) return;
+    setSelectingAll(true);
+    try {
+      const answer = await loadAllMatches();
+      if (countRef.current > 0) onSelectAll(answer);
+    } catch {
+      toast.error("Could not select those photos");
+    } finally {
+      setSelectingAll(false);
+    }
+  };
 
   const [slot, setSlot] = useState<HTMLElement | null>(null);
   const [sheet, setSheet] = useState<SheetKey | null>(null);
@@ -205,10 +233,9 @@ export default function SelectionBar({
     return () => clearTimeout(timer);
   }, [selecting]);
 
-  const done = useCallback(() => {
-    invalidatePhotoCaches(queryClient);
-    onClear();
-  }, [queryClient, onClear]);
+  // A pop-up's change is saved. Each action has already updated the cache for
+  // exactly what it changed (CODE-1), so this only ends the selection.
+  const done = onClear;
 
   // Esc clears the selection, as it would close any other transient layer —
   // unless a pop-up or the More menu is open, which Esc closes instead.
@@ -234,7 +261,9 @@ export default function SelectionBar({
         if (sent < total) toast.loading(runProgress("Moving", "to Trash", sent, total), { id: toastId });
       });
       onClear();
-      invalidatePhotoCaches(queryClient);
+      // Only the photos the server moved leave the cached grids; the ones it
+      // left out are untouched. No grid re-downloads its pages.
+      removePhotosFromLists(queryClient, result.photoIds);
       const moved = result.photoIds.length;
       const notes = [
         result.leftOut > 0 && `${plural(result.leftOut, "photo")} left out: not yours to delete.`,
@@ -281,6 +310,8 @@ export default function SelectionBar({
         (sent, total) => `Removing ${plural(total, "photo")} from “${album.name}”… ${formatCount(sent)} done`
       );
       const { removed } = sumCounts(results, ["removed"]);
+      // Out of this album's cached grid at once; Photos and projects keep them.
+      removePhotosFromLists(queryClient, ids, { fromAlbumId: album.id });
       toast.success(`Removed ${plural(removed, "photo")} from “${album.name}”`, {
         id: toastId,
         description: "The photos are still in Photos.",
@@ -418,18 +449,20 @@ export default function SelectionBar({
       trashLabel
     );
 
-  const selectAll = selectAllLabel && allMatches && (
+  const selectAll = selectAllLabel && (
     <button
       type="button"
       data-testid="selection-select-all"
-      disabled={busy}
-      onClick={() => onSelectAll(allMatches)}
+      disabled={busy || selectingAll}
+      aria-busy={selectingAll || undefined}
+      onClick={() => void selectAllMatches()}
       className={
         isDesktop
-          ? `-mx-1 rounded px-1 text-left text-sm font-medium leading-snug text-[#8bbaff] hover:text-white hover:underline disabled:opacity-50 ${focusRing}`
-          : `flex min-h-11 items-center rounded-lg px-1.5 text-base font-medium text-[#8bbaff] hover:text-white disabled:opacity-50 ${focusRing}`
+          ? `-mx-1 flex items-center gap-1.5 rounded px-1 text-left text-sm font-medium leading-snug text-[#8bbaff] hover:text-white hover:underline disabled:opacity-50 ${focusRing}`
+          : `flex min-h-11 items-center gap-1.5 rounded-lg px-1.5 text-base font-medium text-[#8bbaff] hover:text-white disabled:opacity-50 ${focusRing}`
       }
     >
+      {selectingAll && <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />}
       {selectAllLabel}
     </button>
   );
@@ -650,7 +683,9 @@ export default function SelectionBar({
           loading={!only && !onlyError}
           loadError={onlyError ? "Could not load this photo's name. Close and try again." : undefined}
           onSave={async (name) => {
-            await renamePhoto(ids[0], name);
+            const { photo } = await renamePhoto(ids[0], name);
+            // The answer is the whole renamed row: put it in place, no refetch.
+            patchPhotoRows(queryClient, [photo]);
             toast.success(name.trim() ? "Photo renamed" : "Name set back to the automatic name");
             done();
           }}
