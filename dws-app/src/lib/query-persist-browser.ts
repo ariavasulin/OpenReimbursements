@@ -30,7 +30,11 @@ export const queryPersister = createUserPersister({
   },
   currentUserId: () => currentOwner,
   sessionUserId: async () => {
-    const { data } = await supabase.auth.getSession();
+    const { data, error } = await supabase.auth.getSession();
+    // An expired token whose refresh failed (a weak signal) answers no session
+    // AND an error, though the person is still signed in: that is "could not
+    // check", not "signed out", and must not delete their saved cache.
+    if (error) throw error;
     return data.session?.user?.id ?? null;
   },
 });

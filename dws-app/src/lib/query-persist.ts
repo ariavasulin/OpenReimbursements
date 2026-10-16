@@ -130,7 +130,9 @@ export interface UserPersister extends Persister {
  * device could be shown the first one's lists:
  * - every save records `currentUserId()` as the owner (no one signed in: no save),
  * - a restore hands back the cache only when `sessionUserId()` is that owner,
- *   and deletes it otherwise; what it hands back is marked stale,
+ *   and deletes it when it names someone else or no one; when it throws (the
+ *   sign-in could not be checked) the cache is skipped this time but kept;
+ *   what it hands back is marked stale,
  * - saves are batched: at most one write per `throttleMs`.
  */
 export function createUserPersister({
@@ -143,7 +145,10 @@ export function createUserPersister({
   storage: BlobStorage;
   /** Who is signed in now, as the auth listener last saw it. */
   currentUserId(): string | null | undefined;
-  /** Who is signed in, asked of the auth client (may refresh the token). */
+  /**
+   * Who is signed in, asked of the auth client (may refresh the token). Null
+   * only for a sure "no one"; throws when it could not tell.
+   */
   sessionUserId(): Promise<string | null>;
   throttleMs?: number;
   /** A device whose storage never answers must not hold up every query. */
@@ -185,6 +190,7 @@ export function createUserPersister({
       try {
         userId = await sessionUserId();
       } catch {
+        // Could not tell who is signed in: start cold, but keep the cache for next time.
         return undefined;
       }
       if (!userId || blob.owner !== userId) {

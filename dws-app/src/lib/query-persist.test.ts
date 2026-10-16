@@ -194,6 +194,20 @@ describe("the per-person persister", () => {
     expect(stored).toBeUndefined();
   });
 
+  it("keeps the cache when the sign-in could not be checked", async () => {
+    stored = { owner: "alice", client: client([grid("a", 1)]) };
+    const persister = createUserPersister({
+      storage,
+      currentUserId: () => owner,
+      sessionUserId: async () => {
+        throw new Error("Failed to fetch");
+      },
+    });
+    expect(await persister.restoreClient()).toBeUndefined();
+    expect(storage.del).not.toHaveBeenCalled();
+    expect(stored?.owner).toBe("alice");
+  });
+
   it("restores once per page load", async () => {
     stored = { owner: "alice", client: client([grid("a", 1)]) };
     const persister = make();
