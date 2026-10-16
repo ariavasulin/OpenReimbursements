@@ -1,10 +1,8 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import {
-  AuthLoading,
-  PHOTOS_AUTH_LOADING_CLASS,
-} from "@/hooks/use-session-guard";
+import { preconnect } from "react-dom";
 import PhotosShell from "@/components/photos/photos-shell";
+import { PageSkeleton } from "@/components/photos/shell-skeleton";
 import UploadShell from "@/components/photos/upload-shell";
 
 // Its own icon and manifest, so a home-screen shortcut to the photo library is
@@ -26,20 +24,24 @@ export const metadata: Metadata = {
 // PhotosShell sits inside it — it mounts the upload sheet, which hands its
 // batch to the manager, and places the tray above its phone tab bar.
 //
-// /photos/search calls useSearchParams(), so the Suspense boundary is required
-// — without it Next refuses to prerender that route.
+// /photos/search calls useSearchParams(), so a Suspense boundary is required
+// — without it Next refuses to prerender that route. It wraps only the page,
+// so the frame (tab bar, top bar) is in the prerendered HTML too.
 export default function PhotosLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // Every thumbnail comes from the Supabase host. Opening that connection now
+  // (DNS, TCP, TLS: 2-3 round trips, ~70 ms each from the Bay Area to the east
+  // coast) means the first <img> does not pay for it after the API answers.
+  // No crossOrigin: images are fetched without CORS, and a CORS preconnect
+  // would open a connection they cannot use.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl) preconnect(supabaseUrl);
   return (
-    <Suspense
-      fallback={
-        <AuthLoading className={PHOTOS_AUTH_LOADING_CLASS} />
-      }
-    >
-      <UploadShell tray={false}>
-        <PhotosShell>{children}</PhotosShell>
-      </UploadShell>
-    </Suspense>
+    <UploadShell tray={false}>
+      <PhotosShell>
+        <Suspense fallback={<PageSkeleton />}>{children}</Suspense>
+      </PhotosShell>
+    </UploadShell>
   );
 }

@@ -2,11 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import {
-  AuthLoading,
-  PHOTOS_AUTH_LOADING_CLASS,
-  useSessionGuard,
-} from "@/hooks/use-session-guard";
+import { useSessionGuard } from "@/hooks/use-session-guard";
 import { useDesktop } from "@/hooks/use-desktop";
 import { useCaptureBatch, type UploadTarget } from "@/hooks/use-capture-batch";
 import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
@@ -16,6 +12,11 @@ import NewAlbumSheet from "@/components/photos/new-album-sheet";
 import NewProjectSheet from "@/components/photos/new-project-sheet";
 import { AddButton, BottomNav } from "@/components/photos/section-nav";
 import SectionsRail from "@/components/photos/sections-rail";
+import {
+  PageSkeleton,
+  RailSkeleton,
+  TopBarSkeleton,
+} from "@/components/photos/shell-skeleton";
 import TopBar from "@/components/photos/top-bar";
 import UploadSheet from "@/components/photos/upload-sheet";
 import UploadTray from "@/components/photos/upload-tray";
@@ -44,7 +45,7 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const params = useParams<{ jobId?: string; albumId?: string }>();
 
-  const ready = useSessionGuard(pathname);
+  const ready = useSessionGuard();
   const isDesktop = useDesktop();
   const activeJobId = params?.jobId ?? null;
   const activeAlbumId = params?.albumId ?? null;
@@ -105,8 +106,29 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
     setSelecting,
   };
 
+  // Until the session check finishes (and in the prerendered HTML), draw the
+  // frame with grey stand-ins, so a cold open paints something app-shaped at
+  // once instead of "Verifying authentication". Only the page waits: its
+  // queries need the session. The tab bar is real, so a tap works already.
+  // Phone vs desktop comes from CSS here (useDesktop() is false until after
+  // hydration, which would flash the phone frame on a desktop).
   if (!ready) {
-    return <AuthLoading className={PHOTOS_AUTH_LOADING_CLASS} />;
+    return (
+      <PhotosShellContext.Provider value={value}>
+        <div className="flex h-dvh flex-col bg-[#222222] text-white">
+          <TopBarSkeleton />
+          <div className="flex min-h-0 flex-1">
+            <RailSkeleton />
+            <div className="min-h-0 min-w-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]">
+              <PageSkeleton />
+            </div>
+          </div>
+          <div className="desktop:hidden">
+            <BottomNav />
+          </div>
+        </div>
+      </PhotosShellContext.Provider>
+    );
   }
 
   const showAddButton =
