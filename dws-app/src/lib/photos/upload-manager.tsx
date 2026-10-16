@@ -8,6 +8,10 @@
 // metadata persists to localStorage as a manifest; after a reload the entries
 // come back as "interrupted" and the user re-picks the files to resume
 // (browsers can't hold File handles across reloads).
+//
+// The code that does the uploading (hashing, EXIF, previews, the resumable
+// transfer: ~47 KB gzipped) is loaded on first use, not with every photos page
+// (SHELL-2). Only this file's queue bookkeeping ships up front.
 
 import {
   createContext,
@@ -21,24 +25,44 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
-import { invalidatePhotoCaches } from "./api";
+import { invalidateAfterUpload, photoKeys } from "./api";
 import * as Q from "./upload-queue";
-import {
-  isConnectionFailure,
-  prepareUpload,
-  uploadOne,
-  retrySidecar as uploadSidecar,
-  withoutPreviewNotes,
-  type BatchMeta,
-  type PreparedUpload,
-  type ServerDerive,
-  type UploadIdentity,
-  type UploadResult,
+import type {
+  BatchMeta,
+  PreparedUpload,
+  ServerDerive,
+  UploadIdentity,
+  UploadResult,
 } from "./upload";
 import { plural } from "./format";
-import { buildBrowserUploadDeps, cancelBrowserUpload } from "./upload-browser";
 import type { CancelUploadOutcome } from "./upload-contract";
 import { createTaskLimiter } from "./task-limiter";
+
+let engine: ReturnType<typeof importEngine> | undefined;
+const importEngine = () =>
+  Promise.all([import("./upload"), import("./upload-browser")]).then(([u, b]) => ({
+    uploadOne: u.uploadOne,
+    uploadSidecar: u.retrySidecar,
+    prepareUpload: u.prepareUpload,
+    isConnectionFailure: u.isConnectionFailure,
+    withoutPreviewNotes: u.withoutPreviewNotes,
+    buildBrowserUploadDeps: b.buildBrowserUploadDeps,
+    cancelBrowserUpload: b.cancelBrowserUpload,
+  }));
+/** The upload code, fetched once. A failed fetch (a dropped connection) is
+ * not remembered, so the next upload or retry fetches again. */
+function loadEngine() {
+  engine ??= importEngine().catch((error: unknown) => {
+    engine = undefined;
+    throw error;
+  });
+  return engine;
+}
+/** Start fetching the upload code before it is needed, e.g. when the upload
+ * sheet opens, so the first file does not wait on it. */
+export function preloadUploadEngine() {
+  void loadEngine().catch(() => undefined);
+}
 
 const MANIFEST_KEY = "photos.upload-manifest";
 /** Server-made previews in flight at once; the rest wait their turn. */
@@ -50,7 +74,8 @@ type Action =
   | { type: "retryAll"; now: number }
   | { type: "progress"; photoId: string; sentBytes: number }
   | { type: "stage"; photoId: string; stage: Q.QueueStage }
-  | { type: "previewsMade"; photoId: string }
+  /** Carries the upload code's own filter, which this file does not load up front. */
+  | { type: "previewsMade"; photoId: string; withoutPreviewNotes: (warnings: string[]) => string[] }
   | { type: "fail"; photoId: string; error: string }
   | { type: "beginRemoval"; photoId: string }
   | { type: "removalFailed"; photoId: string; error: string }
@@ -73,7 +98,7 @@ function reducer(q: Q.Queue, a: Action): Q.Queue {
     case "stage":
       return Q.setStage(q, a.photoId, a.stage);
     case "previewsMade":
-      return Q.keepWarnings(q, a.photoId, (warning) => withoutPreviewNotes([warning]).length > 0);
+      return Q.keepWarnings(q, a.photoId, (warning) => a.withoutPreviewNotes([warning]).length > 0);
     case "fail":
       return Q.fail(q, a.photoId, a.error);
     case "identity":
@@ -232,6 +257,14 @@ export function UploadManagerProvider({
     queueRef.current = reducer(queueRef.current, action);
     dispatch(action);
   }, []);
+  // A finished upload changes the grids, the project and album cards, and
+  // the tags; not Trash or the deleted lists. The one photo whose stored
+  // files changed (previews made, an XMP attached) also refreshes, in case
+  // it is open.
+  const refreshAfterUpload = useCallback((photoId?: string) => {
+    invalidateAfterUpload(queryClient);
+    if (photoId) void queryClient.invalidateQueries({ queryKey: photoKeys.detail(photoId) });
+  }, [queryClient]);
   const dropAhead = useCallback(() => {
     ahead.current?.controller.abort();
     ahead.current = null;
@@ -299,7 +332,6 @@ export function UploadManagerProvider({
     if (!next) return;
     running.current = true;
     void (async () => {
-      const deps = buildBrowserUploadDeps();
       const progressGate = Q.createProgressGate();
       let item: Q.QueueItem | null = next;
       let any = false;
@@ -308,35 +340,42 @@ export function UploadManagerProvider({
       const processed = new Set<string>();
       const nextCandidate = (except?: string) => queueRef.current.items.find((candidate) =>
         candidate.status === "queued" && !processed.has(candidate.photoId) && candidate.photoId !== except) ?? null;
-      const prepare = (candidate: Q.QueueItem, entry: Q.PairedFile, controller: AbortController) =>
-        prepareUpload(entry.file, deps, {
-          shutter: candidate.shutterAt ? new Date(candidate.shutterAt) : undefined,
-          sidecar: entry.sidecar,
-          signal: controller.signal,
-        });
-      // Called when the current file starts sending: start on the next one.
-      const warmNext = (currentId: string) => {
-        if (ahead.current || unmounted.current) return;
-        const candidate = nextCandidate(currentId);
-        const entry = candidate ? queueRef.current.files.get(candidate.photoId) : undefined;
-        if (!candidate || !entry) return;
-        const controller = new AbortController();
-        const prepared = prepare(candidate, entry, controller);
-        prepared.warm();
-        ahead.current = { photoId: candidate.photoId, file: entry.file, controller, prepared };
-      };
-      // Server previews run beside the queue; the row's note goes when they land.
-      // Keyed by the queue row, not the server's photo id (a reset attempt has a new one).
-      const deriveLater = (queueId: string, derive: ServerDerive) => {
-        void derives.current.run(derive).then((made) => {
-          if (unmounted.current || !made.thumb_path) return;
-          dispatchCurrent({ type: "previewsMade", photoId: queueId });
-          invalidatePhotoCaches(queryClient);
-        }).catch(() => undefined); // Left to the nightly sweep; the note stands.
-      };
       // Counts come from the run itself, not from queueRef afterwards: the
       // last file's dispatch may not have rendered by the time we get here.
       try {
+        // Inside the try: if the upload code cannot be fetched, the file we
+        // were on fails with a retry (below) instead of the queue sticking.
+        const { buildBrowserUploadDeps, prepareUpload, uploadOne, isConnectionFailure, withoutPreviewNotes } =
+          await loadEngine().catch(() => {
+            throw new Error("the upload code did not load; check the connection");
+          });
+        const deps = buildBrowserUploadDeps();
+        const prepare = (candidate: Q.QueueItem, entry: Q.PairedFile, controller: AbortController) =>
+          prepareUpload(entry.file, deps, {
+            shutter: candidate.shutterAt ? new Date(candidate.shutterAt) : undefined,
+            sidecar: entry.sidecar,
+            signal: controller.signal,
+          });
+        // Called when the current file starts sending: start on the next one.
+        const warmNext = (currentId: string) => {
+          if (ahead.current || unmounted.current) return;
+          const candidate = nextCandidate(currentId);
+          const entry = candidate ? queueRef.current.files.get(candidate.photoId) : undefined;
+          if (!candidate || !entry) return;
+          const controller = new AbortController();
+          const prepared = prepare(candidate, entry, controller);
+          prepared.warm();
+          ahead.current = { photoId: candidate.photoId, file: entry.file, controller, prepared };
+        };
+        // Server previews run beside the queue; the row's note goes when they land.
+        // Keyed by the queue row, not the server's photo id (a reset attempt has a new one).
+        const deriveLater = (queueId: string, photoId: string, derive: ServerDerive) => {
+          void derives.current.run(derive).then((made) => {
+            if (unmounted.current || !made.thumb_path) return;
+            dispatchCurrent({ type: "previewsMade", photoId: queueId, withoutPreviewNotes });
+            refreshAfterUpload(photoId);
+          }).catch(() => undefined); // Left to the nightly sweep; the note stands.
+        };
         while (item && !unmounted.current) {
           const current = item;
           processed.add(current.photoId);
@@ -403,7 +442,7 @@ export function UploadManagerProvider({
                   dispatch({ type: "stage", photoId: id, stage });
                   if (stage === "sending") warmNext(id);
                 },
-                deriveLater: (_photoId, derive) => deriveLater(id, derive),
+                deriveLater: (photoId, derive) => deriveLater(id, photoId, derive),
               }
             );
             let result = await attempt();
@@ -466,8 +505,8 @@ export function UploadManagerProvider({
         running.current = false;
       }
       if (unmounted.current) return;
-      // A duplicate may have been restored or moved by a separate action page.
-      if (any || duplicates) invalidatePhotoCaches(queryClient);
+      // A duplicate may have been moved into this upload's album.
+      if (any || duplicates) refreshAfterUpload();
       if (failed) {
         toast.error(
           `${plural(failed, "upload")} needs attention — open the tray`
@@ -478,7 +517,7 @@ export function UploadManagerProvider({
         toast.success(`${plural(duplicates, "photo")} already in Photos`);
       }
     })();
-  }, [queue, queryClient, dispatchCurrent, dropAhead]);
+  }, [queue, dispatchCurrent, dropAhead, refreshAfterUpload]);
 
   const state = useMemo<UploadState>(() => ({ items: queue.items, active }), [queue.items, active]);
   const actions = useMemo<UploadActions>(() => ({
@@ -498,6 +537,7 @@ export function UploadManagerProvider({
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (!session) throw new Error("Sign in to retry the XMP sidecar.");
+          const { uploadSidecar, buildBrowserUploadDeps } = await loadEngine();
           const result = await uploadSidecar(sidecar, identity, {
             uploaderId: session.user.id, jobId: item.jobId, albumIds: item.albumIds,
           }, buildBrowserUploadDeps(), { signal: controller.signal });
@@ -513,7 +553,7 @@ export function UploadManagerProvider({
             sidecarRetry: result.sidecarRetry ?? result.status !== "done",
           } });
           if (result.status === "done" && !result.sidecarRetry) {
-            invalidatePhotoCaches(queryClient);
+            refreshAfterUpload(identity.photoId);
             toast.success("XMP sidecar saved");
           }
         } catch (error) {
@@ -545,9 +585,11 @@ export function UploadManagerProvider({
       dispatchCurrent({ type: "beginRemoval", photoId });
       void (async () => {
         try {
+          const { cancelBrowserUpload } = await loadEngine();
           const result = await cancelBrowserUpload(Q.cancellationInput(item)!);
           dispatchCurrent({ type: "finishRemoval", photoId, result });
-          if (result.status !== "cancelled") invalidatePhotoCaches(queryClient);
+          // Too late to cancel: the upload had already finished on the server.
+          if (result.status !== "cancelled") refreshAfterUpload();
         } catch (error) {
           dispatchCurrent({ type: "removalFailed", photoId,
             error: error instanceof Error ? error.message : "Unable to confirm cancellation." });
@@ -570,7 +612,7 @@ export function UploadManagerProvider({
       return Q.adoptRepick(queueRef.current, files).unmatched;
     },
     dismissDone: () => dispatch({ type: "dismissDone" }),
-  }), [queryClient, dispatchCurrent, dropAhead]);
+  }), [dispatchCurrent, dropAhead, refreshAfterUpload]);
   return (
     <ActionsCtx.Provider value={actions}>
       <StateCtx.Provider value={state}>{children}</StateCtx.Provider>

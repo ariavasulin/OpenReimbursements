@@ -5,6 +5,7 @@ import {
 } from "./upload-http";
 import { classifyMediaFailure } from "./media-retry";
 import { ORIGINAL_CACHE_SECONDS } from "./storage-cache";
+import { TUS_CHUNK_BYTES } from "./upload-constants";
 import type { ByteProgress, UploadTransferError } from "./upload";
 
 /**
@@ -22,10 +23,9 @@ export type ResumableUpload = (
   }
 ) => Promise<{ error: UploadTransferError | null }>;
 
-/** Plain .upload() is for <=6 MB; anything bigger goes resumable (TUS). */
-export const RESUMABLE_THRESHOLD_BYTES = 6 * 1024 * 1024;
-/** Supabase's TUS endpoint requires chunks of EXACTLY 6 MB. */
-export const TUS_CHUNK_BYTES = 6 * 1024 * 1024;
+// Still exported from here for existing importers; new code imports them from
+// upload-constants.ts, which does not load tus-js-client.
+export { RESUMABLE_THRESHOLD_BYTES, TUS_CHUNK_BYTES } from "./upload-constants";
 
 const PHOTOS_BUCKET = "photos";
 
