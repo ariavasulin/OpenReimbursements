@@ -66,8 +66,9 @@ async function loadAlbum(albumId: string, sort: PhotoSort, signal: AbortSignal):
     const params = new URLSearchParams({ album: albumId, limit: String(LOAD_PAGE) });
     if (sort !== "desc") params.set("sort", sort);
     if (cursor) params.set("cursor", cursor);
-    const page = await fetchPhotosPage(params);
-    if (signal.aborted) return [];
+    // Cancel (or leaving the page) stops the request in flight, not just the
+    // ones after it: an album of 2,000 photos is ten of these.
+    const page = await fetchPhotosPage(params, signal);
     photos.push(...page.photos);
     if (photos.length > MAX_ARRANGE_PHOTOS) return null;
     cursor = page.nextCursor;

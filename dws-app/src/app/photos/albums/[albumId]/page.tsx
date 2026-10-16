@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDownUp, BookImage, Upload } from "lucide-react";
 import { toast } from "sonner";
-import AlbumArrange from "@/components/photos/album-arrange";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
@@ -15,6 +15,7 @@ import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
 import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
+import StatusLine from "@/components/photos/status-line";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import {
   deleteAlbum,
@@ -32,6 +33,18 @@ import {
 import { MAX_ARRANGE_PHOTOS } from "@/lib/photos/apiShared";
 import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
+
+// Arrange and its drag library (dnd-kit, about 18 KB gzipped) are their own
+// chunk, fetched when someone opens Arrange instead of on every album visit
+// (audit VIEW-6). Pointing at or focusing the Arrange button starts the fetch,
+// so it is usually there by the click.
+const loadAlbumArrange = () => import("@/components/photos/album-arrange");
+const AlbumArrange = dynamic(loadAlbumArrange, {
+  ssr: false,
+  loading: () => <StatusLine>Loading every photo in the album...</StatusLine>,
+});
+/** A failed early fetch is not an error: opening Arrange fetches it again. */
+const preloadAlbumArrange = () => void loadAlbumArrange().catch(() => undefined);
 
 /**
  * Drop `sort` from the address bar, so the grid shows the album's own order
@@ -200,7 +213,13 @@ function AlbumPageContent() {
               <PlayButton />
               <ShareButton album={{ id: album.id, name: album.name }} className={headerActionClass} />
               {album.photo_count > 1 && (
-                <button type="button" onClick={startArranging} className={headerActionClass}>
+                <button
+                  type="button"
+                  onClick={startArranging}
+                  onPointerEnter={preloadAlbumArrange}
+                  onFocus={preloadAlbumArrange}
+                  className={headerActionClass}
+                >
                   <ArrowDownUp aria-hidden="true" />
                   Arrange
                 </button>
