@@ -115,6 +115,9 @@ describe('media executor commits and limits', () => {
     expect(f.count.mock.calls).toEqual([['posterSkipped'], ['transcodeVideo']]);
     expect(f.update).toHaveBeenCalledWith({ poster_skipped_reason: expect.stringContaining('output reached') });
     expect(f.upload).toHaveBeenCalledTimes(1);
+    // The rendition key is write-once, so it carries a year of caching.
+    expect(f.upload).toHaveBeenCalledWith('derived/user/photo_playback.mp4', expect.anything(),
+      expect.objectContaining({ contentType: 'video/mp4', cacheControl: '31536000' }));
   });
   it('does not count a zero-row update as a committed skip', async () => {
     const f = fixture(null);

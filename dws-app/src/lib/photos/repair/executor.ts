@@ -22,6 +22,7 @@ import {
   PREVIEW_MAX_DIM,
   THUMB_MAX_DIM,
 } from '../derivatives';
+import { DERIVED_CACHE_SECONDS } from '../storage-cache';
 
 
 const BUCKET = 'photos';
@@ -104,6 +105,7 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
           .upload(out.key, body, {
             contentType: 'image/webp',
             upsert: true,
+            cacheControl: DERIVED_CACHE_SECONDS,
           }));
         if (error) throw new Error(`upload ${out.key}: ${error.message}`);
       })
@@ -150,6 +152,7 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
       .upload(key, body, {
         contentType: 'video/mp4',
         upsert: true,
+        cacheControl: DERIVED_CACHE_SECONDS,
       }));
     if (uploadError) throw new Error(`upload ${key}: ${uploadError.message}`);
 

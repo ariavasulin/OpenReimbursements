@@ -44,6 +44,45 @@ describe("uploadOne", () => {
     });
   });
 
+  it("caches derivatives for a year and originals for a week", async () => {
+    const { deps, uploads } = makeDeps();
+
+    await uploadOne(makeFile("IMG_0001.jpg", "image/jpeg", 10), "photo-1", META, deps);
+
+    expect(uploads.map((u) => [u.path, u.cacheControl])).toEqual([
+      ["originals/user-1/photo-1/IMG_0001.jpg", "604800"],
+      ["derived/user-1/photo-1_thumb.webp", "31536000"],
+      ["derived/user-1/photo-1_preview.webp", "31536000"],
+    ]);
+  });
+
+  it("sends a resumable original's week of caching through TUS", async () => {
+    const { deps } = makeDeps();
+
+    await uploadOne(makeFile("big.mov", "video/quicktime", RESUMABLE_THRESHOLD_BYTES + 1), "photo-1", META, deps);
+
+    expect(deps.resumableUpload).toHaveBeenCalledWith(
+      "originals/user-1/photo-1/big.mov", expect.any(File),
+      expect.objectContaining({ cacheControl: "604800" }),
+    );
+  });
+
+  it("labels a JPEG derivative (a browser without WebP) as image/jpeg under its .webp key", async () => {
+    const { deps, uploads } = makeDeps();
+    deps.makeDerivatives = async () => ({
+      thumb: new Blob(["t"], { type: "image/jpeg" }),
+      preview: new Blob(["p"], { type: "image/jpeg" }),
+      durationSecs: null,
+    });
+
+    await uploadOne(makeFile("IMG_0001.jpg", "image/jpeg", 10), "photo-1", META, deps);
+
+    expect(uploads.filter((u) => u.path.startsWith("derived/")).map((u) => [u.path, u.contentType])).toEqual([
+      ["derived/user-1/photo-1_thumb.webp", "image/jpeg"],
+      ["derived/user-1/photo-1_preview.webp", "image/jpeg"],
+    ]);
+  });
+
   it("treats a created finalize replay as done", async () => {
     const { deps } = makeDeps();
     deps.finalize = vi.fn(async () => ({ status: "created" as const, photo_id: "photo-1", job_id: META.jobId }));

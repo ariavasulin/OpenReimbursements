@@ -162,6 +162,10 @@ describe("sharp renders what the browser and the transform endpoint would not", 
     expect(made["derived/employee/photo_thumb.webp"]).toMatchObject({ format: "webp", width: 640, height: 427 });
     expect(made["derived/employee/photo_preview.webp"]).toMatchObject({ format: "webp", width: 2048, height: 1365 });
     expect(update).toHaveBeenCalledOnce();
+    // Write-once keys: a year of caching, labelled with the real format.
+    for (const [, , options] of upload.mock.calls) {
+      expect(options).toMatchObject({ contentType: "image/webp", cacheControl: "31536000", upsert: true });
+    }
   });
 
   it("reads a TIFF, which the browser never decodes", async () => {

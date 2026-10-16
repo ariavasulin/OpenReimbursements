@@ -90,10 +90,21 @@ describe("createResumableUpload", () => {
       bucketName: "photos",
       objectName: "originals/u1/p1/big.mp4",
       contentType: "video/mp4",
-      cacheControl: "3600",
+      cacheControl: "604800",
     });
     expect(options.headers).toMatchObject({ "x-upsert": "true" });
     expect(options.removeFingerprintOnSuccess).toBe(true);
+  });
+
+  it("passes a caller's cacheControl into the TUS metadata", async () => {
+    FakeTusUpload.reset();
+    const upload = createResumableUpload({ ...CONFIG, getAccessToken: async () => "token" });
+
+    await upload("originals/u1/p1/big.mp4", bigFile(1), {
+      contentType: "video/mp4", cacheControl: "31536000",
+    });
+
+    expect(FakeTusUpload.instances[0].options.metadata).toMatchObject({ cacheControl: "31536000" });
   });
 
   it("refreshes the access token between chunks (expiring mid-upload can't 401 it)", async () => {
