@@ -239,3 +239,24 @@ export function createTrailingThrottle(work: () => unknown, ms: number) {
     },
   };
 }
+
+/**
+ * Keeps the newest answer when repeated reads of the same thing land out of
+ * order (a slow throttled refresh finishing after the run's final one would
+ * otherwise put an older view back). Each read takes a ticket() before it
+ * starts; fresh(ticket) is true only if no later read's answer has been
+ * shown yet, and marks this one shown. An older answer is dropped, not
+ * waited on, so a slow read never holds up a newer one.
+ */
+export function createNewestAnswer() {
+  let issued = 0;
+  let shown = 0;
+  return {
+    ticket: () => ++issued,
+    fresh(ticket: number) {
+      if (ticket <= shown) return false;
+      shown = ticket;
+      return true;
+    },
+  };
+}

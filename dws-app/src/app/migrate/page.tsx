@@ -15,7 +15,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { buildBrowserUploadDeps } from '@/lib/photos/upload-browser';
 import { createUploadRequest } from '@/lib/photos/upload-http';
 import type { UploadAttempt } from '@/lib/photos/upload-contract';
-import { createTrailingThrottle, MigrationEngine } from '@/lib/photos/migration/engine';
+import { createNewestAnswer, createTrailingThrottle, MigrationEngine } from '@/lib/photos/migration/engine';
 import { createProgressGate } from '@/lib/photos/upload-queue';
 import { directorySource, filesSource, type DirectoryHandle, type LocalSource } from '@/lib/photos/migration/inventory';
 import { folderOf, isInsideFolder, type MigrationFolder } from '@/lib/photos/migration/folders';
@@ -90,15 +90,28 @@ export default function MigratePage() {
     try { await work(); } catch (reason) { report(reason); } finally { setBusy(false); }
   };
 
+  // Refreshes overlap (the throttled per-file one, the run's final one, the
+  // 5-second poll) and can land out of order; only the newest answer is shown.
+  // The counts and files, and the folders and sources (only a full refresh
+  // reads those), are ordered separately, so a quick partial refresh does not
+  // drop the folders a slower full one brings.
+  const newestItems = useRef(createNewestAnswer());
+  const newestFolders = useRef(createNewestAnswer());
   const refresh = useCallback(async (id = batchId.current, after: string | null = null, everything = true) => {
     if (!id) return;
+    const itemsTicket = newestItems.current.ticket();
+    const foldersTicket = everything ? newestFolders.current.ticket() : 0;
     const [{ view: nextView, sources: nextSources, items: nextItems }, nextFolders] = await Promise.all([
       loadMigrationBatch(request, id, { after, includeSources: everything }),
       everything ? loadMigrationFolders(request, id) : undefined,
     ]);
-    setView(nextView); setItems(nextItems); setMode(nextView.batch.script_name);
-    if (nextSources) setSources(nextSources);
-    if (nextFolders) setFolders(nextFolders);
+    if (newestItems.current.fresh(itemsTicket)) {
+      setView(nextView); setItems(nextItems); setMode(nextView.batch.script_name);
+    }
+    if (everything && newestFolders.current.fresh(foldersTicket)) {
+      if (nextSources) setSources(nextSources);
+      if (nextFolders) setFolders(nextFolders);
+    }
     return { view: nextView, sources: nextSources, folders: nextFolders };
   }, [request]);
 
