@@ -315,8 +315,9 @@ appear when allowed; a mixed selection reads "Trash the N you can delete".
 
 Your browser makes each photo's thumbnail and preview while it uploads. When it
 cannot — an iPhone HEIC picked on a desktop browser, a TIFF, an image over
-24 MB, a video the browser cannot play — the server makes them as soon as the
-upload lands, so the photo has a preview by the time the tray says done. There
+24 MB or over 40 megapixels, a video the browser cannot play — the server makes
+them as soon as the upload lands. The tray moves on to the next file while it
+does; the "Previews…" note on that row goes away once they are ready. There
 is no upload size limit; a file the server cannot read either (a RAW file, an
 image over 250 MB) shows as a "No preview" tile that still downloads. A photo
 that somehow missed both gets its preview from the nightly sweep.
@@ -327,6 +328,18 @@ clip in the app depends on the browser: an iPhone's HEVC .mov plays on iPhones
 and Macs, and a Windows browser may only offer it for download. The nightly
 sweep makes a standard MP4 copy of clips up to 200 MB and 2 minutes so they
 play everywhere; longer or larger clips stay download-only.
+
+### While an upload runs
+
+Each row in the upload tray says what its file is doing: Preparing (reading the
+photo and making its previews), Sending, then Finishing. Keep DWS Photos open
+until the tray is done: the screen stays on by itself where the browser allows
+it, but locking the phone or switching apps pauses the upload. If the
+connection drops (a basement, a dead spot), the tray says "Waiting for
+connection" and the batch carries on by itself when the signal comes back,
+picking up the same file; nothing needs to be re-picked. After 30 minutes
+without a connection that file fails and the rest go on. When several files
+failed, **Retry all** in the tray retries them in one tap.
 
 ### Other formats of the same photo
 
