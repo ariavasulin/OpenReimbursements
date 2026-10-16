@@ -73,7 +73,7 @@ beforeEach(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  client.setQueryData(['photo-actor'], { user_id: 'me' });
+  client.setQueryData(['photo-me'], { actor: { user_id: 'me', photo_admin: false }, settings: { starter_tags: [], slideshow: { shuffle: false, delay_seconds: 5 } } });
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);

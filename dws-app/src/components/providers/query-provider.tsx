@@ -28,10 +28,10 @@ function makeQueryClient() {
     },
   })
   // A query leaves the cache gcTime after nothing shows it, and the next save
-  // then drops it from the device too. The full project and album lists and
-  // the settings are small and needed on most launches, so they stay as long
-  // as a saved cache may be used. Grids keep the 10 minutes: they are large.
-  for (const queryKey of [['photo-jobs', ''], ['photo-albums', ''], ['photo-settings']]) {
+  // then drops it from the device too. The full project and album lists are
+  // small and needed on most launches, so they stay as long as a saved cache
+  // may be used. Grids keep the 10 minutes: they are large.
+  for (const queryKey of [['photo-jobs', ''], ['photo-albums', '']]) {
     client.setQueryDefaults(queryKey, { gcTime: PERSIST_MAX_AGE_MS })
   }
   return client
