@@ -98,7 +98,8 @@ describe('media executor commits and limits', () => {
   it('keeps an ordinary poster processing failure retryable', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('clip')));
     vi.mocked(probe).mockResolvedValue({ durationSecs: 2 });
-    vi.mocked(poster).mockRejectedValueOnce(new Error('ffmpeg failed'));
+    // Fails from the URL and again from the downloaded copy.
+    vi.mocked(poster).mockRejectedValue(new Error('ffmpeg failed'));
     const f = fixture();
     await expect(mediaExecutor(f.admin, new WorkBudget())([{ action: 'makeVideoPoster', photoId: row.id }], row, f.count)).rejects.toThrow('ffmpeg failed');
     expect(f.count).not.toHaveBeenCalled(); expect(f.update).not.toHaveBeenCalled();
@@ -152,5 +153,82 @@ describe('media executor commits and limits', () => {
     await expect(mediaExecutor(f.admin, budget)([{ action: 'makeVideoPoster', photoId: row.id }, action], row, f.count)).rejects.toBeInstanceOf(DeadlineExceeded);
     expect(f.count.mock.calls).toEqual([['makeVideoPoster']]);
     expect(transcode).not.toHaveBeenCalled();
+  });
+});
+
+describe('poster from the original URL before any download', () => {
+  const posterOnly = [{ action: 'makeVideoPoster' as const, photoId: row.id }];
+  const posterRow = { ...row, thumb_path: null };
+  const writesFrames = async (_input: string, _seek: number, outputs: { path: string }[]) => {
+    await Promise.all(outputs.map(out => writeFile(out.path, 'webp')));
+  };
+  afterEach(() => { vi.mocked(probe).mockReset(); vi.mocked(poster).mockReset(); });
+
+  it('reads the frame straight from the URL and never downloads the clip', async () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    vi.mocked(probe).mockResolvedValue({ durationSecs: 42 });
+    vi.mocked(poster).mockImplementation(writesFrames);
+    const f = fixture();
+    await mediaExecutor(f.admin, new WorkBudget())(posterOnly, posterRow, f.count);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(probe).toHaveBeenCalledWith('https://storage.invalid/original', expect.anything());
+    expect(poster).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(poster).mock.calls[0].slice(0, 2)).toEqual(['https://storage.invalid/original', 1]);
+    expect(f.upload.mock.calls.map(([key]) => key).sort()).toEqual(['derived/user/photo_preview.webp', 'derived/user/photo_thumb.webp']);
+    for (const [, , options] of f.upload.mock.calls) {
+      expect(options).toMatchObject({ contentType: 'image/webp', cacheControl: '31536000', upsert: true });
+    }
+    expect(f.update).toHaveBeenCalledWith({ thumb_path: 'derived/user/photo_thumb.webp', preview_path: 'derived/user/photo_preview.webp', duration_secs: 42 });
+    expect(f.count.mock.calls).toEqual([['makeVideoPoster']]);
+  });
+
+  it('falls back to downloading the clip when the URL read fails', async () => {
+    const fetch = vi.fn(async () => new Response('clip')); vi.stubGlobal('fetch', fetch);
+    vi.mocked(probe).mockResolvedValue({ durationSecs: 42 });
+    vi.mocked(poster).mockRejectedValueOnce(new Error('moov atom not found')).mockImplementation(writesFrames);
+    const f = fixture();
+    await mediaExecutor(f.admin, new WorkBudget())(posterOnly, posterRow, f.count);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(poster).toHaveBeenCalledTimes(2);
+    const [fromUrl, fromFile] = vi.mocked(poster).mock.calls.map(([input]) => input);
+    expect(fromUrl).toBe('https://storage.invalid/original');
+    expect(fromFile).toMatch(/photos-repair-.*input\.mp4$/);
+    expect(f.upload).toHaveBeenCalledTimes(2);
+    expect(f.count.mock.calls).toEqual([['makeVideoPoster']]);
+  });
+
+  it('downloads when the URL gives no duration, rather than record the poster without one', async () => {
+    const fetch = vi.fn(async () => new Response('clip')); vi.stubGlobal('fetch', fetch);
+    vi.mocked(probe).mockResolvedValueOnce({ durationSecs: null }).mockResolvedValue({ durationSecs: 42 });
+    vi.mocked(poster).mockImplementation(writesFrames);
+    const f = fixture();
+    await mediaExecutor(f.admin, new WorkBudget())(posterOnly, posterRow, f.count);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(poster).toHaveBeenCalledTimes(1);
+    expect(f.update).toHaveBeenCalledWith(expect.objectContaining({ duration_secs: 42 }));
+  });
+
+  it('does not start a download once the shared deadline has passed', async () => {
+    let now = 0;
+    const budget = new WorkBudget(0, 240_000, () => now);
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    vi.mocked(probe).mockResolvedValue({ durationSecs: 42 });
+    vi.mocked(poster).mockImplementation(async () => { now = 240_000; throw new Error('killed'); });
+    const f = fixture();
+    await expect(mediaExecutor(f.admin, budget)(posterOnly, posterRow, f.count)).rejects.toBeInstanceOf(DeadlineExceeded);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(f.count).not.toHaveBeenCalled();
+  });
+
+  it('skips the URL read for a pair: the rendition needs the download anyway', async () => {
+    const fetch = vi.fn(async () => new Response('clip')); vi.stubGlobal('fetch', fetch);
+    vi.mocked(probe).mockResolvedValue({ durationSecs: 2 });
+    vi.mocked(poster).mockImplementation(writesFrames);
+    vi.mocked(transcode).mockImplementationOnce(async (_input, output) => { await writeFile(output, 'playback'); });
+    const f = fixture();
+    await mediaExecutor(f.admin, new WorkBudget())([...posterOnly, action], posterRow, f.count);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(poster).mock.calls[0][0]).toMatch(/input\.mp4$/);
+    expect(f.count.mock.calls).toEqual([['makeVideoPoster'], ['transcodeVideo']]);
   });
 });

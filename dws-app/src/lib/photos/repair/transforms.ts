@@ -94,8 +94,11 @@ async function renderWithTransform(
 const unreadable = (error: unknown) =>
   error instanceof Error && /unsupported image format|corrupt header|VipsJpeg: Premature end|not a (TIFF|JPEG|PNG)|unable to load/i.test(error.message);
 
-/** Both sizes from one /tmp copy. The longest side is scaled to `maxDim`,
- * never up; EXIF orientation is applied so a rotated phone photo is upright,
+/** Both sizes from one /tmp copy, decoded once (UP-5): the preview comes
+ * from the original, and the thumb from the preview's bytes, so a 100 MP
+ * original is not decoded a second time for a 640 px image. The longest side
+ * is scaled to the size, never up; EXIF orientation is applied (to the
+ * preview, so the thumb inherits it) so a rotated phone photo is upright,
  * like the browser's `imageOrientation: "from-image"`. */
 async function renderWithSharp(
   admin: SupabaseClient,
@@ -113,16 +116,20 @@ async function renderWithSharp(
       if (error instanceof MediaProcessingLimit) return { refused: error.message };
       throw error;
     }
-    const render = (maxDim: number) => budget.run(async () => {
-      const body = await sharp(input, { sequentialRead: true, limitInputPixels: SHARP_MAX_PIXELS })
-        .rotate()
-        .resize({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 80 })
-        .toBuffer();
-      return { body: new Blob([new Uint8Array(body)]), contentType: "image/webp" } satisfies Rendered;
-    });
+    const fit = (maxDim: number) => ({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true } as const);
+    const rendered = (body: Buffer): Rendered => ({ body: new Blob([new Uint8Array(body)]), contentType: "image/webp" });
     try {
-      return [await render(THUMB_MAX_DIM), await render(PREVIEW_MAX_DIM)];
+      const preview = await budget.run(() => sharp(input, { sequentialRead: true, limitInputPixels: SHARP_MAX_PIXELS })
+        .rotate()
+        .resize(fit(PREVIEW_MAX_DIM))
+        .webp({ quality: 80 })
+        .toBuffer());
+      // Already upright and at most 2048 px, so no rotate and no pixel cap.
+      const thumb = await budget.run(() => sharp(preview)
+        .resize(fit(THUMB_MAX_DIM))
+        .webp({ quality: 80 })
+        .toBuffer());
+      return [rendered(thumb), rendered(preview)];
     } catch (error) {
       if (unreadable(error)) return { refused: (error as Error).message };
       throw error;

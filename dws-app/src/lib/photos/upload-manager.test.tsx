@@ -5,13 +5,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   uploadOne: vi.fn(), cancel: vi.fn(), session: vi.fn(), invalidate: vi.fn(),
+  queryClient: { invalidateQueries: vi.fn() },
+  /** Makes the next load of the upload code fail, like a dropped connection. */
+  failLoad: false,
 }));
 vi.mock('@/lib/supabaseClient', () => ({ supabase: { auth: { getSession: mocks.session } } }));
-vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => null }));
+vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => mocks.queryClient }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
-vi.mock('./api', () => ({ invalidatePhotoCaches: mocks.invalidate }));
+vi.mock('./api', () => ({ invalidateAfterUpload: mocks.invalidate, photoKeys: { detail: (id: string) => ['photo-detail', id] } }));
 vi.mock('./upload', async importOriginal => ({ ...await importOriginal<typeof import('./upload')>(), uploadOne: mocks.uploadOne, retrySidecar: vi.fn() }));
-vi.mock('./upload-browser', () => ({ buildBrowserUploadDeps: () => ({}), cancelBrowserUpload: mocks.cancel }));
+vi.mock('./upload-browser', () => ({
+  // A getter, so a "failed load" can be switched on and off per test.
+  get buildBrowserUploadDeps() {
+    if (mocks.failLoad) throw new Error('Failed to fetch dynamically imported module');
+    return () => ({});
+  },
+  cancelBrowserUpload: mocks.cancel,
+}));
 import { UploadManagerProvider, useUploadManager } from './upload-manager';
 import type { UploadIdentity, UploadResult } from './upload';
 import type { CancelUploadOutcome } from './upload-contract';
@@ -28,6 +38,30 @@ function Consumer() { manager = useUploadManager(); return null; }
 let root: Root | undefined;
 const mount = async () => { const container = document.createElement('div'); document.body.append(container); root = createRoot(container); await act(async () => { root!.render(createElement(UploadManagerProvider, null, createElement(Consumer))); }); };
 const enqueue = async () => { await act(async () => { manager.enqueue([{ file: new File(['x'], 'a.jpg', { type: 'image/jpeg', lastModified: 7 }) }], { jobId: 'job' }); }); return manager.items[0].photoId; };
+
+// First in the file: the upload code must not have loaded yet.
+describe('the upload code loads on first use', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); localStorage.clear();
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    mocks.session.mockResolvedValue({ data: { session: { user: { id: 'employee' } } } });
+  });
+  afterEach(async () => { if (root) await act(async () => { root!.unmount(); root = undefined; }); document.body.innerHTML = ''; vi.unstubAllGlobals(); mocks.failLoad = false; });
+
+  it('fails the file with a retry when the code cannot load, and loads it again on retry', async () => {
+    mocks.failLoad = true;
+    mocks.uploadOne.mockResolvedValue({ status: 'done', warnings: [] });
+    await mount();
+    const key = await enqueue();
+    await vi.waitFor(() => expect(manager.items[0]).toMatchObject({ status: 'failed' }));
+    expect(manager.items[0].error).toContain('the upload code did not load');
+    expect(mocks.uploadOne).not.toHaveBeenCalled();
+    mocks.failLoad = false; // the connection is back
+    await act(async () => { manager.retry(key); });
+    await vi.waitFor(() => expect(manager.items[0].status).toBe('done'));
+    expect(mocks.uploadOne).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('ordinary explicit Remove versus incidental unmount', () => {
   beforeEach(() => {
@@ -158,7 +192,9 @@ describe('the runner: next file prepared ahead, dropped connections, background 
     await vi.waitFor(() => expect(derive).toBeTypeOf('function'));
     await act(async () => { await derive(); });
     await vi.waitFor(() => expect(manager.items[0].warnings).toEqual([]));
-    expect(mocks.invalidate).toHaveBeenCalled();
+    // The upload refresh, not the everything refresh, plus the photo itself in case it is open.
+    expect(mocks.invalidate).toHaveBeenCalledWith(mocks.queryClient);
+    expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['photo-detail', 'photo-a'] });
   });
 
   it('retry all requeues every failed row', async () => {

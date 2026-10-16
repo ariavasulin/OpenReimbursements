@@ -3,7 +3,8 @@
 // without a browser or network.
 
 import { UploadRequestError } from "./upload-http";
-import { RESUMABLE_THRESHOLD_BYTES, type ResumableUpload } from "./upload-tus";
+import type { ResumableUpload } from "./upload-tus";
+import { RESUMABLE_THRESHOLD_BYTES } from "./upload-constants";
 import { isSha256 } from "./apiShared";
 import {
   extractCapturedAt as defaultExtractCapturedAt,
