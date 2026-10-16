@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import BrowseToolbar from "@/components/photos/browse-toolbar";
 import type { FilterChoices } from "@/components/photos/filter-bar";
 import InfiniteSentinel from "@/components/photos/infinite-sentinel";
 import PhotoGrid, { type GridSelection } from "@/components/photos/photo-grid";
-import PhotoLightbox from "@/components/photos/photo-lightbox";
 import SelectionBar from "@/components/photos/selection-bar";
 import StatusLine from "@/components/photos/status-line";
 import { useBrowseState } from "@/hooks/use-browse-state";
@@ -52,6 +52,14 @@ import { cn } from "@/lib/utils";
 // project, and search results: the toolbar (filters, Group by, Sort, all kept
 // in the URL), the grid with select-many and its action bar, endless
 // scrolling, and the viewer with its `?photo=` link.
+
+// The viewer (YARL and its plugins, about 50 KB gzipped) is not needed to draw
+// the grid, so it is its own chunk, fetched after the first page of photos
+// has landed (see viewerWanted below) instead of before the page can paint.
+const PhotoLightbox = dynamic(() => import("@/components/photos/photo-lightbox"), {
+  ssr: false,
+  loading: () => null,
+});
 
 export type BrowserScope =
   | { kind: "all" }
@@ -142,7 +150,6 @@ export default function PhotoBrowser({
     },
     [setSort, albumOrder]
   );
-  const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
   const key = scopeKey(scope);
   const enabled = scope.kind !== "search" || scope.q.length > 0;
   // "photos" / "photo-search" are the prefixes invalidatePhotoCaches refreshes.
@@ -154,12 +161,6 @@ export default function PhotoBrowser({
     [scopeQuery, filters, sort]
   );
   const listKey = listParams.toString();
-
-  // A new album, project, or search is a new screen: its menus start empty.
-  // (Its filters come from its own URL.)
-  useEffect(() => {
-    setSeen(emptySeenOptions());
-  }, [key]);
 
   const {
     data,
@@ -192,9 +193,24 @@ export default function PhotoBrowser({
     [data]
   );
 
-  useEffect(() => {
-    setSeen((previous) => accumulateSeenOptions(previous, photos));
-  }, [photos]);
+  // Every uploader and tag the loaded pages have shown, for the filter menus;
+  // kept across filter changes. A new album, project, or search is a new
+  // screen: its menus start empty (its filters come from its own URL).
+  // Worked out while rendering, not in an effect, so a new page of photos
+  // renders the grid once instead of twice.
+  const [seenState, setSeenState] = useState<{
+    key: string;
+    photos: PhotoRow[];
+    seen: SeenOptions;
+  }>(() => ({ key, photos: [], seen: emptySeenOptions() }));
+  let seen = seenState.seen;
+  if (seenState.key !== key || seenState.photos !== photos) {
+    seen = accumulateSeenOptions(
+      seenState.key === key ? seenState.seen : emptySeenOptions(),
+      photos
+    );
+    setSeenState({ key, photos, seen });
+  }
 
   // Filter menus. Keyed on `seen`, which only changes when a page brings a new
   // uploader or tag — otherwise every appended page would re-sort the lot.
@@ -315,9 +331,29 @@ export default function PhotoBrowser({
     lightboxProps,
   } = useLightboxByPhotoId(openablePhotos);
 
+  // Mount the viewer once the first page is in and the browser is idle, or
+  // sooner if a tile is pressed or a photo opens (a `?photo=` link). Mounted
+  // early, it is ready by the first tap, and it registers the page header's
+  // Play button, which appears with it.
+  const firstPageLoaded = (data?.pages.length ?? 0) > 0;
+  const [viewerWanted, setViewerWanted] = useState(false);
+  useEffect(() => {
+    if (viewerWanted || !firstPageLoaded) return;
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(() => setViewerWanted(true), { timeout: 2000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    // Safari has no requestIdleCallback.
+    const timer = setTimeout(() => setViewerWanted(true), 500);
+    return () => clearTimeout(timer);
+  }, [viewerWanted, firstPageLoaded]);
+  const wantViewer = useCallback(() => setViewerWanted(true), []);
+  // Once opened it stays mounted, so closing plays its close animation.
+  if (lightboxOpen && !viewerWanted) setViewerWanted(true);
+
   useOpenLinkedPhoto({
     photos: openablePhotos,
-    firstPageLoaded: (data?.pages.length ?? 0) > 0,
+    firstPageLoaded,
     isLightboxOpen: lightboxOpen,
     onResolve: (photoId, fetched) => {
       if (fetched) {
@@ -340,6 +376,16 @@ export default function PhotoBrowser({
       return true;
     },
   });
+
+  // Stable, so the memoized grid skips renders that change nothing it draws
+  // (a viewer swipe, a fetch-status flip).
+  const openPhoto = useCallback(
+    (photo: PhotoRow) => setOpenPhotoId(photo.id),
+    [setOpenPhotoId]
+  );
+  const expandPinned = useCallback(() => {
+    if (pinnedTag) setFilters({ tags: [pinnedTag] });
+  }, [pinnedTag, setFilters]);
 
   const noFiltersActive = activeFilterCount(filters) === 0;
   // Known once any data is in hand, including the previous view's while a new
@@ -400,18 +446,18 @@ export default function PhotoBrowser({
       <div
         aria-busy={isPlaceholderData || undefined}
         className={cn("transition-opacity", isPlaceholderData && "opacity-60")}
+        // A press on a tile starts the viewer's download if idle has not yet.
+        onPointerDownCapture={viewerWanted ? undefined : wantViewer}
       >
         <PhotoGrid
           groups={groups}
           // "date" draws the custom list's one header without a loaded-count.
           groupBy={custom ? "date" : groupBy}
-          onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
+          onOpenPhoto={openPhoto}
           selection={gridSelection}
           pinnedTag={noFiltersActive ? pinnedTag : undefined}
           pinnedLabel={pinnedLabel}
-          onExpandPinned={() =>
-            pinnedTag && setFilters({ tags: [pinnedTag] })
-          }
+          onExpandPinned={expandPinned}
         />
       </div>
 
@@ -435,11 +481,13 @@ export default function PhotoBrowser({
         onSelectAll={selectAll}
       />
 
-      <PhotoLightbox
-        {...lightboxProps}
-        onNearEnd={loadMore}
-        onChanged={() => invalidatePhotoCaches(queryClient)}
-      />
+      {(viewerWanted || lightboxOpen) && (
+        <PhotoLightbox
+          {...lightboxProps}
+          onNearEnd={loadMore}
+          onChanged={() => invalidatePhotoCaches(queryClient)}
+        />
+      )}
     </>
   );
 }

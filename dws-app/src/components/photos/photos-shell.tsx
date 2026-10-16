@@ -22,8 +22,10 @@ import UploadTray from "@/components/photos/upload-tray";
 import {
   PHOTOS_FLOATING_SLOT_ID,
   PHOTOS_SCROLLPORT_ID,
+  PhotosSearchProvider,
   PhotosShellContext,
   photoSection,
+  useSetPhotosQuery,
   type PhotosShellValue,
 } from "@/components/photos/photos-shell-context";
 import { usePhotoAlbum, usePhotoJobs } from "@/lib/photos/api";
@@ -40,6 +42,14 @@ const NO_ADD_BUTTON = ["/photos/actions", "/photos/trash", "/photos/settings"];
  * changes and pages only render content.
  */
 export default function PhotosShell({ children }: { children: ReactNode }) {
+  return (
+    <PhotosSearchProvider>
+      <PhotosShellFrame>{children}</PhotosShellFrame>
+    </PhotosSearchProvider>
+  );
+}
+
+function PhotosShellFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const params = useParams<{ jobId?: string; albumId?: string }>();
@@ -52,17 +62,11 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
 
   const batch = useCaptureBatch();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const setQuery = useSetPhotosQuery();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [newAlbumOpen, setNewAlbumOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
-    return () => clearTimeout(timer);
-  }, [query]);
 
   // A selection belongs to the page that made it.
   useEffect(() => setSelecting(false), [pathname]);
@@ -89,21 +93,32 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
     return undefined;
   }, [activeJob, activeAlbumId, activeAlbum]);
 
-  const value: PhotosShellValue = {
-    openPicker: () => fileInputRef.current?.click(),
-    openCamera: () => batch.openCamera(uploadTarget),
-    openSheet: batch.openSheet,
-    openNewProject: () => setNewProjectOpen(true),
-    openNewAlbum: () => setNewAlbumOpen(true),
-    activeJobId,
-    activeAlbumId,
-    section,
-    query,
-    setQuery,
-    debouncedQuery,
-    setViewerOpen,
-    setSelecting,
-  };
+  // One identity until you navigate: every page reads this context, so a new
+  // value would re-render the open page and its whole photo grid. Starting a
+  // selection, opening the viewer, or the batch changing re-renders the shell
+  // but not the page. The actions read the batch and the upload target
+  // through refs, so they never go stale.
+  const batchRef = useRef(batch);
+  batchRef.current = batch;
+  const uploadTargetRef = useRef(uploadTarget);
+  uploadTargetRef.current = uploadTarget;
+  const value = useMemo<PhotosShellValue>(
+    () => ({
+      openPicker: () => fileInputRef.current?.click(),
+      openCamera: () => batchRef.current.openCamera(uploadTargetRef.current),
+      openSheet: (files, target, capturedAtOverrides) =>
+        batchRef.current.openSheet(files, target, capturedAtOverrides),
+      openNewProject: () => setNewProjectOpen(true),
+      openNewAlbum: () => setNewAlbumOpen(true),
+      activeJobId,
+      activeAlbumId,
+      section,
+      setQuery,
+      setViewerOpen,
+      setSelecting,
+    }),
+    [activeJobId, activeAlbumId, section, setQuery]
+  );
 
   if (!ready) {
     return <AuthLoading className={PHOTOS_AUTH_LOADING_CLASS} />;

@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Search } from "lucide-react";
-import { usePhotosShell } from "@/components/photos/photos-shell-context";
+import { usePhotosSearch } from "@/components/photos/photos-shell-context";
 import { usePhotoAlbums, usePhotoJobs } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { PHOTO_SEARCH_PATH, photoSearchHref } from "@/lib/photos/photo-link";
@@ -22,7 +22,7 @@ const headingClass = "px-3 pb-1 pt-3 text-sm font-semibold text-[#b4b4b4]";
 export default function SearchBox({ className = "" }: { className?: string }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { query, setQuery, debouncedQuery } = usePhotosShell();
+  const { query, setQuery, debouncedQuery } = usePhotosSearch();
   const [focused, setFocused] = useState(false);
 
   const active = focused && debouncedQuery.length > 0;

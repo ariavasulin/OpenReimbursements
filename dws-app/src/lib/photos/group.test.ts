@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupPhotos, openableInDisplayOrder } from "./group";
+import { formatDayHeader, groupPhotos, openableInDisplayOrder } from "./group";
 import type { PhotoRow } from "./types";
 
 let counter = 0;
@@ -52,6 +52,22 @@ describe("groupPhotos by date", () => {
     const groups = groupPhotos(photos, "date");
     expect(groups).toHaveLength(2);
     expect(groups[0].photos).toHaveLength(2);
+  });
+
+  it("labels each day exactly as toLocaleDateString did", () => {
+    const photos = [
+      makePhoto({ captured_at: "2026-08-14T18:00:00.000Z" }),
+      makePhoto({ captured_at: "2026-08-14T17:00:00.000Z" }),
+      makePhoto({ captured_at: "2026-01-02T12:00:00.000Z" }),
+    ];
+    const expected = [photos[0], photos[2]].map((photo) =>
+      new Date(photo.captured_at).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    );
+    expect(groupPhotos(photos, "date").map((group) => group.label)).toEqual(expected);
   });
 
   it("labels unparseable dates as Unknown date", () => {
@@ -170,5 +186,11 @@ describe("groupPhotos by file type", () => {
       ["type:Other", "Other", 1],
     ]);
     expect(groups[0].photos.map((photo) => photo.id)).toEqual([jpegA.id, jpegB.id]);
+  });
+});
+
+describe("formatDayHeader", () => {
+  it("writes the long US date", () => {
+    expect(formatDayHeader(new Date(2026, 7, 14, 12))).toBe("August 14, 2026");
   });
 });
