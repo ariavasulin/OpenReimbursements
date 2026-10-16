@@ -101,18 +101,42 @@ describe("incremental SHA-256", () => {
 });
 
 describe("hash worker scheduling", () => {
-  it("starts at most two files and starts the next only after terminating a finished worker", async () => {
+  it("starts at most two files and hands each next file to a worker that has answered", async () => {
     const { hash, workers } = scheduler();
     const files = Array.from({ length: 5 }, () => new Blob(["abc"]));
     const results = files.map((file) => hash(file));
     expect(workers).toHaveLength(2);
-    for (let i = 0; i < files.length; i++) {
-      expect(workers[i].postMessage).toHaveBeenCalledWith(files[i]);
-      workers[i].reply({ digest: ABC_SHA });
-      expect(workers[i].terminate).toHaveBeenCalledOnce();
-      expect(workers.filter((worker) => !worker.terminate.mock.calls.length).length).toBeLessThanOrEqual(2);
-    }
+    expect(workers[0].postMessage).toHaveBeenCalledWith(files[0]);
+    expect(workers[1].postMessage).toHaveBeenCalledWith(files[1]);
+    // Each answer frees its worker, which takes the next waiting file.
+    workers[0].reply({ digest: ABC_SHA });
+    expect(workers[0].postMessage).toHaveBeenLastCalledWith(files[2]);
+    workers[1].reply({ digest: ABC_SHA });
+    expect(workers[1].postMessage).toHaveBeenLastCalledWith(files[3]);
+    workers[0].reply({ digest: ABC_SHA });
+    expect(workers[0].postMessage).toHaveBeenLastCalledWith(files[4]);
+    workers[1].reply({ digest: ABC_SHA });
+    workers[0].reply({ digest: ABC_SHA });
     await expect(Promise.all(results)).resolves.toEqual(files.map(() => ABC_SHA));
+    // Two workers served all five files, and none was thrown away.
+    expect(workers).toHaveLength(2);
+    expect(workers.every((worker) => worker.terminate.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("replaces a worker it had to terminate and keeps the reused one", async () => {
+    const { hash, workers } = scheduler();
+    await Promise.all([hash(new Blob(["abc"])), Promise.resolve().then(() => workers[0].reply({ digest: ABC_SHA }))]);
+    const controller = new AbortController();
+    const cancelled = hash(new Blob(["abc"]), { signal: controller.signal });
+    expect(workers).toHaveLength(1); // the idle worker took it
+    const rejected = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    expect(workers[0].terminate).toHaveBeenCalledOnce();
+    const next = hash(new Blob(["abc"]));
+    expect(workers).toHaveLength(2);
+    workers[1].reply({ digest: ABC_SHA });
+    await expect(next).resolves.toBe(ABC_SHA);
   });
 
   it("cancels queued work without creating a worker or reading its bytes", async () => {
@@ -209,7 +233,7 @@ describe("hash worker scheduling", () => {
 });
 
 describe("worker entry point", () => {
-  it.each([false, true])("posts the real core's success/failure response (failure=%s)", async (fails) => {
+  it.each([false, true])("posts the real core's success/failure response and stays ready for the next file (failure=%s)", async (fails) => {
     vi.resetModules();
     const scope = {
       onmessage: null as ((event: MessageEvent<Blob>) => Promise<void>) | null,
@@ -222,6 +246,7 @@ describe("worker entry point", () => {
       : new Blob(["abc"]);
     await scope.onmessage!(new MessageEvent("message", { data: file }));
     expect(scope.postMessage).toHaveBeenCalledWith(fails ? { error: "source disconnected" } : { digest: ABC_SHA });
-    expect(scope.onmessage).toBeNull();
+    await scope.onmessage!(new MessageEvent("message", { data: new Blob(["abc"]) }));
+    expect(scope.postMessage).toHaveBeenLastCalledWith({ digest: ABC_SHA });
   });
 });
