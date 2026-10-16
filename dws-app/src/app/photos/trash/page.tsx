@@ -13,12 +13,14 @@ import type { PurgeMarked, TrashPhoto, TrashResponse } from '@/lib/photos/action
 import ActionThumbnail from '@/components/photos/action-thumbnail';
 import ConfirmDialog from '@/components/photos/confirm-dialog';
 import { jobLabel, photoName, plural, projectName } from '@/lib/photos/format';
+import { formatDayHeader } from '@/lib/photos/group';
 import { photoPath } from '@/lib/photos/photo-link';
 import { toggleSelection } from '@/lib/photos/selection';
 
 const tall = 'min-h-11 text-base';
 const forever = `${button} ${tall} border-red-900 text-red-200 hover:border-red-400`;
-const day = (iso: string | null | undefined) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'the 30-day limit';
+// The shared formatter, built once: toLocaleDateString builds a new one for every row.
+const day = (iso: string | null | undefined) => iso ? formatDayHeader(new Date(iso)) : 'the 30-day limit';
 const expired = (iso: string) => Date.parse(iso) <= Date.now();
 
 /** One "Delete forever" awaiting its confirmation. `done` words the result from what the server marked. */
