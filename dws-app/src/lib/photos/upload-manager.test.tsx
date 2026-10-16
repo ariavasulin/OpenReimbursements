@@ -170,6 +170,59 @@ describe('the runner: next file prepared ahead, dropped connections, background 
     expect(mocks.uploadOne.mock.calls[1][5].identity).toEqual(identity);
   });
 
+  it('after a dropped connection, waits out the lease the cut-off try still holds and carries on (UP-3)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const answers: UploadResult[] = [
+      // The transfer failed offline, and so did the release of its lease.
+      { status: 'failed', error: 'Upload connection interrupted.', errorCode: 'storage_upload_failed', retryable: true, heldLease: 4, warnings: [] },
+      // Back online, but the hand-back missed (say its lease generation moved on): the lease is still live.
+      { status: 'failed', error: 'Waiting for an earlier try of this upload to time out.', errorCode: 'lease_busy', errorStatus: 409, retryable: true, retryAt: Date.now() + 60_000, warnings: [] },
+      { status: 'done', warnings: [] },
+    ];
+    mocks.uploadOne.mockImplementation(async (file: File, _id, _meta, _deps, _progress, options) => {
+      if (file.name === 'a.jpg') { options.onIdentity(identity); return answers.shift(); }
+      return { status: 'done', warnings: [] };
+    });
+    await mount();
+    await act(async () => { manager.enqueue(files('a.jpg', 'b.jpg'), { jobId: 'job' }); });
+    await act(async () => { window.dispatchEvent(new Event('online')); await vi.advanceTimersByTimeAsync(1_000); });
+    expect(mocks.uploadOne).toHaveBeenCalledTimes(2);
+    // The second try hands back the lease the first could not.
+    expect(mocks.uploadOne.mock.calls[1][5].heldLease).toBe(4);
+    expect(manager.items[0]).toMatchObject({ status: 'uploading', stage: 'reconnecting' });
+    // Not failed at the busy lease: it waits for the lease to run out, then finishes.
+    await act(async () => { await vi.advanceTimersByTimeAsync(59_000); });
+    expect(mocks.uploadOne).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await vi.waitFor(() => expect(manager.items.map(i => i.status)).toEqual(['done', 'done']));
+    expect(mocks.uploadOne.mock.calls.map(call => (call[0] as File).name)).toEqual(['a.jpg', 'a.jpg', 'a.jpg', 'b.jpg']);
+  });
+
+  it('fails a file that can no longer be read at once, instead of holding the batch for it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    mocks.uploadOne.mockImplementation(async (file: File) => file.name === 'a.jpg'
+      ? { status: 'failed', error: 'Load failed', errorCode: 'storage_upload_failed', retryable: true, warnings: [] }
+      : { status: 'done', warnings: [] });
+    const [gone, ok] = files('a.jpg', 'b.jpg');
+    // What a phone does to a picked file it revoked while the page was in the background.
+    gone.file.slice = () => ({ arrayBuffer: () => Promise.reject(new DOMException('The file could not be read', 'NotReadableError')) }) as unknown as Blob;
+    await mount();
+    await act(async () => { manager.enqueue([gone, ok], { jobId: 'job' }); });
+    await act(async () => { window.dispatchEvent(new Event('online')); await vi.advanceTimersByTimeAsync(1_000); });
+    await vi.waitFor(() => expect(manager.items.map(i => i.status)).toEqual(['failed', 'done']));
+    expect(manager.items[0].error).toBe('File can no longer be read — re-pick it');
+    expect(mocks.uploadOne).toHaveBeenCalledTimes(2); // a once, then b; a was not tried again
+  });
+
+  it('refreshes the existing photo a duplicate matched, which may now be in this upload\'s albums', async () => {
+    mocks.uploadOne.mockResolvedValue({ status: 'duplicate', canonicalPhotoId: 'existing', warnings: [] });
+    await mount();
+    await act(async () => { manager.enqueue(files('a.jpg'), { jobId: 'job', albumIds: ['album'] }); });
+    await vi.waitFor(() => expect(manager.items[0].status).toBe('duplicate'));
+    await vi.waitFor(() => expect(mocks.queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['photo-detail', 'existing'] }));
+    expect(mocks.invalidate).toHaveBeenCalledWith(mocks.queryClient);
+  });
+
   it('a server refusal still fails the file and moves on', async () => {
     mocks.uploadOne.mockImplementation(async (file: File) => file.name === 'a.jpg'
       ? { status: 'failed', error: 'Photo operations are temporarily unavailable.', errorCode: 'temporarily_unavailable', errorStatus: 503, retryable: true, warnings: [] }
