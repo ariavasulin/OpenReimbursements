@@ -617,6 +617,60 @@ success it also removes the upload's "Previews skipped…" note from
 has the same 300-second limit as the sweep. If it fails (offline, a timeout),
 the upload still completes and the sweep fills the preview that night.
 
+## Thumbnail format and caching (performance round 1, 2026-10)
+
+**Format.** Thumbnails and previews are WebP where the uploader's browser can
+encode WebP, and JPEG (quality 0.8) where it cannot: every iPhone and iPad
+browser, since all of them are WebKit. The file keeps its `_thumb.webp` /
+`_preview.webp` name either way; the stored Content-Type is the real format,
+and browsers go by that, not the name. Before this, iPhones stored PNGs under
+those names, about 15x the bytes of a WebP thumbnail.
+
+**Caching.** Every upload now sets how long browsers and the storage CDN may
+keep the file (`src/lib/photos/storage-cache.ts`): one year for thumbnails,
+previews, video posters and playback renditions; one week for originals and
+sidecars. Files stored before this keep their old one-hour cache until
+rewritten (see the backfill below). The one-year cache depends on a rule
+written on `derivedKeys` (`src/lib/photos/repair/sweep.ts`): a derived key is
+only ever rewritten with another rendering of the same picture. A future
+feature that changes what a photo looks like (rotate, crop, edit) must write a
+new key or add a version to the URL; otherwise people keep seeing the old
+picture for up to a year. A purged photo's files can also stay in caches (and
+on the CDN, for anyone holding the exact URL) for up to that long.
+
+### One-off backfill: PNG and mislabelled derivatives
+
+`scripts/backfill-png-derivatives.mjs` rewrites, at the same keys, every
+thumbnail and preview whose stored type is not `image/webp` or `image/jpeg`:
+PNGs are re-encoded to WebP with sharp, and real WebP or JPEG files stored as
+`application/octet-stream` get the right label. It re-encodes the stored
+derivative, not the original, so HEIC originals and videos need nothing
+special. Each rewrite gets the one-year cache. It uses storage `update`, so a
+file purged mid-run is reported as an error rather than recreated. It is a
+dry run unless given `--execute`, and safe to stop and re-run: a fixed file no
+longer matches.
+
+From `dws-app/`, after the release that stops new PNGs has deployed:
+
+```bash
+node --env-file=.env.local scripts/backfill-png-derivatives.mjs                      # dry run: counts and the list
+node --env-file=.env.local scripts/backfill-png-derivatives.mjs --execute --limit 4  # spot-check a few in the app
+node --env-file=.env.local scripts/backfill-png-derivatives.mjs --execute            # the rest
+```
+
+The first line says what it found. The dry run on 2026-10-16 listed 3,758
+derived files: 460 PNG (230 photos) and 446 mislabelled (223 photos). The last
+line of an `--execute` run gives the counts and the bytes before and after; it
+exits 1 if any file failed, and a re-run retries only those. Browsers holding
+an old PNG refresh it within the hour (those files carried the one-hour
+cache).
+
+Optional `--recache` also rewrites every correctly typed thumbnail and preview
+that still has the one-hour cache (same bytes, new cache header), so the whole
+existing library, not only new uploads, loads from the phone's cache on a
+revisit. On 2026-10-16 that was 2,844 more files; it downloads and re-uploads
+each one once, which counts against the Supabase egress quota.
+
 ## Repair sweep (`/api/photos/repair`)
 
 A daily Vercel cron (09:00 UTC, `vercel.json`) first permanently purges up to

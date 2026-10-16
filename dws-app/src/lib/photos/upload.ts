@@ -12,6 +12,7 @@ import {
 import { baseName, classifyFile, extensionOf, rewrap } from "./classify";
 import { readSidecarMeta, SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
 import { METADATA_MAX_BYTES, canDecodePreview, isRawImage } from "./decode-limits";
+import { DERIVED_CACHE_SECONDS, ORIGINAL_CACHE_SECONDS } from "./storage-cache";
 import {
   makeDerivatives as defaultMakeDerivatives,
   type Derivatives,
@@ -78,7 +79,13 @@ export interface PhotoStorage {
   upload(
     path: string,
     body: Blob | File,
-    options?: { contentType?: string; upsert?: boolean; signal?: AbortSignal }
+    options?: {
+      contentType?: string;
+      upsert?: boolean;
+      signal?: AbortSignal;
+      /** Seconds browsers and the CDN may cache the file (storage-cache.ts). */
+      cacheControl?: string;
+    }
   ): Promise<{ error: UploadTransferError | null }>;
 }
 
@@ -342,8 +349,8 @@ export async function uploadOne(
 
     const transfer = (path: string, body: File, contentType: string, progress?: ByteProgress) =>
       run(() => body.size > RESUMABLE_THRESHOLD_BYTES
-        ? deps.resumableUpload(path, body, { contentType, onProgress: progress, signal })
-        : deps.storage.upload(path, body, { contentType, upsert: true, signal }));
+        ? deps.resumableUpload(path, body, { contentType, onProgress: progress, signal, cacheControl: ORIGINAL_CACHE_SECONDS })
+        : deps.storage.upload(path, body, { contentType, upsert: true, signal, cacheControl: ORIGINAL_CACHE_SECONDS }));
     // Original FIRST: every intermediate state remains repairable.
     if (!originalState.complete) {
       const original = await transfer(attempt.original_path, file, classified.mime, onBytes);
@@ -365,8 +372,11 @@ export async function uploadOne(
     }
     const uploadDerivative = async (path: string, body: Blob): Promise<string | null> => {
       try {
+        // body.type is the real format (WebP, or JPEG where the browser
+        // cannot encode WebP), whatever the key's .webp name says.
         const result = await run(() => deps.storage.upload(path, body, {
           contentType: body.type || "image/webp", upsert: true, signal,
+          cacheControl: DERIVED_CACHE_SECONDS,
         }));
         if (result.error) throw new Error(result.error.message);
         return path;
@@ -472,8 +482,8 @@ export async function retrySidecar(
     let transferError: unknown;
     try {
       const transferred = file.size > RESUMABLE_THRESHOLD_BYTES
-        ? await deps.resumableUpload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false })
-        : await deps.storage.upload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false });
+        ? await deps.resumableUpload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false, cacheControl: ORIGINAL_CACHE_SECONDS })
+        : await deps.storage.upload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false, cacheControl: ORIGINAL_CACHE_SECONDS });
       transferError = transferred.error;
     } catch (error) { transferError = error; }
     options.signal?.throwIfAborted();

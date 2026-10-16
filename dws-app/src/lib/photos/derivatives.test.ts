@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ENCODE_QUALITY,
   makeDerivatives,
   POSTER_SEEK_SECS,
   THUMB_MAX_DIM,
@@ -13,23 +14,37 @@ interface FakeCanvas {
   height: number;
 }
 
-/** Stub OffscreenCanvas; every canvas constructed lands in `canvases`. */
-function installOffscreenCanvas(canvases: FakeCanvas[]) {
+interface Encode {
+  width: number;
+  height: number;
+  type: string;
+  quality?: number;
+}
+
+/** Stub OffscreenCanvas. Every drawing canvas lands in `canvases` (the 1x1
+ * WebP probe is left out so indexes stay thumb, preview) and every
+ * encode in `encodes`. Like a real browser, a type it cannot encode comes
+ * back as PNG; WebKit is `{ encodable: ["image/png", "image/jpeg"] }`. */
+function installOffscreenCanvas(
+  canvases: FakeCanvas[],
+  { encodable, encodes = [] }: { encodable?: string[]; encodes?: Encode[] } = {}
+) {
   class OffscreenCanvasMock {
     width: number;
     height: number;
     constructor(width: number, height: number) {
       this.width = width;
       this.height = height;
-      canvases.push(this);
+      if (width * height > 1) canvases.push(this);
     }
     getContext(kind: string) {
       return kind === "2d" ? { drawImage: () => {} } : null;
     }
-    async convertToBlob(options?: { type?: string }) {
-      return new Blob([`${this.width}x${this.height}`], {
-        type: options?.type ?? "image/png",
-      });
+    async convertToBlob(options?: { type?: string; quality?: number }) {
+      const asked = options?.type ?? "image/png";
+      const type = !encodable || encodable.includes(asked) ? asked : "image/png";
+      encodes.push({ width: this.width, height: this.height, type: asked, quality: options?.quality });
+      return new Blob([`${this.width}x${this.height}`], { type });
     }
   }
   vi.stubGlobal("OffscreenCanvas", OffscreenCanvasMock);
@@ -41,8 +56,9 @@ function installCanvasMocks(bitmap: {
   /** Stored with an EXIF rotation (e.g. orientation 6): only
    * `imageOrientation: "from-image"` decodes it with the sides swapped. */
   exifRotated?: boolean;
-}) {
+}, encodable?: string[]) {
   const canvases: FakeCanvas[] = [];
+  const encodes: Encode[] = [];
 
   vi.stubGlobal(
     "createImageBitmap",
@@ -56,9 +72,9 @@ function installCanvasMocks(bitmap: {
       };
     })
   );
-  installOffscreenCanvas(canvases);
+  installOffscreenCanvas(canvases, { encodable, encodes });
 
-  return { canvases };
+  return { canvases, encodes };
 }
 
 afterEach(() => {
@@ -118,6 +134,76 @@ describe("makeDerivatives", () => {
     expect(result).not.toBeNull();
     expect(canvases[0]).toMatchObject({ width: 320, height: 240 }); // thumb
     expect(canvases[1]).toMatchObject({ width: 320, height: 240 }); // preview
+  });
+
+  it("falls back to JPEG at quality 0.8 where WebP comes back as PNG (WebKit)", async () => {
+    // Every iOS browser: convertToBlob({type: "image/webp"}) silently
+    // returns a PNG ~15x the size. The derivative must never be that PNG.
+    const { encodes } = installCanvasMocks(
+      { width: 4000, height: 3000 },
+      ["image/png", "image/jpeg"]
+    );
+    const file = new File([new Uint8Array(8)], "IMG_0001.jpg", {
+      type: "image/jpeg",
+    });
+
+    const result = await makeDerivatives(file);
+
+    expect(result).not.toBeNull();
+    expect(result!.thumb.type).toBe("image/jpeg");
+    expect(result!.preview.type).toBe("image/jpeg");
+    // Only the 1x1 probe ever asked for WebP; no full-size PNG was encoded.
+    const sized = encodes.filter((e) => e.width * e.height > 1);
+    expect(sized.map((e) => e.type)).toEqual(["image/jpeg", "image/jpeg"]);
+    expect(sized.every((e) => e.quality === ENCODE_QUALITY)).toBe(true);
+    expect(ENCODE_QUALITY).toBe(0.8);
+  });
+
+  it("asks whether WebP encodes only once per canvas kind", async () => {
+    const { encodes } = installCanvasMocks({ width: 4000, height: 3000 });
+    const file = new File([new Uint8Array(8)], "photo.jpg", {
+      type: "image/jpeg",
+    });
+
+    await makeDerivatives(file);
+    await makeDerivatives(file);
+
+    expect(encodes.filter((e) => e.width * e.height === 1)).toHaveLength(1);
+    expect(encodes.filter((e) => e.width * e.height > 1).map((e) => e.type))
+      .toEqual(Array(4).fill("image/webp"));
+  });
+
+  it("re-encodes as JPEG when the WebP probe passed but a full-size WebP did not", async () => {
+    const { encodes } = installCanvasMocks({ width: 4000, height: 3000 });
+    const file = new File([new Uint8Array(8)], "photo.jpg", {
+      type: "image/jpeg",
+    });
+    // The probe has already run (and passed) for this canvas class; now the
+    // class starts answering WebP requests with PNG.
+    await makeDerivatives(file);
+    const Mock = globalThis.OffscreenCanvas as unknown as {
+      prototype: { convertToBlob(o?: { type?: string }): Promise<Blob> };
+    };
+    const original = Mock.prototype.convertToBlob;
+    Mock.prototype.convertToBlob = async function (o) {
+      const blob = await original.call(this, o);
+      return o?.type === "image/webp" ? new Blob([blob], { type: "image/png" }) : blob;
+    };
+    encodes.length = 0;
+
+    const result = await makeDerivatives(file);
+
+    expect(result!.thumb.type).toBe("image/jpeg");
+    expect(result!.preview.type).toBe("image/jpeg");
+  });
+
+  it("returns null rather than store a PNG when neither WebP nor JPEG encodes", async () => {
+    installCanvasMocks({ width: 4000, height: 3000 }, ["image/png"]);
+    const file = new File([new Uint8Array(8)], "photo.jpg", {
+      type: "image/jpeg",
+    });
+
+    expect(await makeDerivatives(file)).toBeNull();
   });
 
   it("returns null when the file can't be decoded", async () => {
@@ -244,6 +330,20 @@ describe("makeDerivatives (video)", () => {
     expect(result).not.toBeNull();
     expect(result!.durationSecs).toBe(1.2);
     expect(video.seekedTo).toBeCloseTo(0.6);
+  });
+
+  it("makes a JPEG poster where the browser cannot encode WebP (iPhone video)", async () => {
+    const video = new FakeVideo();
+    vi.stubGlobal("document", { createElement: () => video });
+    vi.stubGlobal("URL", { createObjectURL: () => "blob:x", revokeObjectURL: () => {} });
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => ({ width: 1920, height: 1080, close: vi.fn() })));
+    installOffscreenCanvas([], { encodable: ["image/png", "image/jpeg"] });
+    const file = new File([new Uint8Array(8)], "clip.mov", { type: "video/quicktime" });
+
+    const result = await makeDerivatives(file);
+
+    expect(result!.thumb.type).toBe("image/jpeg");
+    expect(result!.preview.type).toBe("image/jpeg");
   });
 
   it("returns null (and still revokes the object URL) when the codec can't decode", async () => {

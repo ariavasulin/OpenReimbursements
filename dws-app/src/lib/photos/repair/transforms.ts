@@ -13,6 +13,7 @@ import path from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { THUMB_MAX_DIM, PREVIEW_MAX_DIM } from "../derivatives";
+import { DERIVED_CACHE_SECONDS } from "../storage-cache";
 import {
   derivedKeys,
   SERVER_IMAGE_MAX_BYTES,
@@ -179,6 +180,7 @@ export async function fillImageDerivatives(
       .upload(path, rendered.body, {
         contentType: rendered.contentType,
         upsert: true,
+        cacheControl: DERIVED_CACHE_SECONDS,
       }));
     if (error) throw new Error(`upload ${path}: ${error.message}`);
   }));

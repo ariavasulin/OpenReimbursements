@@ -45,6 +45,7 @@ export const CAPTURED = new Date("2026-08-14T14:41:00.000Z");
 export interface Recorded {
   path: string;
   contentType?: string;
+  cacheControl?: string;
   bytes: number;
 }
 
@@ -84,6 +85,7 @@ export function makeDeps(overrides?: {
         uploads.push({
           path,
           contentType: options?.contentType,
+          cacheControl: options?.cacheControl,
           bytes: body.size,
         });
         return { error: null };
