@@ -21,8 +21,8 @@ export const PHONE_TILES: TileLayoutGuess = { columns: 3, rowPx: 122 };
 /** A 1440px screen beside the 280px rail: 7 columns of ~150px tiles, gap 8px. */
 export const DESKTOP_TILES: TileLayoutGuess = { columns: 7, rowPx: 158 };
 
-/** The group header row (44px) and the small margin above it. */
-const HEADER_PX = 48;
+/** The group header row. The small margin above a group is the section's own, outside its size. */
+const HEADER_PX = 44;
 
 /** Estimated height in px of a group section holding `count` tiles. */
 export function sectionHeightGuess(count: number, layout: TileLayoutGuess): number {

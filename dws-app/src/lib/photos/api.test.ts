@@ -263,6 +263,56 @@ describe("a patch made while a grid is loading", () => {
     expect(slow.calls).toHaveLength(1);
   });
 
+  it("keeps both of two trashes made during one refetch when the answer already has the first", async () => {
+    const client = new QueryClient();
+    client.setQueryData(key, gridOf(photo("a"), photo("b")));
+    const slow = slowGrid();
+    const refetch = client.fetchInfiniteQuery({
+      queryKey: key, queryFn: slow.queryFn, initialPageParam: null as string | null,
+      getNextPageParam: () => null, staleTime: 0,
+    });
+    await vi.waitFor(() => expect(slow.calls).toHaveLength(1));
+    removePhotosFromLists(client, ["a"]);
+    removePhotosFromLists(client, ["b"]);
+    // Read after the first trash, before the second.
+    slow.land(page("b"));
+    await refetch;
+    expect(idsOf(client, key)).toEqual([]);
+  });
+
+  it("keeps a rename made after a tag the answer already carries", async () => {
+    const client = new QueryClient();
+    client.setQueryData(key, gridOf({ ...photo("b"), display_name: "old" }));
+    const slow = slowGrid();
+    const refetch = client.fetchInfiniteQuery({
+      queryKey: key, queryFn: slow.queryFn, initialPageParam: null as string | null,
+      getNextPageParam: () => null, staleTime: 0,
+    });
+    await vi.waitFor(() => expect(slow.calls).toHaveLength(1));
+    patchPhotoTags(client, ["b"], { add: ["Deck"] });
+    patchPhotoRows(client, [{ id: "b", display_name: "new" }]);
+    slow.land({ photos: [{ ...photo("b"), tags: ["Deck"], display_name: "old" }], nextCursor: null });
+    await refetch;
+    const [row] = client.getQueryData<CachedGrid>(key)!.pages[0].photos;
+    expect([row.display_name, row.tags]).toEqual(["new", ["Deck"]]);
+  });
+
+  it("keeps a rename made while an open photo's read is on its way", async () => {
+    const client = new QueryClient();
+    const detailKey = photoKeys.detail("a");
+    client.setQueryData(detailKey, { ...photo("a"), display_name: "old", albums: [] });
+    let land: (value: unknown) => void = () => undefined;
+    const read = client.fetchQuery({ queryKey: detailKey, queryFn: () => new Promise((resolve) => (land = resolve)), staleTime: 0 });
+    await vi.waitFor(() => expect(client.getQueryState(detailKey)?.fetchStatus).toBe("fetching"));
+    patchPhotoRows(client, [{ id: "a", display_name: "new" }]);
+    patchPhotoTags(client, ["a"], { add: ["Deck"] });
+    // The server answers as it was before the rename and the tag.
+    land({ ...photo("a"), display_name: "old", tags: [], albums: [] });
+    await read;
+    expect(client.getQueryData<PhotoRow>(detailKey)).toMatchObject({ display_name: "new", tags: ["Deck"] });
+    expect(client.getQueryState(detailKey)?.isInvalidated).toBe(true);
+  });
+
   it("keeps a new tag when the next page lands after it", async () => {
     const client = new QueryClient();
     client.setQueryData(key, { pages: [{ photos: [photo("a")], nextCursor: "c1" }], pageParams: [null] });

@@ -359,6 +359,8 @@ export async function uploadOne(
   if (opts.signal?.aborted) cancel();
   else opts.signal?.addEventListener("abort", cancel, { once: true });
   let lease: UploadLeaseInput | undefined;
+  // The last try's lease, until a begin request has carried it to the server.
+  let heldLease = opts.heldLease;
   let completed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let renewing: Promise<void> = Promise.resolve();
@@ -417,7 +419,7 @@ export async function uploadOne(
     // retry of the same identity (a lost response, a dropped connection) checks.
     let fresh = !unchanged;
     // Only this same attempt's lease can be handed back.
-    let heldLease = unchanged ? opts.heldLease : undefined;
+    if (!unchanged) heldLease = undefined;
     let attempt: UploadAttempt;
     let acquired: AcquireUploadOutcome;
     let owner: UploadOwner;
@@ -433,8 +435,10 @@ export async function uploadOne(
       if (deps.begin) {
         const beginInput: BeginUploadInput = { ...attemptInput, probe: !fresh,
           ...(heldLease !== undefined ? { release_generation: heldLease } : {}) };
-        heldLease = undefined;
         begun = await run(() => deps.begin!(beginInput, requestOptions));
+        // Answered: the server has tried the hand-back. A begin that never
+        // got through keeps it for the next try (see finally).
+        heldLease = undefined;
         attempt = begun.attempt;
         if (begun.lease_busy) {
           throw new UploadRequestError("Waiting for an earlier try of this upload to time out.", {
@@ -601,6 +605,10 @@ export async function uploadOne(
       // Offline, the release fails too and the lease stays live for up to two
       // minutes. The next try hands it back as it begins (UP-3).
       if (!released && failure) failure.heldLease = lease.lease_generation;
+    } else if (heldLease !== undefined && failure) {
+      // The connection dropped again before begin could hand the last try's
+      // lease back: the next try hands it back instead of waiting it out.
+      failure.heldLease = heldLease;
     }
   }
 }

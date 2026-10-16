@@ -31,6 +31,7 @@ import {
   type PhotoSort,
 } from "@/lib/photos/api";
 import { activeFilterCount, groupFilters } from "@/lib/photos/browse-state";
+import { selectAllNeedsIds } from "@/lib/photos/select-all";
 import {
   accumulateSeenOptions,
   emptySeenOptions,
@@ -246,8 +247,8 @@ export default function PhotoBrowser({
     groupIds
   );
   // Once something is selected the bar offers "Select all M": only the count
-  // is asked for now (one small request); the ids (up to 5,000) are fetched
-  // when the link is clicked.
+  // is asked for now (one small request); the ids (up to 5,000) wait for the
+  // click, unless the count cannot tell (below).
   const matchCount = useQuery({
     ...photoCountOptions(scope, listParams),
     enabled: enabled && selectedIds.size > 0,
@@ -256,6 +257,13 @@ export default function PhotoBrowser({
     () => queryClient.fetchQuery(photoIdsOptions(scope, listParams)),
     [queryClient, scope, listParams]
   );
+  // When the count cannot say whether every match is selected (a selection
+  // carried over from another filter), the ids decide.
+  const countKnown = isPlaceholderData ? undefined : matchCount.data;
+  const matchIds = useQuery({
+    ...photoIdsOptions(scope, listParams),
+    enabled: enabled && selectAllNeedsIds(selectedIds, countKnown, photosById),
+  });
   // Another album, project, or search is another screen, so its selection goes.
   // Changing a filter keeps it: that is how photos from two projects get picked
   // for one album — filter to the first, tick, filter to the second, tick.
@@ -473,7 +481,8 @@ export default function PhotoBrowser({
         sharedJobId={sharedJobId}
         // Not while the previous filter's photos are still on screen (dimmed):
         // their ticks and the new filter's count do not describe one list.
-        matchCount={isPlaceholderData ? undefined : matchCount.data}
+        matchCount={countKnown}
+        matchIds={isPlaceholderData ? undefined : matchIds.data?.ids}
         loadAllMatches={loadAllMatches}
         onSelectAll={selectAll}
       />

@@ -4,5 +4,5 @@ import { PageSkeleton } from "@/components/photos/shell-skeleton";
 // prefetch makes this instant). The same grey page the shell draws during the
 // session check, so the two never flash one after the other.
 export default function Loading() {
-  return <PageSkeleton />;
+  return <PageSkeleton kind="collection" />;
 }

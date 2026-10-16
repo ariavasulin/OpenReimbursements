@@ -1,8 +1,9 @@
 // The lite build reads JPEG and HEIC, the two formats a phone saves, at about
-// half the size of the full one (SHELL-2). Not the mini build: it has no HEIC
-// reader, so iPhone photos would lose their capture dates. The full build's
-// extra PNG and TIFF readers are not missed: RAW and TIFF files skip this read
-// (decode-limits.ts), and a PNG falls through to the next capture-time rung.
+// half the size of the full one. Not the mini build: it has no HEIC
+// reader, so iPhone photos would lose their capture dates. The lite build has
+// no PNG reader, so a PNG (a screenshot, an exported photo) loads the full
+// build on demand: its EXIF date must still win over the file's date. RAW and
+// TIFF files skip this read (decode-limits.ts).
 import type * as Exifr from "exifr";
 // @ts-expect-error exifr publishes types for its package root only; the lite build has the same API.
 import exifrLite from "exifr/dist/lite.esm.mjs";
@@ -35,7 +36,7 @@ function isPlausibleCapture(date: Date): boolean {
 }
 
 // Read the EXIF capture time from an image file. Returns null when the file
-// has no usable EXIF (videos, PNGs, canvas JPEGs, ...) or when the date it
+// has no usable EXIF (videos, canvas JPEGs, ...) or when the date it
 // carries is not a plausible capture time.
 export async function readExifDate(file: File | Blob): Promise<Date | null> {
   const mime = file.type;
@@ -50,10 +51,11 @@ export async function readExifDate(file: File | Blob): Promise<Date | null> {
       typeof FileReader === "undefined"
         ? new Uint8Array(await file.arrayBuffer())
         : file;
+    const reader: Pick<typeof Exifr, "parse"> = mime === "image/png" ? (await import("exifr")).default : exifr;
     // Both dates sit in the EXIF block, so the tags are named under it. A
     // bare list of tag names (the full build's shorthand) throws in the lite
     // build, which cannot look up which block each name lives in.
-    const parsed = (await exifr.parse(source, {
+    const parsed = (await reader.parse(source, {
       exif: { pick: ["DateTimeOriginal", "CreateDate"] },
       gps: false,
       interop: false,

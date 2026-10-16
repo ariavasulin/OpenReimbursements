@@ -2,14 +2,19 @@
 
 import { Component, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { toast } from "sonner";
+import { reloadIfRedeployed } from "@/lib/photos/redeploy";
 
 // Parts of the photo app download on their own, after the page is up (the
-// viewer, the "+" pop-ups). Such a download can fail: a phone on a weak signal,
-// or a tab opened before a deploy asking for a file name the deploy removed.
-// Without a boundary, React hands the failure to Next's root, which swaps the
-// whole app for "Application error" and loses the upload tray's queue with it.
+// viewer, the "+" pop-ups, Download, Arrange). Each loads through
+// `retryableLoader` and renders inside a <LoadBoundary>. Such a download can
+// fail: a phone on a weak signal, or a tab opened before a deploy asking for a
+// file name the deploy removed. Without a boundary, React hands the failure to
+// Next's root, which swaps the whole app for "Application error" and loses the
+// upload tray's queue with it.
 // <LoadBoundary> keeps the failure to the part that failed, and
 // `retryableLoader` lets the next open of that part try the download again.
+// After a deploy, trying again cannot help (the file is gone for good), so
+// `reloadIfRedeployed` moves the tab onto the new build instead.
 
 export const LOAD_FAILED_MESSAGE =
   "Could not load part of the page. Check your connection and try again.";
@@ -37,7 +42,12 @@ export class LoadBoundary extends Component<LoadBoundaryProps, { failed: boolean
 
   componentDidCatch(error: unknown) {
     // One fixed id: two parts failing together show one toast.
-    if (this.props.notify !== false) toast.error(LOAD_FAILED_MESSAGE, { id: LOAD_FAILED_TOAST_ID });
+    if (this.props.notify !== false) {
+      toast.error(LOAD_FAILED_MESSAGE, { id: LOAD_FAILED_TOAST_ID });
+      // Only for a part someone asked for: a download nobody is waiting on
+      // never reloads the page under them.
+      void reloadIfRedeployed(error);
+    }
     this.props.onError?.(error);
   }
 

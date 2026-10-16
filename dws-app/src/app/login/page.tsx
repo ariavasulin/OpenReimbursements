@@ -13,6 +13,8 @@ import { formatUSPhoneNumber } from '@/lib/phone';
 import { isPhotosHost } from '@/lib/cookieDomain';
 import { needsNameFor } from '@/lib/needs-name';
 
+const PHOTOS_TITLE = 'DWS Photos';
+
 /** Seconds before "Resend code" can be pressed (again). */
 const RESEND_WAIT_SECONDS = 30;
 
@@ -70,11 +72,19 @@ export default function LoginPage() {
   const router = useRouter();
 
   // The browser tab and the heading say which product this is. Decided on the
-  // client because it depends on the address the page was opened at.
+  // client because it depends on the address the page was opened at. Next
+  // writes the static page's title ("DWS Receipts") again just after this
+  // first runs, so the photos title is put back whenever it is replaced.
   useEffect(() => {
     if (!isPhotosSignIn()) return;
     setPhotosSignIn(true);
-    document.title = 'DWS Photos';
+    const keepTitle = () => {
+      if (document.title !== PHOTOS_TITLE) document.title = PHOTOS_TITLE;
+    };
+    keepTitle();
+    const observer = new MutationObserver(keepTitle);
+    observer.observe(document.head, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
   }, []);
 
   // Counts "Resend code" down to zero, one second at a time.

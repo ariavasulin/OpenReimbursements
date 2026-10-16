@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { preconnect } from "react-dom";
 import { QueryProvider } from "@/components/providers/query-provider";
-import PhotosShell from "@/components/photos/photos-shell";
-import { PageSkeleton } from "@/components/photos/shell-skeleton";
+import PhotosShell, { RoutePageSkeleton } from "@/components/photos/photos-shell";
 import UploadShell from "@/components/photos/upload-shell";
 
 // Its own icon and manifest, so a home-screen shortcut to the photo library is
@@ -44,7 +43,7 @@ export default function PhotosLayout({
     <QueryProvider>
       <UploadShell tray={false}>
         <PhotosShell>
-          <Suspense fallback={<PageSkeleton />}>{children}</Suspense>
+          <Suspense fallback={<RoutePageSkeleton />}>{children}</Suspense>
         </PhotosShell>
       </UploadShell>
     </QueryProvider>

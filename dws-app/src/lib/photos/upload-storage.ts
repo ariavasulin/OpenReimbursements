@@ -61,7 +61,11 @@ export function createAbortablePhotoStorage(deps: {
     global: {
       fetch: async (input, init) => {
         const headers = new Headers(init?.headers);
-        const call = calls.get(headers.get(CALL_HEADER) ?? "");
+        const callId = headers.get(CALL_HEADER);
+        const call = callId === null ? undefined : calls.get(callId);
+        // The upload this request belongs to has already settled (cancelled
+        // while the SDK looked up the sign-in token): send nothing.
+        if (callId !== null && !call) throw new DOMException("The upload was cancelled.", "AbortError");
         headers.delete(CALL_HEADER);
         const signal = call?.signal;
         signal?.throwIfAborted();

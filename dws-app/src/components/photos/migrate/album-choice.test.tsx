@@ -54,7 +54,7 @@ it('never creates on blur before the lookup and supports keyboard selection afte
   await type('Party');
   await act(async () => input().blur());
   await settle();
-  expect(changed).not.toHaveBeenCalled(); expect(fetchMock).not.toHaveBeenCalled();
+  expect(changed).not.toHaveBeenCalled(); expect(lookups()).not.toContain('Party');
   expect(pending).toHaveBeenLastCalledWith(true);
   await act(async () => input().focus());
   await settle();
@@ -97,12 +97,23 @@ it('asks once per pause in typing, for a small page, and answers a name typed ag
   albums.mockResolvedValue({ albums: [{ id: 'k', name: 'Kitchen', photo_count: 3 }] });
   await type('K'); await type('Ki'); await type('Kitchen');
   await settle();
-  expect(lookups()).toEqual(['Kitchen']);
-  expect(new URL(fetchMock.mock.calls[0][0], 'http://test').searchParams.get('limit')).toBe('25');
+  // The blank field asked once on focus; the typed name once after the pause.
+  expect(lookups()).toEqual(['', 'Kitchen']);
+  expect(new URL(fetchMock.mock.calls[1][0], 'http://test').searchParams.get('limit')).toBe('25');
   expect(container.querySelector('[role=option]')?.textContent).toContain('Kitchen');
   await type('');
   await type('Kitchen');
   await settle();
   // The same name again within a minute is answered from the cache.
-  expect(lookups()).toEqual(['Kitchen']);
+  expect(lookups()).toEqual(['', 'Kitchen']);
+});
+
+it('lists existing albums when the blank field is focused, before anything is typed', async () => {
+  albums.mockResolvedValue({ albums: [{ id: 'k', name: 'Kitchen', photo_count: 3 }, { id: 'd', name: 'Deck', photo_count: 1 }] });
+  await act(async () => input().blur());
+  await act(async () => input().focus());
+  await settle();
+  expect(lookups()).toContain('');
+  expect([...container.querySelectorAll('[role=option]')].map(option => option.textContent)).toEqual(['Kitchen3 photos', 'Deck1 photo']);
+  expect(container.textContent).not.toContain('Create album');
 });

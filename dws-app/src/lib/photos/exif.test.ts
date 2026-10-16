@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { crc32 } from "node:zlib";
 import { extractCapturedAt, readExifDate } from "./exif";
 
 const fixture = (name: string) =>
@@ -25,6 +26,26 @@ const jpegFile = (value: string, lastModified = 0) =>
     lastModified,
   });
 
+/** The PNG fixture with the JPEG fixture's EXIF block as an eXIf chunk after IHDR. */
+function pngWithExif(): Buffer {
+  const jpeg = fixture("exif-datetime.jpg");
+  let tiff: Buffer | undefined;
+  for (let i = 2; i + 4 < jpeg.length && !tiff; i += 2 + jpeg.readUInt16BE(i + 2)) {
+    if (jpeg[i + 1] === 0xe1 && jpeg.subarray(i + 4, i + 10).toString("latin1") === "Exif\0\0") {
+      tiff = jpeg.subarray(i + 10, i + 2 + jpeg.readUInt16BE(i + 2));
+    }
+  }
+  if (!tiff) throw new Error("fixture has no EXIF block");
+  const chunk = Buffer.alloc(tiff.length + 12);
+  chunk.writeUInt32BE(tiff.length);
+  chunk.write("eXIf", 4, "latin1");
+  tiff.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(chunk.subarray(4, 8 + tiff.length)), 8 + tiff.length);
+  const png = fixture("no-exif.png");
+  // Signature (8) + IHDR (25): the eXIf chunk goes right after.
+  return Buffer.concat([png.subarray(0, 33), chunk, png.subarray(33)]);
+}
+
 // A plausible camera-roll mtime: past, and comfortably after the 1990 floor.
 const PLAUSIBLE_MTIME = Date.UTC(2026, 7, 14, 21, 41);
 
@@ -41,6 +62,14 @@ describe("readExifDate", () => {
     expect(capturedAt!.getDate()).toBe(14);
     expect(capturedAt!.getHours()).toBe(14);
     expect(capturedAt!.getMinutes()).toBe(41);
+  });
+
+  it("returns the EXIF DateTimeOriginal from a PNG", async () => {
+    const file = new File([pngWithExif()], "shot.png", { type: "image/png", lastModified: Date.UTC(2026, 9, 1) });
+    const capturedAt = await readExifDate(file);
+    expect(capturedAt?.getMonth()).toBe(7); // August, not the file's October
+    expect(capturedAt?.getDate()).toBe(14);
+    expect(await extractCapturedAt(file)).toMatchObject({ source: "exif" });
   });
 
   it("returns null for an image without EXIF", async () => {

@@ -128,7 +128,9 @@ view is in `Employee-Features.md` § DWS Photos.
   timezone. `q` is split into words (at most 8) and every word must match.
 - **Select all**: while photos are selected, the bar asks only
   `GET /api/photos/ids?count=1` for its "Select all M" label (one cheap count).
-  The ids themselves are fetched when the link is clicked: `GET /api/photos/ids`
+  The ids themselves are fetched when the link is clicked, or when the count
+  alone cannot tell whether every match is already selected (a selection
+  carried over from another filter): `GET /api/photos/ids`
   walks the match server-side 1,000 rows at a time and stops at 5,000
   (`truncated: true`). The selection
   cap is 5,000 (`MAX_SELECTION_PHOTOS`); the action batch accepts it as one
@@ -347,6 +349,11 @@ Three migrations, applied to production on 2026-10-14 before the deploy:
   desktop top bar and rail, grey tiles) is drawn instead of "Verifying
   authentication"; only the page waits. A signed-out visitor sees that frame
   for a moment before the redirect to `/login?next=...`.
+- **Code loaded on demand.** The viewer, the "+" pop-ups, Download, Arrange
+  and the upload engine download when first used. A failed download keeps the
+  page and the next try downloads again; when the file is gone from the server
+  (404: a tab opened before a deploy), the page reloads onto the new build, at
+  most once a minute (`src/lib/photos/redeploy.ts`).
 - **Project and album pages are cached HTML.** `/photos/[jobId]` and
   `/photos/albums/[albumId]` render once per id and are then served from the
   Vercel cache until the next deploy (their segment layouts export an empty

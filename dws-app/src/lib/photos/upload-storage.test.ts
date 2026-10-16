@@ -209,6 +209,21 @@ describe("actual Supabase SDK Storage adapter with injected network", () => {
     expect(observedSignal?.aborted).toBe(true);
   });
 
+  it("sends nothing when cancelled while the SDK is still looking up the sign-in token", async () => {
+    const { storage, fetch, getAccessToken } = sdk();
+    let releaseToken!: (token: string) => void;
+    getAccessToken.mockImplementationOnce(() => new Promise((resolve) => { releaseToken = resolve; }));
+    const controller = new AbortController();
+    const result = storage.upload(PATH, FILE, { signal: controller.signal });
+    const rejected = expect(result).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(getAccessToken).toHaveBeenCalled());
+    controller.abort();
+    await rejected;
+    releaseToken("employee-token");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("serves every upload from one client, each with its own signal and status, and never sends the call tag", async () => {
     const { storage, fetch } = sdk();
     const first = new AbortController();

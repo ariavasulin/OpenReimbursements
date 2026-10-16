@@ -1096,6 +1096,22 @@ describe("one request before the bytes (begin)", () => {
     expect(vi.mocked(other.begin!).mock.calls[0][0]).not.toHaveProperty("release_generation");
   });
 
+  it("keeps the last try's lease when the connection drops again before begin answers (UP-3)", async () => {
+    const file = makeFile("a.jpg", "image/jpeg");
+    const identity = await retriedIdentity(file);
+    const { deps } = makeDeps();
+    withBegin(deps);
+    deps.begin = vi.fn(async () => { throw new UploadRequestError("Upload connection interrupted.", { code: "network_error", retryable: true }); });
+    const dropped = await uploadOne(file, "photo-1", META, deps, undefined, { identity, heldLease: 4 });
+    expect(dropped).toMatchObject({ status: "failed", heldLease: 4 });
+    expect(vi.mocked(deps.begin).mock.calls[0][0]).toMatchObject({ release_generation: 4 });
+
+    const { deps: next } = makeDeps();
+    withBegin(next);
+    expect((await uploadOne(file, "photo-1", META, next, undefined, { identity, heldLease: dropped.heldLease })).status).toBe("done");
+    expect(vi.mocked(next.begin!).mock.calls[0][0]).toMatchObject({ release_generation: 4 });
+  });
+
   it("holds no lease when the release went through", async () => {
     const { deps } = makeDeps({ throwAt: (path) => path.startsWith("originals/") });
     withBegin(deps);

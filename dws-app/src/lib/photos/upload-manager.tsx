@@ -26,6 +26,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
 import { invalidateAfterUpload, photoKeys } from "./api";
+import { reloadIfRedeployed } from "./redeploy";
 import * as Q from "./upload-queue";
 import type {
   BatchMeta,
@@ -55,6 +56,8 @@ const importEngine = () =>
 function loadEngine() {
   engine ??= importEngine().catch((error: unknown) => {
     engine = undefined;
+    // After a deploy the old file is gone for good: move onto the new build.
+    void reloadIfRedeployed(error);
     throw error;
   });
   return engine;

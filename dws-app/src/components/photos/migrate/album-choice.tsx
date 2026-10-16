@@ -42,25 +42,24 @@ export default function AlbumChoice({ value, onChange, onPendingChange, inputId,
   const pending = typed !== selectedText;
   useEffect(() => { onPendingChange?.(pending); }, [pending, onPendingChange]);
 
-  // One small cached request per typed name (audit CODE-2), where every keystroke used to
-  // fetch a page of 200 album cards to list 8. A blank field has nothing to look up.
+  // One small cached request per name, after a pause in typing. A blank field asks too, so
+  // focusing it lists existing albums to pick from.
   const [lookup, setLookup] = useState(typed);
   useEffect(() => {
     const timer = setTimeout(() => setLookup(typed), LOOKUP_DELAY_MS);
     return () => clearTimeout(timer);
   }, [typed]);
-  const search = usePhotoAlbumSuggestions(open && lookup.length > 0, lookup, LOOKUP_LIMIT);
+  const search = usePhotoAlbumSuggestions(open, lookup, LOOKUP_LIMIT);
   // A stale response must never offer Create for the next query: only the answer for exactly
   // what is typed counts, never the previous name's list kept on screen while it loads.
   const answered = lookup === typed && search.isSuccess && !search.isPlaceholderData;
   const error = lookup === typed && search.isError ? 'Albums could not be loaded. Focus this field again to retry.' : '';
-  // Search errors also do not imply that no album exists. Creation is an explicit option
-  // after a successful lookup.
-  const ready = !typed || answered;
   const found = answered ? search.data ?? [] : [];
   const exact = found.find(album => album.name.toLowerCase() === typed.toLowerCase());
   const albums = (exact ? [exact, ...found.filter(album => album.id !== exact.id)] : found).slice(0, SHOWN);
-  const canCreate = Boolean(ready && typed && !exact);
+  // Search errors also do not imply that no album exists. Creation is an explicit option
+  // after a successful lookup.
+  const canCreate = Boolean(answered && typed && !exact);
   const rowCount = albums.length + (canCreate ? 1 : 0);
   const active = Math.min(activeIndex, Math.max(0, rowCount - 1));
   const choose = (next: AlbumValue) => {
@@ -109,8 +108,8 @@ export default function AlbumChoice({ value, onChange, onPendingChange, inputId,
           {canCreate && <li id={`${listId}-${albums.length}`} role="option" aria-selected={active === albums.length}
             onMouseEnter={() => setActiveIndex(albums.length)} onClick={() => choose({ kind: 'new', name: typed })}
             className={`min-h-11 cursor-pointer rounded-md px-3 py-2 text-base text-white ${active === albums.length ? 'bg-[#3a3a3a]' : ''}`}>Create album “{typed}”</li>}
-          {!ready && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">{error || 'Looking for albums…'}</li>}
-          {ready && !rowCount && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">Type a name to create an album.</li>}
+          {!answered && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">{error || 'Looking for albums…'}</li>}
+          {answered && !rowCount && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">Type a name to create an album.</li>}
         </ul>
       )}
       <p className={`${hint} mt-1 min-h-12`}>

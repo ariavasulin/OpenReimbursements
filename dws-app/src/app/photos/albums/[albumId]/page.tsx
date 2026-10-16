@@ -7,6 +7,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDownUp, BookImage, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { LoadBoundary, retryableLoader } from "@/components/photos/load-boundary";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
@@ -35,11 +36,13 @@ import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
 // Arrange and its drag library (dnd-kit, about 18 KB gzipped) are their own
-// chunk, fetched when someone opens Arrange instead of on every album visit
-// (audit VIEW-6). Pointing at or focusing the Arrange button starts the fetch,
+// chunk, fetched when someone opens Arrange instead of on every album visit.
+// Pointing at or focusing the Arrange button starts the fetch,
 // so it is usually there by the click.
+// A failed download of that code keeps the album page; the next Arrange tries
+// again (load-boundary.tsx).
 const loadAlbumArrange = () => import("@/components/photos/album-arrange");
-const AlbumArrange = dynamic(loadAlbumArrange, {
+const AlbumArrange = dynamic(retryableLoader(loadAlbumArrange), {
   ssr: false,
   loading: () => <StatusLine>Loading every photo in the album...</StatusLine>,
 });
@@ -184,17 +187,19 @@ function AlbumPageContent() {
     return (
       <main className={PAGE_MAIN_CLASS}>
         <PhoneHeader back={{ href: "/photos/albums", label: "Albums" }} />
-        <AlbumArrange
-          album={album}
-          startSort={arranging}
-          onClose={(saved) => {
-            setArranging(null);
-            if (!saved) return;
-            setMode("custom");
-            showAlbumOrder(albumId);
-            toast.success("Order saved", { description: "Everyone sees this order, including the share link." });
-          }}
-        />
+        <LoadBoundary onError={() => setArranging(null)}>
+          <AlbumArrange
+            album={album}
+            startSort={arranging}
+            onClose={(saved) => {
+              setArranging(null);
+              if (!saved) return;
+              setMode("custom");
+              showAlbumOrder(albumId);
+              toast.success("Order saved", { description: "Everyone sees this order, including the share link." });
+            }}
+          />
+        </LoadBoundary>
       </main>
     );
   }

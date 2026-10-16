@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectAllLabel } from "./select-all";
+import { selectAllLabel, selectAllNeedsIds } from "./select-all";
 import { MAX_SELECTION } from "./selection";
 
 const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
@@ -28,6 +28,26 @@ describe("selectAllLabel (the selection bar's Select all link)", () => {
     const selected = new Set([...ids("a", 10), "b0", "b1"]);
     expect(selectAllLabel(selected, 8, loadedMap(projectB))).toBe("Select all 8");
     expect(selectAllLabel(new Set([...ids("a", 10), ...projectB]), 8, loadedMap(projectB))).toBeNull();
+  });
+
+  it("asks for the ids when the count cannot tell, and offers the matches still unticked", () => {
+    // 150 ticked under filter A, then filtered to B (250 matches, 100 loaded) and its loaded 100 ticked.
+    const loadedB = ids("b", 100);
+    const selected = new Set([...ids("a", 150), ...loadedB]);
+    const loaded = loadedMap(loadedB);
+    expect(selectAllNeedsIds(selected, 250, loaded)).toBe(true);
+    expect(selectAllLabel(selected, 250, loaded)).toBeNull();
+    expect(selectAllLabel(selected, 250, loaded, ids("b", 250))).toBe("Select all 250");
+    // After Select all, every match is in the selection: the ids say so.
+    const all = new Set([...selected, ...ids("b", 250)]);
+    expect(selectAllLabel(all, 250, loaded, ids("b", 250))).toBeNull();
+  });
+
+  it("needs no ids when the count settles it", () => {
+    const loaded = loadedMap(ids("p", 100));
+    expect(selectAllNeedsIds(new Set(["p0"]), 250, loaded)).toBe(false);
+    expect(selectAllNeedsIds(new Set(ids("p", 3)), 3, loadedMap(ids("p", 3)))).toBe(false);
+    expect(selectAllNeedsIds(new Set(["p0"]), undefined, loaded)).toBe(false);
   });
 
   it("says how far it goes past the selection limit", () => {

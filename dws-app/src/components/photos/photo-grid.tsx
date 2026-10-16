@@ -9,6 +9,7 @@ import {
   photoName,
   plural,
 } from "@/lib/photos/format";
+import { TILE_GRID_CLASS } from "@/components/photos/page-layout";
 import { useDesktop } from "@/hooks/use-desktop";
 import { usePhotoActor } from "@/lib/photos/api";
 import { useLongPress } from "@/hooks/use-long-press";
@@ -287,7 +288,7 @@ function TileGrid({
 }) {
   const selecting = (selectedIds?.size ?? 0) > 0;
   return (
-    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
+    <div className={TILE_GRID_CLASS}>
       {photos.map((photo) => (
         <Tile
           key={photo.id}
@@ -381,6 +382,11 @@ const PhotoGrid = memo(function PhotoGrid({
             // sticks while its section is on screen. This also clips paint to
             // the section; the clip margin keeps the header tick's focus ring,
             // pulled 10px left by its negative margin, from being cut off.
+            // The gap above a group is the section's margin, not the header's:
+            // containment stops a margin inside the section from collapsing
+            // with the toolbar's above the first group, which would push every
+            // phone group down 4px.
+            className="mt-1 desktop:mt-0"
             style={{
               contentVisibility: "auto",
               containIntrinsicSize: `auto ${sectionHeightGuess(group.photos.length, tileLayout)}px`,
@@ -389,7 +395,7 @@ const PhotoGrid = memo(function PhotoGrid({
           >
             {/* A stuck header must sit flush with the scrollport edge, with its
                 own tiles never scrolling through an unpainted band above it. */}
-            <div className="group/header mt-1 flex min-h-11 items-center desktop:sticky desktop:top-0 desktop:z-10 desktop:mt-0 desktop:bg-[#222222]/95 desktop:backdrop-blur">
+            <div className="group/header flex min-h-11 items-center desktop:sticky desktop:top-0 desktop:z-10 desktop:bg-[#222222]/95 desktop:backdrop-blur">
               {selection && (
                 <button
                   type="button"

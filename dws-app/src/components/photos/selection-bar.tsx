@@ -25,6 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LoadBoundary, retryableLoader } from "@/components/photos/load-boundary";
 import { PHOTOS_FLOATING_SLOT_ID, usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
 import SetProjectSheet from "@/components/photos/set-project-sheet";
@@ -64,8 +65,10 @@ import type { ZipRow } from "@/lib/photos/zip-download";
 
 // The zip code (client-zip) loads when Download is first chosen, or on idle
 // once a selection starts (below), not with the grid.
+// A failed download of that code keeps the bar and closes the pop-up; the next
+// Download tries again (load-boundary.tsx).
 const loadDownloadSheet = () => import("@/components/photos/selection/download-sheet");
-const DownloadSheet = dynamic(loadDownloadSheet, { ssr: false });
+const DownloadSheet = dynamic(retryableLoader(loadDownloadSheet), { ssr: false });
 
 // The bar that appears once photos are selected: the count, "Select all" when
 // more photos match than are selected, and what can be done with them. Add to
@@ -108,6 +111,8 @@ interface SelectionBarProps {
   sharedJobId: string | null;
   /** How many photos the grid's filters match, once known: "Select all M". */
   matchCount?: number;
+  /** Every id the grid's filters match, when already fetched (see selectAllNeedsIds). */
+  matchIds?: readonly string[];
   /** Every id the grid's filters match (GET /api/photos/ids), fetched on a "Select all" click. */
   loadAllMatches(): Promise<PhotoIdsAnswer>;
   onSelectAll(answer: PhotoIdsAnswer): void;
@@ -168,6 +173,7 @@ function SelectionBar({
   photosById,
   sharedJobId,
   matchCount,
+  matchIds,
   loadAllMatches,
   onSelectAll,
 }: SelectionBarProps) {
@@ -180,23 +186,24 @@ function SelectionBar({
   const ids = useMemo(() => [...selectedIds], [selectedIds]);
   const trashable = useMemo(() => trashableIds(actor, selectedIds, photosById), [actor, photosById, selectedIds]);
   const trashLabel = trashActionLabel(trashable.length, count);
-  // "Select all" while some match that are not selected and there is room,
-  // from a count; the ids themselves are fetched on the click.
+  // "Select all" while some match that are not selected and there is room:
+  // from the count, or from the ids when the count cannot tell (select-all.ts).
   const selectAllLabel = useMemo(
-    () => selectAllText(selectedIds, matchCount, photosById),
-    [selectedIds, matchCount, photosById]
+    () => selectAllText(selectedIds, matchCount, photosById, matchIds),
+    [selectedIds, matchCount, photosById, matchIds]
   );
   const [selectingAll, setSelectingAll] = useState(false);
-  // The latest count, read after the ids arrive: a selection cleared while
-  // they were on their way stays cleared.
-  const countRef = useRef(count);
-  countRef.current = count;
+  // Counts the selections that ended. Read after the ids arrive: a selection
+  // cleared while they were on their way stays cleared, and a new one started
+  // since is not filled with the old one's answer.
+  const endedRef = useRef(0);
   const selectAllMatches = async () => {
     if (selectingAll) return;
     setSelectingAll(true);
+    const selection = endedRef.current;
     try {
       const answer = await loadAllMatches();
-      if (countRef.current > 0) onSelectAll(answer);
+      if (endedRef.current === selection) onSelectAll(answer);
     } catch {
       toast.error("Could not select those photos");
     } finally {
@@ -215,6 +222,15 @@ function SelectionBar({
     setSheet(key);
   }, []);
   const mounted = (key: SheetKey) => sheet === key || opened.has(key);
+  // Its code did not download: close it and unmount it, so the next Download mounts a fresh try.
+  const downloadLoadFailed = useCallback(() => {
+    setSheet((current) => (current === "download" ? null : current));
+    setOpened((previous) => {
+      const next = new Set(previous);
+      next.delete("download");
+      return next;
+    });
+  }, []);
   // Each pop-up's open/close handler, the same function every render.
   const sheetChange = useMemo(() => {
     const handler = (key: SheetKey) => (open: boolean) => setSheet(open ? key : null);
@@ -241,10 +257,11 @@ function SelectionBar({
   // the Download pop-up's code a moment later, so it opens at once when asked.
   useEffect(() => {
     if (!selecting) {
+      endedRef.current += 1;
       setOpened((previous) => (previous.size === 0 ? previous : new Set()));
       return;
     }
-    const timer = setTimeout(() => void loadDownloadSheet(), 1000);
+    const timer = setTimeout(() => void loadDownloadSheet().catch(() => undefined), 1000);
     return () => clearTimeout(timer);
   }, [selecting]);
 
@@ -708,14 +725,16 @@ function SelectionBar({
         <SetProjectSheet open={sheet === "project"} onOpenChange={sheetChange.project} photoIds={ids} onContinue={onClear} />
       )}
       {mounted("download") && (
-        <DownloadSheet
-          open={sheet === "download"}
-          onOpenChange={sheetChange.download}
-          photoIds={ids}
-          loaded={photos}
-          albumName={album?.name}
-          onStarted={onClear}
-        />
+        <LoadBoundary onError={downloadLoadFailed}>
+          <DownloadSheet
+            open={sheet === "download"}
+            onOpenChange={sheetChange.download}
+            photoIds={ids}
+            loaded={photos}
+            albumName={album?.name}
+            onStarted={onClear}
+          />
+        </LoadBoundary>
       )}
     </>
   );

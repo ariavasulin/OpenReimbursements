@@ -548,6 +548,13 @@ export function invalidateAfterUpload(queryClient: QueryClient) {
   refreshPrefixes(queryClient, [...GRID_PREFIXES, ...COLLECTION_PREFIXES, "photo-tags"]);
 }
 
+/** Edit one cached query now, and again when a fetch of it already under way lands. */
+function editQuery(queryClient: QueryClient, query: Query, editData: (data: unknown) => unknown) {
+  const next = editData(query.state.data);
+  if (next !== query.state.data) queryClient.setQueryData(query.queryKey, next);
+  if (query.state.fetchStatus === "fetching") editWhenFetchLands(queryClient, query, editData);
+}
+
 /**
  * Every cached grid and search page list, each row passed through `edit` (null
  * takes the row out). A grid still loading gets the same edit when its answer
@@ -561,36 +568,42 @@ function editCachedGrids(
     for (const query of queryClient.getQueryCache().findAll({ queryKey: [prefix] })) {
       if (isSelectAllKey(query.queryKey)) continue;
       const editRows = (photo: PhotoRow) => edit(photo, query.queryKey);
-      const data = query.state.data;
-      if (isCachedGrid(data)) {
-        const next = editGrid(data, editRows);
-        if (next !== data) queryClient.setQueryData(query.queryKey, next);
-      }
-      if (query.state.fetchStatus === "fetching") editWhenFetchLands(queryClient, query, editRows);
+      editQuery(queryClient, query, (data) => (isCachedGrid(data) ? editGrid(data, editRows) : data));
     }
   }
 }
 
+/** Every cached open photo among `ids` passed through `edit`, the same way. */
+function editCachedDetails(queryClient: QueryClient, ids: ReadonlySet<string>, edit: (photo: PhotoDetail) => PhotoDetail) {
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: photoKeys.details })) {
+    if (!ids.has(query.queryKey[1] as string)) continue;
+    editQuery(queryClient, query, (data) => (data ? edit(data as PhotoDetail) : data));
+  }
+}
+
 /**
- * A grid whose fetch is under way was asked before this edit. When it lands it
- * would put the old rows back over the patch (an infinite query rebuilds every
- * page from the data it started with) and mark the grid fresh: a trashed photo
- * would come back, a new tag vanish. So the edit is applied again to what lands,
- * and the grid is marked stale again for its next visit. Edits are safe to
- * repeat, so an answer that already had the change is left as it is. Cancelling
- * and asking again would instead walk every loaded page once more.
+ * A grid or open photo whose fetch is under way was asked before this edit.
+ * When it lands it would put the old rows back over the patch (an infinite
+ * query rebuilds every page from the data it started with) and mark the query
+ * fresh: a trashed photo would come back, a new tag or name vanish. So the edit
+ * is applied again to what lands, and the query is marked stale again for its
+ * next visit. Edits are safe to repeat, so an answer that already had the
+ * change is left as it is. Cancelling and asking again would instead walk
+ * every loaded page once more.
  */
-function editWhenFetchLands(queryClient: QueryClient, query: Query, editRows: (photo: PhotoRow) => PhotoRow | null) {
+function editWhenFetchLands(queryClient: QueryClient, query: Query, editData: (data: unknown) => unknown) {
   const stop = queryClient.getQueryCache().subscribe((event) => {
     if (event.query !== query) return;
     if (event.type === "removed") return stop();
     // A write by hand while the fetch runs leaves it fetching; wait for the end.
     if (event.type !== "updated" || query.state.fetchStatus !== "idle") return;
+    // Another edit's listener marks the query stale while handling the same
+    // landing, before this one has seen it: that is not the fetch's end.
+    if (event.action.type === "invalidate") return;
     stop();
     if (event.action.type !== "success") return;
     const data = query.state.data;
-    if (!isCachedGrid(data)) return;
-    const next = editGrid(data, editRows);
+    const next = editData(data);
     if (next !== data) queryClient.setQueryData(query.queryKey, next);
     void queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true, refetchType: "none" });
   });
@@ -615,9 +628,7 @@ export function patchPhotoRows(queryClient: QueryClient, rows: readonly (Partial
     const row = byId.get(photo.id);
     return row ? { ...photo, ...row } : photo;
   });
-  for (const row of rows) {
-    queryClient.setQueryData<PhotoDetail>(photoKeys.detail(row.id), (photo) => photo && { ...photo, ...row });
-  }
+  editCachedDetails(queryClient, new Set(byId.keys()), (photo) => ({ ...photo, ...byId.get(photo.id) }));
   // A new name can join or leave a search; the next visit to it asks again.
   staleGrids(queryClient);
   staleSelectAll(queryClient);
@@ -656,9 +667,7 @@ export function patchPhotoTags(
     return tags === null || tags === photo.tags ? photo : { ...photo, tags };
   };
   editCachedGrids(queryClient, retag);
-  for (const id of ids) {
-    queryClient.setQueryData<PhotoDetail>(photoKeys.detail(id), (photo) => photo && retag(photo));
-  }
+  editCachedDetails(queryClient, ids, retag);
   staleGrids(queryClient);
   staleSelectAll(queryClient);
   refreshTagViews(queryClient);
@@ -1029,9 +1038,7 @@ export function patchFavorites(queryClient: QueryClient, photoIds: readonly stri
     ids.has(photo.id) ? { ...photo, favorites: on ? [{ user_id: me }] : [] } : photo;
   // Grid pages only: the same prefixes hold "Select all" answers, which have no rows.
   editCachedGrids(queryClient, patch);
-  for (const id of ids) {
-    queryClient.setQueryData<PhotoDetail>(photoKeys.detail(id), (photo) => photo && patch(photo));
-  }
+  editCachedDetails(queryClient, ids, patch);
   void queryClient.invalidateQueries({
     predicate: (query) => typeof query.queryKey[2] === "string" && query.queryKey[2].includes("favorites=1"),
     refetchType: "none",

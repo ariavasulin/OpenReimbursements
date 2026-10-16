@@ -16,6 +16,7 @@ import {
   PageSkeleton,
   RailSkeleton,
   TopBarSkeleton,
+  pageSkeletonKind,
 } from "@/components/photos/shell-skeleton";
 import TopBar from "@/components/photos/top-bar";
 import UploadTray from "@/components/photos/upload-tray";
@@ -59,6 +60,17 @@ function useOpenedOnce(open: boolean): [boolean, () => void] {
 
 /** Pages that are a focused task, not browsing: no "+" button over them. */
 const NO_ADD_BUTTON = ["/photos/actions", "/photos/trash", "/photos/settings"];
+
+/**
+ * The layout's Suspense fallback: the page skeleton shaped for the current
+ * route. A client component because the layout, a server file, cannot read
+ * the path.
+ */
+export function RoutePageSkeleton() {
+  const pathname = usePathname();
+  const params = useParams<{ jobId?: string; albumId?: string }>();
+  return <PageSkeleton kind={pageSkeletonKind(pathname, params ?? {})} />;
+}
 
 /**
  * The /photos frame: owns the session guard (hoisted out of the pages), the
@@ -179,9 +191,9 @@ function PhotosShellFrame({ children }: { children: ReactNode }) {
         <div className="flex h-dvh flex-col bg-[#222222] text-white">
           <TopBarSkeleton />
           <div className="flex min-h-0 flex-1">
-            <RailSkeleton />
+            <RailSkeleton section={section} />
             <div className="min-h-0 min-w-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]">
-              <PageSkeleton />
+              <RoutePageSkeleton />
             </div>
           </div>
           <div className="desktop:hidden">
