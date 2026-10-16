@@ -316,6 +316,40 @@ Three migrations, applied to production on 2026-10-14 before the deploy:
   0 remain and 258 carry `Photoshoot`.
 - `20261014120200_photo_import_album_optional.sql`: see Importing folders.
 
+## Saved lists on the device and the cold open (performance round, 2026-10-16)
+
+- **Saved query cache.** The browser keeps some photo lists in IndexedDB
+  (database `dws-query-cache`, key `photos-query-cache`): the full project and
+  album lists, photo settings, album headers, and the first page of the 6 most
+  recently loaded grids. Not kept: permissions (`photo-actor`), searches,
+  trash, photo details, anything from Receipts. Logic:
+  `src/lib/query-persist.ts`; wiring: `src/components/providers/query-provider.tsx`.
+- It belongs to one person: each save records the user id, and a restore is
+  refused (and deleted) unless the signed-in session is the same person.
+  Sign-out and any change of signed-in person delete it.
+- It expires after 7 days and is thrown away by every deploy (the buster is
+  the commit sha, `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`, which Vercel exposes
+  because "Automatically expose System Environment Variables" is on for
+  `dws-receipts`). Restored lists always refetch when shown.
+- **A user sees an out-of-date list:** it refreshes by itself within a second
+  or two of opening the page. To force it, sign out and back in (deletes the
+  saved copy), or clear the site's data in the browser.
+- **Cold open.** Before the session check finishes, the photos frame (tab bar,
+  desktop top bar and rail, grey tiles) is drawn instead of "Verifying
+  authentication"; only the page waits. A signed-out visitor sees that frame
+  for a moment before the redirect to `/login?next=...`.
+- **Project and album pages are cached HTML.** `/photos/[jobId]` and
+  `/photos/albums/[albumId]` render once per id and are then served from the
+  Vercel cache until the next deploy (their segment layouts export an empty
+  `generateStaticParams`). The pages hold no data; everything is fetched in
+  the browser. `/login` is static too: the photos tab title is set in the
+  browser.
+- **Providers per area.** React Query is mounted in each signed-in area's
+  layout (photos, migrate, capture, photo-actions, employee, dashboard,
+  batch-review, users), not the root one, so the public share page does not
+  load it. A new top-level page that uses React Query needs a `layout.tsx`
+  that wraps it in `QueryProvider`, or it fails with "No QueryClient set".
+
 ## Favorites (`photo_favorites`)
 
 `20261013210000_photo_favorites.sql` adds one table, `photo_favorites

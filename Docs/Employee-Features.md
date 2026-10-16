@@ -188,6 +188,12 @@ called "DWS Photos", and opens on Projects from it. On an iPhone: open the site
 in Safari, Share, **Add to Home Screen**. A shortcut added before this icon
 existed keeps the receipts icon; remove it and add it again.
 
+The app keeps the project and album lists and the last few photo grids on the
+device for up to a week, so opening it again shows them at once and then
+refreshes them in the background (for a moment the lists can be a little out of
+date). Signing out deletes what was kept. The tab bar and grey placeholders
+appear straight away while the sign-in is checked.
+
 ### Browsing
 
 **Projects** lists projects by job number, highest first, so the newest job is
