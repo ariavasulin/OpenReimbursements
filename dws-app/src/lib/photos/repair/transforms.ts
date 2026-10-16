@@ -37,7 +37,12 @@ export type FillResult =
      * caller downgrades the row to a deliberate file tile with this reason. */
     { ok: false; reason: string };
 
-type Rendered = { body: Blob; contentType: string };
+/** A rendered derivative. The Blob carries its own type because that is the
+ * only label Storage keeps: storage-js sends a Blob as a multipart part and
+ * ignores `contentType`, so a typeless Blob is stored as
+ * `application/octet-stream` (the cause of the mislabelled server-rendered
+ * thumbnails, IMG-1). */
+type Rendered = { body: Blob };
 type RenderOutcome = Rendered | { status: number } | { refused: string };
 
 /** Render the original at `width` px through Supabase. The Accept header is
@@ -82,10 +87,7 @@ async function renderWithTransform(
       signal.removeEventListener("abort", cancel);
       await reader.cancel();
     }
-    return {
-      body: new Blob(parts),
-      contentType: res.headers.get("content-type") ?? "image/webp",
-    };
+    return { body: new Blob(parts, { type: res.headers.get("content-type") ?? "image/webp" }) };
   });
 }
 
@@ -117,7 +119,7 @@ async function renderWithSharp(
       throw error;
     }
     const fit = (maxDim: number) => ({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true } as const);
-    const rendered = (body: Buffer): Rendered => ({ body: new Blob([new Uint8Array(body)]), contentType: "image/webp" });
+    const rendered = (body: Buffer): Rendered => ({ body: new Blob([new Uint8Array(body)], { type: "image/webp" }) });
     try {
       const preview = await budget.run(() => sharp(input, { sequentialRead: true, limitInputPixels: SHARP_MAX_PIXELS })
         .rotate()
@@ -185,7 +187,9 @@ export async function fillImageDerivatives(
     const { error } = await budget.run(() => admin.storage
       .from("photos")
       .upload(path, rendered.body, {
-        contentType: rendered.contentType,
+        // Ignored for a Blob body (its own type is stored); kept so the label
+        // stays right if the body ever becomes a Buffer.
+        contentType: rendered.body.type,
         upsert: true,
         cacheControl: DERIVED_CACHE_SECONDS,
       }));
