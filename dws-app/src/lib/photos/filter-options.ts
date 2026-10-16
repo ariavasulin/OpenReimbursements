@@ -2,7 +2,9 @@
 // of photos seen, so picking a filter never shrinks the menus to the filtered
 // set.
 
-import type { PhotoRow } from "./types";
+import { NO_PROJECT_VALUE } from "./browse-state";
+import { jobLabel, NO_PROJECT } from "./format";
+import type { PhotoJobSummary, PhotoRow } from "./types";
 
 export interface SeenOptions {
   /** uploader_id -> display name. */
@@ -59,4 +61,12 @@ export function toUploaderOptions(seen: SeenOptions): FilterOption[] {
   return [...seen.uploaders.entries()]
     .sort((a, b) => a[1].localeCompare(b[1]))
     .map(([id, name]) => ({ value: id, label: name }));
+}
+
+/** The Project filter's menu: "No project" first, then every project that has photos. */
+export function toProjectOptions(jobs: readonly PhotoJobSummary[]): FilterOption[] {
+  return [
+    { value: NO_PROJECT_VALUE, label: NO_PROJECT },
+    ...jobs.filter((job) => job.photo_count > 0).map((job) => ({ value: job.id, label: jobLabel(job) })),
+  ];
 }
