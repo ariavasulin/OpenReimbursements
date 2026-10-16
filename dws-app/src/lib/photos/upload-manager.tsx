@@ -10,7 +10,7 @@
 // (browsers can't hold File handles across reloads).
 //
 // The code that does the uploading (hashing, EXIF, previews, the resumable
-// transfer: ~47 KB gzipped) is loaded on first use, not with every photos page
+// transfer: about 50 KB gzipped) is loaded on first use, not with every photos page
 // (SHELL-2). Only this file's queue bookkeeping ships up front.
 
 import {
