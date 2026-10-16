@@ -37,7 +37,7 @@ import { useMobile } from "@/hooks/use-mobile";
 import {
   addPhotosToAlbum,
   bulkTagPhotos,
-  fetchPhotosPage,
+  fetchJson,
   invalidatePhotoCaches,
   PHOTO_ACTOR_KEY,
   removePhotosFromAlbum,
@@ -46,7 +46,7 @@ import {
   usePhotoDetail,
   type PhotoIdsAnswer, setFavorites, patchFavorites } from "@/lib/photos/api";
 import { MAX_BULK_PHOTOS, MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
-import { inChunks, PartialBulkError, sumCounts } from "@/lib/photos/chunks";
+import { inChunks, MAX_ACTION_RUN_PHOTOS, PartialBulkError, sumCounts } from "@/lib/photos/chunks";
 import { formatCount, photoName, plural } from "@/lib/photos/format";
 import { MAX_SELECTION } from "@/lib/photos/selection";
 import {
@@ -66,7 +66,7 @@ import {
   zipFileName,
   type ZipRow,
 } from "@/lib/photos/zip-download";
-import { openZipTarget, saveZip, ZipEmptyError, type ZipTarget } from "@/lib/photos/zip-save";
+import { openZipTarget, saveZip, ZipEmptyError, zipBuildsInMemory, type ZipTarget } from "@/lib/photos/zip-save";
 
 // The bar that appears once photos are selected: the count, "Select all" when
 // more photos match than are selected, and what can be done with them. Add to
@@ -97,9 +97,9 @@ interface SelectionBarProps {
   /** The loaded photos, so Trash can count which selected ones this person may
    *  delete, and Download has their sizes and names without asking again. */
   photos: readonly (ZipRow & Pick<PhotoRow, "uploader_id" | "created_at">)[];
-  /** The grid's GET /api/photos parameters, for Download to find selected
-   *  photos that are not loaded yet. */
-  listQuery: string;
+  /** No longer read: Download now looks up unloaded photos by id
+   *  (POST /api/photos/rows). Optional so PhotoBrowser can stop passing it. */
+  listQuery?: string;
   /** The one project every selected photo is in, so Tag suggests that
    *  project's tags; null when they differ or have none (every tag). */
   sharedJobId: string | null;
@@ -154,7 +154,14 @@ const sliceError = (reason: unknown, fallback: string, done: (count: string) => 
     ? `${done(`${formatCount(reason.done)} of ${plural(reason.total, "photo")}`)}, then it stopped: ${reason.message.replace(/[.!?]?$/, ".")} Try again to finish.`
     : errorText(reason, fallback);
 
-type SheetKey = "album" | "tag" | "project" | "rename" | "download" | "more";
+/**
+ * Trash and its Undo while they run: "Moving 3 photos to Trash…", and past one
+ * request's worth (MAX_ACTION_RUN_PHOTOS) how many are done so far.
+ */
+const runProgress = (verb: string, where: string, sent: number, total: number) =>
+  `${verb} ${plural(total, "photo")}${where ? ` ${where}` : ""}…${total > MAX_ACTION_RUN_PHOTOS ? ` ${formatCount(sent)} done` : ""}`;
+
+type SheetKey ="album" | "tag" | "project" | "rename" | "download" | "more";
 type Measured = { available: number; widths: Partial<Record<SelectionActionKey | "more", number>> };
 
 const MIXED_TRASH_TAIL = " you can delete";
@@ -166,7 +173,6 @@ export default function SelectionBar({
   inFavorites = false,
   limitMessage,
   photos,
-  listQuery,
   sharedJobId,
   allMatches,
   onSelectAll,
@@ -227,30 +233,48 @@ export default function SelectionBar({
   const trash = async () => {
     if (busy) return;
     setBusy(true);
+    // One toast says it is working (counting up past one request's worth),
+    // then becomes the outcome.
+    const toastId = toast.loading(runProgress("Moving", "to Trash", 0, trashable.length));
     try {
       // No confirmation (owner ruling): Trash is restorable for 30 days, and the
       // toast offers Undo. Photos the rule refuses are left out and counted.
-      const result = await runPhotoAction("trash", trashable);
+      const result = await runPhotoAction("trash", trashable, (sent, total) => {
+        if (sent < total) toast.loading(runProgress("Moving", "to Trash", sent, total), { id: toastId });
+      });
       onClear();
       invalidatePhotoCaches(queryClient);
       const moved = result.photoIds.length;
+      const notes = [
+        result.leftOut > 0 && `${plural(result.leftOut, "photo")} left out: not yours to delete.`,
+        result.failed > 0 && `${plural(result.failed, "photo")} changed just now and stayed put.`,
+      ].filter(Boolean).join(" ");
       if (moved === 0) {
-        toast.error("None of those photos could be moved to Trash.");
+        toast.error("None of those photos could be moved to Trash.", { id: toastId, description: notes || undefined });
       } else {
         toast.success(`Moved ${plural(moved, "photo")} to Trash`, {
-          description: result.leftOut > 0 ? `${plural(result.leftOut, "photo")} left out: not yours to delete.` : undefined,
+          id: toastId,
+          description: notes || undefined,
           action: {
             label: "Undo",
             onClick: () => {
-              void runPhotoAction("restore", result.photoIds)
-                .then(() => { invalidatePhotoCaches(queryClient); toast.success(`Restored ${plural(moved, "photo")}`); })
-                .catch((reason) => toast.error(errorText(reason, "Could not restore those photos.")));
+              const undoId = toast.loading(runProgress("Restoring", "", 0, moved));
+              void runPhotoAction("restore", result.photoIds, (sent, total) => {
+                if (sent < total) toast.loading(runProgress("Restoring", "", sent, total), { id: undoId });
+              })
+                .then(() => toast.success(`Restored ${plural(moved, "photo")}`, { id: undoId }))
+                .catch((reason) =>
+                  toast.error(sliceError(reason, "Could not restore those photos.", (n) => `Restored ${n}`), { id: undoId })
+                )
+                .finally(() => invalidatePhotoCaches(queryClient));
             },
           },
         });
       }
     } catch (reason) {
-      toast.error(errorText(reason, "Could not start that. Try again."));
+      toast.error(sliceError(reason, "Could not start that. Try again.", (n) => `Moved ${n} to Trash`), { id: toastId });
+      // The selection stays, so Trash again finishes the rest.
+      if (reason instanceof PartialBulkError) invalidatePhotoCaches(queryClient);
     } finally {
       setBusy(false);
     }
@@ -649,7 +673,6 @@ export default function SelectionBar({
         onOpenChange={(open) => setSheet(open ? "download" : null)}
         photoIds={ids}
         loaded={photos}
-        listQuery={listQuery}
         albumName={album?.name}
         onStarted={onClear}
       />
@@ -854,12 +877,17 @@ function nameList(names: readonly string[]): string {
   return names.length > 10 ? `${shown}, and ${formatCount(names.length - 10)} more` : shown;
 }
 
-/** GET /api/photos/[id] for Download: null when the photo is gone (404). */
-async function fetchZipRow(id: string): Promise<ZipRow | null> {
-  const response = await fetch(`/api/photos/${encodeURIComponent(id)}`);
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`Could not look up a photo (${response.status})`);
-  return ((await response.json()) as { photo: ZipRow }).photo;
+/** POST /api/photos/rows for Download: the zip fields of up to 500 selected photos the grid has not loaded. */
+async function lookupZipRows(ids: string[], signal?: AbortSignal): Promise<ZipRow[]> {
+  const answer = await fetchJson<{ photos: ZipRow[] }>("/api/photos/rows", "Could not look up the photos", {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ photo_ids: ids }),
+    signal,
+  });
+  return answer.photos;
 }
 
 /**
@@ -911,7 +939,6 @@ function DownloadSheet({
   onOpenChange,
   photoIds,
   loaded,
-  listQuery,
   albumName,
   onStarted,
 }: {
@@ -919,7 +946,6 @@ function DownloadSheet({
   onOpenChange(open: boolean): void;
   photoIds: string[];
   loaded: readonly ZipRow[];
-  listQuery: string;
   albumName?: string;
   /** The download is under way (its toast reports it): the selection can go. */
   onStarted(): void;
@@ -941,22 +967,21 @@ function DownloadSheet({
   const wanted = photoIds.length;
   useEffect(() => {
     if (!open || wanted === 0) return;
-    let current = true;
+    // Closing the sheet (or the selection changing) stops lookups still running.
+    const controller = new AbortController();
     setPlan({ state: "loading" });
-    findRows(photoIds, loaded, listQuery, { page: fetchPhotosPage, one: fetchZipRow })
+    findRows(photoIds, loaded, lookupZipRows, controller.signal)
       .then(({ rows, missing }) => {
-        if (current) setPlan({ state: "ready", rows, missing: missing.length, ...selectionBytes(rows) });
+        if (!controller.signal.aborted) setPlan({ state: "ready", rows, missing: missing.length, ...selectionBytes(rows) });
       })
       .catch((reason) => {
-        if (current) setPlan({ state: "error", message: errorText(reason, "Could not get the photos ready.") });
+        if (!controller.signal.aborted) setPlan({ state: "error", message: errorText(reason, "Could not get the photos ready.") });
       });
-    return () => {
-      current = false;
-    };
+    return () => controller.abort();
     // The ids are read as of the change in count; the loaded rows only save
     // requests, so a new page arriving need not restart this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, wanted, listQuery, attempt]);
+  }, [open, wanted, attempt]);
 
   const start = async () => {
     if (plan.state !== "ready" || plan.rows.length === 0 || starting) return;
@@ -973,7 +998,10 @@ function DownloadSheet({
   };
 
   const ready = plan.state === "ready" ? plan : null;
-  const large = ready !== null && isLargeDownload(ready.bytes);
+  // Without a save dialog the whole zip is held in memory first, and a phone
+  // can run out of it far below 2 GB; the warning comes much sooner there.
+  const inMemory = open && zipBuildsInMemory();
+  const large = ready !== null && isLargeDownload(ready.bytes, inMemory);
 
   return (
     <SheetShell
@@ -1020,8 +1048,11 @@ function DownloadSheet({
             data-testid="download-size-warning"
             className="rounded-lg border border-amber-300/40 bg-amber-300/10 px-3 py-2 text-amber-200"
           >
-            This is over 2 GB. It can take a long time and may not finish, especially on a phone. Downloading fewer
-            photos at a time is safer.
+            {!inMemory
+              ? "This is over 2 GB. It can take a long time and may not finish. Downloading fewer photos at a time is safer."
+              : isPhone
+                ? "This phone may run out of memory before the zip is saved, and then nothing is saved. Select fewer photos and download them in a few parts."
+                : "This browser holds the whole zip in memory before saving it, and may run out. Select fewer photos and download them in a few parts, or use Chrome or Edge, which save as they go."}
           </p>
         )}
         {isPhone && <p data-testid="download-phone-note">Large downloads work best on a computer.</p>}
