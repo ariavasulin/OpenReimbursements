@@ -81,10 +81,13 @@ function TileFace({ photo, place }: { photo: PhotoRow; place: number }) {
   return (
     <>
       {photo.thumb_path ? (
+        // Lazy: an album of up to 2,000 photos loads only the thumbnails in view.
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={publicUrl(photo.thumb_path)}
           alt=""
+          loading="lazy"
+          decoding="async"
           draggable={false}
           className="pointer-events-none h-full w-full object-cover"
         />

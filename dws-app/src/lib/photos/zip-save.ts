@@ -3,7 +3,8 @@
 // Where the browser offers a save dialog (showSaveFilePicker: desktop Chrome
 // and Edge) the zip streams straight to disk; elsewhere it is assembled in
 // memory and saved as a blob download, which is why the confirm warns above
-// 2 GB. Each original is fully fetched before it goes into the zip, so one
+// 2 GB on the first and 400 MB on the second (a phone can run out of memory
+// long before 2 GB, and lose the whole download). Each original is fully fetched before it goes into the zip, so one
 // failed photo is left out and named rather than breaking the whole file.
 
 import { makeZip } from "client-zip";
@@ -21,15 +22,28 @@ type SavePicker = (options: {
   types: { description: string; accept: Record<string, string[]> }[];
 }) => Promise<FileSystemFileHandle>;
 
+/** The browser's save dialog, where there is one and it may be used. */
+function savePicker(): SavePicker | null {
+  if (typeof window === "undefined") return null;
+  const picker = (window as Window & { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+  // The dialog is refused inside a cross-origin frame; a blob download is not.
+  return typeof picker === "function" && window.self === window.top ? picker : null;
+}
+
+/**
+ * True when the zip will be built in memory and then saved (no save dialog:
+ * phones, Safari, Firefox), so the confirm warns at a lower size.
+ */
+export const zipBuildsInMemory = () => savePicker() === null;
+
 /**
  * Ask where to save, when the browser can. Call it first thing in the click
  * handler: the dialog needs the click's user activation. Null when the person
  * cancels the dialog.
  */
 export async function openZipTarget(fileName: string): Promise<ZipTarget | null> {
-  const picker = (window as Window & { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
-  // The dialog is refused inside a cross-origin frame; a blob download is not.
-  if (typeof picker !== "function" || window.self !== window.top) return { kind: "blob", fileName };
+  const picker = savePicker();
+  if (!picker) return { kind: "blob", fileName };
   try {
     const handle = await picker({
       suggestedName: fileName,
