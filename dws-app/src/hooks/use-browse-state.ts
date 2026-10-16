@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import {
+  browseSearchKey,
   NO_FILTERS,
   parseBrowseState,
   writeBrowseState,
@@ -19,9 +20,12 @@ import type { GroupBy } from "@/lib/photos/group";
  * use-photo-deep-link.ts: no new history entry per tap, no route re-render.
  * Next keeps useSearchParams in step with replaceState, so reading it here is
  * enough; a navigation to another page starts from that page's own URL.
+ *
+ * Parsed from the browse keys alone: the viewer's `?photo=` changes on every
+ * swipe, and must not hand the grid a new (equal) filters object each time.
  */
 export function useBrowseState(options: BrowseOptions) {
-  const search = useSearchParams().toString();
+  const search = browseSearchKey(useSearchParams());
   const optionsRef = useRef(options);
   optionsRef.current = options;
   // Callers pass the modes inline; their contents, not identity, matter.
