@@ -17,6 +17,8 @@ import {
 //     { ids, total, truncated }. At most MAX_SELECTION_PHOTOS ids, in the list's
 //     order (an album's arranged order with `sort=custom`); `total` counts every
 //     match, and `truncated` says ids stopped short.
+// GET /api/photos/ids?count=1&<same filters> — only `{ total }`, for the
+//     "Select all N" label: one counting query, no ids walked or sent.
 
 /** Rows one walk step reads: PostgREST's own row ceiling. */
 const PAGE = 1000;
@@ -24,10 +26,18 @@ const PAGE = 1000;
 export async function GET(request: Request) {
   return photoRoute(async () => {
     const supabase = await requirePhotoReader();
-    const filters = parsePhotoFilters(new URL(request.url).searchParams);
+    const params = new URL(request.url).searchParams;
+    const filters = parsePhotoFilters(params);
     if (typeof filters === 'string') return invalidFilter(filters);
+    const countOnly = params.has('count');
+    if (countOnly && params.get('count') !== '1') return invalidFilter('Invalid count');
 
     const search = await resolveSearch(supabase, filters);
+    if (countOnly) {
+      const { error, count } = await filteredPhotos(supabase, filters, search, 'id', { count: 'exact', head: true });
+      if (error) throwPhotoDatabaseError(error);
+      return photoJson({ total: count ?? 0 });
+    }
     const ids: string[] = [];
     let total: number | null = null;
     let last: KeysetRow | undefined;
