@@ -142,7 +142,6 @@ export default function PhotoBrowser({
     },
     [setSort, albumOrder]
   );
-  const [seen, setSeen] = useState<SeenOptions>(emptySeenOptions);
   const key = scopeKey(scope);
   const enabled = scope.kind !== "search" || scope.q.length > 0;
   // "photos" / "photo-search" are the prefixes invalidatePhotoCaches refreshes.
@@ -154,12 +153,6 @@ export default function PhotoBrowser({
     [scopeQuery, filters, sort]
   );
   const listKey = listParams.toString();
-
-  // A new album, project, or search is a new screen: its menus start empty.
-  // (Its filters come from its own URL.)
-  useEffect(() => {
-    setSeen(emptySeenOptions());
-  }, [key]);
 
   const {
     data,
@@ -192,9 +185,24 @@ export default function PhotoBrowser({
     [data]
   );
 
-  useEffect(() => {
-    setSeen((previous) => accumulateSeenOptions(previous, photos));
-  }, [photos]);
+  // Every uploader and tag the loaded pages have shown, for the filter menus;
+  // kept across filter changes. A new album, project, or search is a new
+  // screen: its menus start empty (its filters come from its own URL).
+  // Worked out while rendering, not in an effect, so a new page of photos
+  // renders the grid once instead of twice.
+  const [seenState, setSeenState] = useState<{
+    key: string;
+    photos: PhotoRow[];
+    seen: SeenOptions;
+  }>(() => ({ key, photos: [], seen: emptySeenOptions() }));
+  let seen = seenState.seen;
+  if (seenState.key !== key || seenState.photos !== photos) {
+    seen = accumulateSeenOptions(
+      seenState.key === key ? seenState.seen : emptySeenOptions(),
+      photos
+    );
+    setSeenState({ key, photos, seen });
+  }
 
   // Filter menus. Keyed on `seen`, which only changes when a page brings a new
   // uploader or tag — otherwise every appended page would re-sort the lot.
@@ -341,6 +349,16 @@ export default function PhotoBrowser({
     },
   });
 
+  // Stable, so the memoized grid skips renders that change nothing it draws
+  // (a viewer swipe, a fetch-status flip).
+  const openPhoto = useCallback(
+    (photo: PhotoRow) => setOpenPhotoId(photo.id),
+    [setOpenPhotoId]
+  );
+  const expandPinned = useCallback(() => {
+    if (pinnedTag) setFilters({ tags: [pinnedTag] });
+  }, [pinnedTag, setFilters]);
+
   const noFiltersActive = activeFilterCount(filters) === 0;
   // Known once any data is in hand, including the previous view's while a new
   // sort or filter loads (isLoading is false then). Only a settled answer may
@@ -405,13 +423,11 @@ export default function PhotoBrowser({
           groups={groups}
           // "date" draws the custom list's one header without a loaded-count.
           groupBy={custom ? "date" : groupBy}
-          onOpenPhoto={(photo) => setOpenPhotoId(photo.id)}
+          onOpenPhoto={openPhoto}
           selection={gridSelection}
           pinnedTag={noFiltersActive ? pinnedTag : undefined}
           pinnedLabel={pinnedLabel}
-          onExpandPinned={() =>
-            pinnedTag && setFilters({ tags: [pinnedTag] })
-          }
+          onExpandPinned={expandPinned}
         />
       </div>
 
