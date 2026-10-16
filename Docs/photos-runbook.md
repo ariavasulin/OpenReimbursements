@@ -137,7 +137,10 @@ view is in `Employee-Features.md` § DWS Photos.
   functions as the confirm page, so each slice is one `photo_action_batches`
   row like before. Photos that are gone or that the person may not trash are
   left out and counted, never asked about; a photo already in Trash is skipped. No SQL cap changed. Lower `MAX_SELECTION_PHOTOS` if `/ids`
-  ever times out.
+  ever times out. The "Select all N" label only asks `/ids?count=1`, one
+  counting query with no ids sent. The confirm page's batch responses leave
+  out `selector` (up to about 255 KB); to see what a batch named, read
+  `photo_action_batches.selector` in the database.
 - **Zip download is built in the browser** from the public originals
   (`client-zip`, store-only). Without `showSaveFilePicker` (Safari, Firefox,
   iPhone) the zip is held in memory, so the confirm warns above 400 MB there

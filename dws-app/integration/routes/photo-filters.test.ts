@@ -200,6 +200,11 @@ describe('photo filters, search words, and select-all ids (W2-A: AC-10, AC-11, A
       const tagged = await ids(`job=${project}&tags=${half}`);
       expect(tagged).toMatchObject({ total: 600, truncated: false });
       expect(tagged.ids).toHaveLength(600);
+      // count=1: the same totals from one counting query, without the ids.
+      expect(await ids(`job=${project}&count=1`)).toEqual({ total: 1200 });
+      expect(await ids(`job=${project}&tags=${half}&count=1`)).toEqual({ total: 600 });
+      expect(await ids(`job=${project}&from=2099-01-01T00:00:00Z&count=1`)).toEqual({ total: 0 });
+      expect((await json(await call(listIds, `/api/photos/ids?job=${project}&count=2`), 400)).error.message).toBe('Invalid count');
       // The first grid page and the ids agree on which photos lead.
       expect(await list(`job=${project}`)).toEqual(newestFirst.slice(0, 200));
       expect(await ids(`job=${project}&from=2099-01-01T00:00:00Z`)).toEqual({ ids: [], total: 0, truncated: false });
@@ -214,10 +219,13 @@ describe('photo filters, search words, and select-all ids (W2-A: AC-10, AC-11, A
       expect(new Set(body.ids).size).toBe(5000);
       const newestFirst = [...rows].sort((a, b) => b.captured_at.getTime() - a.captured_at.getTime()).map(row => row.id);
       expect(body.ids).toEqual(newestFirst.slice(0, 5000));
+      // The count alone has no cap.
+      expect(await ids(`job=${project}&count=1`)).toEqual({ total: 6000 });
     });
 
     it('needs a session', async () => {
       expect((await call(listIds, '/api/photos/ids', { actor: null })).status).toBe(401);
+      expect((await call(listIds, '/api/photos/ids?count=1', { actor: null })).status).toBe(401);
     });
   });
 
@@ -321,7 +329,10 @@ describe('photo filters, search words, and select-all ids (W2-A: AC-10, AC-11, A
       for (const count of [501, 5000]) {
         const created = await json(await call(createBatch, '/api/photo-actions/batches', { body: { action: 'trash', selector: { photos: refs(count) } } }));
         madeBatches.push(created.batch.id);
-        expect(created.batch.selector.photos).toHaveLength(count);
+        // Stored whole, but not sent back: a response never repeats the selection (VIEW-1).
+        expect(created.batch).not.toHaveProperty('selector');
+        const stored = await f.sql.query("select jsonb_array_length(selector->'photos') as n from public.photo_action_batches where id=$1", [created.batch.id]);
+        expect(stored.rows[0].n).toBe(count);
       }
       const refused = await json(await call(createBatch, '/api/photo-actions/batches', { body: { action: 'trash', selector: { photos: refs(5001) } } }), 400);
       expect(refused.error.code).toBe('invalid_input');
