@@ -79,7 +79,7 @@ describe('the upload code loads on first use', () => {
     expect(mocks.uploadOne).not.toHaveBeenCalled();
     // A batch was waiting on the code, so the deploy check ran with the import's error.
     expect(mocks.reload).toHaveBeenCalledTimes(1);
-    expect(mocks.reload.mock.calls[0][0]).toBeInstanceOf(Error);
+    expect(mocks.reload).toHaveBeenCalledWith(expect.any(Error));
     mocks.failLoad = false; // the connection is back
     await act(async () => { manager.retry(key); });
     await vi.waitFor(() => expect(manager.items[0].status).toBe('done'));

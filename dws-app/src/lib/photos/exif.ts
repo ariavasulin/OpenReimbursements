@@ -8,6 +8,7 @@ import type * as Exifr from "exifr";
 // @ts-expect-error exifr publishes types for its package root only; the lite build has the same API.
 import exifrLite from "exifr/dist/lite.esm.mjs";
 import type { CapturedAtSource } from "./types";
+import { UploadRequestError } from "./upload-http";
 
 const exifr = exifrLite as typeof Exifr;
 
@@ -15,16 +16,14 @@ const exifr = exifrLite as typeof Exifr;
  * The PNG reader (the full exifr build, fetched on demand) could not be
  * downloaded: a dropped connection, or a deploy that removed the old file.
  * Distinct from "the file has no EXIF": the date is unknown, not absent, so
- * the upload must not fall back to the file's date. The fields make the
- * upload fail like any other dropped connection (retryable, no server
- * answer), so the batch waits and tries the same file again.
+ * the upload must not fall back to the file's date. Shaped as a dropped
+ * connection so the batch waits and tries the same file again.
  */
-export class ExifReaderUnavailableError extends Error {
-  readonly code = "network_error";
-  readonly retryable = true;
+export class ExifReaderUnavailableError extends UploadRequestError {
   constructor(cause: unknown) {
-    super("The photo's metadata reader could not be downloaded; check the connection", { cause });
+    super("The photo's metadata reader could not be downloaded; check the connection", { code: "network_error", retryable: true });
     this.name = "ExifReaderUnavailableError";
+    this.cause = cause;
   }
 }
 

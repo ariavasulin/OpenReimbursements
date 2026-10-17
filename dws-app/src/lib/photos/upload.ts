@@ -288,12 +288,9 @@ export function prepareUpload(
       try {
         return await (deps.extractCapturedAt ?? defaultExtractCapturedAt)(file, captureOptions);
       } catch (error) {
-        // A reader that could not be downloaded leaves the date unknown, not
-        // missing: fail this file like a dropped connection so the batch
-        // waits and tries it again, instead of storing the file's date as
-        // the capture time. After a deploy the old reader file is gone for
-        // good, so move onto the new build (the queue's leave-page prompt
-        // guards the batch, and it resumes from its saved manifest).
+        // The date is unknown, not absent: rethrow so this file fails as a
+        // dropped connection and is retried, never stored with the file's
+        // date. After a deploy, move onto the new build (reloadIfRedeployed).
         if (error instanceof ExifReaderUnavailableError) {
           void reloadIfRedeployed(error.cause);
           throw error;

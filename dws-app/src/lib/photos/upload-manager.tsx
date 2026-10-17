@@ -56,15 +56,11 @@ const importEngine = () =>
 /** The upload code, fetched once. A failed fetch (a dropped connection) is
  * not remembered, so the next upload or retry fetches again.
  *
- * `requested`: a batch is waiting on the code. Then, after a deploy, the old
- * file is gone for good and the tab moves onto the new build; the queue is
- * active by now, so its leave-page prompt guards the batch and the saved
- * manifest resumes it. A background preload never reloads: the files the
- * person is still picking live only in the upload sheet's state and would be
- * lost, and the next real load fetches the code again anyway. */
+ * `requested`: a batch is waiting on the code, so a failed load after a
+ * deploy reloads onto the new build (reloadIfRedeployed). A background
+ * preload never reloads: the files the person is still picking live only in
+ * the upload sheet's state and would be lost. */
 function loadEngine(requested = true) {
-  // A batch may join a preload already in flight; the check then runs on
-  // that shared load's failure as if the batch had started it.
   engineRequested ||= requested;
   engine ??= importEngine().catch((error: unknown) => {
     engine = undefined;
