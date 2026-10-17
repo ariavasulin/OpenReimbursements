@@ -22,6 +22,7 @@ import {
   PREVIEW_MAX_DIM,
   THUMB_MAX_DIM,
 } from '../derivatives';
+import { DERIVED_CACHE_SECONDS } from '../storage-cache';
 
 
 const BUCKET = 'photos';
@@ -61,30 +62,37 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
     }
   }
 
+  /** The stored original's address. The bucket is public, so a plain fetch
+   * (or ffmpeg) can read it; supabase-js download() would buffer the whole clip. */
+  function originalUrl(row: RepairRow) {
+    return supabaseAdmin.storage.from(BUCKET).getPublicUrl(row.original_path).data.publicUrl;
+  }
+
+  function checkVideoCap(row: RepairRow) {
+    if ((row.original_bytes ?? 0) > CAP.bytes) throw new MediaProcessingLimit(`original exceeds ${CAP.bytes} bytes`);
+  }
+
   /** Streams the stored original into `dir` and reads its duration — the shared
    * prefix of both video actions, so a row that needs a poster AND a rendition
-   * pays for the download and the probe once. (The bucket is public, so a plain
-   * fetch streams; supabase-js download() would buffer the whole clip.) */
+   * pays for the download and the probe once. */
   async function fetchAndProbe(row: RepairRow, dir: string) {
-    if ((row.original_bytes ?? 0) > CAP.bytes) throw new MediaProcessingLimit(`original exceeds ${CAP.bytes} bytes`);
+    checkVideoCap(row);
     const input = path.join(dir, `input${path.extname(row.original_path) || '.bin'}`);
-    const { data } = supabaseAdmin.storage
-      .from(BUCKET)
-      .getPublicUrl(row.original_path);
-    await downloadOriginal(data.publicUrl, input, budget, CAP.bytes);
+    await downloadOriginal(originalUrl(row), input, budget, CAP.bytes);
     const { durationSecs } = await probe(input, budget);
     return { input, durationSecs };
   }
 
-  /** Poster for a video row missing its thumb: extract one frame, upload it at
-   * thumb and preview sizes to the same derived/ keys the client would have
-   * written, and record the probed duration. */
-  async function writePoster(
+  type PosterFrames = { key: string; body: Buffer }[];
+
+  /** One frame of `input` (a file or a URL) at thumb and preview sizes,
+   * bound for the same derived/ keys the client would have written. */
+  async function extractPoster(
     row: RepairRow,
     dir: string,
     input: string,
     durationSecs: number | null
-  ) {
+  ): Promise<PosterFrames> {
     // Frame 0 is often black, so seek ~1s in — unless the clip is shorter, or
     // its duration is unknown (probe returns null), where 0 is the safe seek.
     const seek =
@@ -96,14 +104,50 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
       { path: path.join(dir, 'preview.webp'), maxDim: PREVIEW_MAX_DIM, key: keys.preview },
     ];
     await poster(input, seek, outputs, budget, POSTER_BYTES);
+    return Promise.all(outputs.map(async (out) => ({
+      key: out.key,
+      body: await readOutput(out.path, POSTER_BYTES, budget),
+    })));
+  }
+
+  /** Poster for a row that needs nothing else (UP-5). First straight from
+   * the original's URL: ffmpeg range-reads the header and the bytes around
+   * the frame, a few MB, where the download copies the whole clip (up to
+   * 200 MB) into /tmp first. When that read fails (an MP4 whose index sits at
+   * its end and cannot be reached by seeking, a dropped connection, a
+   * duration the header does not state) the clip is downloaded as before. */
+  async function posterFromOriginal(row: RepairRow, dir: string) {
+    checkVideoCap(row);
+    const url = originalUrl(row);
+    try {
+      // probe swallows ffmpeg's own failures as an unknown duration; a
+      // poster recorded with a null duration would hide the real one, so an
+      // unknown duration here goes to the download too.
+      const { durationSecs } = await probe(url, budget);
+      if (durationSecs !== null) {
+        return { frames: await extractPoster(row, dir, url, durationSecs), durationSecs };
+      }
+    } catch (error) {
+      // Out of time, or an output over its cap: the download would end the same way.
+      budget.check();
+      if (error instanceof MediaProcessingLimit) throw error;
+      console.info(`photos.repair posterFromUrl photoId=${row.id} fallback=download err=${error instanceof Error ? error.message.split('\n')[0] : error}`);
+    }
+    const { input, durationSecs } = await fetchAndProbe(row, dir);
+    return { frames: await extractPoster(row, dir, input, durationSecs), durationSecs };
+  }
+
+  /** Upload a poster's frames and record the probed duration on the row. */
+  async function storePoster(row: RepairRow, frames: PosterFrames, durationSecs: number | null) {
+    const keys = derivedKeys(row.uploader_id, row.id);
     await Promise.all(
-      outputs.map(async (out) => {
-        const body = await readOutput(out.path, POSTER_BYTES, budget);
+      frames.map(async (out) => {
         const { error } = await budget.run(() => supabaseAdmin.storage
           .from(BUCKET)
-          .upload(out.key, body, {
+          .upload(out.key, out.body, {
             contentType: 'image/webp',
             upsert: true,
+            cacheControl: DERIVED_CACHE_SECONDS,
           }));
         if (error) throw new Error(`upload ${out.key}: ${error.message}`);
       })
@@ -150,6 +194,7 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
       .upload(key, body, {
         contentType: 'video/mp4',
         upsert: true,
+        cacheControl: DERIVED_CACHE_SECONDS,
       }));
     if (uploadError) throw new Error(`upload ${key}: ${uploadError.message}`);
 
@@ -213,8 +258,8 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
       case 'makeVideoPoster':
         return withTempDir(async (dir) => {
           try {
-            const { input, durationSecs } = await fetchAndProbe(row, dir);
-            await writePoster(row, dir, input, durationSecs);
+            const { frames, durationSecs } = await posterFromOriginal(row, dir);
+            await storePoster(row, frames, durationSecs);
             count(a.action);
           } catch (error) {
             if (!(error instanceof MediaProcessingLimit)) throw error;
@@ -235,7 +280,7 @@ export function mediaExecutor(supabaseAdmin: SupabaseClient, budget: WorkBudget)
           const { input, durationSecs } = source;
           if (video.alsoPoster) {
             try {
-              await writePoster(row, dir, input, durationSecs);
+              await storePoster(row, await extractPoster(row, dir, input, durationSecs), durationSecs);
               count('makeVideoPoster');
             } catch (error) {
               if (!(error instanceof MediaProcessingLimit)) throw error;

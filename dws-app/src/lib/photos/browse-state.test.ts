@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activeFilterCount,
+  browseSearchKey,
   customRange,
   dateFilterLabel,
   groupFilters,
@@ -141,5 +142,24 @@ describe("groupFilters", () => {
   it("has no filter for the groups that collect what is missing", () => {
     expect(groupFilters(group("tag:none"), base)).toBeNull();
     expect(groupFilters(group("uploader:unknown"), base)).toBeNull();
+  });
+});
+
+describe("browseSearchKey", () => {
+  it("ignores the viewer's ?photo= and other keys, so a swipe does not change it", () => {
+    expect(browseSearchKey("tags=a&photo=1&q=x")).toBe(browseSearchKey("photo=2&tags=a&q=y"));
+    expect(browseSearchKey("photo=2")).toBe("");
+  });
+
+  it("changes with any filter, the sort, or the grouping", () => {
+    const base = browseSearchKey("tags=a");
+    expect(browseSearchKey("tags=a&sort=asc")).not.toBe(base);
+    expect(browseSearchKey("tags=a&group=tag")).not.toBe(base);
+    expect(browseSearchKey("tags=b")).not.toBe(base);
+  });
+
+  it("parses to the same state as the whole string", () => {
+    const search = "photo=9&project=p1&tags=a,b&sort=asc&group=tag";
+    expect(parseBrowseState(browseSearchKey(search), photos)).toEqual(parseBrowseState(search, photos));
   });
 });

@@ -35,7 +35,18 @@ function retryAfter(error: unknown): string | undefined {
   return typeof header === "string" ? header : undefined;
 }
 
-/** Keep SDK multipart uploads while forwarding cancellation through its fetch seam. */
+/**
+ * Names the upload call a request belongs to, on its way from upload() into
+ * the client's fetch. Removed before the request leaves the browser.
+ */
+const CALL_HEADER = "x-photos-upload-call";
+
+/**
+ * Keep SDK multipart uploads while forwarding cancellation through its fetch
+ * seam. One client serves every upload this storage makes (it was three per
+ * photo); the SDK takes no per-call signal, so each call tags its request with
+ * a header the fetch seam reads, strips, and maps to that call's signal.
+ */
 export function createAbortablePhotoStorage(deps: {
   supabaseUrl: string;
   anonKey: string;
@@ -43,30 +54,49 @@ export function createAbortablePhotoStorage(deps: {
   fetch?: typeof fetch;
 }): PhotoStorage {
   const fetchRequest = deps.fetch ?? fetch;
+  const calls = new Map<string, { signal?: AbortSignal; status?: number; retryAfter: string | null }>();
+  let lastCall = 0;
+  const client = createClient(deps.supabaseUrl, deps.anonKey, {
+    accessToken: deps.getAccessToken,
+    global: {
+      fetch: async (input, init) => {
+        const headers = new Headers(init?.headers);
+        const callId = headers.get(CALL_HEADER);
+        const call = callId === null ? undefined : calls.get(callId);
+        // The upload this request belongs to has already settled (cancelled
+        // while the SDK looked up the sign-in token): send nothing.
+        if (callId !== null && !call) throw new DOMException("The upload was cancelled.", "AbortError");
+        headers.delete(CALL_HEADER);
+        const signal = call?.signal;
+        signal?.throwIfAborted();
+        const response = await fetchRequest(input, { ...init, headers, signal });
+        if (call) {
+          call.status = response.status;
+          call.retryAfter = response.headers.get("Retry-After");
+        }
+        return response;
+      },
+    },
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
   return {
     async upload(path, body, options) {
       const signal = options?.signal;
-      let responseStatus: number | undefined;
-      let responseRetryAfter: string | null = null;
-      const client = createClient(deps.supabaseUrl, deps.anonKey, {
-        accessToken: deps.getAccessToken,
-        global: {
-          fetch: async (input, init) => {
-            signal?.throwIfAborted();
-            const response = await fetchRequest(input, { ...init, signal });
-            responseStatus = response.status;
-            responseRetryAfter = response.headers.get("Retry-After");
-            return response;
-          },
-        },
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-      });
-      const result = await abortUploadWork(() => client.storage.from("photos").upload(path, body, options), signal);
-      if (!result.error) return { error: null };
-      return { error: Object.assign(result.error, {
-        ...(responseStatus === undefined ? {} : { status: responseStatus }),
-        ...(responseRetryAfter === null ? {} : { retryAfter: responseRetryAfter }),
-      }) };
+      const id = String(++lastCall);
+      const call: { signal?: AbortSignal; status?: number; retryAfter: string | null } = { signal, retryAfter: null };
+      calls.set(id, call);
+      try {
+        const result = await abortUploadWork(() => client.storage.from("photos").upload(path, body, {
+          ...options, headers: { [CALL_HEADER]: id },
+        }), signal);
+        if (!result.error) return { error: null };
+        return { error: Object.assign(result.error, {
+          ...(call.status === undefined ? {} : { status: call.status }),
+          ...(call.retryAfter === null ? {} : { retryAfter: call.retryAfter }),
+        }) };
+      } finally {
+        calls.delete(id);
+      }
     },
   };
 }

@@ -5,19 +5,25 @@ const supabaseHostname = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).hostname
 const nextConfig: NextConfig = {
   serverExternalPackages: ['@boundaryml/baml', 'ffmpeg-static'],
   // ffmpeg-static reaches its binary via path.join, not require(), so output
-  // tracing can't see it — the repair route would deploy without ffmpeg and
-  // fail every video action at runtime. Name it explicitly.
+  // tracing can't see it — a route would deploy without ffmpeg and fail every
+  // video action at runtime. Name it explicitly for each route that runs it:
+  // the nightly repair, and the right-after-upload derive (a video poster the
+  // browser could not make).
   outputFileTracingIncludes: {
     '/api/photos/repair': ['./node_modules/ffmpeg-static/ffmpeg'],
+    '/api/photos/[id]/derive': ['./node_modules/ffmpeg-static/ffmpeg'],
     '/mcp/*': ['./src/lib/mcp/harness/**/*.md'],
   },
+  // Only receipt images go through next/image (the receipt viewer). Photos are
+  // served straight from Storage; allowing their bucket here would let anyone
+  // spend the Vercel image-optimization quota on any photo, no sign-in needed.
   images: {
     remotePatterns: [
       {
         protocol: "https",
         hostname: supabaseHostname,
         port: "",
-        pathname: "/storage/v1/object/public/**",
+        pathname: "/storage/v1/object/public/receipt-images/**",
       },
     ],
   },

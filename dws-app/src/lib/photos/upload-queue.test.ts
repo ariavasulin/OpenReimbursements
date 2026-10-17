@@ -222,3 +222,65 @@ describe("durable ordinary upload removal", () => {
     expect(Q.clearSettled(settled).items).toHaveLength(1);
   });
 });
+
+describe("stages, retry all, reconnect waits, progress gate", () => {
+  it("shows a stage only on an uploading row and never persists it", () => {
+    let q = enq(Q.emptyQueue(), [{ file: f("a.jpg") }, { file: f("b.jpg") }]);
+    const [a, b] = q.items.map((i) => i.photoId);
+    q = Q.setStage(q, b, "sending");
+    expect(q.items[1].stage).toBeUndefined(); // still queued
+    q = Q.start(q, a);
+    expect(q.items[0].stage).toBe("preparing");
+    q = Q.progress(Q.setStage(q, a, "sending"), a, 7);
+    q = Q.setStage(q, a, "finishing");
+    expect(q.items[0]).toMatchObject({ stage: "finishing", sentBytes: 7 });
+    q = Q.setStage(q, a, "reconnecting");
+    expect(q.items[0]).toMatchObject({ stage: "reconnecting", sentBytes: 7 });
+    // A new try starts its bytes over.
+    expect(Q.setStage(q, a, "preparing").items[0].sentBytes).toBe(0);
+    expect(Q.toManifest(q, 1)[0]).not.toHaveProperty("stage");
+  });
+
+  it("retry all requeues failed and contended rows that are due, and leaves decisions alone", () => {
+    let q = enq(Q.emptyQueue(), ["a", "b", "c", "d", "e"].map((name) => ({ file: f(`${name}.jpg`) })));
+    const [a, b, c, d, e] = q.items.map((i) => i.photoId);
+    q = Q.fail(q, a, "offline");
+    q = Q.recordOutcome(q, b, { status: "waiting_claim", retryAt: 0 });
+    q = Q.recordOutcome(q, c, { status: "job_conflict" });
+    q = Q.recordOutcome(q, d, { status: "failed", retryAt: 5_000 });
+    q = Q.recordOutcome(q, e, { status: "done" });
+    expect(Q.retryableNow(q, 1_000)).toBe(2);
+    q = Q.retryAll(q, 1_000);
+    expect(q.items.map((i) => i.status)).toEqual(["queued", "queued", "job_conflict", "failed", "done"]);
+    expect(Q.retryableNow(q, 6_000)).toBe(1);
+  });
+
+  it("waits 5 s after a dropped connection, doubling to a minute", () => {
+    expect([1, 2, 3, 4, 5, 6, 20].map(Q.reconnectDelay)).toEqual([5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000]);
+  });
+
+  it("lets byte progress through about four times a second, on whole-percent changes, plus the last", () => {
+    let time = 0;
+    const gate = Q.createProgressGate(250, () => time);
+    const total = 1000;
+    expect(gate("a", 1, total)).toBe(true); // first
+    expect(gate("a", 5, total)).toBe(false); // same percent
+    time = 100;
+    expect(gate("a", 50, total)).toBe(false); // new percent, too soon
+    time = 260;
+    expect(gate("a", 60, total)).toBe(true);
+    expect(gate("b", 1, total)).toBe(true); // each file has its own clock
+    time = 270;
+    expect(gate("a", total, total)).toBe(true); // the end always shows
+    expect(gate("a", 2, total)).toBe(true); // a new try starts fresh
+  });
+
+  it("drops a row's preview notes once the server made its previews", () => {
+    let q = enq(Q.emptyQueue(), [{ file: f("a.heic") }]);
+    const a = q.items[0].photoId;
+    q = Q.recordOutcome(q, a, { status: "done", warnings: ["Previews could not be generated; the original is preserved.", "Sidecar failed"] });
+    const kept = Q.keepWarnings(q, a, (w) => !w.startsWith("Previews "));
+    expect(kept.items[0].warnings).toEqual(["Sidecar failed"]);
+    expect(Q.keepWarnings(kept, a, (w) => !w.startsWith("Previews "))).toBe(kept);
+  });
+});

@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabaseClient";
 import type { UploadDeps } from "./upload";
 import { createResumableUpload } from "./upload-tus";
-import type { UploadAttempt, AcquireUploadOutcome, ClaimUploadOutcome, CanonicalUploadOutcome, OriginalUploadState, CancelUploadInput, CancelUploadOutcome, FormatTwin } from "./upload-contract";
+import type { UploadAttempt, BeginUploadOutcome, AcquireUploadOutcome, ClaimUploadOutcome, CanonicalUploadOutcome, OriginalUploadState, CancelUploadInput, CancelUploadOutcome, FormatTwin } from "./upload-contract";
 import { extractCapturedAt } from "./exif";
 import { sha256 } from "./hash";
 import { createUploadRequest } from "./upload-http";
@@ -25,6 +25,7 @@ export function buildBrowserUploadDeps(): UploadDeps {
       refreshAuth: refreshUploadAuth,
     }),
     createAttempt: (input, options) => uploadRequest<UploadAttempt>("attempt", input, options),
+    begin: (input, options) => uploadRequest<BeginUploadOutcome>("begin", input, options),
     acquireLease: (input, options) => uploadRequest<AcquireUploadOutcome>("acquire", input, options),
     claimContent: (input, options) => uploadRequest<ClaimUploadOutcome>("claim", input, options),
     probeOriginal: (input, options) => uploadRequest<OriginalUploadState>("original", input, options),

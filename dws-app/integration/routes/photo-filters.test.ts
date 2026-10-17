@@ -200,6 +200,11 @@ describe('photo filters, search words, and select-all ids (W2-A: AC-10, AC-11, A
       const tagged = await ids(`job=${project}&tags=${half}`);
       expect(tagged).toMatchObject({ total: 600, truncated: false });
       expect(tagged.ids).toHaveLength(600);
+      // count=1: the same totals from one counting query, without the ids.
+      expect(await ids(`job=${project}&count=1`)).toEqual({ total: 1200 });
+      expect(await ids(`job=${project}&tags=${half}&count=1`)).toEqual({ total: 600 });
+      expect(await ids(`job=${project}&from=2099-01-01T00:00:00Z&count=1`)).toEqual({ total: 0 });
+      expect((await json(await call(listIds, `/api/photos/ids?job=${project}&count=2`), 400)).error.message).toBe('Invalid count');
       // The first grid page and the ids agree on which photos lead.
       expect(await list(`job=${project}`)).toEqual(newestFirst.slice(0, 200));
       expect(await ids(`job=${project}&from=2099-01-01T00:00:00Z`)).toEqual({ ids: [], total: 0, truncated: false });
@@ -214,10 +219,107 @@ describe('photo filters, search words, and select-all ids (W2-A: AC-10, AC-11, A
       expect(new Set(body.ids).size).toBe(5000);
       const newestFirst = [...rows].sort((a, b) => b.captured_at.getTime() - a.captured_at.getTime()).map(row => row.id);
       expect(body.ids).toEqual(newestFirst.slice(0, 5000));
+      // The count alone has no cap.
+      expect(await ids(`job=${project}&count=1`)).toEqual({ total: 6000 });
     });
 
     it('needs a session', async () => {
       expect((await call(listIds, '/api/photos/ids', { actor: null })).status).toBe(401);
+      expect((await call(listIds, '/api/photos/ids?count=1', { actor: null })).status).toBe(401);
+    });
+  });
+
+  // Performance round (DB-2, DB-3, HOST-6): an album (date order too) and Favorites read from their
+  // own views instead of walking the library, and a cursor also bounds the sort column. Same rows,
+  // same order, same favorites column; errors in the shared { error: { code, message } } shape.
+  describe('album and Favorites lists, and cursor walks', () => {
+    async function rpc(name: string, args: Record<string, unknown>) {
+      const { data, error } = await f.admin.rpc(name, args);
+      expect(error, `${name}: ${error?.message}`).toBeNull();
+      return data;
+    }
+    /** Every id, following nextCursor `limit` rows at a time. */
+    async function walk(query: string, limit: number) {
+      const seen: string[] = []; let cursor: string | null = null;
+      do {
+        const page = await json(await call(listPhotos, `/api/photos?limit=${limit}&${query}${cursor ? `&cursor=${cursor}` : ''}`));
+        seen.push(...page.photos.map((row: { id: string }) => row.id));
+        cursor = page.nextCursor;
+      } while (cursor);
+      return seen;
+    }
+
+    it('an album in date order lists its active photos newest first, in pages, with the favorites column', async () => {
+      const project = await job();
+      // Two share a capture time, so the walk must break the tie by id across a page boundary.
+      const times = ['2031-01-05T00:00:00.000Z', '2031-01-04T00:00:00.000Z', '2031-01-04T00:00:00.000Z', '2031-01-02T00:00:00.000Z', '2031-01-01T00:00:00.000Z'];
+      const made: string[] = [];
+      for (const capturedAt of times) made.push(await photo(project, { capturedAt }));
+      const outside = await photo(project, { capturedAt: '2031-01-03T00:00:00.000Z' });
+      const trashed = made[3];
+      const albumId = (await rpc('photo_create_album', { p_actor: f.employeeA.id, p_name: `Perf album ${randomUUID()}` })).album.id as string;
+      await rpc('photo_album_add', { p_actor: f.employeeA.id, p_album: albumId, p_photo_ids: made });
+      await rpc('photo_favorite', { p_actor: f.employeeA.id, p_photo_ids: [made[0]], p_on: true });
+      await f.sql.query("update public.photos set deleted_at=now(),deleted_by=$2,purge_after=now()+interval '30 days' where id=$1", [trashed, f.employeeA.id]);
+
+      const active = made.filter(id => id !== trashed);
+      const newestFirst = [made[0], ...[made[1], made[2]].sort().reverse(), made[4]];
+      expect(new Set(newestFirst)).toEqual(new Set(active));
+      const page = await json(await call(listPhotos, `/api/photos?album=${albumId}`));
+      expect(page.photos.map((row: { id: string }) => row.id)).toEqual(newestFirst);
+      expect(page.photos).not.toContainEqual(expect.objectContaining({ id: outside }));
+      // The row is the same shape as any list row: no album columns, the reader's own favorite.
+      expect(page.photos[0].favorites).toEqual([{ user_id: f.employeeA.id }]);
+      expect(page.photos[1].favorites).toEqual([]);
+      expect(page.photos[0]).not.toHaveProperty('album_id');
+      expect(page.photos[0]).not.toHaveProperty('album_position');
+      for (const limit of [1, 2]) {
+        expect(await walk(`album=${albumId}`, limit)).toEqual(newestFirst);
+        expect(await walk(`album=${albumId}&sort=asc`, limit)).toEqual([...newestFirst].reverse());
+        expect(await walk(`job=${project}`, limit)).toEqual(await list(`job=${project}`));
+      }
+      expect(await ids(`album=${albumId}`)).toEqual({ ids: newestFirst, total: 4, truncated: false });
+      // Album plus Favorites: only the reader's favorites in that album.
+      expect(await list(`album=${albumId}&favorites=1`)).toEqual([made[0]]);
+      expect((await json(await call(listPhotos, `/api/photos?album=${albumId}&favorites=1`, { actor: f.employeeB }))).photos).toEqual([]);
+      expect(await ids(`album=${albumId}&favorites=1`)).toEqual({ ids: [made[0]], total: 1, truncated: false });
+      // A deleted album lists nothing.
+      await rpc('photo_delete_album', { p_actor: f.employeeA.id, p_album: albumId });
+      expect(await list(`album=${albumId}`)).toEqual([]);
+    });
+
+    it('Favorites lists only the reader\'s own active favorites, newest first, in pages', async () => {
+      const project = await job();
+      const mine = [await photo(project, { capturedAt: '2032-01-03T00:00:00.000Z' }), await photo(project, { capturedAt: '2032-01-02T00:00:00.000Z' }),
+        await photo(project, { capturedAt: '2032-01-01T00:00:00.000Z' })];
+      const theirs = await photo(project, { capturedAt: '2032-01-04T00:00:00.000Z' });
+      await rpc('photo_favorite', { p_actor: f.employeeA.id, p_photo_ids: mine, p_on: true });
+      await rpc('photo_favorite', { p_actor: f.employeeB.id, p_photo_ids: [theirs, mine[0]], p_on: true });
+      await f.sql.query("update public.photos set deleted_at=now(),deleted_by=$2,purge_after=now()+interval '30 days' where id=$1", [mine[2], f.employeeA.id]);
+      try {
+        const scope = `job=${project}&favorites=1`;
+        const page = await json(await call(listPhotos, `/api/photos?${scope}`));
+        expect(page.photos.map((row: { id: string }) => row.id)).toEqual([mine[0], mine[1]]);
+        expect(page.photos.map((row: { favorites: unknown }) => row.favorites)).toEqual([[{ user_id: f.employeeA.id }], [{ user_id: f.employeeA.id }]]);
+        expect(await walk(scope, 1)).toEqual([mine[0], mine[1]]);
+        expect(await ids(scope)).toEqual({ ids: [mine[0], mine[1]], total: 2, truncated: false });
+        const theirsPage = await json(await call(listPhotos, `/api/photos?${scope}`, { actor: f.employeeB }));
+        expect(theirsPage.photos.map((row: { id: string }) => row.id)).toEqual([theirs, mine[0]]);
+        expect(theirsPage.photos[1].favorites).toEqual([{ user_id: f.employeeB.id }]);
+      } finally {
+        await f.sql.query('delete from public.photo_favorites where photo_id=any($1::uuid[])', [[...mine, theirs]]);
+      }
+    });
+
+    it('answers in the shared shape: no-store, a coded 400 with the parser\'s message, a coded 401', async () => {
+      const response = await call(listPhotos, '/api/photos?cursor=nonsense');
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(await json(response, 400)).toEqual({ error: { code: 'invalid_input', message: 'Invalid cursor', retryable: false } });
+      expect((await json(await call(listIds, '/api/photos/ids?sort=custom'), 400)).error.message).toMatch(/album/);
+      expect((await json(await call(listPhotos, '/api/photos', { actor: null }), 401)).error.code).toBe('unauthenticated');
+      const ok = await call(listPhotos, '/api/photos?limit=1');
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get('cache-control')).toBe('no-store');
     });
   });
 
@@ -227,7 +329,11 @@ describe('photo filters, search words, and select-all ids (W2-A: AC-10, AC-11, A
       for (const count of [501, 5000]) {
         const created = await json(await call(createBatch, '/api/photo-actions/batches', { body: { action: 'trash', selector: { photos: refs(count) } } }));
         madeBatches.push(created.batch.id);
-        expect(created.batch.selector.photos).toHaveLength(count);
+        // Stored whole, but not sent back: a response never repeats the selection (VIEW-1).
+        // Only the one-release compatibility stub, never the 5,000 references.
+        expect(created.batch.selector).toEqual({});
+        const stored = await f.sql.query("select jsonb_array_length(selector->'photos') as n from public.photo_action_batches where id=$1", [created.batch.id]);
+        expect(stored.rows[0].n).toBe(count);
       }
       const refused = await json(await call(createBatch, '/api/photo-actions/batches', { body: { action: 'trash', selector: { photos: refs(5001) } } }), 400);
       expect(refused.error.code).toBe('invalid_input');

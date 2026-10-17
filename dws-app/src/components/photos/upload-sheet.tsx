@@ -9,7 +9,7 @@ import PhotoMetaFields, {
   type PhotoMeta,
 } from "@/components/photos/photo-meta-fields";
 import BatchPreview from "@/components/photos/batch-preview";
-import { useUploadManager } from "@/lib/photos/upload-manager";
+import { preloadUploadEngine, useUploadActions } from "@/lib/photos/upload-manager";
 import { useTagChoices } from "@/components/photos/tag-dropdown";
 import { addTagToMeta, appendResolvedTag, resolveTag } from "@/lib/photos/tags";
 import type { UploadTarget } from "@/hooks/use-capture-batch";
@@ -55,7 +55,8 @@ export default function UploadSheet({
   capturedAtOverrides,
   sidecars,
 }: UploadSheetProps) {
-  const manager = useUploadManager();
+  // Actions only: the sheet need not re-render on every upload progress tick.
+  const uploads = useUploadActions();
   const seededMeta = (): PhotoMeta => ({
     ...EMPTY_META,
     jobId: defaultTarget?.jobId ?? "",
@@ -67,6 +68,11 @@ export default function UploadSheet({
   const previewsRef = useRef<(string | null)[]>([]);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
 
+  // The upload code loads on first use; fetching it as the sheet opens hides
+  // that round trip, so the first picked file starts sending at once.
+  useEffect(() => {
+    if (open) preloadUploadEngine();
+  }, [open]);
   // Reset per new batch.
   useEffect(() => {
     if (open) {
@@ -160,7 +166,7 @@ export default function UploadSheet({
     if (!hasDestination) return;
     // Pairing was decided at pick time; a sidecar whose primary was removed
     // from the strip simply stays behind.
-    manager.enqueue(
+    uploads.enqueue(
       files.map((file) => ({ file, sidecar: sidecars?.get(file) })),
       {
         jobId: meta.jobId || null,
@@ -187,6 +193,9 @@ export default function UploadSheet({
               <img
                 src={previews[index]}
                 alt={file.name}
+                // Each is a full-size original: decode it off the main
+                // thread so scrolling the strip does not stall on it.
+                decoding="async"
                 className="h-14 w-14 rounded-lg object-cover"
               />
             ) : (

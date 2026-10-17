@@ -21,7 +21,9 @@ import NewJobForm from '@/components/photos/new-job-form';
 // the verb and Cancel. Detail about a photo that changed underneath you appears
 // only when that has actually happened.
 
-const PAGE_SIZE = 50;
+// The most a batch page or one apply call takes (the routes' cap), so Apply on
+// a big batch makes as few round trips as it can.
+const PAGE_SIZE = 100;
 /** `?destination=none` and the form's "No project" choice. */
 const NO_PROJECT_VALUE = 'none';
 const danger = `${button} border-transparent bg-red-600 text-white hover:bg-red-700`;
@@ -95,7 +97,8 @@ export default function PhotoActions() {
     do {
       next = await actionRequest<View>(`batches/${batchId}/materialize`, choices ? { choices } : {});
       choices = undefined;
-      const wanted = 'photos' in next.batch.selector ? next.batch.selector.photos.length : 0;
+      // The answer no longer echoes the selector (it can be 5,000 ids); the server counts it instead.
+      const wanted = next.selection_size ?? 0;
       setView(next); setMessage(wanted > 1 ? `Getting the photos ready… ${next.total} of ${wanted}` : 'Getting the photo ready…');
     } while (!next.batch.materialization_complete && !next.unresolved.length);
     setMessage('');

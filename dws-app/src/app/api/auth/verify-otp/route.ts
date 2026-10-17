@@ -1,5 +1,21 @@
 import { createSupabaseServerClient } from '@/lib/supabaseServerClient';
+import { needsNameFor } from '@/lib/needs-name';
 import { NextResponse } from 'next/server';
+
+type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+
+/**
+ * Whether the sign-in page should ask for a name, read here so the phone does
+ * not make its own profile query after signing in (one round trip fewer).
+ * No profile row yet (PGRST116) means yes; any other read error means no, so a
+ * hiccup never holds sign-in behind the name prompt. Same rule as the page's
+ * own fallback query.
+ */
+async function needsNameAfterSignIn(supabase: ServerClient, user: { id: string; phone?: string | null }): Promise<boolean> {
+  const { data, error } = await supabase.from('user_profiles').select('full_name').eq('user_id', user.id).single();
+  if (error) return error.code === 'PGRST116';
+  return needsNameFor(data.full_name, user.phone);
+}
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -35,7 +51,11 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'OTP verification successful, but no session returned. This might indicate the OTP was already used or expired.' }, { status: 401 });
     }
 
-    return NextResponse.json({ success: true, message: 'OTP verified successfully', user: data.user, session: data.session });
+    // The session just verified is the one this client now sends, so the read
+    // goes through the person's own row rules, as the page's query did.
+    const needsName = data.user ? await needsNameAfterSignIn(supabase, data.user) : undefined;
+
+    return NextResponse.json({ success: true, message: 'OTP verified successfully', user: data.user, session: data.session, needsName });
 
   } catch (error) {
     console.error('Verify OTP endpoint error:', error);

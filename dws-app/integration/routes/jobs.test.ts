@@ -19,7 +19,7 @@ vi.mock('next/headers', async () => {
 });
 
 import { GET as listJobs, POST as createJob } from '@/app/api/photo-jobs/route';
-import { PATCH as renameJob } from '@/app/api/photo-jobs/[id]/route';
+import { DELETE as deleteJob, GET as readJob, PATCH as renameJob } from '@/app/api/photo-jobs/[id]/route';
 
 describe('hand-made project routes (photo-folders AC-2, AC-3, AC-5, AC-6)', () => {
   let f: Awaited<ReturnType<typeof createFixtures>>;
@@ -37,6 +37,11 @@ describe('hand-made project routes (photo-folders AC-2, AC-3, AC-5, AC-6)', () =
   const rename = (id: string, body: unknown) => {
     const r = request(`/api/photo-jobs/${id}`, 'PATCH', body);
     return withRequest(r, f.employeeB.cookies, () => renameJob(r, { params: Promise.resolve({ id }) }));
+  };
+
+  const readOne = (id: string, cookies = f.employeeA.cookies) => {
+    const r = new Request(`${origin}/api/photo-jobs/${id}`);
+    return withRequest(r, cookies, () => readJob(r, { params: Promise.resolve({ id }) }));
   };
 
   beforeAll(async () => { f = await createFixtures(); await gate(true); });
@@ -70,9 +75,9 @@ describe('hand-made project routes (photo-folders AC-2, AC-3, AC-5, AC-6)', () =
       return originalFetch(input, init);
     });
     try {
+      // By number only (20261014120000_photo_list_order.sql); having photos no longer lifts a project.
       const expected = (await f.sql.query(`select id from public.jobs where id=any($1::uuid[])
-        order by (id=any($2::uuid[])) desc,
-          (case when job_number ~ '^[0-9]+$' then lpad(job_number,20,'0') else job_number end) desc,id`, [ids, ids.slice(0, 3)])).rows.map(row => row.id);
+        order by public.photo_job_number_key(job_number) collate "C" desc,id`, [ids])).rows.map(row => row.id);
       expect((await fetchJobs(prefix)).map(row => row.id)).toEqual(expected);
       expect(sizes).toEqual([200, 200, 200, 200, 200, 200, 3]);
       // Force the tied numeric pair to straddle a page boundary.
@@ -85,6 +90,36 @@ describe('hand-made project routes (photo-folders AC-2, AC-3, AC-5, AC-6)', () =
       mocked.mockRestore();
       await f.sql.query('delete from public.photos where id=any($1::uuid[])', [photoIds]);
       await f.sql.query('delete from public.jobs where id=any($1::uuid[])', [[...ids, unrelated]]);
+    }
+  });
+
+  it('reads one project as its card shows it, and 404s once it is deleted', async () => {
+    const number = `one-${randomUUID().slice(0, 8)}`;
+    const created = await create({ name: 'One project', job_number: number, location: 'Oakland' });
+    expect(created.status).toBe(201);
+    const job = (await created.json()).job;
+    const photo = randomUUID();
+    await f.sql.query(`insert into public.photos(id,job_id,uploader_id,kind,original_path,thumb_path,captured_at)
+      values($1::uuid,$2,$3,'image','originals/' || $1::text || '/one.jpg','derived/' || $1::text || '_thumb.webp',now())`, [photo, job.id, f.employeeA.id]);
+    try {
+      const response = await readOne(job.id);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      const one = (await response.json()).job;
+      // The same card the list shows for it.
+      const listRequest = new Request(`${origin}/api/photo-jobs?q=${number}`);
+      const listed = (await (await withRequest(listRequest, f.employeeA.cookies, () => listJobs(listRequest))).json()).jobs;
+      expect(listed).toEqual([one]);
+      expect(one).toMatchObject({ id: job.id, job_number: number, name: 'One project', location: 'Oakland', photo_count: 1,
+        thumb_paths: [`derived/${photo}_thumb.webp`] });
+      expect((await readOne(randomUUID())).status).toBe(404);
+      expect((await readOne('not-a-uuid')).status).toBe(400);
+      expect((await readOne(job.id, [])).status).toBe(401);
+      const r = request(`/api/photo-jobs/${job.id}`, 'DELETE', {});
+      expect((await withRequest(r, f.photoAdmin.cookies, () => deleteJob(r, { params: Promise.resolve({ id: job.id }) }))).status).toBe(200);
+      expect((await readOne(job.id)).status).toBe(404);
+    } finally {
+      await f.sql.query('delete from public.photos where id=$1', [photo]);
     }
   });
 

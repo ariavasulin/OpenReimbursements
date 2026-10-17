@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MigrationEngine, type MigrationEngineOptions } from './engine';
+import { createNewestAnswer, createTrailingThrottle, MigrationEngine, type MigrationEngineOptions } from './engine';
 import { retryDue, type MigrationItem, type MigrationRequest } from './client';
 import { uploadOne, type UploadDeps } from '../upload';
 import { UploadRequestError } from '../upload-http';
@@ -166,5 +166,82 @@ describe('foreground migration scheduler', () => {
     // The message uses the screen's plain words for a file's state, never the internal status.
     await expect(engine.run()).rejects.toThrow('1 in another project');
     expect(request.mock.calls.some(([, body]) => (body as { action?: string })?.action === 'complete')).toBe(false);
+  });
+});
+
+describe('import pace (UP-10)', () => {
+  beforeEach(() => { vi.mocked(uploadOne).mockReset(); });
+
+  it('starts the next files without waiting for the page to refresh, and still awaits the final refresh', async () => {
+    vi.mocked(uploadOne).mockResolvedValue({ status: 'done', warnings: [] });
+    const { options } = setup(['a', 'b', 'c', 'd'].map(id => item(id, { relative_path: `${id}.jpg` })));
+    let finishRefresh!: () => void;
+    const slowRefresh = new Promise<void>(resolve => { finishRefresh = resolve; });
+    const calls: (string | undefined)[] = [];
+    options.onChange = vi.fn(async (id?: string) => { calls.push(id); if (id === 'a') await slowRefresh; });
+    const work = new MigrationEngine(options).run();
+    await vi.waitFor(() => expect(uploadOne).toHaveBeenCalledTimes(4));
+    let finished = false;
+    void work.then(() => { finished = true; });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    expect(finished).toBe(false); // the final refresh waits behind the slow one
+    finishRefresh(); await work;
+    expect(calls.at(-1)).toBeUndefined();
+  });
+
+  it('keeps importing when a per-file refresh fails', async () => {
+    vi.mocked(uploadOne).mockResolvedValue({ status: 'done', warnings: [] });
+    const { options } = setup(['a', 'b', 'c'].map(id => item(id, { relative_path: `${id}.jpg` })));
+    options.onChange = vi.fn(async (id?: string) => { if (id === 'a') throw new Error('refresh failed'); });
+    await new MigrationEngine(options).run();
+    expect(uploadOne).toHaveBeenCalledTimes(3);
+    expect(options.onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('sends server previews in the background and never the one-request begin', async () => {
+    let handed: ((photoId: string, derive: () => Promise<{ thumb_path: string | null }>) => void) | undefined;
+    let deps: UploadDeps | undefined;
+    vi.mocked(uploadOne).mockImplementation(async (_file, _id, _meta, given, _bytes, opts) => {
+      handed = opts?.deriveLater; deps = given; return { status: 'done', warnings: [] };
+    });
+    const { options } = setup([item('a')]);
+    options.deps = { begin: vi.fn() } as unknown as UploadDeps;
+    options.onPreviewsMade = vi.fn();
+    await new MigrationEngine(options).run();
+    expect(deps?.begin).toBeUndefined();
+    handed!('photo-a', async () => ({ thumb_path: 'derived/x_thumb.webp' }));
+    await vi.waitFor(() => expect(options.onPreviewsMade).toHaveBeenCalledWith('photo-a'));
+  });
+
+  it('throttles: calls inside the window share one run, cancel drops a pending one', async () => {
+    vi.useFakeTimers();
+    try {
+      const work = vi.fn();
+      const throttle = createTrailingThrottle(work, 2_500);
+      throttle.schedule(); throttle.schedule(); throttle.schedule();
+      await vi.advanceTimersByTimeAsync(2_500);
+      expect(work).toHaveBeenCalledOnce();
+      throttle.schedule(); throttle.cancel();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(work).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('createNewestAnswer', () => {
+  it('drops an answer that lands after a newer one was shown', () => {
+    const order = createNewestAnswer();
+    const throttled = order.ticket(); // the per-file refresh, slow
+    const final = order.ticket(); // the run's last refresh
+    expect(order.fresh(final)).toBe(true);
+    expect(order.fresh(throttled)).toBe(false);
+  });
+
+  it('shows answers that land in order, and an older one while nothing newer has landed', () => {
+    const order = createNewestAnswer();
+    const first = order.ticket(); const second = order.ticket();
+    expect(order.fresh(first)).toBe(true);
+    expect(order.fresh(second)).toBe(true);
+    expect(order.fresh(second)).toBe(false);
   });
 });

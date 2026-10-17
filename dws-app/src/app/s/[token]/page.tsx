@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { preconnect } from 'react-dom';
 import { readSharedPage } from '@/lib/photos/server/sharing';
 import SharedGallery from '@/components/photos/shared-gallery';
 
@@ -17,6 +18,11 @@ export const dynamic = 'force-dynamic';
 export const metadata: Metadata = { title: 'Shared photos · DWS Photos', robots: { index: false, follow: false, nocache: true } };
 
 export default async function SharedPage({ params }: { params: Promise<{ token: string }> }) {
+  // The photos come from the Supabase host: open that connection while the
+  // page is still being read, before the first <img> asks for it. No
+  // crossOrigin, because the images are fetched without CORS.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (supabaseUrl) preconnect(supabaseUrl);
   const { token } = await params;
   const first = await readSharedPage(token, null);
   if (!first) notFound();

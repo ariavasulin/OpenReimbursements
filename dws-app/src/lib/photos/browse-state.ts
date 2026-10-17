@@ -80,6 +80,22 @@ function parseSort(value: string | null, options: BrowseOptions): PhotoSort {
   return options.defaultSort ?? "desc";
 }
 
+/**
+ * Only this module's part of a query string, in a fixed order: the same text
+ * whenever the filters, sort, and grouping are the same. The viewer rewrites
+ * `?photo=` on every swipe; keyed on this instead of the whole string, the
+ * parsed filters keep their identity through a swipe, so nothing keyed on
+ * them (the grid's list parameters, its memoised tiles) is rebuilt.
+ */
+export function browseSearchKey(search: string | URLSearchParams): string {
+  const params = typeof search === "string" ? new URLSearchParams(search) : search;
+  const kept = new URLSearchParams();
+  for (const key of BROWSE_KEYS) {
+    for (const value of params.getAll(key)) kept.append(key, value);
+  }
+  return kept.toString();
+}
+
 /** The state a query string describes. Unknown or malformed values read as unset. */
 export function parseBrowseState(
   search: string | URLSearchParams,

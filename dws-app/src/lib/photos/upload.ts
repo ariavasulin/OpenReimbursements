@@ -3,21 +3,26 @@
 // without a browser or network.
 
 import { UploadRequestError } from "./upload-http";
-import { RESUMABLE_THRESHOLD_BYTES, type ResumableUpload } from "./upload-tus";
+import type { ResumableUpload } from "./upload-tus";
+import { RESUMABLE_THRESHOLD_BYTES } from "./upload-constants";
 import { isSha256 } from "./apiShared";
 import {
+  ExifReaderUnavailableError,
   extractCapturedAt as defaultExtractCapturedAt,
   type CapturedAt,
 } from "./exif";
-import { baseName, classifyFile, extensionOf, rewrap } from "./classify";
+import { reloadIfRedeployed } from "./redeploy";
+import { baseName, classifyFile, extensionOf, rewrap, type Classified } from "./classify";
 import { readSidecarMeta, SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
 import { METADATA_MAX_BYTES, canDecodePreview, isRawImage } from "./decode-limits";
+import { DERIVED_CACHE_SECONDS, ORIGINAL_CACHE_SECONDS } from "./storage-cache";
+import { exceedsPreviewPixels } from "./image-size";
 import {
   makeDerivatives as defaultMakeDerivatives,
   type Derivatives,
 } from "./derivatives";
 import type {
-  AcquireUploadOutcome, AttachUploadSidecarInput, CanonicalUploadOutcome, ClaimUploadOutcome,
+  AcquireUploadOutcome, AttachUploadSidecarInput, BeginUploadInput, BeginUploadOutcome, CanonicalUploadOutcome, ClaimUploadOutcome,
   CreateUploadAttemptInput, FinalizeUploadInput, FormatTwin, FormatTwinQuery, ReleaseUploadInput,
   OriginalUploadState, UploadAttempt, UploadClaimInput, UploadLeaseInput, UploadOwner,
 } from "./upload-contract";
@@ -63,7 +68,7 @@ function transferFailure(error: UploadTransferError): UploadRequestError {
   });
 }
 
-function retryDetails(error: unknown): Pick<UploadResult, "retryAt" | "retryable" | "newAttemptRequired" | "errorCode"> {
+function retryDetails(error: unknown): Pick<UploadResult, "retryAt" | "retryable" | "newAttemptRequired" | "errorCode" | "errorStatus"> {
   if (error === null || typeof error !== "object") return {};
   const details = error as UploadTransferError;
   return {
@@ -71,14 +76,42 @@ function retryDetails(error: unknown): Pick<UploadResult, "retryAt" | "retryable
     retryable: typeof details.retryable === "boolean" ? details.retryable : undefined,
     newAttemptRequired: details.newAttemptRequired,
     errorCode: details.code,
+    errorStatus: typeof details.status === "number" ? details.status : undefined,
   };
+}
+
+/**
+ * The connection dropped (no server answered at all), as opposed to a server
+ * that answered with a refusal. Every request already retried itself a few
+ * times before this, so the phone is likely in a dead spot: the manager holds
+ * the batch on this file and tries it again rather than failing the rest.
+ */
+export function isConnectionFailure(result: Pick<UploadResult, "status" | "retryable" | "retryAt" | "errorCode" | "errorStatus">): boolean {
+  return result.status === "failed" && result.retryable === true && result.retryAt === undefined &&
+    result.errorStatus === undefined &&
+    (result.errorCode === "network_error" || result.errorCode === "storage_upload_failed");
+}
+
+/**
+ * An earlier try of this same upload still holds its lease: one cut off by a
+ * dropped connection before it could hand the lease back. Not a refusal; the
+ * lease runs out by `retryAt` and the upload can carry on then.
+ */
+export function isLeaseBusy(result: Pick<UploadResult, "status" | "errorCode" | "retryAt">): result is UploadResult & { retryAt: number } {
+  return result.status === "failed" && result.errorCode === "lease_busy" && typeof result.retryAt === "number";
 }
 
 export interface PhotoStorage {
   upload(
     path: string,
     body: Blob | File,
-    options?: { contentType?: string; upsert?: boolean; signal?: AbortSignal }
+    options?: {
+      contentType?: string;
+      upsert?: boolean;
+      signal?: AbortSignal;
+      /** Seconds browsers and the CDN may cache the file (storage-cache.ts). */
+      cacheControl?: string;
+    }
   ): Promise<{ error: UploadTransferError | null }>;
 }
 
@@ -89,6 +122,10 @@ export interface UploadDeps {
   storage: PhotoStorage;
   hash: (file: File, options?: RequestOptions) => Promise<string>;
   createAttempt: (input: CreateUploadAttemptInput, options?: RequestOptions) => Promise<UploadAttempt>;
+  /** POST .../uploads/begin: attempt, lease, claim and original check in one
+   *  round trip. Without it each step is its own request (the importer, whose
+   *  attempts come from its own prepare step). */
+  begin?: (input: BeginUploadInput, options?: RequestOptions) => Promise<BeginUploadOutcome>;
   acquireLease: (input: UploadOwner, options?: RequestOptions) => Promise<AcquireUploadOutcome>;
   claimContent: (input: UploadLeaseInput, options?: RequestOptions) => Promise<ClaimUploadOutcome>;
   probeOriginal: (input: UploadClaimInput, options?: RequestOptions) => Promise<OriginalUploadState>;
@@ -125,7 +162,18 @@ export interface UploadResult {
   newAttemptRequired?: boolean;
   /** With status format_twin: the photo already in the project that this file looks like. */
   twin?: FormatTwin;
+  /** HTTP status of the failure, when a server answered. */
+  errorStatus?: number;
+  /** The lease this try took and could not hand back: its release went down
+   *  with the connection. Pass it to the next try as `heldLease`. */
+  heldLease?: number;
 }
+
+/** What a row shows while it uploads: getting the file ready, sending bytes, saving the photo. */
+export type UploadStage = "preparing" | "sending" | "finishing";
+
+/** Makes the previews the browser could not; answers the thumbnail path, or null when the server could not either. */
+export type ServerDerive = () => Promise<{ thumb_path: string | null }>;
 
 /** The words for a held format twin (plan Decision 11), in the tray and the import list. */
 export const formatTwinMessage = (twin: Pick<FormatTwin, "original_name">) =>
@@ -158,86 +206,73 @@ function canonicalResult(
   return { ...common, status: outcome.status === "created" ? "done" : "duplicate" };
 }
 
-export async function uploadOne(
+/** Reject at once when the signal aborts, without waiting on work that cannot be stopped. */
+function stopOnAbort<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return Promise.resolve().then(operation);
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return operation();
+    }).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+/**
+ * The work on one file that needs no server: its hash, its capture date and
+ * its previews. Each step starts on first use and runs once. uploadOne makes
+ * its own and runs the steps in its usual order (previews only once the
+ * server has said the file is new); the manager may instead make one for the
+ * NEXT file and warm() it while the current file's bytes are on the network,
+ * so the phone's processor and its connection work at the same time.
+ */
+export interface PreparedUpload {
+  /** The file as picked; uploadOne only uses a preparation made from the same file. */
+  readonly source: File;
+  /** The same bytes with the canonical type. */
+  readonly file: File;
+  readonly classified: Classified;
+  digest(): Promise<string>;
+  /** The capture date. Its notes collect in captureNotes. */
+  capture(): Promise<CapturedAt>;
+  readonly captureNotes: string[];
+  /** The previews, or null. Its notes collect in previewNotes. */
+  derivatives(): Promise<Derivatives | null>;
+  readonly previewNotes: string[];
+  /** Run every step now, one after another, so at most one photo is decoded at a time. */
+  warm(): void;
+}
+
+export function prepareUpload(
   rawFile: File,
-  /** Stable local queue key. Server-returned paths are the transfer authority. */
-  queueId: string,
-  meta: UploadMeta,
-  deps: UploadDeps,
-  onBytes?: ByteProgress,
-  opts: {
-    shutter?: Date; sidecar?: File; signal?: AbortSignal;
-    identity?: UploadIdentity; onIdentity?: (identity: UploadIdentity) => void;
-    expectedSidecarName?: string;
-    /** Upload even when the project already holds this shot in another format. */
-    keepFormatTwin?: boolean;
-  } = {}
-): Promise<UploadResult> {
-  const warnings: string[] = [];
-  let sidecarRetryAt: number | undefined;
-  if (opts.expectedSidecarName && !opts.sidecar) {
-    warnings.push("Sidecar file was not reselected; the original is preserved.");
-  }
-  const controller = new AbortController();
-  const signal = controller.signal;
-  const cancel = () => controller.abort(opts.signal?.reason);
-  if (opts.signal?.aborted) cancel();
-  else opts.signal?.addEventListener("abort", cancel, { once: true });
-  let lease: UploadLeaseInput | undefined;
-  let completed = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let renewing: Promise<void> = Promise.resolve();
-  const requestOptions = { signal };
-
-  // Some decoders and older Storage adapters cannot abort an outstanding call.
-  // Stop awaiting it and schedule no dependent writes after cancellation.
-  const run = <T>(operation: () => Promise<T>): Promise<T> => {
-    signal.throwIfAborted();
-    return new Promise((resolve, reject) => {
-      const abort = () => reject(signal.reason);
-      signal.addEventListener("abort", abort, { once: true });
-      Promise.resolve().then(() => {
-        signal.throwIfAborted();
-        return operation();
-      }).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
-    });
-  };
-  const startRenewal = (claim: UploadClaimInput) => {
-    const schedule = () => {
-      timer = setTimeout(() => {
-        renewing = Promise.resolve().then(() => deps.renewLease(claim, requestOptions)).then(() => {
-          if (!signal.aborted) schedule();
-        }).catch((error: unknown) => {
-          controller.abort(error instanceof Error ? error : new Error("Upload lease renewal failed"));
-        });
-      }, LEASE_RENEW_MS);
-    };
-    schedule();
-  };
-
-  try {
-    const classified = classifyFile(rawFile);
-    const file = rewrap(rawFile, classified.mime);
-    const rawImage = isRawImage(file);
-    // Every size must finish the same hash/preflight contract before any bytes.
-    const digest = await run(() => deps.hash(file, requestOptions));
-    if (!isSha256(digest)) throw new Error("Hashing did not return a SHA-256 digest");
-
-    // Read once: before the claim when the format-twin check needs it, otherwise
-    // beside the previews. Its notes join the warnings only once the upload gets
-    // that far, so an early outcome (a duplicate) carries none of them.
-    const captureNotes: string[] = [];
-    let capture: Promise<CapturedAt> | undefined;
-    const readCapture = () => capture ??= run(async (): Promise<CapturedAt> => {
+  deps: Pick<UploadDeps, "hash" | "extractCapturedAt" | "makeDerivatives">,
+  opts: { shutter?: Date; sidecar?: File; signal?: AbortSignal } = {}
+): PreparedUpload {
+  const classified = classifyFile(rawFile);
+  const file = rewrap(rawFile, classified.mime);
+  const rawImage = isRawImage(file);
+  const { signal } = opts;
+  const guard = <T>(operation: () => Promise<T>) => stopOnAbort(operation, signal);
+  const captureNotes: string[] = [];
+  const previewNotes: string[] = [];
+  let digest: Promise<string> | undefined;
+  let capture: Promise<CapturedAt> | undefined;
+  let derivatives: Promise<Derivatives | null> | undefined;
+  const prepared: PreparedUpload = {
+    source: rawFile, file, classified, captureNotes, previewNotes,
+    digest: () => digest ??= guard(() => deps.hash(file, { signal })),
+    capture: () => capture ??= guard(async (): Promise<CapturedAt> => {
       let sidecarDate: Date | null = null;
       if (opts.sidecar) {
         if (opts.sidecar.size > SIDECAR_METADATA_MAX_BYTES) {
           captureNotes.push("Sidecar capture metadata skipped: XMP exceeds the metadata size limit.");
         } else {
           try {
-            sidecarDate = (await run(() => readSidecarMeta(opts.sidecar!))).capturedAt;
+            sidecarDate = (await guard(() => readSidecarMeta(opts.sidecar!))).capturedAt;
           } catch {
-            signal.throwIfAborted();
+            signal?.throwIfAborted();
             captureNotes.push("Sidecar metadata could not be read. Reselect the sidecar to retry.");
           }
         }
@@ -252,11 +287,123 @@ export async function uploadOne(
       }
       try {
         return await (deps.extractCapturedAt ?? defaultExtractCapturedAt)(file, captureOptions);
-      } catch {
+      } catch (error) {
+        // The date is unknown, not absent: rethrow so this file fails as a
+        // dropped connection and is retried, never stored with the file's
+        // date. After a deploy, move onto the new build (reloadIfRedeployed).
+        if (error instanceof ExifReaderUnavailableError) {
+          void reloadIfRedeployed(error.cause);
+          throw error;
+        }
         captureNotes.push("Embedded capture metadata could not be read.");
         return fallbackCapture();
       }
-    });
+    }),
+    derivatives: () => derivatives ??= guard(async (): Promise<Derivatives | null> => {
+      const skipped = "Previews skipped to limit browser decoding memory use.";
+      if (!canDecodePreview(file)) {
+        previewNotes.push(skipped);
+        return null;
+      }
+      try {
+        // A file size limit cannot see a 48-200 MP photo that still fits
+        // under it; decoding one at full size can crash a phone's tab. The
+        // server makes those previews instead (deriveOnServer).
+        if (classified.kind === "image" && await exceedsPreviewPixels(file)) {
+          previewNotes.push(skipped);
+          return null;
+        }
+        const result = await (deps.makeDerivatives ?? defaultMakeDerivatives)(file);
+        if (!result && classified.kind !== "file" && classified.kind !== "sidecar") {
+          previewNotes.push("Previews could not be generated; the original is preserved.");
+        }
+        return result;
+      } catch {
+        previewNotes.push("Previews could not be generated; the original is preserved.");
+        return null;
+      }
+    }),
+    warm: () => {
+      void prepared.digest().then(() => prepared.capture()).then(() => prepared.derivatives()).catch(() => undefined);
+    },
+  };
+  return prepared;
+}
+
+export async function uploadOne(
+  rawFile: File,
+  /** Stable local queue key. Server-returned paths are the transfer authority. */
+  queueId: string,
+  meta: UploadMeta,
+  deps: UploadDeps,
+  onBytes?: ByteProgress,
+  opts: {
+    shutter?: Date; sidecar?: File; signal?: AbortSignal;
+    identity?: UploadIdentity; onIdentity?: (identity: UploadIdentity) => void;
+    expectedSidecarName?: string;
+    /** Upload even when the project already holds this shot in another format. */
+    keepFormatTwin?: boolean;
+    /** A preparation of this same file, already started (see prepareUpload). */
+    prepared?: PreparedUpload;
+    /** Told when the upload moves on: preparing, then sending, then finishing. */
+    onStage?: (stage: UploadStage) => void;
+    /** Takes the server-preview request instead of waiting for it, so the
+     *  next file need not wait. Without it the request is awaited here. */
+    deriveLater?: (photoId: string, derive: ServerDerive) => void;
+    /** The last try's `heldLease`. Begin hands it back before taking a new
+     *  one, so a retry after a dropped connection need not wait it out. */
+    heldLease?: number;
+  } = {}
+): Promise<UploadResult> {
+  const warnings: string[] = [];
+  let sidecarRetryAt: number | undefined;
+  // The failure answer, kept so the release below can add a lease it could not hand back.
+  let failure: UploadResult | undefined;
+  if (opts.expectedSidecarName && !opts.sidecar) {
+    warnings.push("Sidecar file was not reselected; the original is preserved.");
+  }
+  const controller = new AbortController();
+  const signal = controller.signal;
+  const cancel = () => controller.abort(opts.signal?.reason);
+  if (opts.signal?.aborted) cancel();
+  else opts.signal?.addEventListener("abort", cancel, { once: true });
+  let lease: UploadLeaseInput | undefined;
+  // The last try's lease, until a begin request has carried it to the server.
+  let heldLease = opts.heldLease;
+  let completed = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let renewing: Promise<void> = Promise.resolve();
+  const requestOptions = { signal };
+
+  // Some decoders and older Storage adapters cannot abort an outstanding call.
+  // Stop awaiting it and schedule no dependent writes after cancellation.
+  const run = <T>(operation: () => Promise<T>): Promise<T> => stopOnAbort(operation, signal);
+  const startRenewal = (claim: UploadClaimInput) => {
+    const schedule = () => {
+      timer = setTimeout(() => {
+        renewing = Promise.resolve().then(() => deps.renewLease(claim, requestOptions)).then(() => {
+          if (!signal.aborted) schedule();
+        }).catch((error: unknown) => {
+          controller.abort(error instanceof Error ? error : new Error("Upload lease renewal failed"));
+        });
+      }, LEASE_RENEW_MS);
+    };
+    schedule();
+  };
+
+  try {
+    opts.onStage?.("preparing");
+    const prepared = opts.prepared?.source === rawFile ? opts.prepared
+      : prepareUpload(rawFile, deps, { shutter: opts.shutter, sidecar: opts.sidecar, signal });
+    const { file, classified } = prepared;
+    // Every size must finish the same hash/preflight contract before any bytes.
+    const digest = await run(() => prepared.digest());
+    if (!isSha256(digest)) throw new Error("Hashing did not return a SHA-256 digest");
+
+    // Read once: before the claim when the format-twin check needs it, otherwise
+    // beside the previews. Its notes join the warnings only once the upload gets
+    // that far, so an early outcome (a duplicate) carries none of them.
+    const readCapture = () => run(() => prepared.capture());
 
     // Format twin (plan Decision 11): the same shot already in this project in
     // another format (IMG_1234.CR2 beside IMG_1234.JPG) is held for the uploader
@@ -276,26 +423,52 @@ export async function uploadOne(
       photoId: opts.identity ? crypto.randomUUID() : queueId,
       contentSha256: digest, sourceSignature,
     };
+    // A fresh identity names a photo no earlier try used, so no original can
+    // be stored under it yet and the original-file check can be skipped. A
+    // retry of the same identity (a lost response, a dropped connection) checks.
+    let fresh = !unchanged;
+    // Only this same attempt's lease can be handed back.
+    if (!unchanged) heldLease = undefined;
     let attempt: UploadAttempt;
     let acquired: AcquireUploadOutcome;
     let owner: UploadOwner;
+    let begun: BeginUploadOutcome | undefined;
     for (let reset = 0; ; reset++) {
       opts.onIdentity?.(identity);
-      attempt = await run(() => deps.createAttempt({
+      const attemptInput: CreateUploadAttemptInput = {
         attempt_id: identity.attemptId, photo_id: identity.photoId,
         job_id: meta.jobId, album_ids: meta.albumIds ?? [],
         source_signature: sourceSignature, content_sha256: digest,
         original_name: file.name, original_bytes: file.size, mime_type: classified.mime,
-      }, requestOptions));
+      };
+      if (deps.begin) {
+        const beginInput: BeginUploadInput = { ...attemptInput, probe: !fresh,
+          ...(heldLease !== undefined ? { release_generation: heldLease } : {}) };
+        begun = await run(() => deps.begin!(beginInput, requestOptions));
+        // Answered: the server has tried the hand-back. A begin that never
+        // got through keeps it for the next try (see finally).
+        heldLease = undefined;
+        attempt = begun.attempt;
+        if (begun.lease_busy) {
+          throw new UploadRequestError("Waiting for an earlier try of this upload to time out.", {
+            code: "lease_busy", status: 409, retryable: true, retryAt: Date.now() + begun.lease_busy.retry_after_ms,
+          });
+        }
+      } else {
+        begun = undefined;
+        attempt = await run(() => deps.createAttempt(attemptInput, requestOptions));
+      }
       if (attempt.content_sha256 !== digest || attempt.job_id !== meta.jobId) {
         throw new Error("Upload attempt does not match this file and job");
       }
       owner = { owner_kind: attempt.owner_kind, owner_id: attempt.owner_id };
-      acquired = attempt.result ?? await run(() => deps.acquireLease(owner, requestOptions));
+      const leaseOwner = owner;
+      acquired = attempt.result ?? begun?.acquired ?? await run(() => deps.acquireLease(leaseOwner, requestOptions));
       if (acquired.status === "acquired") break;
       if (acquired.new_attempt_required) {
         if (reset > 0) throw new Error("Upload attempt could not be reset; retry shortly");
         identity = { ...identity, attemptId: crypto.randomUUID(), photoId: crypto.randomUUID() };
+        fresh = true;
         continue;
       }
       if (acquired.status === "created" && acquired.sidecar_retry && opts.sidecar) {
@@ -305,7 +478,7 @@ export async function uploadOne(
     }
     lease = { ...owner, lease_generation: acquired.lease_generation };
     const leased = lease;
-    const claimed = await run(() => deps.claimContent(leased, requestOptions));
+    const claimed = begun?.claimed ?? await run(() => deps.claimContent(leased, requestOptions));
     if (claimed.status === "waiting_claim") {
       const retryAt = Date.parse(claimed.lease_expires_at);
       return { status: "waiting_claim", error: "Another upload is processing these bytes. Retry shortly.", warnings,
@@ -319,31 +492,25 @@ export async function uploadOne(
     startRenewal(claim);
     // A prior transfer may have completed despite a lost response or expired
     // TUS URL. The server checks the bound path and size under this exact claim.
-    const originalState = await run(() => deps.probeOriginal(claim, requestOptions));
+    if (begun?.original_mismatch) {
+      throw new UploadRequestError("Stored upload differs from this file. Start a fresh attempt before retrying.", {
+        code: "conflict", status: 409, retryable: false, newAttemptRequired: true,
+      });
+    }
+    const originalState: OriginalUploadState = begun?.original
+      ?? (fresh && attempt.photo_id === identity.photoId ? { complete: false }
+        : await run(() => deps.probeOriginal(claim, requestOptions)));
 
     const capturedAt = await readCapture();
-    warnings.push(...captureNotes);
-    const derivatives = await run(async (): Promise<Derivatives | null> => {
-      if (!canDecodePreview(file)) {
-        warnings.push("Previews skipped to limit browser decoding memory use.");
-        return null;
-      }
-      try {
-        const result = await (deps.makeDerivatives ?? defaultMakeDerivatives)(file);
-        if (!result && classified.kind !== "file" && classified.kind !== "sidecar") {
-          warnings.push("Previews could not be generated; the original is preserved.");
-        }
-        return result;
-      } catch {
-        warnings.push("Previews could not be generated; the original is preserved.");
-        return null;
-      }
-    });
+    warnings.push(...prepared.captureNotes);
+    const derivatives = await run(() => prepared.derivatives());
+    warnings.push(...prepared.previewNotes);
 
     const transfer = (path: string, body: File, contentType: string, progress?: ByteProgress) =>
       run(() => body.size > RESUMABLE_THRESHOLD_BYTES
-        ? deps.resumableUpload(path, body, { contentType, onProgress: progress, signal })
-        : deps.storage.upload(path, body, { contentType, upsert: true, signal }));
+        ? deps.resumableUpload(path, body, { contentType, onProgress: progress, signal, cacheControl: ORIGINAL_CACHE_SECONDS })
+        : deps.storage.upload(path, body, { contentType, upsert: true, signal, cacheControl: ORIGINAL_CACHE_SECONDS }));
+    opts.onStage?.("sending");
     // Original FIRST: every intermediate state remains repairable.
     if (!originalState.complete) {
       const original = await transfer(attempt.original_path, file, classified.mime, onBytes);
@@ -365,8 +532,11 @@ export async function uploadOne(
     }
     const uploadDerivative = async (path: string, body: Blob): Promise<string | null> => {
       try {
+        // body.type is the real format (WebP, or JPEG where the browser
+        // cannot encode WebP), whatever the key's .webp name says.
         const result = await run(() => deps.storage.upload(path, body, {
           contentType: body.type || "image/webp", upsert: true, signal,
+          cacheControl: DERIVED_CACHE_SECONDS,
         }));
         if (result.error) throw new Error(result.error.message);
         return path;
@@ -381,6 +551,7 @@ export async function uploadOne(
       uploadDerivative(attempt.preview_path, derivatives.preview),
     ]) : [null, null];
 
+    opts.onStage?.("finishing");
     // Fence a failed in-flight renewal before committing; the server checks both generations.
     clearTimeout(timer);
     await run(() => renewing);
@@ -400,16 +571,24 @@ export async function uploadOne(
     }, requestOptions));
     completed = true;
     // The row is in; previews the browser could not make are made on the
-    // server now, so the photo has one when the tray says done. A failure
-    // here changes nothing: the sweep fills it later and the note stands.
+    // server now. A failure there changes nothing: the sweep fills it later
+    // and the note stands. With deriveLater the caller sends the request and
+    // this file is done at once, so a slow server render (a long video, a
+    // big TIFF) never holds up the next file.
     let reported = warnings;
     if (result.status === "created" && !derivatives && deps.deriveOnServer
         && (classified.kind === "image" || classified.kind === "video")) {
-      try {
-        const made = await deps.deriveOnServer(attempt.photo_id, requestOptions);
-        if (made.thumb_path) reported = warnings.filter((warning) => !warning.startsWith("Previews "));
-      } catch {
-        // Left to the sweep.
+      const photoId = attempt.photo_id;
+      const deriveOnServer = deps.deriveOnServer;
+      if (opts.deriveLater) {
+        opts.deriveLater(photoId, () => deriveOnServer(photoId));
+      } else {
+        try {
+          const made = await deriveOnServer(photoId, requestOptions);
+          if (made.thumb_path) reported = withoutPreviewNotes(warnings);
+        } catch {
+          // Left to the sweep.
+        }
       }
     }
     // Only the server may clean unreferenced duplicate objects after commit.
@@ -419,21 +598,32 @@ export async function uploadOne(
       retryAt: sidecarRetryAt,
     };
   } catch (error) {
-    return {
+    failure = {
       status: opts.signal?.aborted ? "cancelled" : "failed",
       error: error instanceof Error ? error.message : "Upload failed", warnings,
       ...retryDetails(error),
     };
+    return failure;
   } finally {
     clearTimeout(timer);
     opts.signal?.removeEventListener("abort", cancel);
     if (lease && !completed) {
       // Transport interruption remains retryable; explicit batch cancellation is server-owned.
       // No aborted signal: releasing a fenced lease must still be attempted.
-      await deps.releaseLease({ ...lease, status: "retryable_failed" }).catch(() => undefined);
+      const released = await deps.releaseLease({ ...lease, status: "retryable_failed" }).then(() => true, () => false);
+      // Offline, the release fails too and the lease stays live for up to two
+      // minutes. The next try hands it back as it begins (UP-3).
+      if (!released && failure) failure.heldLease = lease.lease_generation;
+    } else if (heldLease !== undefined && failure) {
+      // The connection dropped again before begin could hand the last try's
+      // lease back: the next try hands it back instead of waiting it out.
+      failure.heldLease = heldLease;
     }
   }
 }
+
+/** The upload's "Previews ..." notes, dropped once the server has made the previews. */
+export const withoutPreviewNotes = (warnings: string[]) => warnings.filter((warning) => !warning.startsWith("Previews "));
 
 /** Attach a reselected XMP to an owned completed attempt without reuploading the original. */
 export async function retrySidecar(
@@ -472,8 +662,8 @@ export async function retrySidecar(
     let transferError: unknown;
     try {
       const transferred = file.size > RESUMABLE_THRESHOLD_BYTES
-        ? await deps.resumableUpload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false })
-        : await deps.storage.upload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false });
+        ? await deps.resumableUpload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false, cacheControl: ORIGINAL_CACHE_SECONDS })
+        : await deps.storage.upload(attempt.sidecar_path, file, { ...options, contentType: file.type, upsert: false, cacheControl: ORIGINAL_CACHE_SECONDS });
       transferError = transferred.error;
     } catch (error) { transferError = error; }
     options.signal?.throwIfAborted();

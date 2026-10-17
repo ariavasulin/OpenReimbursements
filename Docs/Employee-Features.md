@@ -188,6 +188,12 @@ called "DWS Photos", and opens on Projects from it. On an iPhone: open the site
 in Safari, Share, **Add to Home Screen**. A shortcut added before this icon
 existed keeps the receipts icon; remove it and add it again.
 
+The app keeps the project and album lists and the last few photo grids on the
+device for up to a week, so opening it again shows them at once and then
+refreshes them in the background (for a moment the lists can be a little out of
+date). Signing out deletes what was kept. The tab bar and grey placeholders
+appear straight away while the sign-in is checked.
+
 ### Browsing
 
 **Projects** lists projects by job number, highest first, so the newest job is
@@ -235,10 +241,13 @@ photo when it is deleted forever.
 Long-press (phone) or click the tick (desktop) to start a selection. The bar
 reads "N selected · Select all M"; **Select all** picks every photo that matches
 the current filters, loaded or not, up to 5,000 ("Select all 5,000 (of M)" past
-that). A group header's tick selects the whole group the same way. Tag and
+that); it spins for a moment while it fetches them, and if every match is
+already selected a click simply adds nothing. A group header's tick selects the whole group the same way. Tag and
 Add to album work in slices of 500 behind one progress toast; Set project goes
 through the confirmation page as one batch, and Trash moves the photos at once
-with an Undo.
+with an Undo. Trash (and its Undo) shows one toast while it runs, counting up
+for selections over 1,000; if it stops part way, the toast says how many were
+moved and the selection stays, so pressing Trash again finishes the rest.
 
 **Tag** has two modes, **Add tags** and **Remove tags**. To take a tag off
 photos it was given by mistake: Group by Tag, tick that tag's group header,
@@ -253,8 +262,11 @@ case, stores that spelling.
 ### Download
 
 **Download** in the selection bar builds one zip in the browser. A confirmation
-shows the count and total size first, warns above 2 GB, and on a phone says
-large downloads work best on a computer. Entries are named with each photo's
+shows the count and total size first and warns when it is large: above 2 GB in
+Chrome and Edge on a computer (they save the zip as it is built), above 400 MB
+everywhere else (phones, Safari, Firefox), because there the whole zip is held
+in memory first and a phone can run out of it and save nothing. On a phone it
+also says large downloads work best on a computer. Entries are named with each photo's
 display name plus its original extension; duplicates get " (2)", " (3)". If any
 photo could not be fetched, the toast names it and never calls the zip complete.
 
@@ -315,8 +327,9 @@ appear when allowed; a mixed selection reads "Trash the N you can delete".
 
 Your browser makes each photo's thumbnail and preview while it uploads. When it
 cannot — an iPhone HEIC picked on a desktop browser, a TIFF, an image over
-24 MB, a video the browser cannot play — the server makes them as soon as the
-upload lands, so the photo has a preview by the time the tray says done. There
+24 MB or over 40 megapixels, a video the browser cannot play — the server makes
+them as soon as the upload lands. The tray moves on to the next file while it
+does; the "Previews…" note on that row goes away once they are ready. There
 is no upload size limit; a file the server cannot read either (a RAW file, an
 image over 250 MB) shows as a "No preview" tile that still downloads. A photo
 that somehow missed both gets its preview from the nightly sweep.
@@ -327,6 +340,22 @@ clip in the app depends on the browser: an iPhone's HEVC .mov plays on iPhones
 and Macs, and a Windows browser may only offer it for download. The nightly
 sweep makes a standard MP4 copy of clips up to 200 MB and 2 minutes so they
 play everywhere; longer or larger clips stay download-only.
+
+### While an upload runs
+
+Each row in the upload tray says what its file is doing: Preparing (reading the
+photo and making its previews), Sending, then Finishing. Keep DWS Photos open
+until the tray is done: the screen stays on by itself where the browser allows
+it, but locking the phone or switching apps pauses the upload. If the
+connection drops (a basement, a dead spot), the tray says "Waiting for
+connection" and the batch carries on by itself when the signal comes back,
+picking up the same file; nothing needs to be re-picked (now and then it
+waits up to two more minutes while the server lets go of the interrupted try).
+After 30 minutes without a connection that file fails and the rest go on. If
+the phone can no longer read a picked file (an iPhone can drop it while the app
+sits in the background), that file fails at once with "File can no longer be
+read — re-pick it" and the rest go on. When several files
+failed, **Retry all** in the tray retries them in one tap.
 
 ### Other formats of the same photo
 

@@ -4,6 +4,7 @@
 // warning, a small in-order fetch pool, and finding the rows for selected ids
 // the grid has not loaded. zip-save.ts fetches the originals and writes the zip.
 
+import { MAX_BULK_PHOTOS } from "./apiShared";
 import { downloadName, formatBytes } from "./format";
 import type { PhotoRow } from "./types";
 
@@ -13,11 +14,21 @@ export type ZipRow = Pick<
   "id" | "original_path" | "original_bytes" | "original_name" | "display_name" | "captured_at"
 >;
 
-/** Above this the confirm warns before anything is fetched. */
+/** The zip streams to a file the person picked: the confirm warns above this. */
 export const ZIP_WARN_BYTES = 2 * 1024 ** 3;
 
-/** Rows per GET /api/photos page while looking for unloaded rows (the route's maximum). */
-export const ROW_PAGE_SIZE = 200;
+/**
+ * The zip is built in memory first (phones, Safari, Firefox: no save dialog),
+ * so the browser holds all of it before saving. A phone can run out of memory,
+ * and lose the whole download, far below 2 GB: the confirm warns above this.
+ */
+export const ZIP_WARN_BYTES_IN_MEMORY = 400 * 1024 ** 2;
+
+/** Ids per POST /api/photos/rows while looking up unloaded rows (the route's maximum). */
+export const ROW_LOOKUP_SIZE = MAX_BULK_PHOTOS;
+
+/** Row lookups in flight at once. */
+const ROW_LOOKUPS_AT_ONCE = 3;
 
 /** Sizes summed from `original_bytes`; `unknown` rows have none recorded. */
 export function selectionBytes(rows: readonly Pick<ZipRow, "original_bytes">[]): { bytes: number; unknown: number } {
@@ -30,8 +41,9 @@ export function selectionBytes(rows: readonly Pick<ZipRow, "original_bytes">[]):
   return { bytes, unknown };
 }
 
-/** True when the download is over 2 GB. */
-export const isLargeDownload = (bytes: number) => bytes > ZIP_WARN_BYTES;
+/** True when the download is too big to start without a warning: over 2 GB, or 400 MB when built in memory. */
+export const isLargeDownload = (bytes: number, inMemory = false) =>
+  bytes > (inMemory ? ZIP_WARN_BYTES_IN_MEMORY : ZIP_WARN_BYTES);
 
 /** "3.4 GB" past a gigabyte, otherwise formatBytes ("850.2 MB"). */
 export function formatDownloadSize(bytes: number): string {
@@ -106,50 +118,39 @@ export async function* inOrderPool<T, R>(
   }
 }
 
-export interface FindRowsDeps {
-  /** One page of GET /api/photos for these parameters. */
-  page(params: URLSearchParams): Promise<{ photos: ZipRow[]; nextCursor: string | null }>;
-  /** One photo by id; null when it is gone (trashed or deleted). */
-  one(id: string): Promise<ZipRow | null>;
-}
+/**
+ * The zip fields for these ids (at most ROW_LOOKUP_SIZE), as POST
+ * /api/photos/rows answers: only photos still available, in any order.
+ */
+export type RowLookup = (ids: string[], signal?: AbortSignal) => Promise<ZipRow[]>;
 
 /**
  * The rows for `ids`: those already `known` (the grid's loaded photos), then
- * the grid's own list (`listQuery`, the grid's GET /api/photos parameters) page
- * by page until every id is found or the list ends, then one by one for any
- * picked under an earlier filter. `missing` are ids no longer available.
- * Rows come back in `ids` order.
+ * the rest by id, ROW_LOOKUP_SIZE ids a request, a few requests at once.
+ * `missing` are ids no longer available (trashed or deleted). Rows come back
+ * in `ids` order. `signal` stops the lookups when the sheet closes.
  */
 export async function findRows(
   ids: readonly string[],
   known: readonly ZipRow[],
-  listQuery: string | null,
-  deps: FindRowsDeps,
-  poolSize = 6
+  lookup: RowLookup,
+  signal?: AbortSignal
 ): Promise<{ rows: ZipRow[]; missing: string[] }> {
   const wanted = new Set(ids);
   const found = new Map<string, ZipRow>();
   for (const row of known) if (wanted.has(row.id)) found.set(row.id, row);
 
-  let cursor: string | null = null;
-  while (listQuery !== null && found.size < wanted.size) {
-    const params = new URLSearchParams(listQuery);
-    params.set("limit", String(ROW_PAGE_SIZE));
-    if (cursor !== null) params.set("cursor", cursor);
-    const page = await deps.page(params);
-    for (const row of page.photos) if (wanted.has(row.id) && !found.has(row.id)) found.set(row.id, row);
-    cursor = page.nextCursor;
-    if (cursor === null) break;
-  }
-
   const leftover = ids.filter((id) => !found.has(id));
-  const missing: string[] = [];
-  let index = 0;
-  for await (const row of inOrderPool(leftover, poolSize, (id) => deps.one(id))) {
-    if (row) found.set(row.id, row);
-    else missing.push(leftover[index]);
-    index += 1;
+  const slices: string[][] = [];
+  for (let start = 0; start < leftover.length; start += ROW_LOOKUP_SIZE) {
+    slices.push(leftover.slice(start, start + ROW_LOOKUP_SIZE));
+  }
+  for await (const rows of inOrderPool(slices, ROW_LOOKUPS_AT_ONCE, (slice) => lookup(slice, signal))) {
+    for (const row of rows) if (wanted.has(row.id)) found.set(row.id, row);
   }
 
-  return { rows: ids.flatMap((id) => found.get(id) ?? []), missing };
+  return {
+    rows: ids.flatMap((id) => found.get(id) ?? []),
+    missing: leftover.filter((id) => !found.has(id)),
+  };
 }

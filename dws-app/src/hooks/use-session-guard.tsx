@@ -2,22 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { clearPersistedQueries } from "@/lib/query-persist-browser";
 
 /**
  * Session-only guard (no role gate): redirects to /login?next=<path and query>
  * when there is no session or the user signs out. Returns true once verified.
  *
- * Only `pathname` re-arms the check, never the query string: arming costs a
- * getSession() token refresh and an onAuthStateChange resubscribe whose own
- * INITIAL_SESSION emit can redirect, and the lightbox rewrites `?photo=<id>`
- * in place once per slide.
+ * Checks once per mount, not per navigation: the photos shell stays mounted
+ * across /photos pages, and the SIGNED_OUT listener below already catches a
+ * session that ends later (including a token refresh that fails). Re-arming on
+ * every tap cost a getSession() auth lock, a cookie parse and a resubscribe.
+ * `_path` is unused; it stays so existing callers compile.
  */
-export function useSessionGuard(pathname: string): boolean {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function useSessionGuard(_path?: string): boolean {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    // Read at redirect time, so `?next=` carries the query string as it stands.
+    // Read at redirect time, so `?next=` carries the page and query the
+    // person is on at that moment, not the one this guard mounted on.
     const toLogin = () =>
       window.location.replace(
         `/login?next=${encodeURIComponent(
@@ -49,7 +53,7 @@ export function useSessionGuard(pathname: string): boolean {
       cancelled = true;
       authListener.subscription.unsubscribe();
     };
-  }, [pathname]);
+  }, []);
 
   return ready;
 }
@@ -57,14 +61,13 @@ export function useSessionGuard(pathname: string): boolean {
 /**
  * The auth cookie is apex-scoped (e.g. .dws-receipts.com), so this signs out of
  * Receipts too — intended: one account. The session guard handles the redirect.
+ * The photo lists saved on this device go first: the redirect is a full page
+ * load, which could cut off a delete started after it.
  */
 export async function signOut(): Promise<void> {
+  await clearPersistedQueries();
   await supabase.auth.signOut();
 }
-
-/** Full-height AuthLoading. */
-export const PHOTOS_AUTH_LOADING_CLASS =
-  "flex h-dvh items-center justify-center bg-[#222222] px-4 text-white";
 
 export function AuthLoading({
   className = "flex min-h-full items-center justify-center px-4 py-8",

@@ -4,8 +4,10 @@ import {
   formatDownloadSize,
   inOrderPool,
   isLargeDownload,
+  ROW_LOOKUP_SIZE,
   selectionBytes,
   ZIP_WARN_BYTES,
+  ZIP_WARN_BYTES_IN_MEMORY,
   zipEntryNames,
   zipFileName,
   type ZipRow,
@@ -65,7 +67,7 @@ describe("zipEntryNames", () => {
   });
 });
 
-describe("selectionBytes and the 2 GB rule", () => {
+describe("selectionBytes and the size warnings", () => {
   it("adds the recorded sizes and counts the unknown ones", () => {
     expect(
       selectionBytes([{ original_bytes: 1500 }, { original_bytes: null }, { original_bytes: 2500 }])
@@ -73,11 +75,20 @@ describe("selectionBytes and the 2 GB rule", () => {
     expect(selectionBytes([])).toEqual({ bytes: 0, unknown: 0 });
   });
 
-  it("warns only above 2 GB", () => {
+  it("warns above 2 GB when the zip streams to a file", () => {
     expect(ZIP_WARN_BYTES).toBe(2 * 1024 ** 3);
     expect(isLargeDownload(ZIP_WARN_BYTES)).toBe(false);
     expect(isLargeDownload(ZIP_WARN_BYTES + 1)).toBe(true);
     expect(isLargeDownload(40 * 3_000_000)).toBe(false);
+  });
+
+  it("warns above 400 MB when the zip is built in memory (phones, Safari, Firefox)", () => {
+    expect(ZIP_WARN_BYTES_IN_MEMORY).toBe(400 * 1024 ** 2);
+    expect(isLargeDownload(ZIP_WARN_BYTES_IN_MEMORY, true)).toBe(false);
+    expect(isLargeDownload(ZIP_WARN_BYTES_IN_MEMORY + 1, true)).toBe(true);
+    // 120 phone photos of about 3 MB fit; 200 do not.
+    expect(isLargeDownload(120 * 3_000_000, true)).toBe(false);
+    expect(isLargeDownload(200 * 3_000_000, true)).toBe(true);
   });
 
   it("writes sizes in GB past a gigabyte", () => {
@@ -113,42 +124,42 @@ describe("inOrderPool", () => {
 });
 
 describe("findRows", () => {
-  const listed = Array.from({ length: 450 }, (_, i) => row(`p${i}`));
-  const page = vi.fn(async (params: URLSearchParams) => {
-    const start = Number(params.get("cursor") ?? 0);
-    const limit = Number(params.get("limit"));
-    const end = start + limit;
-    return { photos: listed.slice(start, end), nextCursor: end < listed.length ? String(end) : null };
-  });
+  /** A rows lookup that knows p0…p1199, recording each request's ids. */
+  const library = new Map(Array.from({ length: 1200 }, (_, i) => [`p${i}`, row(`p${i}`)]));
+  const lookup = vi.fn(async (ids: string[]) => ids.flatMap((id) => library.get(id) ?? []));
 
-  it("uses loaded rows, walks the grid's list until every id is found, then asks for leftovers", async () => {
-    page.mockClear();
-    const one = vi.fn(async (id: string) => (id === "gone" ? null : row(id)));
-    const ids = ["p0", "p250", "elsewhere", "gone", "p5"];
-    const { rows, missing } = await findRows(ids, [row("p0"), row("p5")], "job=j1&sort=asc", { page, one });
-    expect(rows.map((r) => r.id)).toEqual(["p0", "p250", "elsewhere", "p5"]);
+  it("uses loaded rows, looks the rest up by id, and names the ones no longer available", async () => {
+    lookup.mockClear();
+    const ids = ["p0", "p250", "gone", "p5"];
+    const { rows, missing } = await findRows(ids, [row("p0"), row("p5")], lookup);
+    expect(rows.map((r) => r.id)).toEqual(["p0", "p250", "p5"]);
     expect(missing).toEqual(["gone"]);
-    // Three pages of 200 hold 450 rows; "elsewhere" and "gone" are not in them.
-    expect(page).toHaveBeenCalledTimes(3);
-    expect(page.mock.calls[0][0].toString()).toBe("job=j1&sort=asc&limit=200");
-    expect(one.mock.calls.map(([id]) => id)).toEqual(["elsewhere", "gone"]);
+    expect(lookup.mock.calls.map(([sent]) => sent)).toEqual([["p250", "gone"]]);
   });
 
-  it("stops walking once every id is found, and asks nothing when all are loaded", async () => {
-    page.mockClear();
-    const one = vi.fn(async () => null);
-    await findRows(["p3", "p150"], [], "", { page, one });
-    expect(page).toHaveBeenCalledTimes(1);
-    page.mockClear();
-    await findRows(["p3"], [row("p3")], "", { page, one });
-    expect(page).not.toHaveBeenCalled();
-    expect(one).not.toHaveBeenCalled();
+  it("asks ROW_LOOKUP_SIZE ids a request, keeps the selection's order, and asks nothing when all are loaded", async () => {
+    lookup.mockClear();
+    const ids = Array.from({ length: 1200 }, (_, i) => `p${1199 - i}`);
+    const { rows, missing } = await findRows(ids, [], lookup);
+    expect(lookup.mock.calls.map(([sent]) => sent.length)).toEqual([ROW_LOOKUP_SIZE, ROW_LOOKUP_SIZE, 1200 - 2 * ROW_LOOKUP_SIZE]);
+    expect(rows.map((r) => r.id)).toEqual(ids);
+    expect(missing).toEqual([]);
+    lookup.mockClear();
+    await findRows(["p3"], [row("p3")], lookup);
+    expect(lookup).not.toHaveBeenCalled();
   });
 
-  it("fails when a lookup fails", async () => {
-    const one = vi.fn(async () => {
-      throw new Error("Could not look up a photo (500)");
+  it("passes the signal on, and fails when a lookup fails", async () => {
+    const controller = new AbortController();
+    const seen = vi.fn(async (_ids: string[], signal?: AbortSignal) => {
+      expect(signal).toBe(controller.signal);
+      return [];
     });
-    await expect(findRows(["x"], [], null, { page, one })).rejects.toThrow("(500)");
+    await findRows(["x"], [], seen, controller.signal);
+    expect(seen).toHaveBeenCalledTimes(1);
+    const failing = vi.fn(async () => {
+      throw new Error("Could not look up the photos (500)");
+    });
+    await expect(findRows(["x"], [], failing)).rejects.toThrow("(500)");
   });
 });

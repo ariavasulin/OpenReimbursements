@@ -4,7 +4,7 @@ import { useId, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { toast } from "sonner";
-import { createAlbum, usePhotoAlbums } from "@/lib/photos/api";
+import { createAlbum, photoKeys, usePhotoAlbums } from "@/lib/photos/api";
 import type { PhotoAlbumRef } from "@/lib/photos/types";
 import { useSuggestionEscape } from "@/hooks/use-suggestion-escape";
 import { useCloseOnBlur } from "@/hooks/use-close-on-blur";
@@ -77,7 +77,7 @@ export default function AlbumField({
     setCreating(true);
     try {
       const { album } = await createAlbum(typed);
-      queryClient.invalidateQueries({ queryKey: ["photo-albums"] });
+      queryClient.invalidateQueries({ queryKey: photoKeys.allAlbums });
       pick(album);
       toast.success(`Album “${album.name}” created`);
     } catch (reason) {

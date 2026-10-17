@@ -90,6 +90,16 @@ describe("trashableIds and trashActionLabel (the selection bar's Trash)", () => 
     expect(trashableIds(me, ["mine-new", "mine-new"], twice, now)).toEqual(["mine-new"]);
   });
 
+  it("reads a map of the loaded photos by id the same as the list", () => {
+    const byId = new Map(loaded.map((photo) => [photo.id, photo]));
+    expect(trashableIds(me, ["mine-new", "theirs", "mine-old", "unloaded"], byId, now)).toEqual([
+      "mine-new",
+      "unloaded",
+    ]);
+    expect(trashableIds(admin, ["theirs", "mine-old"], byId, now)).toEqual(["theirs", "mine-old"]);
+    expect(trashableIds(undefined, ["mine-new"], byId, now)).toEqual([]);
+  });
+
   it("offers nothing before the permissions load", () => {
     expect(trashableIds(undefined, ["mine-new"], loaded, now)).toEqual([]);
     expect(label(undefined, ["mine-new"])).toBeNull();

@@ -126,16 +126,33 @@ view is in `Employee-Features.md` § DWS Photos.
   (`src/lib/photos/server/list-filters.ts`). `from`/`to` are zoned ISO instants
   the browser computes in its own local time; the server never picks a
   timezone. `q` is split into words (at most 8) and every word must match.
-- **Select all** calls `GET /api/photos/ids`, which walks the match server-side
-  1,000 rows at a time and stops at 5,000 (`truncated: true`). The selection
+- **Select all**: while photos are selected, the bar asks only
+  `GET /api/photos/ids?count=1` for its "Select all M" label (one cheap count).
+  The ids themselves are fetched when the link is clicked, or when the count
+  alone cannot tell whether every match is already selected (a selection
+  carried over from another filter): `GET /api/photos/ids`
+  walks the match server-side 1,000 rows at a time and stops at 5,000
+  (`truncated: true`). The selection
   cap is 5,000 (`MAX_SELECTION_PHOTOS`); the action batch accepts it as one
   request, while the tag, album, and purge routes keep 500 per request and the
-  client chunks. No SQL cap changed. Lower `MAX_SELECTION_PHOTOS` if `/ids`
-  ever times out.
+  client chunks. Trash and its Undo from the selection bar and the viewer go
+  through `POST /api/photos/bulk` (`src/lib/photos/server/bulk.ts`), 1,000
+  photos a request (`MAX_ACTION_RUN_PHOTOS`): the server creates, materializes,
+  approves and applies one ordinary batch per request with the same SQL
+  functions as the confirm page, so each slice is one `photo_action_batches`
+  row like before. Photos that are gone or that the person may not trash are
+  left out and counted, never asked about; a photo already in Trash is skipped. No SQL cap changed. Lower `MAX_SELECTION_PHOTOS` if `/ids`
+  ever times out. The "Select all N" label only asks `/ids?count=1`, one
+  counting query with no ids sent. The confirm page's batch responses leave
+  out `selector` (up to about 255 KB); to see what a batch named, read
+  `photo_action_batches.selector` in the database.
 - **Zip download is built in the browser** from the public originals
   (`client-zip`, store-only). Without `showSaveFilePicker` (Safari, Firefox,
-  iPhone) the zip is held in memory, which is what the 2 GB warning is for;
-  there is no hard cap. A failed original is left out and named in the toast.
+  iPhone) the zip is held in memory, so the confirm warns above 400 MB there
+  (`ZIP_WARN_BYTES_IN_MEMORY`) and above 2 GB where it streams to disk; there
+  is no hard cap. Sizes and names of selected photos the grid has not loaded
+  come from `POST /api/photos/rows` (500 ids a request). A failed original is
+  left out and named in the toast.
 - **Album order.** Migration `20261012223043_album_custom_order.sql` adds
   `album_photos.position` and `albums.sort_mode` (`date` | `custom`),
   `photo_album_reorder` (full order, or `null` to return to date order while
@@ -307,6 +324,48 @@ Three migrations, applied to production on 2026-10-14 before the deploy:
   0 remain and 258 carry `Photoshoot`.
 - `20261014120200_photo_import_album_optional.sql`: see Importing folders.
 
+## Saved lists on the device and the cold open (performance round, 2026-10-16)
+
+- **Saved query cache.** The browser keeps some photo lists in IndexedDB
+  (database `dws-query-cache`, key `photos-query-cache`): the full project and
+  album lists, album headers, and the first page of the 6 most recently
+  loaded grids. Not kept: permissions and settings (`photo-me`, one answer
+  that carries the admin flag), searches, trash, photo details, anything from
+  Receipts. Logic:
+  `src/lib/query-persist.ts`; wiring: `src/components/providers/query-provider.tsx`.
+- It belongs to one person: each save records the user id, and a restore is
+  refused (and deleted) when the signed-in session is someone else or no one.
+  When the session cannot be checked (the token refresh failed on a weak
+  signal), that launch starts cold and the saved cache is kept.
+  Sign-out and any change of signed-in person delete it.
+- It expires after 7 days and is thrown away by every deploy (the buster is
+  the commit sha, `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`, which Vercel exposes
+  because "Automatically expose System Environment Variables" is on for
+  `dws-receipts`). Restored lists always refetch when shown.
+- **A user sees an out-of-date list:** it refreshes by itself within a second
+  or two of opening the page. To force it, sign out and back in (deletes the
+  saved copy), or clear the site's data in the browser.
+- **Cold open.** Before the session check finishes, the photos frame (tab bar,
+  desktop top bar and rail, grey tiles) is drawn instead of "Verifying
+  authentication"; only the page waits. A signed-out visitor sees that frame
+  for a moment before the redirect to `/login?next=...`.
+- **Code loaded on demand.** The viewer, the "+" pop-ups, Download, Arrange
+  and the upload engine download when first used. A failed download keeps the
+  page and the next try downloads again; when the file is gone from the server
+  (404: a tab opened before a deploy), the page reloads onto the new build, at
+  most once a minute (`src/lib/photos/redeploy.ts`).
+- **Project and album pages are cached HTML.** `/photos/[jobId]` and
+  `/photos/albums/[albumId]` render once per id and are then served from the
+  Vercel cache until the next deploy (their segment layouts export an empty
+  `generateStaticParams`). The pages hold no data; everything is fetched in
+  the browser. `/login` is static too: the photos tab title is set in the
+  browser.
+- **Providers per area.** React Query is mounted in each signed-in area's
+  layout (photos, migrate, capture, photo-actions, employee, dashboard,
+  batch-review, users), not the root one, so the public share page does not
+  load it. A new top-level page that uses React Query needs a `layout.tsx`
+  that wraps it in `QueryProvider`, or it fails with "No QueryClient set".
+
 ## Favorites (`photo_favorites`)
 
 `20261013210000_photo_favorites.sql` adds one table, `photo_favorites
@@ -314,11 +373,77 @@ Three migrations, applied to production on 2026-10-14 before the deploy:
 p_on)`, behind the `writes` gate. A favorite is personal: the table's row rule
 shows a person only their own rows, so `GET /api/photos` embedding
 `favorites:photo_favorites(user_id)` through the employee's session returns
-`[]` or `[{user_id: me}]` per photo, and `favorites=1` inner-joins to list only
+`[]` or `[{user_id: me}]` per photo, and `favorites=1` reads the
+`photo_favorite_photos` view (since `20261016140400`) to list only
 theirs: the Favorites chip in every grid, kept in the URL as `favorites=1`
 (`/photos/favorites` redirects there). `POST /api/photos/favorites { photo_ids,
 on }` adds or removes up to 500 at once. Rows cascade with the photo's permanent deletion and with the user.
 Apply the migration before the deploy that ships it (additive only).
+
+## Server and database speedups (performance round 1, 2026-10-16)
+
+One migration, `20261016140400_photo_perf_server_reads.sql`. Apply it to
+production BEFORE the deploy, with `-f` like any transactional file. It only
+adds things or keeps their shape, so the app that is live in between keeps
+working. What it adds, and what reads it:
+
+- `photo_actor_context(p_actor)` (service role only). Every write and every
+  upload step checks who is asking. That check is now Auth's `getUser` plus this
+  one read, instead of `getUser` plus three reads one after another (profile,
+  `photo_require_actor`, release gates). The refusals are the same, in the same
+  order: no live profile is 403, a deleted or banned Auth user is 401, a closed
+  gate is 503.
+- `get_photo_me()` (signed-in sessions). Answers `GET /api/photos/me`
+  (`{ actor, settings }`), which the app reads once for both its permission
+  checks and its settings, and also `GET /api/photos/actor` and
+  `GET /api/photos/settings` (no longer read by the app). Who is asking comes from the database-verified
+  token, so these reads no longer call the Auth server.
+- `get_photo_album_cards(q)`. Album cards in one pass over each album's photos,
+  with `created_by`, `sort_mode` and `has_custom_order` added.
+  `get_photo_album_summaries_by_name_page` (what `GET /api/photo-albums` calls)
+  now reads it, so the album list makes one database call.
+  `get_photo_album_summaries` keeps its six columns and reads it too.
+- `photo_favorite_photos` view. `favorites=1` starts from the reader's own
+  favorites. In the same way, `album=…` now always reads `album_photo_order`,
+  date order included. Both used to walk the whole library newest first. The
+  favorites row rule is now `user_id = (select auth.uid())`, which shows the
+  same rows.
+- Index `photos_active_job_created` on `photos(job_id, created_at desc)
+  include (thumb_path) where deleted_at is null`, for the Projects list. It is
+  built without CONCURRENTLY, which briefly holds writes to `photos`: well under
+  a second at today's size. If `photos` has grown past about 100k rows, run that
+  one statement by itself with CONCURRENTLY instead (see
+  `supabase/migrations/README.md`).
+
+`album_photo_order` and `photo_favorite_photos` both copy the `photos` column
+list at the moment they were created. A new column on `photos` that a list needs
+must be added to both views.
+
+App-side changes that go with the migration:
+
+- **Region.** `vercel.json` pins functions to `cle1` (Cleveland, AWS us-east-2),
+  the same region as the database. They used to run in `iad1` (Washington DC).
+  After the deploy, check that a response's `x-vercel-id` reads
+  `sfo1::cle1::…`. The Hobby plan allows one region. If the dashboard's
+  Functions region setting disagrees, `vercel.json` wins on the next deploy.
+- **Paged lists.** A next-page cursor on `GET /api/photos` and
+  `/api/photos/ids` also bounds the sort column (`captured_at <=` the cursor
+  value, or `>=` for oldest first). That lets Postgres start each page from the
+  index instead of re-reading every row before it.
+- **One response shape.** `GET /api/photos`, `/api/photos/ids` and
+  `/api/photo-tags` now answer like every other photo route: `no-store`, and
+  errors as `{ error: { code, message, retryable } }` with no database text.
+- **ffmpeg for posters.** `/api/photos/[id]/derive` now ships with the ffmpeg
+  binary (about 45 MB more in that one function). A video poster the browser
+  could not make now appears right after the upload, not after the 09:00 UTC
+  sweep.
+- **Image allow-list.** `next/image` only optimizes
+  `/storage/v1/object/public/receipt-images/**`. Photos never went through it.
+  The old pattern let anyone spend the image-optimization quota on any photo.
+
+To check the album list after applying (read-only):
+`explain (analyze, buffers) select * from public.get_photo_album_summaries_by_name_page(null, 200, null, null);`
+run as a signed-in role. Compare it with the audit's 20,074 buffers.
 
 ## Share links (`/s/<token>`)
 
@@ -602,12 +727,16 @@ would become visible or hard-deletable.
 ## Previews made on the server (`POST /api/photos/<id>/derive`)
 
 The uploader's browser makes each photo's thumbnail and preview while it
-uploads, for images up to 24 MB that it can decode. For anything else — a HEIC
-picked on a desktop browser, a TIFF or RAW, an image over 24 MB, a video the
-browser cannot play — the upload client asks the server for them as soon as the
-row is in, through this route, with the same renderers the nightly sweep uses
-(sharp; Supabase image transforms for HEIC; ffmpeg for a video poster). So a
-60 MB TIFF has a preview when the tray says done, not the next morning. Any
+uploads, for images up to 24 MB and 40 megapixels (read from the file header)
+that it can decode. For anything else — a HEIC picked on a desktop browser, a
+TIFF or RAW, an image over 24 MB or 40 MP, a video the browser cannot play —
+the upload client asks the server for them as soon as the row is in, through
+this route, which uses the same renderers the nightly sweep uses (sharp;
+Supabase image transforms for HEIC; ffmpeg for a video poster). The request
+runs in the background, two at a time per tab (the folder import too), so the
+next file does not wait for it; the tray row's "Previews…" note clears when it
+lands. So a 60 MB TIFF has a preview minutes after upload, not the next
+morning. Any
 signed-in employee may call it for any active photo: it fills only an empty
 slot at that photo's fixed derived keys. A refusal (a RAW, a HEIC over 25 MB,
 an image over 250 MB) answers `thumb_path: null` with the reason and changes
@@ -615,7 +744,95 @@ nothing; the sweep decides later whether the row becomes a file tile. On
 success it also removes the upload's "Previews skipped…" note from
 `upload_warnings`. It needs `photo_writes_enabled`, not `repair_enabled`, and
 has the same 300-second limit as the sweep. If it fails (offline, a timeout),
-the upload still completes and the sweep fills the preview that night.
+the upload still completes and the sweep fills the preview that night. Like the
+sweep, it ships with the ffmpeg binary (`outputFileTracingIncludes` in
+`next.config.ts`), so a video poster can be made here too.
+
+## Thumbnail format and caching (performance round 1, 2026-10)
+
+**Format.** Thumbnails and previews are WebP where the uploader's browser can
+encode WebP, and JPEG (quality 0.8) where it cannot: every iPhone and iPad
+browser, since all of them are WebKit. The file keeps its `_thumb.webp` /
+`_preview.webp` name either way; the stored Content-Type is the real format,
+and browsers go by that, not the name. Before this, iPhones stored PNGs under
+those names, about 15x the bytes of a WebP thumbnail.
+
+**Caching.** Every upload now sets how long browsers and the storage CDN may
+keep the file (`src/lib/photos/storage-cache.ts`): one year for thumbnails,
+previews, video posters and playback renditions; one week for originals and
+sidecars. Files stored before this keep their old one-hour cache until
+rewritten (see the backfill below). The one-year cache depends on a rule
+written on `derivedKeys` (`src/lib/photos/repair/sweep.ts`): a derived key is
+only ever rewritten with another rendering of the same picture. A future
+feature that changes what a photo looks like (rotate, crop, edit) must write a
+new key or add a version to the URL; otherwise people keep seeing the old
+picture for up to a year. A purged photo's files can also stay in caches (and
+on the CDN, for anyone holding the exact URL) for up to that long.
+
+### One-off backfill: PNG and mislabelled derivatives
+
+`scripts/backfill-png-derivatives.mjs` rewrites, at the same keys, every
+thumbnail and preview whose stored type is not `image/webp` or `image/jpeg`:
+PNGs are re-encoded to WebP with sharp, and real WebP or JPEG files stored as
+`application/octet-stream` get the right label. It re-encodes the stored
+derivative, not the original, so HEIC originals and videos need nothing
+special. Each rewrite gets the one-year cache. It uses storage `update`, so a
+file purged mid-run is reported as an error rather than recreated. It is a
+dry run unless given `--execute`, and safe to stop and re-run: a fixed file no
+longer matches.
+
+From `dws-app/`, after the release that stops new PNGs has deployed:
+
+```bash
+node --env-file=.env.local scripts/backfill-png-derivatives.mjs                      # dry run: counts and the list
+node --env-file=.env.local scripts/backfill-png-derivatives.mjs --execute --limit 4  # spot-check a few in the app
+node --env-file=.env.local scripts/backfill-png-derivatives.mjs --execute            # the rest
+```
+
+The first line says what it found. The dry run on 2026-10-16 listed 3,758
+derived files: 460 PNG (230 photos) and 446 mislabelled (223 photos). The last
+line of an `--execute` run gives the counts and the bytes before and after; it
+exits 1 if any file failed, and a re-run retries only those. Browsers holding
+an old PNG refresh it within the hour (those files carried the one-hour
+cache).
+
+Optional `--recache` also rewrites every correctly typed thumbnail and preview
+that still has the one-hour cache (same bytes, new cache header), so the whole
+existing library, not only new uploads, loads from the phone's cache on a
+revisit. On 2026-10-16 that was 2,844 more files; it downloads and re-uploads
+each one once, which counts against the Supabase egress quota.
+
+## Upload requests (`/api/photo-migrations/uploads/*`)
+
+An ordinary upload makes one `POST .../uploads/begin` before its bytes: it runs
+`photo_create_upload_attempt`, `photo_acquire_upload`, `photo_claim_content`
+and, only when the browser is retrying an identity it recorded earlier, the
+original-file check (renew, lock, Storage size), in that order, behind one
+actor check. A fresh attempt skips the original check: nothing can be stored
+under a new photo id yet. If a step after the lease fails, the route releases
+the lease (`retryable_failed`, `claim_failed`) before answering, so the
+browser's automatic retry can take a new one. The separate `attempt`,
+`acquire`, `claim` and `original` routes stay: the folder import still uses
+them (its attempts come from `prepare`), and a tab loaded before a deploy keeps
+working. Then come the bytes, then `POST /api/photos` (finalize), which checks
+the original's size alongside the derived files'.
+
+When the connection drops mid-batch, the tray holds the batch on the same file
+and retries it (5 s, 10 s, 20 s, 40 s, then every minute, sooner on the
+browser's `online` event or when the page returns to the front), up to 30
+minutes, before failing it. Only failures with no HTTP answer count as a
+dropped connection; a 503 (writes gated off) still fails the file at once.
+Offline, the cut-off try's lease release fails too, so the lease stays live for
+up to two minutes. The browser remembers that lease's generation and sends it
+to `begin` as `release_generation`; `begin` releases it
+(`retryable_failed`, `connection_lost`) before acquiring, so the retry starts
+at once. If the lease is still live anyway (that release missed, or the lost
+request was `begin` itself), `begin` answers `200` with
+`lease_busy: { retry_after_ms }` (read on the server's clock) instead of a
+409, and the tray waits that long and tries again, at most three times. Before
+each retry the browser reads one byte of the picked file; a file the phone can
+no longer read fails at once ("File can no longer be read — re-pick it")
+instead of holding the batch for 30 minutes.
 
 ## Repair sweep (`/api/photos/repair`)
 
@@ -655,7 +872,7 @@ response looks like:
 | --- | --- |
 | `fillImageDerivatives` | An image row had no thumbnail (the browser did not make one — a HEIC picked in Chrome, a TIFF, an image over the browser's 24 MB decoding budget). The sweep rendered a thumb + preview and filled the row: with sharp from a /tmp copy of the original for every format libvips reads (JPEG, PNG, WebP, TIFF, GIF, AVIF), with no 25 MB ceiling; through Supabase image transforms for HEIC/HEIF, which the prebuilt sharp cannot decode, under that endpoint's 25 MB input cap. |
 | `markFileTile` | No renderer could read the image (a RAW format, a HEIC over 25 MB, an original over the server's 250 MB cap, or corrupt bytes). The row was set to `kind='file'` — a deliberate file tile, not a hole. Check the log line for the reason. |
-| `makeVideoPoster` | A video row had no poster. The sweep downloaded the original, extracted a frame with ffmpeg (~1 s in), uploaded it as thumb + preview WebPs, and recorded `duration_secs`. |
+| `makeVideoPoster` | A video row had no poster. The sweep extracted a frame with ffmpeg (~1 s in), uploaded it as thumb + preview WebPs, and recorded `duration_secs`. ffmpeg first reads straight from the original's public URL with range requests (only the header and the bytes near the frame); if that fails or gives no duration, the log shows `photos.repair posterFromUrl … fallback=download` and the whole original is downloaded as before. A row that also needs a rendition always downloads once. |
 | `transcodeVideo` | A video within the caps gained an H.264/AAC `playback_path` rendition (`derived/{uid}/{photoId}_playback.mp4`). Only planned when `PHOTOS_TRANSCODE=1`. |
 | `posterSkipped` | A video exceeds the server poster processing cap. The persistent `poster_skipped_reason` explains the skip; its original and video kind are retained. |
 | `playbackSkipped` | A planned transcode found the clip over a cap and set `playback_skipped_reason` instead. The sweep never replans it; the lightbox shows the download card. |

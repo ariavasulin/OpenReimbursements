@@ -13,6 +13,7 @@ import path from "node:path";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { THUMB_MAX_DIM, PREVIEW_MAX_DIM } from "../derivatives";
+import { DERIVED_CACHE_SECONDS } from "../storage-cache";
 import {
   derivedKeys,
   SERVER_IMAGE_MAX_BYTES,
@@ -36,7 +37,12 @@ export type FillResult =
      * caller downgrades the row to a deliberate file tile with this reason. */
     { ok: false; reason: string };
 
-type Rendered = { body: Blob; contentType: string };
+/** A rendered derivative. The Blob carries its own type because that is the
+ * only label Storage keeps: storage-js sends a Blob as a multipart part and
+ * ignores `contentType`, so a typeless Blob is stored as
+ * `application/octet-stream` (the cause of the mislabelled server-rendered
+ * thumbnails, IMG-1). */
+type Rendered = { body: Blob };
 type RenderOutcome = Rendered | { status: number } | { refused: string };
 
 /** Render the original at `width` px through Supabase. The Accept header is
@@ -81,10 +87,7 @@ async function renderWithTransform(
       signal.removeEventListener("abort", cancel);
       await reader.cancel();
     }
-    return {
-      body: new Blob(parts),
-      contentType: res.headers.get("content-type") ?? "image/webp",
-    };
+    return { body: new Blob(parts, { type: res.headers.get("content-type") ?? "image/webp" }) };
   });
 }
 
@@ -93,8 +96,11 @@ async function renderWithTransform(
 const unreadable = (error: unknown) =>
   error instanceof Error && /unsupported image format|corrupt header|VipsJpeg: Premature end|not a (TIFF|JPEG|PNG)|unable to load/i.test(error.message);
 
-/** Both sizes from one /tmp copy. The longest side is scaled to `maxDim`,
- * never up; EXIF orientation is applied so a rotated phone photo is upright,
+/** Both sizes from one /tmp copy, decoded once (UP-5): the preview comes
+ * from the original, and the thumb from the preview's bytes, so a 100 MP
+ * original is not decoded a second time for a 640 px image. The longest side
+ * is scaled to the size, never up; EXIF orientation is applied (to the
+ * preview, so the thumb inherits it) so a rotated phone photo is upright,
  * like the browser's `imageOrientation: "from-image"`. */
 async function renderWithSharp(
   admin: SupabaseClient,
@@ -112,16 +118,20 @@ async function renderWithSharp(
       if (error instanceof MediaProcessingLimit) return { refused: error.message };
       throw error;
     }
-    const render = (maxDim: number) => budget.run(async () => {
-      const body = await sharp(input, { sequentialRead: true, limitInputPixels: SHARP_MAX_PIXELS })
-        .rotate()
-        .resize({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true })
-        .webp({ quality: 80 })
-        .toBuffer();
-      return { body: new Blob([new Uint8Array(body)]), contentType: "image/webp" } satisfies Rendered;
-    });
+    const fit = (maxDim: number) => ({ width: maxDim, height: maxDim, fit: "inside", withoutEnlargement: true } as const);
+    const rendered = (body: Buffer): Rendered => ({ body: new Blob([new Uint8Array(body)], { type: "image/webp" }) });
     try {
-      return [await render(THUMB_MAX_DIM), await render(PREVIEW_MAX_DIM)];
+      const preview = await budget.run(() => sharp(input, { sequentialRead: true, limitInputPixels: SHARP_MAX_PIXELS })
+        .rotate()
+        .resize(fit(PREVIEW_MAX_DIM))
+        .webp({ quality: 80 })
+        .toBuffer());
+      // Already upright and at most 2048 px, so no rotate and no pixel cap.
+      const thumb = await budget.run(() => sharp(preview)
+        .resize(fit(THUMB_MAX_DIM))
+        .webp({ quality: 80 })
+        .toBuffer());
+      return [rendered(thumb), rendered(preview)];
     } catch (error) {
       if (unreadable(error)) return { refused: (error as Error).message };
       throw error;
@@ -177,8 +187,11 @@ export async function fillImageDerivatives(
     const { error } = await budget.run(() => admin.storage
       .from("photos")
       .upload(path, rendered.body, {
-        contentType: rendered.contentType,
+        // Ignored for a Blob body (its own type is stored); kept so the label
+        // stays right if the body ever becomes a Buffer.
+        contentType: rendered.body.type,
         upsert: true,
+        cacheControl: DERIVED_CACHE_SECONDS,
       }));
     if (error) throw new Error(`upload ${path}: ${error.message}`);
   }));

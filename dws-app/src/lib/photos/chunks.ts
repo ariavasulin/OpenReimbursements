@@ -47,3 +47,10 @@ export function sumCounts<K extends string>(results: readonly Record<K, number>[
   for (const result of results) for (const key of keys) total[key] += result[key];
   return total;
 }
+
+/**
+ * Photos one POST /api/photos/bulk takes (Trash, and its Undo). The server runs
+ * the whole batch for them; the browser sends a bigger selection in slices of
+ * this size, which keeps each request well inside the function time limit.
+ */
+export const MAX_ACTION_RUN_PHOTOS = 1000;

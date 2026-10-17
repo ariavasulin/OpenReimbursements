@@ -100,6 +100,7 @@ export default function BatchPreview({
           <img
             src={imageUrl}
             alt={file.name}
+            decoding="async"
             className="max-h-full max-w-full object-contain"
           />
         )}

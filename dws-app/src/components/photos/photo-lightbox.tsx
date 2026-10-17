@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Heart, Info, Pause, Play, X } from "lucide-react";
 import Lightbox, {
+  isImageSlide,
   type GenericSlide,
   type Slide,
   type SlideshowRef,
@@ -32,7 +33,6 @@ import {
   PHOTOS_SCROLLPORT_ID,
   usePhotosShell,
 } from "@/components/photos/photos-shell-context";
-import { useRegisterSlideshow } from "@/components/photos/slideshow-link";
 import { TOAST_REGION_ID } from "@/lib/toast-region";
 import type { PhotoRow } from "@/lib/photos/types";
 import { videoSource } from "@/lib/photos/video-source";
@@ -64,7 +64,8 @@ import { videoSource } from "@/lib/photos/video-source";
 // whether they come in the grid's order or at random, is the person's own
 // setting (Settings page; usePhotoSettings). It starts with the controls
 // hidden, and any tap pauses it and shows them. A page's header Play button
-// reaches it through <SlideshowLink>.
+// opens the viewer with `autoplay` (the grid registers it with
+// <SlideshowLink>, so it shows before this file has downloaded).
 
 // Custom slide for videos this browser reports it can't decode: the poster
 // with a download card instead of a dead play button (rendered by
@@ -190,6 +191,54 @@ function unplayableSlide(slide: {
   );
 }
 
+/**
+ * The grid's thumbnail, already in the browser's cache, drawn where the preview
+ * will be while the preview downloads, so the viewer opens on a recognisable
+ * photo instead of black and a spinner. It sits behind the slide (z-index
+ * below it, no pointer events), so taps, swipes and zoom reach the preview
+ * exactly as before. Once the preview has loaded and decoded it covers the
+ * thumbnail exactly (both fill the slide, contain-fit), and the thumbnail goes.
+ */
+function SlideThumb({ src }: { src: string }) {
+  const ref = useRef<HTMLImageElement>(null);
+  const [shown, setShown] = useState(true);
+  // Layout effect: a cached preview can fire `load` before a plain effect runs.
+  useLayoutEffect(() => {
+    const slide = ref.current?.parentElement;
+    if (!slide) return;
+    let live = true;
+    const done = (preview: HTMLImageElement) => {
+      // YARL shows the preview once decode() settles; drop the thumbnail a frame later.
+      void preview.decode().catch(() => {}).then(() => requestAnimationFrame(() => { if (live) setShown(false); }));
+    };
+    const current = slide.querySelector<HTMLImageElement>("img.yarl__slide_image");
+    if (current?.complete && current.naturalWidth > 0) done(current);
+    // `load` does not bubble, but it does pass the slide on the way down.
+    const onLoad = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLImageElement && target.classList.contains("yarl__slide_image")) done(target);
+    };
+    slide.addEventListener("load", onLoad, true);
+    return () => {
+      live = false;
+      slide.removeEventListener("load", onLoad, true);
+    };
+  }, []);
+  if (!shown) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      ref={ref}
+      src={src}
+      alt=""
+      aria-hidden="true"
+      decoding="async"
+      draggable={false}
+      className="pointer-events-none absolute inset-0 -z-10 h-full w-full object-contain"
+    />
+  );
+}
+
 /** sessionStorage key for the desktop Details toggle: on or off for the tab. */
 const DETAILS_KEY = "dws-photos:viewer-details";
 
@@ -236,8 +285,10 @@ interface PhotoLightboxProps {
   /** The viewer is a few photos from the end of `photos`: load more if there are more. */
   onNearEnd?(): void;
   onClose(): void;
-  /** Fired after a successful edit or delete so grids refetch. */
-  onChanged(): void;
+  /** Opened by the page header's Play: play from the photo shown, controls hidden. */
+  autoplay?: boolean;
+  /** The slideshow `autoplay` asked for has started. */
+  onAutoplayStarted?(): void;
 }
 
 export default function PhotoLightbox({
@@ -247,7 +298,8 @@ export default function PhotoLightbox({
   onIndexChange,
   onNearEnd,
   onClose,
-  onChanged,
+  autoplay = false,
+  onAutoplayStarted,
 }: PhotoLightboxProps) {
   const isDesktop = useDesktop();
   const { setViewerOpen } = usePhotosShell();
@@ -292,10 +344,15 @@ export default function PhotoLightbox({
   const slides = useMemo(
     () =>
       photos.map((item): Slide => {
+        // The grid's 640 px thumbnail: the desktop filmstrip shows it instead
+        // of decoding full previews into 120 px cells, and the slide shows it
+        // while the preview downloads (SlideThumb).
+        const thumbnail = item.thumb_path ? publicUrl(item.thumb_path) : undefined;
         if (item.kind !== "video") {
           return {
             src: previewUrl(item) ?? "",
             alt: photoName(item) ?? "",
+            thumbnail,
           };
         }
         // Playback streams from storage (which serves range requests)
@@ -307,6 +364,7 @@ export default function PhotoLightbox({
             poster: previewUrl(item) ?? "",
             download: downloadUrl(item),
             name: photoName(item) ?? "video",
+            thumbnail,
           };
         }
         return {
@@ -368,6 +426,7 @@ export default function PhotoLightbox({
   // else, every photo.
   const viewSlides = slideshowActive ? playSlides : slides;
   const viewIndex = slideshowActive ? Math.max(0, playPosition[stillIndex[index] ?? 0] ?? 0) : index;
+  const currentSlide = viewSlides[viewIndex];
 
   // Leaving a slide abandons any half-done edit on it.
   useEffect(() => {
@@ -401,19 +460,18 @@ export default function PhotoLightbox({
     slideshowRef.current?.play();
   };
 
-  // Play from a page header: open on the first still and play, controls
-  // hidden. Opening mounts the slideshow with `autoplay` already true.
-  const startFromPageRef = useRef<() => void>(() => {});
-  startFromPageRef.current = () => {
-    const first = nextStill(0);
-    if (first === -1) return;
-    orderRef.current = [];
+  // Play from a page header: the grid opens this on its first still with
+  // `autoplay`. Set while rendering, not in an effect, so the render that
+  // opens the viewer mounts YARL's slideshow with its `autoplay` already true
+  // (it reads that once, on opening).
+  if (autoplay && open && !slideshowActive && hasStills) {
+    orderRef.current = []; // a fresh draw when shuffling
     setSlideshowActive(true);
     setChromeHidden(true);
-    onIndexChange(first);
-  };
-  const startFromPage = useCallback(() => startFromPageRef.current(), []);
-  useRegisterSlideshow(hasStills ? startFromPage : null);
+  }
+  useEffect(() => {
+    if (autoplay && open) onAutoplayStarted?.();
+  }, [autoplay, open, onAutoplayStarted]);
 
   // The fixed fullscreen row (portalled to <body>) and the info panel.
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -628,7 +686,6 @@ export default function PhotoLightbox({
         photo={photo ?? null}
         open={editing}
         onOpenChange={setEditing}
-        onSaved={onChanged}
       />
       <SetProjectSheet
         photoIds={photo ? [photo.id] : []}
@@ -655,8 +712,21 @@ export default function PhotoLightbox({
     },
     slides: viewSlides,
     zoom: { maxZoomPixelRatio: 4, doubleTapDelay: 300 },
-    // Edge to edge: no padding around the photo.
-    carousel: { finite: false, padding: 0 },
+    carousel: {
+      finite: false,
+      // Edge to edge: no padding around the photo.
+      padding: 0,
+      // How many slides either side are mounted, so how many previews load
+      // with the one tapped. On a phone, on mobile data, the neighbours would
+      // compete with it: one each side there (a very fast double swipe shows
+      // the thumbnail for a moment), two on a computer.
+      preload: isDesktop ? 2 : 1,
+      // The photo on screen downloads first; the neighbours after it.
+      imageProps: (slide: Slide) => ({
+        fetchPriority: slide === currentSlide ? ("high" as const) : ("low" as const),
+        decoding: "async" as const,
+      }),
+    },
     // Mounts playing when a page header's Play opened the viewer.
     slideshow: { autoplay: slideshowActive, delay: slideshowSettings.delay_seconds * 1000, ref: slideshowRef },
     // Solid: the page behind a see-through viewer reads as clutter around the photo.
@@ -666,6 +736,18 @@ export default function PhotoLightbox({
       // (image, and the Video plugin's player).
       slide: ({ slide }: { slide: Slide }) =>
         slide.type === "unplayable" ? unplayableSlide(slide) : undefined,
+      // A photo's thumbnail behind it while its preview downloads.
+      slideContainer: ({ slide, children }: { slide: Slide; children?: React.ReactNode }) =>
+        isImageSlide(slide) && slide.thumbnail && slide.thumbnail !== slide.src ? (
+          <>
+            <SlideThumb key={slide.thumbnail} src={slide.thumbnail} />
+            {children}
+          </>
+        ) : (
+          children
+        ),
+      // The thumbnail says it is loading; YARL's spinner on top of it is noise.
+      iconLoading: () => null,
       // Our own Play: it switches the slides to the stills before playing.
       // Absent when there are only videos to show.
       buttonSlideshow: ({ playing, pause }: SlideshowRef) =>
@@ -792,7 +874,7 @@ export default function PhotoLightbox({
                   onEdit={startEdit}
                   onSetProject={startSetProject}
                   onNavigate={onClose}
-                  onTrashed={() => { onClose(); onChanged?.(); }}
+                  onTrashed={onClose}
                 />
               </aside>
             )}
@@ -859,7 +941,7 @@ export default function PhotoLightbox({
             onEdit={startEdit}
             onSetProject={startSetProject}
             onNavigate={onClose}
-            onTrashed={() => { onClose(); onChanged?.(); }}
+            onTrashed={onClose}
           />
         )}
       </SheetShell>

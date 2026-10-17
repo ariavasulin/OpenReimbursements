@@ -124,7 +124,17 @@ export function planSweep(
 }
 
 /** Deterministic rendition keys, matching SQL-bound thumbnail/preview upload
- * destinations and adding the repair-generated playback destination. */
+ * destinations and adding the repair-generated playback destination.
+ *
+ * Write-once rule: these files are uploaded with a one-year cache
+ * (DERIVED_CACHE_SECONDS in storage-cache.ts), so once a key has been shown,
+ * browsers and the CDN may keep serving the copy they have for a year. A key
+ * may be written again only with another rendering of the same picture (an
+ * upload retry, a derive racing the sweep, the PNG-to-WebP backfill): a stale
+ * cached copy then still shows the right photo. Anything that changes what
+ * the picture looks like (rotate, crop, a new edit) must write a NEW key, or
+ * add a version (`?v=`) to the URL that publicUrl builds; overwriting in
+ * place would leave people seeing the old picture for up to a year. */
 export function derivedKeys(uploaderId: string, photoId: string) {
   const base = `derived/${uploaderId}/${photoId}`;
   return {

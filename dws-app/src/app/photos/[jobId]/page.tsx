@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -15,7 +15,7 @@ import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
 import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
-import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoActor, usePhotoJobs } from "@/lib/photos/api";
+import { deleteJob, invalidatePhotoCaches, renameJob, usePhotoActor, usePhotoJob } from "@/lib/photos/api";
 import { isPhotoAdmin } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
 
@@ -33,7 +33,12 @@ export default function ProjectPage() {
 
 function ProjectPageContent() {
   const { jobId } = useParams<{ jobId: string }>();
-  const linkedPhoto = useSearchParams().get("photo");
+  // The ?photo= an old link arrived with, read once: the viewer rewrites it on
+  // every swipe, and following those changes would redraw this whole page.
+  // (Lazy initializers also run during SSR, hence the window guard.)
+  const [linkedPhoto] = useState(() =>
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("photo")
+  );
   const router = useRouter();
   const queryClient = useQueryClient();
   const { openPicker } = usePhotosShell();
@@ -43,9 +48,10 @@ function ProjectPageContent() {
   const canDelete = isPhotoAdmin(usePhotoActor());
 
   // Always enabled: the shell holds the session guard, so this page only
-  // renders once the session is ready.
-  const { data: jobs } = usePhotoJobs(true);
-  const job = jobs?.find((candidate) => candidate.id === jobId);
+  // renders once the session is ready. Shown at once from the Projects list
+  // when that is cached; otherwise this one project is read by itself.
+  const { data: found } = usePhotoJob(jobId);
+  const job = found ?? undefined;
 
   const remove = async () => {
     if (!job) return;
@@ -64,10 +70,10 @@ function ProjectPageContent() {
     }
   };
 
-  // The list holds active projects only, so a deleted (or unknown) project's old
+  // Only active projects are found, so a deleted (or unknown) project's old
   // link lands here: say so, and never offer an upload into it. An older
   // /photos/<jobId>?photo=<id> link still opens its photo, wherever it is now.
-  const deadLink = jobs !== undefined && !job;
+  const deadLink = found === null;
   useEffect(() => {
     if (deadLink && linkedPhoto) router.replace(`/photos?photo=${encodeURIComponent(linkedPhoto)}`);
   }, [deadLink, linkedPhoto, router]);

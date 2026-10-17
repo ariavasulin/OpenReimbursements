@@ -59,7 +59,7 @@ async function select(page: Page, phone: boolean, names: string[]) {
 }
 /** Load a page and wait until it knows who is signed in, so a missing control is a decision, not a page still loading. */
 async function open(page: Page, url: string) {
-  const actor = page.waitForResponse(response => response.url().endsWith('/api/photos/actor') && response.ok());
+  const actor = page.waitForResponse(response => response.url().endsWith('/api/photos/me') && response.ok());
   await page.goto(url);
   await actor;
 }

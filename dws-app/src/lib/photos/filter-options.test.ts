@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   accumulateSeenOptions,
   emptySeenOptions,
+  toProjectOptions,
   toUploaderOptions,
 } from "./filter-options";
 import type { PhotoRow } from "./types";
@@ -88,6 +89,17 @@ describe("toUploaderOptions", () => {
       { value: "u-1", label: "Ada" },
       { value: "u-5", label: "Mel" },
       { value: "u-9", label: "Zoe" },
+    ]);
+  });
+});
+
+describe("toProjectOptions", () => {
+  it("offers No project first, then only projects that hold photos", () => {
+    const job = (id: string, photo_count: number) =>
+      ({ id, job_number: id, name: `Job ${id}`, location: null, photo_count, thumb_paths: [], latest_activity: null });
+    expect(toProjectOptions([job("1", 3), job("2", 0)])).toEqual([
+      { value: "none", label: "No project" },
+      { value: "1", label: "#1 · Job 1" },
     ]);
   });
 });

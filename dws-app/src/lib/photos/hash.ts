@@ -8,10 +8,16 @@ export type HashWorker = Pick<Worker,
 
 const HASH_CONCURRENCY = 2;
 
-/** The factory seam lets tests exercise scheduling without a browser runtime. */
+/**
+ * The factory seam lets tests exercise scheduling without a browser runtime.
+ * A worker (and the WebAssembly hasher inside it) is kept for the next file
+ * once it answers; only a cancelled or failed one is thrown away, because a
+ * worker cannot be stopped mid-file any other way.
+ */
 export function createSha256(createWorker: () => HashWorker) {
   let active = 0;
   const waiting: Array<() => void> = [];
+  const idle: HashWorker[] = [];
 
   const drain = () => {
     while (active < HASH_CONCURRENCY && waiting.length) waiting.shift()!();
@@ -28,7 +34,9 @@ export function createSha256(createWorker: () => HashWorker) {
         signal?.removeEventListener("abort", abort);
         if (worker) {
           worker.onmessage = worker.onerror = worker.onmessageerror = null;
-          worker.terminate();
+          // A worker that answered is free; keep it (at most one per slot).
+          if (!error && idle.length < HASH_CONCURRENCY) idle.push(worker);
+          else worker.terminate();
         }
         if (started) active--;
         else {
@@ -44,7 +52,7 @@ export function createSha256(createWorker: () => HashWorker) {
         started = true;
         active++;
         try {
-          worker = createWorker();
+          worker = idle.pop() ?? createWorker();
           worker.onmessage = (event: MessageEvent<HashWorkerReply>) => {
             const reply = event.data;
             if (reply && "digest" in reply && isSha256(reply.digest)) {

@@ -1,12 +1,23 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { QueryClient, type Query } from '@tanstack/react-query'
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { supabase } from '@/lib/supabaseClient'
+import {
+  PERSIST_BUSTER,
+  PERSIST_MAX_AGE_MS,
+  shouldPersistQuery,
+} from '@/lib/query-persist'
+import {
+  clearPersistedQueries,
+  queryPersister,
+  setPersistOwner,
+} from '@/lib/query-persist-browser'
 
 function makeQueryClient() {
-  return new QueryClient({
+  const client = new QueryClient({
     defaultOptions: {
       queries: {
         staleTime: 5 * 60 * 1000,
@@ -16,6 +27,14 @@ function makeQueryClient() {
       },
     },
   })
+  // A query leaves the cache gcTime after nothing shows it, and the next save
+  // then drops it from the device too. The full project and album lists are
+  // small and needed on most launches, so they stay as long as a saved cache
+  // may be used. Grids keep the 10 minutes: they are large.
+  for (const queryKey of [['photo-jobs', ''], ['photo-albums', '']]) {
+    client.setQueryDefaults(queryKey, { gcTime: PERSIST_MAX_AGE_MS })
+  }
+  return client
 }
 
 let browserQueryClient: QueryClient | undefined = undefined
@@ -31,24 +50,43 @@ function getQueryClient() {
   }
 }
 
+// The signed-in identity the browser cache belongs to. Module-level, like the
+// cache itself, so a provider that remounts (each area of the site mounts its
+// own) does not take a new baseline and miss a change of person.
+// undefined = no identity observed yet, so the first observation is the
+// baseline rather than a transition.
+let lastIdentity: string | null | undefined = undefined
+
+const persistOptions = {
+  persister: queryPersister,
+  maxAge: PERSIST_MAX_AGE_MS,
+  buster: PERSIST_BUSTER,
+  dehydrateOptions: {
+    shouldDehydrateQuery: (query: Query) =>
+      query.state.status === 'success' && shouldPersistQuery(query.queryKey),
+    shouldDehydrateMutation: () => false,
+  },
+}
+
 export function QueryProvider({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => getQueryClient())
-  // undefined = no identity observed yet, so the first observation is the
-  // baseline rather than a transition.
-  const lastIdentityRef = useRef<string | null | undefined>(undefined)
 
-  // Drop the whole cache whenever the signed-in identity changes: the
-  // QueryClient is a module-level singleton with a 5-minute staleTime, so
-  // cached data must not survive an identity change.
+  // Drop the whole cache, in memory and on the device, whenever the signed-in
+  // identity changes: the QueryClient is a module-level singleton with a
+  // 5-minute staleTime, and the photo query keys carry no user id, so cached
+  // data must not survive an identity change. (The saved cache also records
+  // its owner and is refused at restore by anyone else; see query-persist.ts.)
   useEffect(() => {
     const observe = (userId: string | null) => {
-      if (lastIdentityRef.current === undefined) {
-        lastIdentityRef.current = userId
+      setPersistOwner(userId)
+      if (lastIdentity === undefined) {
+        lastIdentity = userId
         return
       }
-      if (lastIdentityRef.current === userId) return
-      lastIdentityRef.current = userId
+      if (lastIdentity === userId) return
+      lastIdentity = userId
       queryClient.clear()
+      void clearPersistedQueries()
     }
 
     // The subscription's INITIAL_SESSION event sets the baseline.
@@ -59,10 +97,13 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
     return () => authListener?.subscription?.unsubscribe()
   }, [queryClient])
 
+  // Lists saved on this device paint at once on a cold launch, then refresh
+  // in the background (restored entries are marked stale). While the saved
+  // cache is being read, queries wait instead of fetching.
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
       {children}
       <ReactQueryDevtools initialIsOpen={false} />
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   )
 }

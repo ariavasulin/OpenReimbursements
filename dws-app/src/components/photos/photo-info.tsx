@@ -5,7 +5,14 @@ import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Download, Heart, Link2, Pencil, TextCursorInput, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { invalidatePhotoCaches, renamePhoto, usePhotoActor, usePhotoDetail } from "@/lib/photos/api";
+import {
+  invalidatePhotoCaches,
+  patchPhotoRows,
+  removePhotosFromLists,
+  renamePhoto,
+  usePhotoActor,
+  usePhotoDetail,
+} from "@/lib/photos/api";
 import { MAX_PHOTO_NAME_LENGTH } from "@/lib/photos/apiShared";
 import { buildPhotoLink } from "@/lib/photos/photo-link";
 import { runPhotoAction } from "@/lib/photos/trash-now";
@@ -34,7 +41,7 @@ interface PhotoInfoProps {
   onSetProject(): void;
   /** A link inside is about to leave the viewer (an album). */
   onNavigate?(): void;
-  /** The photo was just moved to Trash: the viewer should close and refresh. */
+  /** The photo was just moved to Trash (and taken out of every cached list): the viewer should close. */
   onTrashed?(): void;
 }
 
@@ -61,11 +68,16 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate, onT
     setTrashing(true);
     try {
       const result = await runPhotoAction("trash", [photo.id]);
-      invalidatePhotoCaches(queryClient);
       if (result.photoIds.length === 0) {
+        // Left out or changed by someone else: the browser cannot tell which,
+        // so everything asks the server again.
+        invalidatePhotoCaches(queryClient);
         toast.error("That photo could not be moved to Trash.");
         return;
       }
+      // The photo leaves every cached grid at once; refetching every loaded
+      // page of the grid behind the viewer only delayed showing that (CODE-1).
+      removePhotosFromLists(queryClient, result.photoIds);
       toast.success("Moved to Trash", {
         description: trashDisclosure,
         action: {
@@ -88,7 +100,7 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate, onT
   const { data: detail, isLoading: albumsLoading } = usePhotoDetail(photo.id);
   const albums = detail?.albums ?? [];
   const actor = usePhotoActor();
-  // The saved name shows at once; the grid row catches up when its list refetches.
+  // The saved name shows at once, even before the cached rows are patched below.
   const [saved, setSaved] = useState<{ id: string; name: string | null } | null>(null);
   const name = saved?.id === photo.id ? saved.name : photoName(photo);
   // A half-typed name belongs to its photo: paging to another one drops it.
@@ -104,7 +116,9 @@ export default function PhotoInfo({ photo, onEdit, onSetProject, onNavigate, onT
       const { photo: updated } = await renamePhoto(photo.id, draft);
       setSaved({ id: photo.id, name: photoName(updated) });
       setDraft(null);
-      invalidatePhotoCaches(queryClient);
+      // The server's row goes into every cached grid and open photo, so the
+      // grid behind the viewer shows the name without refetching (CODE-1).
+      patchPhotoRows(queryClient, [updated]);
       toast.success(draft.trim() ? "Photo renamed" : "Name set back to the automatic name");
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : "Failed to rename the photo");

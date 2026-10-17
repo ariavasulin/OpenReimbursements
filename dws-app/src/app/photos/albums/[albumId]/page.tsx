@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowDownUp, BookImage, Upload } from "lucide-react";
 import { toast } from "sonner";
-import AlbumArrange from "@/components/photos/album-arrange";
+import { LoadBoundary, retryableLoader } from "@/components/photos/load-boundary";
 import ShareButton from "@/components/photos/share-button";
 import CollectionHeader, { headerActionClass } from "@/components/photos/collection-header";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
@@ -15,14 +16,17 @@ import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import PhotoBrowser from "@/components/photos/photo-browser";
 import { PlayButton, SlideshowLink } from "@/components/photos/slideshow-link";
+import StatusLine from "@/components/photos/status-line";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import {
   deleteAlbum,
+  invalidateAlbum,
   invalidatePhotoCaches,
   renameAlbum,
   restoreAlbumOrder,
   setAlbumDateOrder,
   usePhotoActor,
+  photoKeys,
   usePhotoAlbum,
   type PhotoAlbumHeader,
   type PhotoSort,
@@ -30,6 +34,20 @@ import {
 import { MAX_ARRANGE_PHOTOS } from "@/lib/photos/apiShared";
 import { canDeleteAlbum } from "@/lib/photos/permissions";
 import { plural } from "@/lib/photos/format";
+
+// Arrange and its drag library (dnd-kit, about 18 KB gzipped) are their own
+// chunk, fetched when someone opens Arrange instead of on every album visit.
+// Pointing at or focusing the Arrange button starts the fetch,
+// so it is usually there by the click.
+// A failed download of that code keeps the album page; the next Arrange tries
+// again (load-boundary.tsx).
+const loadAlbumArrange = () => import("@/components/photos/album-arrange");
+const AlbumArrange = dynamic(retryableLoader(loadAlbumArrange), {
+  ssr: false,
+  loading: () => <StatusLine>Loading every photo in the album...</StatusLine>,
+});
+/** A failed early fetch is not an error: opening Arrange fetches it again. */
+const preloadAlbumArrange = () => void loadAlbumArrange().catch(() => undefined);
 
 /**
  * Drop `sort` from the address bar, so the grid shows the album's own order
@@ -60,20 +78,23 @@ function AlbumPageContent() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { openPicker } = usePhotosShell();
+  // Shown at once from the Albums list's card when that is cached (and says
+  // the album's order), so the grid below starts loading without waiting.
   const { data: album, error, isLoading } = usePhotoAlbum(albumId);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [arranging, setArranging] = useState(false);
+  /** Arranging, from this order (null: not arranging). */
+  const [arranging, setArranging] = useState<PhotoSort | null>(null);
   const actor = usePhotoActor();
   const canDelete = album !== undefined && canDeleteAlbum(actor, album);
-  const viewSort = useSearchParams().get("sort");
 
   /** The album's mode as this page now knows it, ahead of the refetch. */
   const setMode = (mode: PhotoAlbumHeader["sort_mode"]) => {
-    queryClient.setQueryData<PhotoAlbumHeader>(["photo-album", albumId], (current) =>
+    queryClient.setQueryData<PhotoAlbumHeader>(photoKeys.album(albumId), (current) =>
       current && { ...current, sort_mode: mode, has_custom_order: current.has_custom_order || mode === "custom" }
     );
-    invalidatePhotoCaches(queryClient);
+    // Only this album's grid, header, and card show its order.
+    invalidateAlbum(queryClient, albumId);
   };
 
   const restoreCustom = async (name: string) => {
@@ -115,7 +136,9 @@ function AlbumPageContent() {
       });
       return;
     }
-    setArranging(true);
+    // Read here rather than followed: the viewer rewrites the address on every swipe.
+    const viewSort = new URLSearchParams(window.location.search).get("sort");
+    setArranging(album.has_custom_order ? "custom" : viewSort === "asc" ? "asc" : "desc");
   };
 
   const remove = async () => {
@@ -160,21 +183,23 @@ function AlbumPageContent() {
     );
   }
 
-  if (album && arranging) {
+  if (album && arranging !== null) {
     return (
       <main className={PAGE_MAIN_CLASS}>
         <PhoneHeader back={{ href: "/photos/albums", label: "Albums" }} />
-        <AlbumArrange
-          album={album}
-          startSort={album.has_custom_order ? "custom" : viewSort === "asc" ? "asc" : "desc"}
-          onClose={(saved) => {
-            setArranging(false);
-            if (!saved) return;
-            setMode("custom");
-            showAlbumOrder(albumId);
-            toast.success("Order saved", { description: "Everyone sees this order, including the share link." });
-          }}
-        />
+        <LoadBoundary onError={() => setArranging(null)}>
+          <AlbumArrange
+            album={album}
+            startSort={arranging}
+            onClose={(saved) => {
+              setArranging(null);
+              if (!saved) return;
+              setMode("custom");
+              showAlbumOrder(albumId);
+              toast.success("Order saved", { description: "Everyone sees this order, including the share link." });
+            }}
+          />
+        </LoadBoundary>
       </main>
     );
   }
@@ -193,7 +218,13 @@ function AlbumPageContent() {
               <PlayButton />
               <ShareButton album={{ id: album.id, name: album.name }} className={headerActionClass} />
               {album.photo_count > 1 && (
-                <button type="button" onClick={startArranging} className={headerActionClass}>
+                <button
+                  type="button"
+                  onClick={startArranging}
+                  onPointerEnter={preloadAlbumArrange}
+                  onFocus={preloadAlbumArrange}
+                  className={headerActionClass}
+                >
                   <ArrowDownUp aria-hidden="true" />
                   Arrange
                 </button>

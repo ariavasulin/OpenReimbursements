@@ -1,4 +1,5 @@
-// Runs on local files only; on Vercel that means /tmp.
+// Runs on local files (on Vercel that means /tmp), except that the poster
+// frame and the duration may be read straight from the original's URL.
 //
 // Duration comes from ffmpeg's own header dump rather than ffprobe:
 // ffprobe-static ships every platform's binary (345 MB installed, 62 MB for
@@ -47,6 +48,20 @@ export function parseDuration(stderr: string): number | null {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
+/** Longest wait, in microseconds (ffmpeg's unit), for any one read from a
+ * URL. A stalled connection then fails in seconds and the caller falls back
+ * to the download, instead of the stall eating the whole work budget. */
+const URL_READ_TIMEOUT_US = 15_000_000;
+
+/** `-i <input>`, plus a read timeout when the input is a URL rather than a
+ * file. Over HTTP ffmpeg reads with range requests: the header, then only the
+ * bytes around a seek point. */
+function inputArgs(input: string): string[] {
+  return /^https?:\/\//.test(input)
+    ? ["-rw_timeout", String(URL_READ_TIMEOUT_US), "-i", input]
+    : ["-i", input];
+}
+
 /**
  * Clip duration in seconds, or null when the container doesn't state one.
  * `ffmpeg -i <input>` with no output file reads the container header, prints
@@ -59,7 +74,7 @@ export async function probe(
   budget = new WorkBudget(),
 ): Promise<{ durationSecs: number | null }> {
   try {
-    const { stderr } = await runFfmpeg(["-hide_banner", "-i", input], budget);
+    const { stderr } = await runFfmpeg(["-hide_banner", ...inputArgs(input)], budget);
     return { durationSecs: parseDuration(stderr) };
   } catch (e) {
     budget.check();
@@ -74,7 +89,9 @@ export async function probe(
  * the .webp extension) once per requested size, each scaled to fit its
  * `maxDim` (never upscaled). Every size comes out of a single invocation, so
  * the frame is decoded once however many outputs are asked for. The caller
- * passes seekSecs=0 for clips shorter than the usual 1 s seek. */
+ * passes seekSecs=0 for clips shorter than the usual 1 s seek. `input` is a
+ * file or a URL; `-ss` before the input seeks with the container's index, so
+ * from a URL only the bytes near that frame are fetched. */
 export async function poster(
   input: string,
   seekSecs: number,
@@ -85,7 +102,7 @@ export async function poster(
   await runFfmpeg([
     "-y",
     "-ss", String(seekSecs),
-    "-i", input,
+    ...inputArgs(input),
     ...outputs.flatMap((out) => [
       "-frames:v", "1",
       "-vf", `scale='min(${out.maxDim},iw)':-2`,

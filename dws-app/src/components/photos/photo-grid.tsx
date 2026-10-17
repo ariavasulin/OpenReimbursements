@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import { Check, Download, FileText, Heart, Play, Video } from "lucide-react";
 import {
   formatBytes,
@@ -9,10 +9,12 @@ import {
   photoName,
   plural,
 } from "@/lib/photos/format";
+import { TILE_GRID_CLASS } from "@/components/photos/page-layout";
 import { useDesktop } from "@/hooks/use-desktop";
 import { usePhotoActor } from "@/lib/photos/api";
 import { useLongPress } from "@/hooks/use-long-press";
 import { fileTypeLabel } from "@/lib/photos/file-type";
+import { DESKTOP_TILES, PHONE_TILES, sectionHeightGuess } from "@/lib/photos/grid-layout";
 import { isOpenable, type GroupBy, type PhotoGroup } from "@/lib/photos/group";
 import { downloadUrl, publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
@@ -50,6 +52,7 @@ interface PhotoGridProps {
 }
 
 type OnOpen = (photo: PhotoRow) => void;
+type OnToggle = GridSelection["onToggle"];
 
 /** The round tick shown on a tile, in a group header, and on an album or project card. */
 export function Tick({ checked, className }: { checked: boolean; className?: string }) {
@@ -86,33 +89,43 @@ function FavoriteBadge() {
   );
 }
 
-function Tile({
-  photo,
-  onOpen,
-  isDesktop,
-  selection,
-  favorite,
-}: {
+interface TileProps {
   photo: PhotoRow;
   onOpen?: OnOpen;
   isDesktop: boolean;
-  selection?: GridSelection;
+  /** Absent for a grid that cannot select. Keeps one identity across renders. */
+  onToggle?: OnToggle;
+  selected: boolean;
+  /** Anything in the grid is selected: taps tick instead of opening. */
+  selecting: boolean;
   /** One of the reader's favorites: a small heart in the corner. */
   favorite: boolean;
-}) {
-  const selected = selection?.selectedIds.has(photo.id) ?? false;
-  const selecting = (selection?.selectedIds.size ?? 0) > 0;
+}
+
+// Memoized, with plain props: a tick, a viewer swipe, or a new page re-renders
+// only the tiles whose own props changed, not every loaded tile. So every prop
+// here must keep its identity between renders when nothing about this tile
+// changed (the photo object itself, stable callbacks, booleans).
+const Tile = memo(function Tile({
+  photo,
+  onOpen,
+  isDesktop,
+  onToggle,
+  selected,
+  selecting,
+  favorite,
+}: TileProps) {
   const name = photoName(photo) ?? photo.kind;
 
   // Press and hold (phone layout) starts selecting.
   const { handlers: pressHandlers, takeHold } = useLongPress(
-    selection && !isDesktop ? () => selection.onToggle(photo, { range: false }) : null
+    onToggle && !isDesktop ? () => onToggle(photo, { range: false }) : null
   );
 
   const handleClick = (event: React.MouseEvent<HTMLElement>, open: boolean) => {
     if (takeHold()) return;
-    if (selection && (selecting || event.shiftKey)) {
-      selection.onToggle(photo, { range: event.shiftKey });
+    if (onToggle && (selecting || event.shiftKey)) {
+      onToggle(photo, { range: event.shiftKey });
       return;
     }
     if (!open) return;
@@ -123,7 +136,7 @@ function Tile({
     onOpen?.(photo);
   };
 
-  const tick = selection && (
+  const tick = onToggle && (
     <button
       type="button"
       role="checkbox"
@@ -131,7 +144,7 @@ function Tile({
       aria-label={`Select ${name}`}
       onClick={(event) => {
         event.stopPropagation();
-        selection.onToggle(photo, { range: event.shiftKey });
+        onToggle(photo, { range: event.shiftKey });
       }}
       // 44px target around a 24px tick. At desktop it appears on hover or
       // keyboard focus; on a phone only once selecting has begun, so a stray
@@ -168,7 +181,7 @@ function Tile({
         <button
           type="button"
           onClick={(event) => handleClick(event, true)}
-          aria-pressed={selection && selecting ? selected : undefined}
+          aria-pressed={onToggle && selecting ? selected : undefined}
           className="block h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2680FC]"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -176,6 +189,9 @@ function Tile({
             src={publicUrl(photo.thumb_path)}
             alt={photoName(photo) ?? ""}
             loading="lazy"
+            // Decode off the main thread, so a fast scroll does not stall on
+            // dozens of thumbnails decoding at once.
+            decoding="async"
             draggable={false}
             className={cn(
               "h-full w-full object-cover transition-transform",
@@ -247,7 +263,7 @@ function Tile({
       {tick}
     </div>
   );
-}
+});
 
 /*
  * The desktop track is minmax(140px, 1fr), not a capped max: auto-fill counts
@@ -258,23 +274,30 @@ function TileGrid({
   photos,
   onOpen,
   isDesktop,
-  selection,
+  onToggle,
+  selectedIds,
+  me,
 }: {
   photos: PhotoRow[];
   onOpen?: OnOpen;
   isDesktop: boolean;
-  selection?: GridSelection;
+  onToggle?: OnToggle;
+  selectedIds?: ReadonlySet<string>;
+  /** The reader's user id, for the favorite hearts. */
+  me: string | undefined;
 }) {
-  const me = usePhotoActor()?.user_id;
+  const selecting = (selectedIds?.size ?? 0) > 0;
   return (
-    <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
+    <div className={TILE_GRID_CLASS}>
       {photos.map((photo) => (
         <Tile
           key={photo.id}
           photo={photo}
           onOpen={onOpen}
           isDesktop={isDesktop}
-          selection={selection}
+          onToggle={onToggle}
+          selected={selectedIds?.has(photo.id) ?? false}
+          selecting={selecting}
           favorite={isFavorite(photo, me)}
         />
       ))}
@@ -282,7 +305,12 @@ function TileGrid({
   );
 }
 
-export default function PhotoGrid({
+/**
+ * Memoized: the page re-renders on things the grid does not draw (a viewer
+ * swipe, the infinite query's fetch status), and those skip the grid entirely.
+ * The page passes memoized `groups` and stable callbacks so this holds.
+ */
+const PhotoGrid = memo(function PhotoGrid({
   groups,
   groupBy = "date",
   onOpenPhoto,
@@ -292,7 +320,21 @@ export default function PhotoGrid({
   onExpandPinned,
 }: PhotoGridProps) {
   const isDesktop = useDesktop();
-  const selecting = (selection?.selectedIds.size ?? 0) > 0;
+  // One actor lookup for the whole grid, not one per group.
+  const me = usePhotoActor()?.user_id;
+  const selectedIds = selection?.selectedIds;
+  const selecting = (selectedIds?.size ?? 0) > 0;
+  // The selection object is rebuilt whenever the set changes; tiles get one
+  // stable toggle that calls the latest one, so ticking a photo re-renders
+  // only that tile (and every tile once when selecting starts or stops).
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const toggle = useCallback<OnToggle>(
+    (photo, options) => selectionRef.current?.onToggle(photo, options),
+    []
+  );
+  const onToggle = selection ? toggle : undefined;
+  const tileLayout = isDesktop ? DESKTOP_TILES : PHONE_TILES;
   const pinned = useMemo(
     () =>
       pinnedTag && groupBy === "date"
@@ -322,19 +364,38 @@ export default function PhotoGrid({
             photos={pinned.slice(0, 3)}
             onOpen={onOpenPhoto}
             isDesktop={isDesktop}
-            selection={selection}
+            onToggle={onToggle}
+            selectedIds={selectedIds}
+            me={me}
           />
         </section>
       )}
       {groups.map((group) => {
         const allSelected =
           group.photos.length > 0 &&
-          group.photos.every((photo) => selection?.selectedIds.has(photo.id));
+          group.photos.every((photo) => selectedIds?.has(photo.id));
         return (
-          <section key={group.key}>
+          <section
+            key={group.key}
+            // Off-screen sections skip layout and paint (see grid-layout.ts).
+            // The sticky header lives inside its own section, so it still
+            // sticks while its section is on screen. This also clips paint to
+            // the section; the clip margin keeps the header tick's focus ring,
+            // pulled 10px left by its negative margin, from being cut off.
+            // The gap above a group is the section's margin, not the header's:
+            // containment stops a margin inside the section from collapsing
+            // with the toolbar's above the first group, which would push every
+            // phone group down 4px.
+            className="mt-1 desktop:mt-0"
+            style={{
+              contentVisibility: "auto",
+              containIntrinsicSize: `auto ${sectionHeightGuess(group.photos.length, tileLayout)}px`,
+              overflowClipMargin: "4px",
+            }}
+          >
             {/* A stuck header must sit flush with the scrollport edge, with its
                 own tiles never scrolling through an unpainted band above it. */}
-            <div className="group/header mt-1 flex min-h-11 items-center desktop:sticky desktop:top-0 desktop:z-10 desktop:mt-0 desktop:bg-[#222222]/95 desktop:backdrop-blur">
+            <div className="group/header flex min-h-11 items-center desktop:sticky desktop:top-0 desktop:z-10 desktop:bg-[#222222]/95 desktop:backdrop-blur">
               {selection && (
                 <button
                   type="button"
@@ -373,11 +434,15 @@ export default function PhotoGrid({
               photos={group.photos}
               onOpen={onOpenPhoto}
               isDesktop={isDesktop}
-              selection={selection}
+              onToggle={onToggle}
+              selectedIds={selectedIds}
+              me={me}
             />
           </section>
         );
       })}
     </div>
   );
-}
+});
+
+export default PhotoGrid;

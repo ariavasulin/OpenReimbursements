@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { UploadTarget } from "@/hooks/use-capture-batch";
 
 // Separate module so TopBar, JobsRail, and capture-bar can consume the shell
@@ -54,22 +61,81 @@ export interface PhotosShellValue {
   /** A page reports that photos are selected; the shell hides the "+" button
    *  so the selection bar can take its place. */
   setSelecting(selecting: boolean): void;
-  /** Search text — the single copy; /photos/search seeds it from `?q=`. */
-  query: string;
+  /** Sets the search text (see usePhotosSearch); /photos/search seeds it from `?q=`. */
   setQuery(value: string): void;
-  /** 250ms-debounced `query`; this is what goes into the react-query key. */
-  debouncedQuery: string;
   /** The desktop photo viewer reports itself open here; the shell's drop
    *  intake treats that as busy, like an open sheet or camera. */
   setViewerOpen(open: boolean): void;
 }
 
+// Two contexts, so typing in the search box re-renders the search box and not
+// the page under it: the shell's value (actions and where you are) keeps one
+// identity while you type, and only the few readers of the search text
+// subscribe to it. Every page calls usePhotosShell() for an open* action; if
+// the text lived in the same value, each keystroke would re-render the open
+// page and every photo tile on it.
+
 export const PhotosShellContext = createContext<PhotosShellValue | null>(null);
 
+/** The shell's actions and where you are. Its identity changes only on navigation. */
 export function usePhotosShell(): PhotosShellValue {
   const value = useContext(PhotosShellContext);
   if (!value) {
     throw new Error("usePhotosShell must be used inside <PhotosShell>");
   }
   return value;
+}
+
+export interface PhotosSearchValue {
+  /** Search text — the single copy; /photos/search seeds it from `?q=`. */
+  query: string;
+  setQuery(value: string): void;
+  /** 250ms-debounced `query`; this is what goes into the react-query key. */
+  debouncedQuery: string;
+}
+
+const PhotosSearchContext = createContext<PhotosSearchValue | null>(null);
+const SetPhotosQueryContext = createContext<((value: string) => void) | null>(null);
+
+/**
+ * Holds the search text above the shell. Its own component, so a keystroke
+ * re-renders only this provider and the components reading usePhotosSearch():
+ * its children are the same elements as before and React skips them.
+ */
+export function PhotosSearchProvider({ children }: { children: ReactNode }) {
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const value = useMemo(
+    () => ({ query, setQuery, debouncedQuery }),
+    [query, debouncedQuery]
+  );
+  return (
+    <SetPhotosQueryContext.Provider value={setQuery}>
+      <PhotosSearchContext.Provider value={value}>{children}</PhotosSearchContext.Provider>
+    </SetPhotosQueryContext.Provider>
+  );
+}
+
+/** The search text, for the search box. Re-renders on every keystroke. */
+export function usePhotosSearch(): PhotosSearchValue {
+  const value = useContext(PhotosSearchContext);
+  if (!value) {
+    throw new Error("usePhotosSearch must be used inside <PhotosSearchProvider>");
+  }
+  return value;
+}
+
+/** The search text's setter alone; never re-renders on a keystroke. */
+export function useSetPhotosQuery(): (value: string) => void {
+  const setQuery = useContext(SetPhotosQueryContext);
+  if (!setQuery) {
+    throw new Error("useSetPhotosQuery must be used inside <PhotosSearchProvider>");
+  }
+  return setQuery;
 }

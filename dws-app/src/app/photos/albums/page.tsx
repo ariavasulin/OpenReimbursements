@@ -9,7 +9,7 @@ import CollectionSelectBar from "@/components/photos/collection-select-bar";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
 import CollectionTitleRow from "@/components/photos/collection-sort-chip";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
-import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
+import { CARD_GRID_CLASS, PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
@@ -71,7 +71,7 @@ export default function AlbumsPage() {
         </EmptyState>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      <div className={CARD_GRID_CLASS}>
         {albums?.slice(page * ALBUMS_PER_PAGE, (page + 1) * ALBUMS_PER_PAGE).map((album) => (
           <CollectionCard
             key={album.id}
@@ -81,6 +81,7 @@ export default function AlbumsPage() {
             thumbPaths={album.thumb_paths}
             emptyText="No photos yet"
             selection={select.card(album.id)}
+            prefetch={{ kind: "album", id: album.id }}
           />
         ))}
       </div>

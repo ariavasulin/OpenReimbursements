@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, Folder } from 'lucide-react';
-import type { MigrationRequest, MigrationSource } from '@/lib/photos/migration/client';
+import type { MigrationSource } from '@/lib/photos/migration/client';
 import { cleanAlbumName, groupFolders, sharedChoice, type FolderGroup, type MigrationFolder } from '@/lib/photos/migration/folders';
 import FolderTags from './folder-tags';
 import ProjectChoice, { type ProjectRef } from './project-choice';
@@ -19,7 +19,6 @@ const ROWS_PER_PAGE = 100;
 const plural = (count: number, one: string, many = `${one}s`) => `${count.toLocaleString()} ${count === 1 ? one : many}`;
 
 interface FolderReviewProps {
-  request: MigrationRequest;
   sources: MigrationSource[];
   folders: MigrationFolder[];
   /** False once the import has started: the rows are then a record of what was chosen. */
@@ -125,7 +124,7 @@ function WholeFolderChoice({ source, folder, scope, shared, rows, underProject, 
       <legend className="px-1 text-base font-medium text-white">For {scope}</legend>
       <div className="grid gap-4 md:grid-cols-2">
         <div><span className={labelClass}>Project</span>
-          <div className="mt-1"><ProjectChoice request={props.request} value={project} ariaLabel={`Project for ${scope}`}
+          <div className="mt-1"><ProjectChoice value={project} ariaLabel={`Project for ${scope}`}
             onChange={job => props.onPatch(source, folder, true, { job })} /></div>
           {underProject}
         </div>
@@ -207,7 +206,7 @@ function Row({ source, row, ...props }: FolderReviewProps & { source: MigrationS
             : <span className="mt-1 block break-words text-base text-white">{album}</span>)}
         </div>
         <div><span className={labelClass}>Project</span>
-          <div className="mt-1"><ProjectChoice request={props.request} value={row.jobs ?? null} disabled={!props.editable || props.busy}
+          <div className="mt-1"><ProjectChoice value={row.jobs ?? null} disabled={!props.editable || props.busy}
             ariaLabel={`Project for ${album}`} onChange={job => props.onPatch(source, row.folder, false, { job })} /></div>
         </div>
         <div><span className={labelClass}>Tags</span>

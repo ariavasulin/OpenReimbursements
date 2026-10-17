@@ -1,36 +1,76 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import {
-  AuthLoading,
-  PHOTOS_AUTH_LOADING_CLASS,
-  useSessionGuard,
-} from "@/hooks/use-session-guard";
+import { useSessionGuard } from "@/hooks/use-session-guard";
 import { useDesktop } from "@/hooks/use-desktop";
 import { useCaptureBatch, type UploadTarget } from "@/hooks/use-capture-batch";
 import { pickerAccept, readInputFiles } from "@/lib/photos/batch";
 import DropZone from "@/components/photos/drop-zone";
+import { LoadBoundary, retryableLoader } from "@/components/photos/load-boundary";
 import MultiShotCamera from "@/components/photos/multi-shot-camera";
-import NewAlbumSheet from "@/components/photos/new-album-sheet";
-import NewProjectSheet from "@/components/photos/new-project-sheet";
 import { AddButton, BottomNav } from "@/components/photos/section-nav";
 import SectionsRail from "@/components/photos/sections-rail";
+import {
+  PageSkeleton,
+  RailSkeleton,
+  TopBarSkeleton,
+  pageSkeletonKind,
+} from "@/components/photos/shell-skeleton";
 import TopBar from "@/components/photos/top-bar";
-import UploadSheet from "@/components/photos/upload-sheet";
 import UploadTray from "@/components/photos/upload-tray";
 import {
   PHOTOS_FLOATING_SLOT_ID,
   PHOTOS_SCROLLPORT_ID,
+  PhotosSearchProvider,
   PhotosShellContext,
   photoSection,
+  useSetPhotosQuery,
   type PhotosShellValue,
 } from "@/components/photos/photos-shell-context";
-import { usePhotoAlbum, usePhotoJobs } from "@/lib/photos/api";
+import { usePhotoAlbum, usePhotoJob } from "@/lib/photos/api";
 import { jobLabel } from "@/lib/photos/format";
+
+// The pop-ups behind "+" load as their own chunks, not with the first page:
+// nobody needs them before something is tapped. Each mounts the first time it
+// opens (then stays, so it can animate closed), and the browser fetches all
+// three when it is idle after the page is up, so the first open is instant.
+// The camera stays static: the tab bar's camera check imports its module.
+// A download that fails closes the pop-up with a toast instead of taking the
+// app (and the upload tray's queue) down, and the next open tries again
+// (LoadBoundary, retryableLoader).
+const loadUploadSheet = () => import("@/components/photos/upload-sheet");
+const loadNewProjectSheet = () => import("@/components/photos/new-project-sheet");
+const loadNewAlbumSheet = () => import("@/components/photos/new-album-sheet");
+const UploadSheet = dynamic(retryableLoader(loadUploadSheet), { ssr: false });
+const NewProjectSheet = dynamic(retryableLoader(loadNewProjectSheet), { ssr: false });
+const NewAlbumSheet = dynamic(retryableLoader(loadNewAlbumSheet), { ssr: false });
+
+/**
+ * False until `open` is first true, then true until `forget` (a pop-up whose
+ * code failed to load is unmounted, so its next open mounts it afresh).
+ */
+function useOpenedOnce(open: boolean): [boolean, () => void] {
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
+  const forget = useCallback(() => setOpened(false), []);
+  return [opened || open, forget];
+}
 
 /** Pages that are a focused task, not browsing: no "+" button over them. */
 const NO_ADD_BUTTON = ["/photos/actions", "/photos/trash", "/photos/settings"];
+
+/**
+ * The layout's Suspense fallback: the page skeleton shaped for the current
+ * route. A client component because the layout, a server file, cannot read
+ * the path.
+ */
+export function RoutePageSkeleton() {
+  const pathname = usePathname();
+  const params = useParams<{ jobId?: string; albumId?: string }>();
+  return <PageSkeleton kind={pageSkeletonKind(pathname, params ?? {})} />;
+}
 
 /**
  * The /photos frame: owns the session guard (hoisted out of the pages), the
@@ -40,11 +80,19 @@ const NO_ADD_BUTTON = ["/photos/actions", "/photos/trash", "/photos/settings"];
  * changes and pages only render content.
  */
 export default function PhotosShell({ children }: { children: ReactNode }) {
+  return (
+    <PhotosSearchProvider>
+      <PhotosShellFrame>{children}</PhotosShellFrame>
+    </PhotosSearchProvider>
+  );
+}
+
+function PhotosShellFrame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const params = useParams<{ jobId?: string; albumId?: string }>();
 
-  const ready = useSessionGuard(pathname);
+  const ready = useSessionGuard();
   const isDesktop = useDesktop();
   const activeJobId = params?.jobId ?? null;
   const activeAlbumId = params?.albumId ?? null;
@@ -52,28 +100,43 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
 
   const batch = useCaptureBatch();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const setQuery = useSetPhotosQuery();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [newAlbumOpen, setNewAlbumOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 250);
-    return () => clearTimeout(timer);
-  }, [query]);
-
   // A selection belongs to the page that made it.
   useEffect(() => setSelecting(false), [pathname]);
 
-  // For the drop overlay's label and the upload pop-up's pre-fill. Both are
-  // deduped by react-query with the open page's identical query. The list
-  // holds active projects only, so a deleted project's page is never an
-  // upload target.
-  const { data: jobsForLabel } = usePhotoJobs(ready && activeJobId !== null);
-  const activeJob = jobsForLabel?.find((job) => job.id === activeJobId);
-  const deadJob = activeJobId !== null && jobsForLabel !== undefined && !activeJob;
+  const [uploadSheetMounted, forgetUploadSheet] = useOpenedOnce(batch.sheetOpen);
+  const [newProjectMounted, forgetNewProject] = useOpenedOnce(newProjectOpen);
+  const [newAlbumMounted, forgetNewAlbum] = useOpenedOnce(newAlbumOpen);
+
+  // Fetch the pop-ups' code once the page is up and the browser is idle.
+  // Safari has no requestIdleCallback; a short timer stands in.
+  useEffect(() => {
+    if (!ready) return;
+    const preload = () => {
+      void loadUploadSheet();
+      void loadNewProjectSheet();
+      void loadNewAlbumSheet();
+    };
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(preload, { timeout: 5000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = setTimeout(preload, 2000);
+    return () => clearTimeout(timer);
+  }, [ready]);
+
+  // For the drop overlay's label and the upload pop-up's pre-fill. Both share
+  // the project page's own one-project query, so opening a project never
+  // waits on (or downloads) every project. Only active projects are found:
+  // `null` means deleted or unknown, so that page is never an upload target.
+  const { data: activeJobData } = usePhotoJob(ready ? activeJobId : null);
+  const activeJob = activeJobData ?? undefined;
+  const deadJob = activeJobId !== null && activeJobData === null;
   const { data: activeAlbum } = usePhotoAlbum(
     activeAlbumId ?? "",
     ready && activeAlbumId !== null
@@ -89,24 +152,56 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
     return undefined;
   }, [activeJob, activeAlbumId, activeAlbum]);
 
-  const value: PhotosShellValue = {
-    openPicker: () => fileInputRef.current?.click(),
-    openCamera: () => batch.openCamera(uploadTarget),
-    openSheet: batch.openSheet,
-    openNewProject: () => setNewProjectOpen(true),
-    openNewAlbum: () => setNewAlbumOpen(true),
-    activeJobId,
-    activeAlbumId,
-    section,
-    query,
-    setQuery,
-    debouncedQuery,
-    setViewerOpen,
-    setSelecting,
-  };
+  // One identity until you navigate: every page reads this context, so a new
+  // value would re-render the open page and its whole photo grid. Starting a
+  // selection, opening the viewer, or the batch changing re-renders the shell
+  // but not the page. The actions read the batch and the upload target
+  // through refs, so they never go stale.
+  const batchRef = useRef(batch);
+  batchRef.current = batch;
+  const uploadTargetRef = useRef(uploadTarget);
+  uploadTargetRef.current = uploadTarget;
+  const value = useMemo<PhotosShellValue>(
+    () => ({
+      openPicker: () => fileInputRef.current?.click(),
+      openCamera: () => batchRef.current.openCamera(uploadTargetRef.current),
+      openSheet: (files, target, capturedAtOverrides) =>
+        batchRef.current.openSheet(files, target, capturedAtOverrides),
+      openNewProject: () => setNewProjectOpen(true),
+      openNewAlbum: () => setNewAlbumOpen(true),
+      activeJobId,
+      activeAlbumId,
+      section,
+      setQuery,
+      setViewerOpen,
+      setSelecting,
+    }),
+    [activeJobId, activeAlbumId, section, setQuery]
+  );
 
+  // Until the session check finishes (and in the prerendered HTML), draw the
+  // frame with grey stand-ins, so a cold open paints something app-shaped at
+  // once instead of "Verifying authentication". Only the page waits: its
+  // queries need the session. The tab bar is real, so a tap works already.
+  // Phone vs desktop comes from CSS here (useDesktop() is false until after
+  // hydration, which would flash the phone frame on a desktop).
   if (!ready) {
-    return <AuthLoading className={PHOTOS_AUTH_LOADING_CLASS} />;
+    return (
+      <PhotosShellContext.Provider value={value}>
+        <div className="flex h-dvh flex-col bg-[#222222] text-white">
+          <TopBarSkeleton />
+          <div className="flex min-h-0 flex-1">
+            <RailSkeleton section={section} />
+            <div className="min-h-0 min-w-0 flex-1 overflow-hidden pt-[env(safe-area-inset-top)]">
+              <RoutePageSkeleton />
+            </div>
+          </div>
+          <div className="desktop:hidden">
+            <BottomNav />
+          </div>
+        </div>
+      </PhotosShellContext.Provider>
+    );
   }
 
   const showAddButton =
@@ -177,29 +272,56 @@ export default function PhotosShell({ children }: { children: ReactNode }) {
           }
         />
       )}
-      <UploadSheet
-        files={batch.pickedFiles}
-        open={batch.sheetOpen}
-        onOpenChange={batch.setSheetOpen}
-        defaultTarget={batch.sheetTarget}
-        capturedAtOverrides={batch.capturedAtOverrides}
-        sidecars={batch.sidecars}
-      />
+      {uploadSheetMounted && (
+        <LoadBoundary
+          onError={() => {
+            batch.setSheetOpen(false);
+            forgetUploadSheet();
+          }}
+        >
+          <UploadSheet
+            files={batch.pickedFiles}
+            open={batch.sheetOpen}
+            onOpenChange={batch.setSheetOpen}
+            defaultTarget={batch.sheetTarget}
+            capturedAtOverrides={batch.capturedAtOverrides}
+            sidecars={batch.sidecars}
+          />
+        </LoadBoundary>
+      )}
       <MultiShotCamera
         open={batch.cameraOpen}
         onClose={batch.closeCamera}
         onDone={batch.handleShotsDone}
       />
-      <NewProjectSheet
-        open={newProjectOpen}
-        onOpenChange={setNewProjectOpen}
-        onDone={(job) => router.push(`/photos/${job.id}`)}
-      />
-      <NewAlbumSheet
-        open={newAlbumOpen}
-        onOpenChange={setNewAlbumOpen}
-        onCreated={(album) => router.push(`/photos/albums/${album.id}`)}
-      />
+      {newProjectMounted && (
+        <LoadBoundary
+          onError={() => {
+            setNewProjectOpen(false);
+            forgetNewProject();
+          }}
+        >
+          <NewProjectSheet
+            open={newProjectOpen}
+            onOpenChange={setNewProjectOpen}
+            onDone={(job) => router.push(`/photos/${job.id}`)}
+          />
+        </LoadBoundary>
+      )}
+      {newAlbumMounted && (
+        <LoadBoundary
+          onError={() => {
+            setNewAlbumOpen(false);
+            forgetNewAlbum();
+          }}
+        >
+          <NewAlbumSheet
+            open={newAlbumOpen}
+            onOpenChange={setNewAlbumOpen}
+            onCreated={(album) => router.push(`/photos/albums/${album.id}`)}
+          />
+        </LoadBoundary>
+      )}
     </PhotosShellContext.Provider>
   );
 }

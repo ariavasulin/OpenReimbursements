@@ -32,7 +32,7 @@ import {
 import { photoName, plural } from "@/lib/photos/format";
 import { publicUrl } from "@/lib/photos/urls";
 import type { PhotoRow } from "@/lib/photos/types";
-import { PAGE_SUBTITLE_CLASS, PAGE_TITLE_CLASS } from "@/components/photos/page-layout";
+import { PAGE_SUBTITLE_CLASS, PAGE_TITLE_CLASS, TILE_GRID_CLASS } from "@/components/photos/page-layout";
 import StatusLine from "@/components/photos/status-line";
 import { cn } from "@/lib/utils";
 
@@ -66,8 +66,9 @@ async function loadAlbum(albumId: string, sort: PhotoSort, signal: AbortSignal):
     const params = new URLSearchParams({ album: albumId, limit: String(LOAD_PAGE) });
     if (sort !== "desc") params.set("sort", sort);
     if (cursor) params.set("cursor", cursor);
-    const page = await fetchPhotosPage(params);
-    if (signal.aborted) return [];
+    // Cancel (or leaving the page) stops the request in flight, not just the
+    // ones after it: an album of 2,000 photos is ten of these.
+    const page = await fetchPhotosPage(params, signal);
     photos.push(...page.photos);
     if (photos.length > MAX_ARRANGE_PHOTOS) return null;
     cursor = page.nextCursor;
@@ -81,10 +82,13 @@ function TileFace({ photo, place }: { photo: PhotoRow; place: number }) {
   return (
     <>
       {photo.thumb_path ? (
+        // Lazy: an album of up to 2,000 photos loads only the thumbnails in view.
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={publicUrl(photo.thumb_path)}
           alt=""
+          loading="lazy"
+          decoding="async"
           draggable={false}
           className="pointer-events-none h-full w-full object-cover"
         />
@@ -283,7 +287,7 @@ export default function AlbumArrange({
           onDragCancel={() => setActiveId(null)}
         >
           <SortableContext items={ids} strategy={rectSortingStrategy}>
-            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 desktop:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] desktop:gap-2">
+            <div className={TILE_GRID_CLASS}>
               {order.map((photo, index) => (
                 <SortableTile key={photo.id} photo={photo} place={index + 1} disabled={saving} />
               ))}

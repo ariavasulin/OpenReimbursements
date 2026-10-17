@@ -1,5 +1,41 @@
-import exifr from "exifr";
+// The lite build reads JPEG and HEIC, the two formats a phone saves, at about
+// half the size of the full one. Not the mini build: it has no HEIC
+// reader, so iPhone photos would lose their capture dates. The lite build has
+// no PNG reader, so a PNG (a screenshot, an exported photo) loads the full
+// build on demand: its EXIF date must still win over the file's date. RAW and
+// TIFF files skip this read (decode-limits.ts).
+import type * as Exifr from "exifr";
+// @ts-expect-error exifr publishes types for its package root only; the lite build has the same API.
+import exifrLite from "exifr/dist/lite.esm.mjs";
 import type { CapturedAtSource } from "./types";
+import { UploadRequestError } from "./upload-http";
+
+const exifr = exifrLite as typeof Exifr;
+
+/**
+ * The PNG reader (the full exifr build, fetched on demand) could not be
+ * downloaded: a dropped connection, or a deploy that removed the old file.
+ * Distinct from "the file has no EXIF": the date is unknown, not absent, so
+ * the upload must not fall back to the file's date. Shaped as a dropped
+ * connection so the batch waits and tries the same file again.
+ */
+export class ExifReaderUnavailableError extends UploadRequestError {
+  constructor(cause: unknown) {
+    super("The photo's metadata reader could not be downloaded; check the connection", { code: "network_error", retryable: true });
+    this.name = "ExifReaderUnavailableError";
+    this.cause = cause;
+  }
+}
+
+/** The reader for `mime`: the lite build, or for a PNG the full build loaded on demand. */
+async function readerFor(mime: string): Promise<Pick<typeof Exifr, "parse">> {
+  if (mime !== "image/png") return exifr;
+  try {
+    return (await import("exifr")).default;
+  } catch (error) {
+    throw new ExifReaderUnavailableError(error);
+  }
+}
 
 /** A capture time plus where it came from (see CapturedAtSource). */
 export interface CapturedAt {
@@ -26,14 +62,18 @@ function isPlausibleCapture(date: Date): boolean {
 }
 
 // Read the EXIF capture time from an image file. Returns null when the file
-// has no usable EXIF (videos, PNGs, canvas JPEGs, ...) or when the date it
-// carries is not a plausible capture time.
+// has no usable EXIF (videos, canvas JPEGs, ...) or when the date it
+// carries is not a plausible capture time. Throws ExifReaderUnavailableError
+// when a PNG's reader could not be downloaded, which is not the same as null.
 export async function readExifDate(file: File | Blob): Promise<Date | null> {
   const mime = file.type;
   // exifr only reads photo metadata; skip videos and other non-images outright
   // (never pull a multi-GB video into memory looking for EXIF it can't have).
   if (mime && !mime.startsWith("image/")) return null;
 
+  // Outside the catch below: a reader that failed to download must surface,
+  // while a file the reader cannot parse is simply one without a date.
+  const reader = await readerFor(mime);
   try {
     // In the browser exifr reads the File in chunks; in Node (tests) it needs
     // a byte buffer.
@@ -41,10 +81,15 @@ export async function readExifDate(file: File | Blob): Promise<Date | null> {
       typeof FileReader === "undefined"
         ? new Uint8Array(await file.arrayBuffer())
         : file;
-    const parsed = (await exifr.parse(source, [
-      "DateTimeOriginal",
-      "CreateDate",
-    ])) as { DateTimeOriginal?: unknown; CreateDate?: unknown } | undefined;
+    // Both dates sit in the EXIF block, so the tags are named under it. A
+    // bare list of tag names (the full build's shorthand) throws in the lite
+    // build, which cannot look up which block each name lives in.
+    const parsed = (await reader.parse(source, {
+      exif: { pick: ["DateTimeOriginal", "CreateDate"] },
+      gps: false,
+      interop: false,
+      ifd1: false,
+    })) as { DateTimeOriginal?: unknown; CreateDate?: unknown } | undefined;
 
     const candidate = parsed?.DateTimeOriginal ?? parsed?.CreateDate;
     if (candidate instanceof Date && isPlausibleCapture(candidate)) {

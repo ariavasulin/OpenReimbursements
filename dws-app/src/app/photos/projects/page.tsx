@@ -9,7 +9,7 @@ import CollectionSelectBar from "@/components/photos/collection-select-bar";
 import ConfirmDialog from "@/components/photos/confirm-dialog";
 import CollectionTitleRow from "@/components/photos/collection-sort-chip";
 import EmptyState, { emptyPrimary } from "@/components/photos/empty-state";
-import { PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
+import { CARD_GRID_CLASS, PAGE_MAIN_CLASS } from "@/components/photos/page-layout";
 import PhoneHeader from "@/components/photos/phone-header";
 import { usePhotosShell } from "@/components/photos/photos-shell-context";
 import RenameSheet from "@/components/photos/rename-sheet";
@@ -69,7 +69,7 @@ export default function ProjectsPage() {
         </EmptyState>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      <div className={CARD_GRID_CLASS}>
         {jobs?.map((job) => (
           <CollectionCard
             key={job.id}
@@ -80,6 +80,7 @@ export default function ProjectsPage() {
             thumbPaths={job.thumb_paths}
             emptyText={job.location ? `${job.location} · No photos yet` : "No photos yet"}
             selection={select.card(job.id)}
+            prefetch={{ kind: "job", id: job.id }}
           />
         ))}
       </div>

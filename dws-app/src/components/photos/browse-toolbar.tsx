@@ -11,6 +11,7 @@ import {
   FavoritesChip,
   FILE_TYPE_OPTIONS,
   FilterChip,
+  ProjectFilterChip,
   TagsFilterChip,
   type FilterChoices,
 } from "@/components/photos/filter-bar";
@@ -102,7 +103,7 @@ export default function BrowseToolbar({
   const [sheetOpen, setSheetOpen] = useState(false);
   const count = activeFilterCount(filters);
   const projectLabel = filters.project
-    ? choices.projects?.find((option) => option.value === filters.project)?.label ?? "Project"
+    ? choices.projectLabel ?? choices.projects?.find((option) => option.value === filters.project)?.label ?? "Project"
     : null;
   const uploaderLabel = filters.uploader
     ? choices.uploaders.find((option) => option.value === filters.uploader)?.label ?? "Uploader"
@@ -136,7 +137,15 @@ export default function BrowseToolbar({
             )}
           </button>
           <div className="hidden desktop:contents">
-            {choices.projects && (
+            {/* Where the project list loads on demand, its chip fetches it
+                when the menu first opens. */}
+            {choices.lazyProjects ? (
+              <ProjectFilterChip
+                active={filters.project}
+                onSelect={(project) => onFiltersChange({ project })}
+                onClear={() => onFiltersChange({ project: null })}
+              />
+            ) : choices.projects && (
               <FilterChip
                 label="Project"
                 active={projectLabel}

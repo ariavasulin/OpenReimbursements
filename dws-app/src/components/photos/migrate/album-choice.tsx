@@ -2,12 +2,22 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { useSuggestionEscape } from '@/hooks/use-suggestion-escape';
-import { fetchJson } from '@/lib/photos/api';
+import { usePhotoAlbumSuggestions } from '@/lib/photos/api';
 import { cleanAlbumName } from '@/lib/photos/migration/folders';
 import { field, hint } from './styles';
 
 export type AlbumValue = { kind: 'none' } | { kind: 'new'; name: string } | { kind: 'existing'; id: string; name: string };
-type AlbumRef = { id: string; name: string; photo_count: number };
+
+/** Albums listed under the field. */
+const SHOWN = 8;
+/**
+ * Albums asked for per lookup: a few more than are listed, so an album named exactly what
+ * was typed is still found when several names that only contain it sort ahead of it.
+ * Missing it would offer Create and make a second album of the same name.
+ */
+const LOOKUP_LIMIT = 25;
+/** The lookup waits for a pause in typing. */
+const LOOKUP_DELAY_MS = 200;
 
 interface AlbumChoiceProps {
   value: AlbumValue;
@@ -21,8 +31,6 @@ interface AlbumChoiceProps {
 export default function AlbumChoice({ value, onChange, onPendingChange, inputId, disabled }: AlbumChoiceProps) {
   const selectedText = value.kind === 'none' ? '' : value.name;
   const [text, setText] = useState(selectedText);
-  const [result, setResult] = useState<{ query: string; albums: AlbumRef[] } | null>(null);
-  const [error, setError] = useState('');
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -34,25 +42,24 @@ export default function AlbumChoice({ value, onChange, onPendingChange, inputId,
   const pending = typed !== selectedText;
   useEffect(() => { onPendingChange?.(pending); }, [pending, onPendingChange]);
 
+  // One small cached request per name, after a pause in typing. A blank field asks too, so
+  // focusing it lists existing albums to pick from.
+  const [lookup, setLookup] = useState(typed);
   useEffect(() => {
-    if (!open) return;
-    const controller = new AbortController();
-    setError('');
-    const timer = setTimeout(() => {
-      fetchJson<{ albums: AlbumRef[] }>(`/api/photo-albums?q=${encodeURIComponent(typed)}`, 'Albums could not be loaded', { signal: controller.signal, cache: 'no-store' })
-        .then(result => {
-          if (!controller.signal.aborted) setResult({ query: typed, albums: result.albums });
-        }).catch(() => { if (!controller.signal.aborted) setError('Albums could not be loaded. Focus this field again to retry.'); });
-    }, 200);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [open, typed]);
-
-  // A stale response must never offer Create for the next query. Search errors also do not
-  // imply that no album exists. Creation is an explicit option after a successful lookup.
-  const ready = result?.query === typed && !error;
-  const exact = ready ? result.albums.find(album => album.name.toLowerCase() === typed.toLowerCase()) : undefined;
-  const albums = ready ? (exact ? [exact, ...result.albums.filter(album => album.id !== exact.id)] : result.albums).slice(0, 8) : [];
-  const canCreate = Boolean(ready && typed && !exact);
+    const timer = setTimeout(() => setLookup(typed), LOOKUP_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [typed]);
+  const search = usePhotoAlbumSuggestions(open, lookup, LOOKUP_LIMIT);
+  // A stale response must never offer Create for the next query: only the answer for exactly
+  // what is typed counts, never the previous name's list kept on screen while it loads.
+  const answered = lookup === typed && search.isSuccess && !search.isPlaceholderData;
+  const error = lookup === typed && search.isError ? 'Albums could not be loaded. Focus this field again to retry.' : '';
+  const found = answered ? search.data ?? [] : [];
+  const exact = found.find(album => album.name.toLowerCase() === typed.toLowerCase());
+  const albums = (exact ? [exact, ...found.filter(album => album.id !== exact.id)] : found).slice(0, SHOWN);
+  // Search errors also do not imply that no album exists. Creation is an explicit option
+  // after a successful lookup.
+  const canCreate = Boolean(answered && typed && !exact);
   const rowCount = albums.length + (canCreate ? 1 : 0);
   const active = Math.min(activeIndex, Math.max(0, rowCount - 1));
   const choose = (next: AlbumValue) => {
@@ -74,11 +81,11 @@ export default function AlbumChoice({ value, onChange, onPendingChange, inputId,
         aria-activedescendant={open && rowCount ? `${listId}-${active}` : undefined}
         onChange={event => {
           const next = event.target.value;
-          setText(next); setResult(null); setActiveIndex(0); setOpen(true);
+          setText(next); setActiveIndex(0); setOpen(true);
           onPendingChange?.(cleanAlbumName(next) !== selectedText);
           if (!cleanAlbumName(next)) choose({ kind: 'none' });
         }}
-        onFocus={() => { setResult(null); setActiveIndex(0); setOpen(true); }} onBlur={() => setOpen(false)}
+        onFocus={() => { setActiveIndex(0); setOpen(true); if (search.isError) void search.refetch(); }} onBlur={() => setOpen(false)}
         onKeyDown={event => {
           if (event.key === 'Enter') { event.preventDefault(); if (open && rowCount) pick(active); }
           else if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); setActiveIndex(open ? Math.min(active + 1, Math.max(0, rowCount - 1)) : 0); }
@@ -101,8 +108,8 @@ export default function AlbumChoice({ value, onChange, onPendingChange, inputId,
           {canCreate && <li id={`${listId}-${albums.length}`} role="option" aria-selected={active === albums.length}
             onMouseEnter={() => setActiveIndex(albums.length)} onClick={() => choose({ kind: 'new', name: typed })}
             className={`min-h-11 cursor-pointer rounded-md px-3 py-2 text-base text-white ${active === albums.length ? 'bg-[#3a3a3a]' : ''}`}>Create album “{typed}”</li>}
-          {!ready && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">{error || 'Looking for albums…'}</li>}
-          {ready && !rowCount && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">Type a name to create an album.</li>}
+          {!answered && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">{error || 'Looking for albums…'}</li>}
+          {answered && !rowCount && <li role="presentation" className="px-3 py-2 text-base text-[#c4c4c4]">Type a name to create an album.</li>}
         </ul>
       )}
       <p className={`${hint} mt-1 min-h-12`}>

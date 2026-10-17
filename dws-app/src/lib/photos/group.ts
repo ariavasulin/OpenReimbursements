@@ -34,6 +34,20 @@ function append(
   group.photos.push(photo);
 }
 
+// One formatter for every date header. Building one per photo (what
+// toLocaleDateString does under the hood) was most of the cost of regrouping a
+// few thousand photos, and every new page regroups all of them.
+const DAY_HEADER = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
+/** A date group's header: "August 14, 2026", in the reader's time zone. */
+export function formatDayHeader(date: Date): string {
+  return DAY_HEADER.format(date);
+}
+
 const byLabel = (a: PhotoGroup, b: PhotoGroup) =>
   a.label.localeCompare(b.label, "en", { sensitivity: "base" });
 
@@ -100,16 +114,11 @@ export function groupPhotos(photos: PhotoRow[], groupBy: GroupBy): PhotoGroup[] 
       if (Number.isNaN(date.getTime())) {
         append(map, "date:unknown", "Unknown date", photo);
       } else {
-        append(
-          map,
-          `date:${date.toDateString()}`,
-          date.toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          }),
-          photo
-        );
+        const key = `date:${date.toDateString()}`;
+        // The label is only needed when this day's group is new.
+        const group = map.get(key);
+        if (group) group.photos.push(photo);
+        else append(map, key, formatDayHeader(date), photo);
       }
     } else {
       // No project is its own group. "Unknown job" is only for a project the

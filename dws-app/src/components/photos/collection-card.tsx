@@ -4,7 +4,9 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useDesktop } from "@/hooks/use-desktop";
 import { useLongPress } from "@/hooks/use-long-press";
+import { usePrefetchOnIntent } from "@/hooks/use-prefetch-on-intent";
 import { Tick } from "@/components/photos/photo-grid";
+import type { CollectionTarget } from "@/lib/photos/api";
 import { plural } from "@/lib/photos/format";
 import { publicUrl } from "@/lib/photos/urls";
 import { cn } from "@/lib/utils";
@@ -36,6 +38,7 @@ export default function CollectionCard({
   thumbPaths,
   emptyText,
   selection,
+  prefetch,
 }: {
   href: string;
   name: string;
@@ -46,8 +49,11 @@ export default function CollectionCard({
   thumbPaths: string[];
   emptyText: string;
   selection?: CardSelection;
+  /** What opening the card shows, loaded on hover, focus, or touch. */
+  prefetch?: CollectionTarget;
 }) {
   const isDesktop = useDesktop();
+  const intent = usePrefetchOnIntent(prefetch);
   const { handlers: pressHandlers, takeHold } = useLongPress(
     selection && !isDesktop ? () => selection.onToggle({ range: false }) : null
   );
@@ -77,6 +83,7 @@ export default function CollectionCard({
                 src={publicUrl(path)}
                 alt=""
                 loading="lazy"
+                decoding="async"
                 draggable={false}
                 className="h-full w-full object-cover"
               />
@@ -132,6 +139,7 @@ export default function CollectionCard({
         <Link
           href={href}
           title={name}
+          {...intent}
           onClick={(event) => {
             // As on a photo tile, shift-click selects rather than opening.
             if (!selection || !event.shiftKey) return;

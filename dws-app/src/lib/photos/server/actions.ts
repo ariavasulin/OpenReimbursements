@@ -37,11 +37,47 @@ export function validateSelector(value: unknown): PhotoSelector {
   }
   return selector as PhotoSelector;
 }
-export async function getActionBatch(actor:PhotoActor,id:string):Promise<PhotoActionBatch> {
-  const {data,error}=await actor.db.from('photo_action_batches').select('*,destination_job:jobs(id,job_number,name)').eq('id',photoId(id)).maybeSingle();
+/**
+ * A batch as responses carry it: every column but `selector`. The selector names
+ * the whole selection (about 255 KB for 5,000 photos), and every confirm-page
+ * response used to repeat it, page after page (VIEW-1). The few places that need
+ * it read it themselves: materializeAction whole, the rest one reference at a time.
+ */
+export type StoredActionBatch = Omit<PhotoActionBatch, 'selector'>;
+/**
+ * Compatibility stub for one release; delete it (and `selector` below) next round.
+ * A confirm page whose script loaded before this deploy reads
+ * `'photos' in next.batch.selector` on every materialize answer, and `in` throws
+ * on undefined. Vercel Hobby has no skew protection, so an open Set project or
+ * Trash page would fail with a script error. An empty object makes that old code
+ * read "0 wanted" and show "Getting the photo ready…" instead; the current page
+ * uses `selection_size` and never reads this.
+ */
+const LEGACY_SELECTOR_STUB: Record<string, never> = Object.freeze({});
+/** What the batch routes answer: the batch without its selector (see StoredActionBatch), plus the stub above. */
+export type ActionBatchAnswer = Omit<PhotoActionBatchResponse, 'batch'> & { batch: StoredActionBatch & { selector: Record<string, never> } };
+/**
+ * POST .../materialize also says how many references the selection names (null
+ * for a whole project), so the confirm page can show "N of M" without the selector.
+ */
+export type MaterializeAnswer = ActionBatchAnswer & { selection_size: number | null };
+const BATCH_COLUMNS = 'id,created_by,origin,action,destination_job_id,status,approved_by,approved_at,created_at,updated_at,materialization_complete,materialization_cursor,destination_job:jobs(id,job_number,name)';
+
+async function readBatchRow(actor:PhotoActor,id:string,columns:string) {
+  const {data,error}=await actor.db.from('photo_action_batches').select(columns).eq('id',photoId(id)).maybeSingle();
   if(error) throwPhotoDatabaseError(error);
   if(!data) throw new PhotoApiError('not_found');
-  return data as unknown as PhotoActionBatch;
+  return data as unknown;
+}
+export async function getActionBatch(actor:PhotoActor,id:string):Promise<StoredActionBatch> {
+  return await readBatchRow(actor,id,BATCH_COLUMNS) as StoredActionBatch;
+}
+/** One reference from a `{photos}` selector by its index, without the rest; null past the end or for a whole-project selector. */
+export async function selectorReference(actor:PhotoActor,id:string,index:number):Promise<PhotoReference|null> {
+  // The row is read even for a bad index, so an unknown batch is still a 404 first.
+  const valid=Number.isSafeInteger(index)&&index>=0;
+  const row=await readBatchRow(actor,id,valid?`ref:selector->photos->${index}`:'id') as {ref?:PhotoReference|null};
+  return valid?row.ref??null:null;
 }
 /** Parse known application links; this resolver never performs HTTP requests. */
 function referenceId(ref:PhotoReference, origin:string):string|null {
@@ -66,34 +102,56 @@ export async function referenceCandidates(actor:PhotoActor,ref:PhotoReference,or
   if(error) throwPhotoDatabaseError(error);
   return {candidates:(data??[]) as unknown as ActionPhoto[],total:count??0};
 }
-export async function readActionBatch(actor:PhotoActor,id:string,origin:string,offset=0,limit=100):Promise<PhotoActionBatchResponse> {
+/**
+ * One page of a batch for the confirm page. `selector` is passed by callers that
+ * already hold it, which saves reading the next reference back. The reads that do
+ * not depend on each other go out together.
+ */
+export async function readActionBatch(actor:PhotoActor,id:string,origin:string,offset=0,limit=100,selector?:PhotoSelector):Promise<ActionBatchAnswer> {
   const batch=await getActionBatch(actor,id);
-  const selected=await actor.db.from('photo_action_items').select('*',{count:'exact'}).eq('batch_id',id).order('photo_id').range(offset,offset+limit-1);
+  // A `{photos}` selector's cursor is the index of the next reference; a project-wide one's is a photo id.
+  const index=Number(batch.materialization_cursor??0);
+  const drafting=batch.status==='draft'&&!batch.materialization_complete&&Number.isSafeInteger(index);
+  const nextRef=async():Promise<PhotoReference|null>=>{
+    if(!drafting) return null;
+    if(selector) return 'photos' in selector?selector.photos[index]??null:null;
+    return selectorReference(actor,id,index);
+  };
+  const mutable=async()=>{
+    try {await assertPhotoBatchActor(actor,id,'action');return true;}
+    catch(error) {if(!(error instanceof PhotoApiError)||error.code!=='forbidden') throw error;return false;}
+  };
+  const [selected,can_mutate,ref]=await Promise.all([
+    actor.db.from('photo_action_items').select('*',{count:'exact'}).eq('batch_id',id).order('photo_id').range(offset,offset+limit-1),
+    mutable(),
+    nextRef(),
+  ]);
   if(selected.error) throwPhotoDatabaseError(selected.error);
   const ids=(selected.data??[]).map(row=>row.photo_id);
-  const photos=ids.length ? await actor.db.from('photos').select(ACTION_PHOTO_COLUMNS).in('id',ids) : {data:[],error:null};
+  const [photos,result]=await Promise.all([
+    ids.length ? actor.db.from('photos').select(ACTION_PHOTO_COLUMNS).in('id',ids) : {data:[],error:null},
+    ref ? referenceCandidates(actor,ref,origin) : null,
+  ]);
   if(photos.error) throwPhotoDatabaseError(photos.error);
   const byId=new Map((photos.data??[]).map(row=>[row.id,row]));
-  let can_mutate=true;
-  try {await assertPhotoBatchActor(actor,id,'action');} catch(error) {if(!(error instanceof PhotoApiError)||error.code!=='forbidden') throw error;can_mutate=false;}
   const unresolved:PhotoActionBatchResponse['unresolved']=[];
-  if(batch.status==='draft'&&!batch.materialization_complete&&'photos' in batch.selector) {
-    const index=Number(batch.materialization_cursor??0), ref=batch.selector.photos[index];
-    if(ref) {
-      const result=await referenceCandidates(actor,ref,origin);
-      if(result.total!==1) unresolved.push({reference_index:index,reference:ref,reason:result.total?'ambiguous':'not_found',...result});
-      // One match this person may not trash (an assistant's list can name anyone's photo): ask to leave it out.
-      else if(batch.action==='trash'&&!mayTrash(actor,result.candidates[0])) unresolved.push({reference_index:index,reference:ref,reason:'forbidden',...result});
-    }
+  if(ref&&result) {
+    if(result.total!==1) unresolved.push({reference_index:index,reference:ref,reason:result.total?'ambiguous':'not_found',...result});
+    // One match this person may not trash (an assistant's list can name anyone's photo): ask to leave it out.
+    else if(batch.action==='trash'&&!mayTrash(actor,result.candidates[0])) unresolved.push({reference_index:index,reference:ref,reason:'forbidden',...result});
   }
-  return {batch,items:(selected.data??[]).map(row=>({...row,photo:byId.get(row.photo_id)??null})) as PhotoActionBatchResponse['items'],total:selected.count??0,can_mutate,unresolved};
+  return {batch:{...batch,selector:LEGACY_SELECTOR_STUB},items:(selected.data??[]).map(row=>({...row,photo:byId.get(row.photo_id)??null})) as PhotoActionBatchResponse['items'],total:selected.count??0,can_mutate,unresolved};
 }
-export async function materializeAction(actor:PhotoActor,id:string,origin:string,body:Record<string,unknown>) {
+export async function materializeAction(actor:PhotoActor,id:string,origin:string,body:Record<string,unknown>):Promise<MaterializeAnswer> {
   onlyKeys(body,['choices']);
-  const batch=await getActionBatch(actor,id);
+  // The one step that needs the whole selector, so the one read of it.
+  const batch=await readBatchRow(actor,id,`${BATCH_COLUMNS},selector`) as PhotoActionBatch;
   await assertPhotoBatchActor(actor,id,'action');
   if(batch.status!=='draft') throw new PhotoApiError('conflict');
-  if(batch.materialization_complete) return readActionBatch(actor,id,origin);
+  const stored=batch.selector as Partial<{photos:PhotoReference[]}>;
+  const selection_size=Array.isArray(stored.photos)?stored.photos.length:null;
+  const answer=async():Promise<MaterializeAnswer>=>({...await readActionBatch(actor,id,origin,0,100,batch.selector),selection_size});
+  if(batch.materialization_complete) return answer();
   const selector=validateSelector(batch.selector);
   let ids:string[]=[],next:string|null=null,complete=false;
   if('photos' in selector) {
@@ -120,7 +178,7 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
           p_actor: actor.actorId, p_batch_id: id, p_cursor: batch.materialization_cursor,
           p_ids: ids, p_next_cursor: String(cursor), p_complete: cursor === selector.photos.length,
         });
-        return readActionBatch(actor, id, origin);
+        return answer();
       }
     }
     const choice=(choices as Record<string,unknown>)[index];
@@ -142,7 +200,7 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
       } else {
         const candidates=await referenceCandidates(actor,ref,origin);
         if(candidates.total===1&&(batch.action!=='trash'||mayTrash(actor,candidates.candidates[0]))) ids=[candidates.candidates[0].id];
-        else return readActionBatch(actor,id,origin);
+        else return answer();
       }
     }
     next=String(index+1);complete=index+1===selector.photos.length;
@@ -164,7 +222,7 @@ export async function materializeAction(actor:PhotoActor,id:string,origin:string
     ids=(data??[]).slice(0,100).map(row=>row.id);next=ids.at(-1)??batch.materialization_cursor;complete=(data??[]).length<=100;
   }
   await photoRpc(actor,'photo_materialize_action',{p_actor:actor.actorId,p_batch_id:id,p_cursor:batch.materialization_cursor,p_ids:ids,p_next_cursor:next,p_complete:complete});
-  return readActionBatch(actor,id,origin);
+  return answer();
 }
 export async function createAction(actor:PhotoActor,body:Record<string,unknown>,origin:string) {
   onlyKeys(body,['action','selector','destination_job_id']);
@@ -180,7 +238,7 @@ export async function createAction(actor:PhotoActor,body:Record<string,unknown>,
   if('photos' in selector) for(const ref of selector.photos) referenceId(ref,origin);
   const {data,error}=await actor.db.from('photo_action_batches').insert({created_by:actor.actorId,origin:body.action==='move'?'ui':'ordinary',action:body.action,selector,destination_job_id:destination}).select('id').single();
   if(error) throwPhotoDatabaseError(error);
-  return readActionBatch(actor,data.id,origin);
+  return readActionBatch(actor,data.id,origin,0,100,selector);
 }
 export function actionIds(value:unknown):string[]{
   if(!Array.isArray(value)||!value.length||value.length>100) throw new PhotoApiError('invalid_input');

@@ -23,6 +23,9 @@ import { GET as dedupe } from '@/app/api/photos/dedupe/route';
 import { GET as ownership } from '@/app/api/photos/[id]/ownership/route';
 import { GET as migrationBatch } from '@/app/api/photo-migrations/batches/[id]/route';
 import { GET as actionBatch } from '@/app/api/photo-actions/batches/[id]/route';
+import { GET as meRoute } from '@/app/api/photos/me/route';
+import { GET as actorRoute } from '@/app/api/photos/actor/route';
+import { GET as settingsRoute } from '@/app/api/photos/settings/route';
 import { requirePhotoActor, assertPhotoBatchActor } from '@/lib/photos/server/authority';
 import { AUTH_COOKIE_NAME } from '@/lib/cookieDomain';
 
@@ -93,7 +96,8 @@ describe('authenticated photo routes against isolated Auth and PostgREST (AC-2, 
     }
   });
 
-  it('rejects a forged session cookie instead of trusting its locally decoded user', async () => {
+  /** employeeA's session cookie re-signed by nobody: the token claims to be employeeB. */
+  function forgedCookies() {
     const cookie = f.employeeA.cookies.find(c => c.name.startsWith(AUTH_COOKIE_NAME) &&!c.name.endsWith('.1'))!;
     const baseName = cookie.name.replace(/\.0$/, '');
     const combined = f.employeeA.cookies.filter(c => c.name === baseName || c.name.startsWith(`${baseName}.`))
@@ -103,9 +107,21 @@ describe('authenticated photo routes against isolated Auth and PostgREST (AC-2, 
     const payload = JSON.parse(Buffer.from(jwt[1], 'base64url').toString());
     jwt[1] = Buffer.from(JSON.stringify({ ...payload, sub: f.employeeB.id })).toString('base64url');
     session.access_token = jwt.join('.');
+    return [{ name: baseName, value: `base64-${Buffer.from(JSON.stringify(session)).toString('base64url')}` }];
+  }
+
+  it('rejects a forged session cookie instead of trusting its locally decoded user', async () => {
     const request = get('/api/photos/trash');
-    const cookies = [{ name: baseName, value: `base64-${Buffer.from(JSON.stringify(session)).toString('base64url')}` }];
-    await assertError(await withRequest(request, cookies, () => trash(request)), 401, 'unauthenticated');
+    await assertError(await withRequest(request, forgedCookies(), () => trash(request)), 401, 'unauthenticated');
+  });
+
+  // These reads skip Auth's getUser and leave the token check to PostgREST, so a
+  // forged cookie must still come back as a sign-in problem (PGRST30x -> 401), not a 503.
+  it('rejects a forged session cookie on the reads that let PostgREST verify the token', async () => {
+    for (const [path, handler] of [['/api/photos/me', meRoute], ['/api/photos/actor', actorRoute], ['/api/photos/settings', settingsRoute]] as const) {
+      const request = get(path);
+      await assertError(await withRequest(request, forgedCookies(), () => handler()), 401, 'unauthenticated');
+    }
   });
 
   it('denies a deactivated employee even while their Auth cookie is otherwise valid', async () => {

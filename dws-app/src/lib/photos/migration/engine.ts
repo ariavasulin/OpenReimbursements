@@ -3,6 +3,7 @@ import { fileTypeLabel } from '../file-type';
 import { formatTwinMessage, uploadOne, type UploadDeps, type UploadIdentity, type UploadMeta, type UploadResult } from '../upload';
 import type { UploadAttempt } from '../upload-contract';
 import { abortUploadWork, UploadRequestError } from '../upload-http';
+import { createTaskLimiter } from '../task-limiter';
 import type { LocalSource } from './inventory';
 import { folderOf, type MigrationFolder } from './folders';
 import { FORMAT_TWIN_CODE, migrationItemStatusLabel, outcomePayload, retryDue, type BatchView, type ItemPage, type MigrationItem, type MigrationRequest, type MigrationSource } from './client';
@@ -16,7 +17,14 @@ export interface MigrationEngineOptions {
   meta?: Pick<UploadMeta, 'tags'>;
   /** The batch's "Keep other formats" switch. Off: a format twin is left out, never uploaded. */
   keepFormatTwins?: boolean;
+  /**
+   * A file finished (with its id), or the run ended (no id). The run does not
+   * wait for a per-file call, so the page may refresh at its own pace; it
+   * awaits the final one.
+   */
   onChange(completedItemId?: string): Promise<void>;
+  /** The server finished previews for a photo this run imported. */
+  onPreviewsMade?(photoId: string): void;
   onProgress?(itemId: string, bytes: number, total: number): void;
   onIdentity?(itemId: string, identity: UploadIdentity): void;
 }
@@ -29,6 +37,8 @@ export class MigrationEngine {
   private active = false;
   private updates: Promise<void> = Promise.resolve();
   private readonly folders = new Map<string, MigrationFolder>();
+  /** Server-made previews run beside the import, two at a time. */
+  private readonly derives = createTaskLimiter(2);
   constructor(private readonly options: MigrationEngineOptions) {
     for (const row of options.folders ?? []) this.folders.set(`${row.source_id}\n${row.folder}`, row);
   }
@@ -46,8 +56,10 @@ export class MigrationEngine {
     return { jobId: source.job_id || null, tags };
   }
   private changed(itemId?: string) {
-    this.updates = this.updates.then(() => this.options.onChange(itemId));
-    return this.updates;
+    const settled = this.updates.then(() => this.options.onChange(itemId));
+    // One failed refresh must not swallow every later one.
+    this.updates = settled.catch(() => undefined);
+    return settled;
   }
 
   async run(): Promise<void> {
@@ -66,7 +78,10 @@ export class MigrationEngine {
           const results = await Promise.allSettled(pair.map(async item => {
             try {
               const result = await this.upload(item, signal);
-              await this.changed(item.id);
+              // Not awaited: the next files start while the page refreshes
+              // its counts. A failed refresh is only a stale count; the run
+              // reads fresh counts itself before it completes the batch.
+              void this.changed(item.id).catch(() => undefined);
               return result;
             }
             catch (error) { this.stop(); throw error; }
@@ -122,6 +137,9 @@ export class MigrationEngine {
     } : undefined;
     const deps: UploadDeps = {
       ...this.options.deps,
+      // The importer's attempts come from its own prepare step (below), so
+      // the ordinary uploads' one-request begin does not apply here.
+      begin: undefined,
       acquireLease: async (owner, options) => {
         const outcome = await this.options.deps.acquireLease(owner, options);
         if (outcome.status === 'acquired') leaseGeneration = outcome.lease_generation;
@@ -146,6 +164,12 @@ export class MigrationEngine {
       uploaderId: this.options.uploaderId, ...this.destination(item, source),
     }, deps, (bytes, total) => this.options.onProgress?.(item.id, bytes, total), {
       signal, identity, sidecar, keepFormatTwin: this.options.keepFormatTwins,
+      // A slow server preview (a long video, a big TIFF) must not hold up the next file.
+      deriveLater: (photoId, derive) => {
+        void this.derives.run(derive).then(made => {
+          if (made.thumb_path) this.options.onPreviewsMade?.(photoId);
+        }).catch(() => undefined);
+      },
       expectedSidecarName: item.sidecar?.original_name ?? item.sidecar?.name ?? item.sidecar?.relative_path,
       onIdentity: next => { identity = next; onIdentity?.(currentItem.id, next); },
     });
@@ -192,4 +216,47 @@ function pairs(items: MigrationItem[]): MigrationItem[][] {
     else out.push([item]);
   }
   return out;
+}
+
+/**
+ * Runs `work` at most once per `ms`: the first schedule() starts the clock,
+ * later ones inside the window join that same call. cancel() drops a pending
+ * call (the caller is about to run `work` itself).
+ */
+export function createTrailingThrottle(work: () => unknown, ms: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    schedule() {
+      if (timer !== undefined) return;
+      timer = setTimeout(() => {
+        timer = undefined;
+        void Promise.resolve().then(work).catch(() => undefined);
+      }, ms);
+    },
+    cancel() {
+      clearTimeout(timer);
+      timer = undefined;
+    },
+  };
+}
+
+/**
+ * Keeps the newest answer when repeated reads of the same thing land out of
+ * order (a slow throttled refresh finishing after the run's final one would
+ * otherwise put an older view back). Each read takes a ticket() before it
+ * starts; fresh(ticket) is true only if no later read's answer has been
+ * shown yet, and marks this one shown. An older answer is dropped, not
+ * waited on, so a slow read never holds up a newer one.
+ */
+export function createNewestAnswer() {
+  let issued = 0;
+  let shown = 0;
+  return {
+    ticket: () => ++issued,
+    fresh(ticket: number) {
+      if (ticket <= shown) return false;
+      shown = ticket;
+      return true;
+    },
+  };
 }

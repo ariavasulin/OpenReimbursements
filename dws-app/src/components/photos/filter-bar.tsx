@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { ChevronDown, X, Heart } from "lucide-react";
 import {
   DropdownMenu,
@@ -8,9 +9,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { dateFilterLabel, type BrowseFilters } from "@/lib/photos/browse-state";
+import { usePhotoJob, usePhotoJobs } from "@/lib/photos/api";
+import { dateFilterLabel, NO_PROJECT_VALUE, type BrowseFilters } from "@/lib/photos/browse-state";
 import { FILE_TYPE_LABELS } from "@/lib/photos/file-type";
-import type { FilterOption } from "@/lib/photos/filter-options";
+import { toProjectOptions, type FilterOption } from "@/lib/photos/filter-options";
+import { jobLabel, NO_PROJECT } from "@/lib/photos/format";
 import { cn } from "@/lib/utils";
 
 // The pieces of a grid's filters that the phone's Filter pop-up and the
@@ -22,6 +25,63 @@ export interface FilterChoices {
   projects: FilterOption[] | null;
   uploaders: FilterOption[];
   tags: FilterOption[];
+  /**
+   * The project list is loaded only when someone opens the Project filter
+   * (ProjectFilterChip, useProjectFilterOptions), not whenever a grid shows:
+   * `projects` is then [] and `projectLabel` names the chosen project.
+   */
+  lazyProjects?: boolean;
+  projectLabel?: string | null;
+}
+
+/** The Project filter's menu, loaded only while `enabled` (its menu or the Filter sheet is open). */
+export function useProjectFilterOptions(enabled: boolean): FilterOption[] | undefined {
+  const { data: jobs } = usePhotoJobs(enabled);
+  return useMemo(() => (jobs ? toProjectOptions(jobs) : undefined), [jobs]);
+}
+
+/**
+ * How the chosen project reads on its chip: "#3962 · Westbridge", from that
+ * one project's read (or any project list already cached), never the whole
+ * list. Null when no project is chosen.
+ */
+export function useProjectFilterLabel(projectId: string | null): string | null {
+  const named = projectId !== null && projectId !== NO_PROJECT_VALUE;
+  const { data: job } = usePhotoJob(named ? projectId : null);
+  if (projectId === null) return null;
+  if (projectId === NO_PROJECT_VALUE) return NO_PROJECT;
+  return job ? jobLabel(job) : "Project";
+}
+
+/**
+ * The Project chip, which loads the project list when its menu first opens.
+ * The list is shared with every other project picker, so it opens from cache
+ * after that.
+ */
+export function ProjectFilterChip({
+  active,
+  onSelect,
+  onClear,
+}: {
+  /** The chosen project id, NO_PROJECT_VALUE, or null. */
+  active: string | null;
+  onSelect(project: string): void;
+  onClear(): void;
+}) {
+  const [opened, setOpened] = useState(false);
+  const options = useProjectFilterOptions(opened);
+  const label = useProjectFilterLabel(active);
+  return (
+    <FilterChip
+      label="Project"
+      active={label}
+      options={options ?? []}
+      loading={options === undefined}
+      onOpenChange={(open) => open && setOpened(true)}
+      onSelect={onSelect}
+      onClear={onClear}
+    />
+  );
 }
 
 export const FILE_TYPE_OPTIONS: FilterOption[] = FILE_TYPE_LABELS.map((label) => ({
@@ -29,7 +89,7 @@ export const FILE_TYPE_OPTIONS: FilterOption[] = FILE_TYPE_LABELS.map((label) =>
   label,
 }));
 
-const labelOf = (options: FilterOption[] | null, value: string, fallback: string) =>
+const labelOf = (options: FilterOption[] | null | undefined, value: string, fallback: string) =>
   options?.find((option) => option.value === value)?.label ?? fallback;
 
 /** One active filter as a removable chip: what it reads, and the change that removes it. */
@@ -42,7 +102,8 @@ export interface ActiveFilter {
 export function activeFilters(filters: BrowseFilters, choices: FilterChoices): ActiveFilter[] {
   const chips: ActiveFilter[] = [];
   if (filters.project) {
-    chips.push({ key: "project", label: labelOf(choices.projects, filters.project, "Project"), remove: { project: null } });
+    const label = choices.projectLabel ?? labelOf(choices.projects, filters.project, "Project");
+    chips.push({ key: "project", label, remove: { project: null } });
   }
   if (filters.uploader) {
     chips.push({ key: "uploader", label: labelOf(choices.uploaders, filters.uploader, "Uploader"), remove: { uploader: null } });
@@ -133,6 +194,7 @@ export const menuItemClass = "min-h-11 px-3 text-base focus:bg-[#2680FC] focus:t
 /**
  * One dropdown filter chip. It renders nothing when there is nothing to choose
  * and nothing chosen: a menu that only says "None yet" cannot help anyone.
+ * A chip whose options load when it opens (`loading`) shows until they land.
  */
 export function FilterChip({
   label,
@@ -141,6 +203,8 @@ export function FilterChip({
   onSelect,
   onClear,
   clearLabel = `Show every ${label.toLowerCase()}`,
+  loading = false,
+  onOpenChange,
 }: {
   label: string;
   active: string | null;
@@ -149,10 +213,13 @@ export function FilterChip({
   onClear(): void;
   /** The menu row that takes the filter off. */
   clearLabel?: string;
+  /** The options are still on their way: the menu says so. */
+  loading?: boolean;
+  onOpenChange?(open: boolean): void;
 }) {
-  if (options.length === 0 && !active) return null;
+  if (options.length === 0 && !active && !loading) return null;
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -175,6 +242,11 @@ export function FilterChip({
             className={cn(menuItemClass, "text-[#8bbaff]")}
           >
             {clearLabel}
+          </DropdownMenuItem>
+        )}
+        {loading && (
+          <DropdownMenuItem disabled className={cn(menuItemClass, "text-[#b4b4b4]")}>
+            Loading {label.toLowerCase()}s...
           </DropdownMenuItem>
         )}
         {options.map((option) => (

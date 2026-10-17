@@ -10,6 +10,7 @@ import { GET as read, PATCH as control } from '@/app/api/photo-actions/batches/[
 import { POST as materialize } from '@/app/api/photo-actions/batches/[id]/materialize/route';
 import { POST as approve } from '@/app/api/photo-actions/batches/[id]/approve/route';
 import { POST as apply } from '@/app/api/photo-actions/batches/[id]/apply/route';
+import { GET as candidates } from '@/app/api/photo-actions/batches/[id]/candidates/route';
 import { POST as consume } from '@/app/api/photo-migrations/handoffs/consume/route';
 import { DELETE as remove, PATCH as edit } from '@/app/api/photos/[id]/route';
 import { GET as dedupe } from '@/app/api/photos/dedupe/route';
@@ -36,7 +37,9 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
 
  it('freezes20 confirmed IDs, leaves21st untouched, preserves retention on replay, and blocks target additions',async()=>{
   const j=await job(),ids=[];for(let i=0;i<20;i++)ids.push(await photo(j.id));
-  const d=await draft('trash',{job_number:j.number,scope:'active'});const approved=await confirm(d.batch.id);expect(approved.total).toBe(20);
+  const d=await draft('trash',{job_number:j.number,scope:'active'});expect(d.unresolved).toEqual([]);
+  expect((await json(await call(materialize,d.batch.id,{}))).selection_size).toBeNull();
+  const approved=await confirm(d.batch.id);expect(approved.total).toBe(20);
   const added=await photo(j.id);
   const first=await json(await call(apply,d.batch.id,{photo_ids:ids}));expect(first.outcomes).toHaveLength(20);expect(first.outcomes.every((o:{status:string})=>o.status==='applied')).toBe(true);
   const retained=await f.admin.from('photos').select('id,deleted_at,purge_after').in('id',ids);
@@ -116,6 +119,16 @@ describe('exact confirmed action routes (AC-5, AC-7, AC-8, AC-9)',()=>{
   const j=await job(),a=await photo(j.id),b=await photo(j.id);
   const d=await draft('move',{photos:[{job_number:j.number,original_filename:'file.jpg'}]},j.id);
   const unresolved=await json(await call(materialize,d.batch.id,{}));expect(unresolved.unresolved[0].total).toBe(2);expect(unresolved.total).toBe(0);
+  // No response repeats the selection (VIEW-1): materialize says its size, and a page read or the
+  // candidates route reads the one reference it needs. `selector:{}` is a one-release stub so a
+  // confirm page loaded before the deploy does not throw (actions.ts LEGACY_SELECTOR_STUB).
+  expect(unresolved.batch.selector).toEqual({});expect(unresolved.selection_size).toBe(1);
+  const page=await json(await call(read,d.batch.id,undefined,f.employeeA,'GET'));
+  expect(page.batch.selector).toEqual({});expect(page.unresolved[0]).toMatchObject({reference_index:0,reason:'ambiguous',total:2});
+  expect((await json(await call(candidates,d.batch.id,undefined,f.employeeA,'GET','?reference_index=0'))).total).toBe(2);
+  await json(await call(candidates,d.batch.id,undefined,f.employeeA,'GET','?reference_index=1'),400);
+  await json(await call(candidates,d.batch.id,undefined,f.employeeA,'GET','?reference_index=x'),400);
+  await json(await call(candidates,randomUUID(),undefined,f.employeeA,'GET','?reference_index=x'),404);
   await json(await call(approve,d.batch.id,{}),409);
   const resolved=await json(await call(materialize,d.batch.id,{choices:{0:b}}));expect(resolved.items[0].photo_id).toBe(b);
   const missing=await draft('trash',{photos:[{job_number:j.number,original_filename:'missing.jpg'}]});expect((await json(await call(materialize,missing.batch.id,{}))).unresolved[0].reason).toBe('not_found');

@@ -4,6 +4,8 @@ import {
   uploadRetryDelay, UploadRequestError,
 } from "./upload-http";
 import { classifyMediaFailure } from "./media-retry";
+import { ORIGINAL_CACHE_SECONDS } from "./storage-cache";
+import { TUS_CHUNK_BYTES } from "./upload-constants";
 import type { ByteProgress, UploadTransferError } from "./upload";
 
 /**
@@ -13,13 +15,17 @@ import type { ByteProgress, UploadTransferError } from "./upload";
 export type ResumableUpload = (
   path: string,
   file: File,
-  options: { contentType: string; onProgress?: ByteProgress; signal?: AbortSignal; upsert?: boolean }
+  options: {
+    contentType: string; onProgress?: ByteProgress; signal?: AbortSignal; upsert?: boolean;
+    /** Seconds browsers and the CDN may cache the file; defaults to the
+     * originals' week (storage-cache.ts), since only originals go resumable. */
+    cacheControl?: string;
+  }
 ) => Promise<{ error: UploadTransferError | null }>;
 
-/** Plain .upload() is for <=6 MB; anything bigger goes resumable (TUS). */
-export const RESUMABLE_THRESHOLD_BYTES = 6 * 1024 * 1024;
-/** Supabase's TUS endpoint requires chunks of EXACTLY 6 MB. */
-export const TUS_CHUNK_BYTES = 6 * 1024 * 1024;
+// Still exported from here for existing importers; new code imports them from
+// upload-constants.ts, which does not load tus-js-client.
+export { RESUMABLE_THRESHOLD_BYTES, TUS_CHUNK_BYTES } from "./upload-constants";
 
 const PHOTOS_BUCKET = "photos";
 
@@ -146,7 +152,7 @@ export function createResumableUpload(
           bucketName: PHOTOS_BUCKET,
           objectName: path,
           contentType: options.contentType,
-          cacheControl: "3600",
+          cacheControl: options.cacheControl ?? ORIGINAL_CACHE_SECONDS,
         },
         // Fresh token on every request — this is what lets a chunk sent an
         // hour into an upload (or a resume after a kill) still authorize.
