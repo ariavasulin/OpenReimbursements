@@ -199,3 +199,23 @@ test('pgClientConfig drops sslmode from the URL and always uses TLS', () => {
   assert.deepEqual(cfg.ssl, { rejectUnauthorized: false });
   assert.equal(cfg.statement_timeout, 120000);
 });
+
+test('refresh_jobs returning ok:false marks the run failed without throwing', async () => {
+  const { mirror, logs, clients } = setup({ clientOpts: { refreshResult: { ok: false, error: 'boom' } } });
+  const result = await mirror.runOnce();
+  assert.equal(result.ok, false);
+  assert.equal(syncRuns(clients[0]).length, TABLES.length); // table rows still recorded
+  assert.ok(logs.some((l) => /refresh_jobs FAILED/.test(l)));
+  const status = mirror.status();
+  assert.equal(status.lastOk, false);
+  assert.equal(status.refreshJobs.ok, false);
+  assert.deepEqual(status.refreshJobs.result, { ok: false, error: 'boom' });
+});
+
+test('refresh_jobs returning ok:true keeps the run ok and exposes the result', async () => {
+  const { mirror, clients } = setup({ clientOpts: { refreshResult: { ok: true, upserted: 2, skipped_trashed: 0, dropped_from_open: [] } } });
+  const result = await mirror.runOnce();
+  assert.equal(result.ok, true);
+  assert.equal(clients[0].ended, true);
+  assert.equal(mirror.status().refreshJobs.result.upserted, 2);
+});

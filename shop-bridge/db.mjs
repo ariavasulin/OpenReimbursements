@@ -41,6 +41,10 @@ export function buildConfig(env = process.env) {
       // The shop instance most likely has a self-signed certificate; this hop stays on the LAN.
       trustServerCertificate: trustCert,
       readOnlyIntent: true,
+      // Keep datetime values as the wall-clock time stored in SQL Server. With the default
+      // (useUTC: true) a 9:00 shop timestamp would land in Postgres shifted by the box's
+      // UTC offset, because pg writes JS Dates in local time.
+      useUTC: false,
     },
   };
   if (instanceName) config.options.instanceName = instanceName;

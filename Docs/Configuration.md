@@ -29,6 +29,19 @@ OPENAI_API_KEY=sk-...        # For GPT-5 models
 ANTHROPIC_API_KEY=sk-ant-... # For Claude models
 ```
 
+### Optional: Shop database bridge
+
+Server-only. Set all four to let API routes read the office database through the shop
+bridge; leave them unset and the feature is off (`/api/shop/health` reports
+`not_configured`). See [Shop Bridge Runbook](shop-bridge-runbook.md).
+
+```bash
+SHOP_BRIDGE_URL=https://shop.<your-throwaway-domain>   # the tunnel hostname, no path
+SHOP_BRIDGE_TOKEN=<64 hex chars>                        # the bridge's own bearer token
+CF_ACCESS_CLIENT_ID=<...>.access                        # Cloudflare Access service token
+CF_ACCESS_CLIENT_SECRET=<...>
+```
+
 ## Package Scripts
 
 ```json

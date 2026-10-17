@@ -17,3 +17,4 @@
   - [Components](Components.md)
   - [Photos Runbook](photos-runbook.md)
   - [DWS MCP Runbook](dws-mcp-runbook.md)
+  - [Shop Bridge Runbook](shop-bridge-runbook.md)

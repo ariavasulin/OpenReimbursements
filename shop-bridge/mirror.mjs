@@ -85,7 +85,7 @@ export function createMirror({
   createPgClient = defaultCreatePgClient,
 }) {
   const say = (msg) => log(`${new Date().toISOString()} mirror ${msg}`);
-  const state = { lastRunAt: null, lastOk: null, inFlight: false, tables: {} };
+  const state = { lastRunAt: null, lastOk: null, inFlight: false, tables: {}, refreshJobs: null };
   let timer = null;
 
   async function copyTable(client, table) {
@@ -159,7 +159,16 @@ export function createMirror({
       // shop.refresh_jobs() writes its own sync_runs row ('public.jobs'), so none is written here.
       try {
         const res = await client.query('SELECT shop.refresh_jobs() AS result');
-        say(`refresh_jobs ok ${JSON.stringify(res.rows?.[0]?.result ?? null)}`);
+        const result = res.rows?.[0]?.result ?? null;
+        // The function records its own failure row and returns { ok: false, error } rather
+        // than raising, so that row survives; it never throws for a data problem.
+        if (result && result.ok === false) {
+          allOk = false;
+          say(`refresh_jobs FAILED ${JSON.stringify(result)}`);
+        } else {
+          say(`refresh_jobs ok ${JSON.stringify(result)}`);
+        }
+        state.refreshJobs = { ok: !(result && result.ok === false), finishedAt: new Date().toISOString(), result };
       } catch (err) {
         allOk = false;
         say(`refresh_jobs FAILED error=${JSON.stringify(err.message)}`);
@@ -196,6 +205,7 @@ export function createMirror({
         lastOk: state.lastOk,
         inFlight: state.inFlight,
         tables: structuredClone(state.tables),
+        refreshJobs: structuredClone(state.refreshJobs),
       };
     },
   };
