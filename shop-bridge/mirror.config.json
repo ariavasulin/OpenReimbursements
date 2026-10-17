@@ -1,0 +1,3 @@
+{
+  "tables": ["tblProject", "tblLocation", "tblMas90JobMasterOpen", "tblContact", "tblHardware"]
+}
