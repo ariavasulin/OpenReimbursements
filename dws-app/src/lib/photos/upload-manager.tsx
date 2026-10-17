@@ -40,6 +40,8 @@ import type { CancelUploadOutcome } from "./upload-contract";
 import { createTaskLimiter } from "./task-limiter";
 
 let engine: ReturnType<typeof importEngine> | undefined;
+/** Whether a batch, not only a preload, is waiting on the load in flight. */
+let engineRequested = false;
 const importEngine = () =>
   Promise.all([import("./upload"), import("./upload-browser")]).then(([u, b]) => ({
     uploadOne: u.uploadOne,
@@ -52,12 +54,23 @@ const importEngine = () =>
     cancelBrowserUpload: b.cancelBrowserUpload,
   }));
 /** The upload code, fetched once. A failed fetch (a dropped connection) is
- * not remembered, so the next upload or retry fetches again. */
-function loadEngine() {
+ * not remembered, so the next upload or retry fetches again.
+ *
+ * `requested`: a batch is waiting on the code. Then, after a deploy, the old
+ * file is gone for good and the tab moves onto the new build; the queue is
+ * active by now, so its leave-page prompt guards the batch and the saved
+ * manifest resumes it. A background preload never reloads: the files the
+ * person is still picking live only in the upload sheet's state and would be
+ * lost, and the next real load fetches the code again anyway. */
+function loadEngine(requested = true) {
+  // A batch may join a preload already in flight; the check then runs on
+  // that shared load's failure as if the batch had started it.
+  engineRequested ||= requested;
   engine ??= importEngine().catch((error: unknown) => {
     engine = undefined;
-    // After a deploy the old file is gone for good: move onto the new build.
-    void reloadIfRedeployed(error);
+    const wanted = engineRequested;
+    engineRequested = false;
+    if (wanted) void reloadIfRedeployed(error);
     throw error;
   });
   return engine;
@@ -65,7 +78,7 @@ function loadEngine() {
 /** Start fetching the upload code before it is needed, e.g. when the upload
  * sheet opens, so the first file does not wait on it. */
 export function preloadUploadEngine() {
-  void loadEngine().catch(() => undefined);
+  void loadEngine(false).catch(() => undefined);
 }
 
 const MANIFEST_KEY = "photos.upload-manifest";

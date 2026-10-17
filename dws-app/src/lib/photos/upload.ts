@@ -7,9 +7,11 @@ import type { ResumableUpload } from "./upload-tus";
 import { RESUMABLE_THRESHOLD_BYTES } from "./upload-constants";
 import { isSha256 } from "./apiShared";
 import {
+  ExifReaderUnavailableError,
   extractCapturedAt as defaultExtractCapturedAt,
   type CapturedAt,
 } from "./exif";
+import { reloadIfRedeployed } from "./redeploy";
 import { baseName, classifyFile, extensionOf, rewrap, type Classified } from "./classify";
 import { readSidecarMeta, SIDECAR_METADATA_MAX_BYTES } from "./sidecar";
 import { METADATA_MAX_BYTES, canDecodePreview, isRawImage } from "./decode-limits";
@@ -285,7 +287,17 @@ export function prepareUpload(
       }
       try {
         return await (deps.extractCapturedAt ?? defaultExtractCapturedAt)(file, captureOptions);
-      } catch {
+      } catch (error) {
+        // A reader that could not be downloaded leaves the date unknown, not
+        // missing: fail this file like a dropped connection so the batch
+        // waits and tries it again, instead of storing the file's date as
+        // the capture time. After a deploy the old reader file is gone for
+        // good, so move onto the new build (the queue's leave-page prompt
+        // guards the batch, and it resumes from its saved manifest).
+        if (error instanceof ExifReaderUnavailableError) {
+          void reloadIfRedeployed(error.cause);
+          throw error;
+        }
         captureNotes.push("Embedded capture metadata could not be read.");
         return fallbackCapture();
       }

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { UploadRequestError } from "./upload-http";
+import { ExifReaderUnavailableError } from "./exif";
 import {
   LEASE_RENEW_MS,
   type UploadIdentity,
@@ -198,6 +199,19 @@ describe("uploadOne", () => {
       captured_at: null,
       captured_at_source: "upload",
     });
+  });
+
+  it("fails like a dropped connection, storing no date, when the PNG reader could not be downloaded", async () => {
+    const { deps, finalized } = makeDeps();
+    deps.extractCapturedAt = async () => {
+      throw new ExifReaderUnavailableError(new Error("Loading chunk 123 failed."));
+    };
+
+    const result = await uploadOne(makeFile("shot.png", "image/png"), "photo-1", META, deps);
+
+    expect(result).toMatchObject({ status: "failed", retryable: true, errorCode: "network_error" });
+    expect(isConnectionFailure(result)).toBe(true);
+    expect(finalized).toHaveLength(0);
   });
 });
 

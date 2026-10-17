@@ -8,7 +8,10 @@ const mocks = vi.hoisted(() => ({
   queryClient: { invalidateQueries: vi.fn() },
   /** Makes the next load of the upload code fail, like a dropped connection. */
   failLoad: false,
+  /** The deploy check a failed load of the upload code hands its error to. */
+  reload: vi.fn(),
 }));
+vi.mock('./redeploy', () => ({ reloadIfRedeployed: mocks.reload }));
 vi.mock('@/lib/supabaseClient', () => ({ supabase: { auth: { getSession: mocks.session } } }));
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => mocks.queryClient }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -22,7 +25,7 @@ vi.mock('./upload-browser', () => ({
   },
   cancelBrowserUpload: mocks.cancel,
 }));
-import { UploadManagerProvider, useUploadManager } from './upload-manager';
+import { UploadManagerProvider, preloadUploadEngine, useUploadManager } from './upload-manager';
 import type { UploadIdentity, UploadResult } from './upload';
 import type { CancelUploadOutcome } from './upload-contract';
 
@@ -48,6 +51,24 @@ describe('the upload code loads on first use', () => {
   });
   afterEach(async () => { if (root) await act(async () => { root!.unmount(); root = undefined; }); document.body.innerHTML = ''; vi.unstubAllGlobals(); mocks.failLoad = false; });
 
+  it('a background preload that fails never reloads the tab (the files being picked would be lost)', async () => {
+    mocks.failLoad = true;
+    preloadUploadEngine();
+    // The imports settle on real ticks, not microtasks; let the failed load finish.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(mocks.reload).not.toHaveBeenCalled();
+  });
+
+  it('a batch that joins a preload still in flight gets the deploy check when that load fails', async () => {
+    mocks.failLoad = true;
+    mocks.uploadOne.mockResolvedValue({ status: 'done', warnings: [] });
+    await mount();
+    preloadUploadEngine();
+    await enqueue();
+    await vi.waitFor(() => expect(manager.items[0]).toMatchObject({ status: 'failed' }));
+    expect(mocks.reload).toHaveBeenCalledTimes(1);
+  });
+
   it('fails the file with a retry when the code cannot load, and loads it again on retry', async () => {
     mocks.failLoad = true;
     mocks.uploadOne.mockResolvedValue({ status: 'done', warnings: [] });
@@ -56,6 +77,9 @@ describe('the upload code loads on first use', () => {
     await vi.waitFor(() => expect(manager.items[0]).toMatchObject({ status: 'failed' }));
     expect(manager.items[0].error).toContain('the upload code did not load');
     expect(mocks.uploadOne).not.toHaveBeenCalled();
+    // A batch was waiting on the code, so the deploy check ran with the import's error.
+    expect(mocks.reload).toHaveBeenCalledTimes(1);
+    expect(mocks.reload.mock.calls[0][0]).toBeInstanceOf(Error);
     mocks.failLoad = false; // the connection is back
     await act(async () => { manager.retry(key); });
     await vi.waitFor(() => expect(manager.items[0].status).toBe('done'));
