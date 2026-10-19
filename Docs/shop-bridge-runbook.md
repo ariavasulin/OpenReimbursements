@@ -112,7 +112,9 @@ those characters.
 
 ### 1.6 The SQL Server login (ask the admin)
 
-Ask the shop's admin for one of these, whichever needs no restart of SQL Server:
+Bring [the explainer written for the admin](shop-bridge-for-the-database-admin.md); it
+covers the security and reliability questions they will ask, and ends with the SQL
+below. Ask for one of these, whichever needs no restart of SQL Server:
 
 - **A SQL login** (works when the instance allows "mixed mode"; check with
   `SELECT SERVERPROPERTY('IsIntegratedSecurityOnly')` returning `0`):

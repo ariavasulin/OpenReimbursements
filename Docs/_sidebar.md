@@ -18,3 +18,4 @@
   - [Photos Runbook](photos-runbook.md)
   - [DWS MCP Runbook](dws-mcp-runbook.md)
   - [Shop Bridge Runbook](shop-bridge-runbook.md)
+  - [Shop Bridge for the Database Admin](shop-bridge-for-the-database-admin.md)

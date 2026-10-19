@@ -41,6 +41,9 @@ export function buildConfig(env = process.env) {
       // The shop instance most likely has a self-signed certificate; this hop stays on the LAN.
       trustServerCertificate: trustCert,
       readOnlyIntent: true,
+      // Shows up as program_name in sys.dm_exec_sessions, so the shop's admin can tell
+      // the bridge's sessions apart from Access users.
+      appName: 'dws-bridge',
       // Keep datetime values as the wall-clock time stored in SQL Server. With the default
       // (useUTC: true) a 9:00 shop timestamp would land in Postgres shifted by the box's
       // UTC offset, because pg writes JS Dates in local time.
