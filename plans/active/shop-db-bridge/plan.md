@@ -23,7 +23,7 @@ tables in Supabase, and the web apps reading the office database). **Delivery: g
 Server Express two ways: a live read-only query path for ad-hoc use, and a 15-minute
 mirror of chosen tables in Postgres for the apps. No inbound hole in the shop network.
 Source of truth: this plan, then the ticket, then the research. Locked decisions:
-Decisions 1–14 below. Current phase: **Phases 1, 2 (code), and 4 built on branch `shop-db-bridge`, 2026-10-17; Phase 0 items 2, 4, 5, the production migrations, and the shop install (Phase 3) are Ari's.**
+Decisions 1–20 below. Current phase: **Built on branch `shop-db-bridge` (2026-10-17), then narrowed to a statement file after the admin meeting (2026-10-22, decisions 17–20); Phase 0 items 2, 4, 5, the admin's statements, the production migrations, and the shop install (Phase 3) are Ari's.**
 Stop-and-ask triggers: anything run against the shop's SQL Server or the production
 Supabase project (including migrations); creating or changing a Cloudflare account,
 zone, or token; any production env var. Everything else (file layout, helper names,
@@ -163,7 +163,7 @@ flowchart LR
 | Decision | Warrant | Reversal condition |
 |---|---|---|
 | 1. HTTP query service, not the raw SQL port, behind the tunnel | Vercel functions cannot run `cloudflared`, which raw TCP through a tunnel requires | None expected |
-| 2. The bridge accepts arbitrary single `SELECT`s, guarded by a read-only login, keyword and statement checks, timeout and row cap | Ari asked for an agnostic read ability; the login makes writes impossible regardless of the checks | Switch to a named-query allowlist if the log shows misuse or load |
+| 2. ~~The bridge accepts arbitrary single `SELECT`s~~ Superseded 2026-10-22 by 17: the bridge runs only statements listed in `queries.json` on the box (mirror entries and named live queries, the latter empty today); the keyword guard, timeout and row cap still apply to every listed statement | The shop's admin asked for the specific queries rather than open query rights; the apps need no ad-hoc reads today | Reopen ad-hoc `SELECT`s only with the admin's agreement |
 | 3. Bridge and mirror run on the bridge box, not on the shop server | Ari's stated setup; keeps new software off the machine that runs the business | Move onto the shop server if the admin prefers |
 | 4. Plain Node (`.mjs`), dependencies `mssql` and `pg` only, built-in `http`, no build step | Smallest thing to install and debug on Windows; one language with the rest of the repo | None expected |
 | 5. Two auth layers on the bridge (Cloudflare service token at the edge, bearer inside) | Cheap; survives either side being misconfigured | None expected |
@@ -175,9 +175,13 @@ flowchart LR
 | 11. The mirror is pushed from the bridge box every 15 minutes, in the same service as the bridge | Vercel Hobby crons are daily; one service is one thing to install and watch | Pull from a Vercel cron if the plan becomes Pro and the box is unwanted |
 | 12. Each mirrored table is replaced whole, inside one Postgres transaction, over a direct `pg` connection to the session pooler | No reliable modified-at columns in the source; tables are small; a transaction means readers never see a half-copied table | Incremental sync for a large table if one is ever added |
 | 13. The box holds a dedicated Postgres role `shop_mirror` with rights only on the `shop` schema and `execute` on `shop.refresh_jobs()` | Least privilege; the box never holds the service-role key | — |
-| 14. Mirror table DDL is generated from SQL Server metadata (read through the bridge) into a migration file that Ari reviews and applies | Keeps the repo rule "every schema change is a migration"; still one command to add a table | Let the service create tables itself if the migration step proves too slow |
+| 14. ~~Mirror table DDL is generated into a migration file~~ Superseded 2026-10-22 by 18: the service creates each landing table (`shop.<into>`, all columns nullable, no PK) from the statement's result set on first run, and stops that entry with a clear error if the shape later differs; it never drops or alters | The admin authors the statements, so their shape is not known when migrations are written | Return to committed DDL if the admin wants the landing shape reviewed in the repo |
 | 15. `public.jobs` refresh runs in SQL (`shop.refresh_jobs()`) after each mirror run, mirrors `import-jobs.mjs`'s rules, and never deactivates | Pure SQL is testable in `test:db`; deactivation hides photos and the runbook calls it undecided | Decide deactivation after a few weeks of "dropped from open" logs |
 | 16. A new runtime is being added (the hosted-MCP plan asks before this) | Ari asked for it explicitly in the ticket | — |
+| 17. Least privilege by a statement file: `queries.json` on the box is the complete list of SQL the service can run; the admin writes or approves every line; the shipped statements are suggestions with the needed columns named | Ari 2026-10-22, after meeting the admin: limit the bridge to what the receipts and photos apps need now and build trust; "she can write the queries" | Add statements only by agreement with the admin |
+| 18. Landing tables are created by the service from the result set (see 14); the Supabase migrations ship only the schema, the role, `sync_runs`, `refresh_jobs()`, and the status function | Follows from 17 | As 14 |
+| 19. Mirror set is `projects`, `locations`, `open_jobs`, `contacts` (all rows of `tblContact`, 10 columns); `tblHardware` dropped | Ari 2026-10-22: all contacts, because only a person who exists as a DWS contact may register an account (employees now, architects and contractors later); hardware is not used by any app | Add a table only by agreement with the admin |
+| 20. One document, `shop-bridge/README.md`, for developer, admin, and future maintainer; shared with the admin as a secret gist rather than the repository | Ari 2026-10-22: do not point the admin at the whole repository; one neutral document instead of a runbook plus an admin explainer | Move to the service's own repository when it gets one |
 
 ## Alternatives considered
 
@@ -487,3 +491,23 @@ Vercel env → confirm the health route.
   contact is the shop install. The Windows scripts were not executed (no PowerShell here).
 - `shop_mirror` has `select, insert` on `sync_runs` and `select, insert, delete` on the
   mirror tables; `delete` on `sync_runs` is revoked on purpose.
+
+## Scope change (2026-10-22)
+
+After Ari met the shop's database admin: she is open to the setup, wants to see the
+specific queries rather than grant open query rights, and will write or approve them.
+Rework on branch `shop-db-bridge`:
+
+- `shop-bridge/queries.json` replaces `mirror.config.json`; ad-hoc `POST /query` and
+  `GET /ddl` are gone; `POST /query/<name>` runs a named `live` statement (none shipped).
+- Landing tables `shop.projects`, `shop.locations`, `shop.open_jobs`, `shop.contacts`
+  are created by the service; the `shop_tables` migration is deleted and
+  `refresh_jobs()` reads the new names.
+- `shop-bridge/README.md` is the single document; the two `Docs/` pages collapse into a
+  pointer. The admin gets it, with the code, as a secret gist.
+- Still Ari's: the admin's account in the apps (phone number pending), the login,
+  Phase 0 answers, migrations, shop install.
+- Raised by the admin and out of this plan's scope: photo and receipt storage buckets are
+  public, so any object URL once seen works forever regardless of share-link state; needs
+  its own plan (private buckets plus signed URLs), followed by a security audit.
+
