@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildCreateTable, isSafeTableName, pgType, SQL_TO_PG } from './types.mjs';
+import { buildCreateTable, buildCreateTableFromRecordset, isSafeTableName, pgType, SQL_TO_PG } from './types.mjs';
 
 test('type map', () => {
   const expected = {
@@ -60,6 +60,31 @@ test('buildCreateTable without a primary key, composite keys, and quoting', () =
       { name: 'B', dataType: 'int', nullable: false },
     ], ['A', 'B']),
     /primary key \("A", "B"\)\n\);$/,
+  );
+});
+
+test('buildCreateTableFromRecordset: result order, mapped types, all nullable, no primary key', () => {
+  // mssql recordset.columns: keyed by name, ordered by `index`, type.declaration is the SQL Server type.
+  const columns = {
+    Archived: { index: 2, name: 'Archived', type: { declaration: 'bit' } },
+    ProjectID: { index: 0, name: 'ProjectID', type: { declaration: 'int' } },
+    Project: { index: 1, name: 'Project', type: { declaration: 'varchar' } },
+    Completed: { index: 3, name: 'Completed', type: { declaration: 'datetime' } },
+    Odd: { index: 4, name: 'Odd', type: {} },
+  };
+  assert.equal(
+    buildCreateTableFromRecordset('projects', columns),
+    'create table if not exists shop."projects" (\n' +
+      '  "ProjectID" integer,\n' +
+      '  "Project" text,\n' +
+      '  "Archived" boolean,\n' +
+      '  "Completed" timestamp,\n' +
+      '  "Odd" text\n' +
+      ');',
+  );
+  assert.equal(
+    buildCreateTable('x', [{ name: 'a', dataType: 'int', nullable: true }]),
+    'create table if not exists shop."x" (\n  "a" integer\n);',
   );
 });
 

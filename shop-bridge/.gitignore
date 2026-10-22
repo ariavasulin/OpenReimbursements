@@ -2,5 +2,5 @@ node_modules/
 .env
 logs/
 # The repo root ignores *.json and .env*; these two belong in git.
-!mirror.config.json
+!queries.json
 !.env.example

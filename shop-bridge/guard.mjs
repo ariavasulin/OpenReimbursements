@@ -1,9 +1,10 @@
-// The statement guard for POST /query: a pure function, no database access.
+// The statement guard for queries.json: a pure function, no database access.
+// Every statement is checked when the file loads and again right before it runs.
 //
 // It is a second line of defence. The first is the shop database login itself,
 // which is read-only (db_datareader + db_denydatawriter), so even SQL that slips
 // past this check cannot write. The guard is deliberately conservative: when in
-// doubt it rejects, and the caller can pass values through `params` instead of
+// doubt it rejects, and a statement can take values through `@params` instead of
 // inlining them (a banned word inside a string literal is still rejected).
 
 export const MAX_SQL_BYTES = 64 * 1024;

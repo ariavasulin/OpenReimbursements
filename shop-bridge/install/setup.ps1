@@ -10,10 +10,13 @@
   What it does, in order:
     1. Checks Node.js 22+ and nssm are on PATH (prints download links if not).
     2. Stops the service if it is already installed.
-    3. Copies the service files to C:\dws-bridge (not node_modules, tests, or install\).
+    3. Copies the service files to C:\dws-bridge (not node_modules, tests, or install\),
+       including queries.json, the only SQL the service runs. Removes files from older
+       versions that are no longer used.
     4. Runs `npm ci --omit=dev` there.
     5. Asks for each setting and writes C:\dws-bridge\.env. Secrets are typed hidden and
-       never printed. On a re-run, pressing Enter keeps the current value.
+       never printed. On a re-run, pressing Enter keeps the current value, and optional
+       settings added by hand (SHOP_MIRROR_MAX_ROWS, SHOP_QUERIES_FILE) are kept.
     6. Restricts the folder to Administrators, SYSTEM, and the service account.
     7. Installs (or updates) the NSSM service "dws-bridge": node --env-file=.env server.mjs,
        starts at boot, restarts on crash, logs to C:\dws-bridge\logs\ with rotation.
@@ -103,6 +106,19 @@ foreach ($file in $files) {
   Write-Host "  $relative"
 }
 
+# Older versions shipped these; the service no longer uses them.
+foreach ($stale in @('mirror.config.json', 'ddl.mjs', 'scripts\ddl.mjs')) {
+  $stalePath = Join-Path $InstallDir $stale
+  if (Test-Path -LiteralPath $stalePath) {
+    Remove-Item -LiteralPath $stalePath -Force
+    Write-Host "  removed old $stale"
+  }
+}
+$staleScripts = Join-Path $InstallDir 'scripts'
+if ((Test-Path -LiteralPath $staleScripts) -and -not (Get-ChildItem -LiteralPath $staleScripts -Force)) {
+  Remove-Item -LiteralPath $staleScripts -Force
+}
+
 # --- 3. Dependencies ------------------------------------------------------------------
 
 Write-Step 'Installing dependencies (npm ci --omit=dev)'
@@ -189,6 +205,10 @@ foreach ($s in $settings) {
   $values[$name] = $plain
 }
 if ($values['SHOP_BRIDGE_TOKEN'].Length -lt 32) { throw 'SHOP_BRIDGE_TOKEN must be at least 32 characters.' }
+# Keep settings this script does not ask about (e.g. SHOP_MIRROR_MAX_ROWS, SHOP_QUERIES_FILE).
+foreach ($name in ($current.Keys | Sort-Object)) {
+  if (-not $values.Contains($name)) { $values[$name] = $current[$name] }
+}
 
 $lines = @('# Written by install/setup.ps1. Holds secrets: readable only by Administrators, SYSTEM, and the service account.')
 foreach ($name in $values.Keys) {

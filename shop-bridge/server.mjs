@@ -1,21 +1,22 @@
-// The bridge: a tiny HTTP service on 127.0.0.1 that runs one read-only SELECT
-// on the shop's SQL Server and returns rows as JSON. cloudflared on the same box
-// is its only client. Run directly, it also starts the mirror loop.
+// The bridge: a tiny HTTP service on 127.0.0.1 that runs one named, read-only
+// statement from queries.json on the shop's SQL Server and returns rows as JSON.
+// It never runs SQL sent by a caller. cloudflared on the same box is its only
+// client. Run directly, it also starts the mirror loop.
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadQueries } from './config.mjs';
 import { closePool, getPool as defaultGetPool } from './db.mjs';
-import { ddlForTables } from './ddl.mjs';
 import { checkReadOnlySql } from './guard.mjs';
-import { createMirror } from './mirror.mjs';
+import { createMirror, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
 import { isSafeTableName } from './types.mjs';
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_MAX_ROWS = 5000;
 export const MAX_ROWS_CAP = 50000;
-const MAX_DDL_TABLES = 50;
+const QUERY_PREFIX = '/query/';
+const BODY_KEYS = ['params', 'maxRows'];
 const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // Errors that mean "could not talk to SQL Server at all".
@@ -84,18 +85,22 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+/** Body of POST /query/<name>: `{ params?, maxRows? }`; an empty body means `{}`. */
 function parseQueryBody(text) {
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    throw new HttpError(400, 'bad_request', 'The request body is not valid JSON.');
+  let body = {};
+  if (text.trim() !== '') {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new HttpError(400, 'bad_request', 'The request body is not valid JSON.');
+    }
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw new HttpError(400, 'bad_request', 'The request body must be a JSON object.');
   }
-  if (typeof body.sql !== 'string' || body.sql.trim() === '') {
-    throw new HttpError(400, 'bad_request', 'The request body needs a "sql" string.');
+  const unknown = Object.keys(body).find((key) => !BODY_KEYS.includes(key));
+  if (unknown) {
+    throw new HttpError(400, 'bad_request', `Unknown field "${unknown}"; the body takes only "params" and "maxRows".`);
   }
   const params = body.params ?? {};
   if (typeof params !== 'object' || Array.isArray(params)) {
@@ -117,7 +122,7 @@ function parseQueryBody(text) {
     }
     maxRows = Math.min(body.maxRows, MAX_ROWS_CAP);
   }
-  return { sql: body.sql, params, maxRows };
+  return { params, maxRows };
 }
 
 function toJsonSafeRow(row) {
@@ -181,6 +186,8 @@ export function runQuery(pool, sql, params, maxRows) {
  * @param {string} [deps.server]  shown in /health
  * @param {string} [deps.database]  shown in /health
  * @param {() => object} [deps.mirrorStatus]
+ * @param {Record<string, string>} [deps.live]  the `live` statements from queries.json, by name
+ * @param {string[]} [deps.mirrorNames]  the `into` names of the `mirror` entries, shown in /health
  * @param {(line: string) => void} [deps.log]
  */
 export function createHandler({
@@ -189,8 +196,11 @@ export function createHandler({
   server = null,
   database = null,
   mirrorStatus = () => ({ enabled: false }),
+  live = {},
+  mirrorNames = [],
   log = (line) => console.log(line),
 } = {}) {
+  const queries = { mirror: [...mirrorNames], live: Object.keys(live) };
   const expectedDigest = token && token.length >= 32 ? sha256(token) : null;
 
   function requireAuth(req) {
@@ -211,25 +221,33 @@ export function createHandler({
       const pool = await getPool();
       const result = await pool.request().query('SELECT @@VERSION AS version');
       const version = String(result.recordset?.[0]?.version ?? '').split('\n')[0].trim();
-      return [200, { ok: true, ...base, version, mirror: mirrorStatus(), durationMs: Date.now() - started }];
+      return [200, { ok: true, ...base, version, mirror: mirrorStatus(), queries, durationMs: Date.now() - started }];
     } catch (err) {
       return [502, {
         ok: false,
         ...base,
         version: null,
         mirror: mirrorStatus(),
+        queries,
         durationMs: Date.now() - started,
         error: { code: 'db_unreachable', message: `Could not reach the shop database (${err?.code ?? 'unknown error'}).` },
       }];
     }
   }
 
-  async function query(req, info) {
+  async function query(req, name, info) {
     requireAuth(req);
-    const { sql, params, maxRows } = parseQueryBody(await readBody(req));
+    // Checked only after auth, so the names cannot be probed without the token.
+    if (!isSafeTableName(name) || !Object.hasOwn(live, name) || typeof live[name] !== 'string') {
+      throw new HttpError(404, 'not_found', `No live query named "${name}".`);
+    }
+    const { params, maxRows } = parseQueryBody(await readBody(req));
+    const sql = live[name];
+    info.name = name;
     info.sql = sql;
+    // Already checked when queries.json loaded; failing here means the statement changed under us.
     const verdict = checkReadOnlySql(sql);
-    if (!verdict.ok) throw new HttpError(400, 'not_read_only', `Query refused: ${verdict.reason}.`);
+    if (!verdict.ok) throw new Error(`live query "${name}" failed the read-only guard at run time: ${verdict.reason}`);
     const started = Date.now();
     const pool = await getPool();
     const { columns, rows, truncated } = await runQuery(pool, sql, params, maxRows);
@@ -238,35 +256,17 @@ export function createHandler({
     return [200, { columns, rows, rowCount: rows.length, truncated, durationMs: Date.now() - started }];
   }
 
-  async function ddl(req, url) {
-    requireAuth(req);
-    const tables = (url.searchParams.get('tables') ?? '').split(',').map((t) => t.trim()).filter(Boolean);
-    if (tables.length === 0) throw new HttpError(400, 'bad_request', 'Pass ?tables=tblA,tblB.');
-    if (tables.length > MAX_DDL_TABLES) throw new HttpError(400, 'bad_request', `At most ${MAX_DDL_TABLES} tables at once.`);
-    const bad = tables.find((t) => !isSafeTableName(t));
-    if (bad) throw new HttpError(400, 'bad_request', `"${bad}" is not a plain table name.`);
-    const pool = await getPool();
-    try {
-      return [200, { sql: await ddlForTables(pool, tables), tables }];
-    } catch (err) {
-      if (err?.code === 'ETABLENOTFOUND' || err?.code === 'ETABLENAME') {
-        throw new HttpError(400, 'bad_request', err.message);
-      }
-      throw err;
-    }
-  }
-
   return async function handler(req, res) {
     const started = Date.now();
     const url = new URL(req.url ?? '/', 'http://bridge.local');
-    const info = { sql: null, rowCount: null, truncated: null };
+    const info = { name: null, sql: null, rowCount: null, truncated: null };
     let status = 500;
     try {
       let result;
       if (req.method === 'GET' && url.pathname === '/health') result = await health();
-      else if (req.method === 'POST' && url.pathname === '/query') result = await query(req, info);
-      else if (req.method === 'GET' && url.pathname === '/ddl') result = await ddl(req, url);
-      else throw new HttpError(404, 'not_found', `No route for ${req.method} ${url.pathname}.`);
+      else if (req.method === 'POST' && url.pathname.startsWith(QUERY_PREFIX)) {
+        result = await query(req, url.pathname.slice(QUERY_PREFIX.length), info);
+      } else throw new HttpError(404, 'not_found', `No route for ${req.method} ${url.pathname}.`);
       status = result[0];
       sendJson(res, status, result[1]);
     } catch (raw) {
@@ -279,7 +279,8 @@ export function createHandler({
       const sqlSnippet = info.sql == null ? '-' : JSON.stringify(info.sql.replace(/\s+/g, ' ').trim().slice(0, 80));
       log([
         new Date().toISOString(), req.method, url.pathname, status, `${Date.now() - started}ms`,
-        `rows=${info.rowCount ?? '-'}`, `truncated=${info.truncated ?? '-'}`, `sql=${sqlSnippet}`,
+        `rows=${info.rowCount ?? '-'}`, `truncated=${info.truncated ?? '-'}`,
+        ...(info.name ? [`name=${info.name}`] : []), `sql=${sqlSnippet}`,
       ].join(' '));
     }
   };
@@ -290,20 +291,41 @@ function main() {
   const port = Number(env.SHOP_BRIDGE_PORT || 8787);
   const say = (line) => console.log(`${new Date().toISOString()} ${line}`);
 
+  // queries.json is the only SQL this program runs. Any problem in it stops the service here.
+  const queriesPath = env.SHOP_QUERIES_FILE
+    ? path.resolve(env.SHOP_QUERIES_FILE)
+    : fileURLToPath(new URL('./queries.json', import.meta.url));
+  const loaded = loadQueries(queriesPath);
+  if (!loaded.ok) {
+    say(`${queriesPath} is not valid; not starting:`);
+    for (const error of loaded.errors) say(`  ${error}`);
+    process.exitCode = 1;
+    return;
+  }
+  const { queries } = loaded;
+  say(`loaded ${queriesPath}: ${queries.mirror.length} mirror, ${Object.keys(queries.live).length} live`);
+
+  const maxRows = Number(env.SHOP_MIRROR_MAX_ROWS || DEFAULT_MIRROR_MAX_ROWS);
+  if (!Number.isInteger(maxRows) || maxRows < 1) {
+    say(`SHOP_MIRROR_MAX_ROWS must be a positive whole number (got ${JSON.stringify(env.SHOP_MIRROR_MAX_ROWS)}); not starting`);
+    process.exitCode = 1;
+    return;
+  }
+
   let mirror = null;
   if (env.SHOP_MIRROR_DATABASE_URL) {
-    const { tables } = JSON.parse(readFileSync(new URL('./mirror.config.json', import.meta.url), 'utf8'));
     mirror = createMirror({
       getPool: defaultGetPool,
       pgConnectionString: env.SHOP_MIRROR_DATABASE_URL,
-      tables,
+      mirror: queries.mirror,
+      maxRows,
       intervalMinutes: Number(env.SHOP_MIRROR_INTERVAL_MINUTES || 15),
     });
   } else {
     say('SHOP_MIRROR_DATABASE_URL is not set: the mirror is off');
   }
   if (!env.SHOP_BRIDGE_TOKEN || env.SHOP_BRIDGE_TOKEN.length < 32) {
-    say('SHOP_BRIDGE_TOKEN is missing or shorter than 32 characters: /query answers 503');
+    say('SHOP_BRIDGE_TOKEN is missing or shorter than 32 characters: /query/<name> answers 503');
   }
 
   const handler = createHandler({
@@ -311,6 +333,8 @@ function main() {
     server: env.SHOP_DB_SERVER ?? null,
     database: env.SHOP_DB_NAME ?? null,
     mirrorStatus: () => (mirror ? mirror.status() : { enabled: false }),
+    live: queries.live,
+    mirrorNames: queries.mirror.map((entry) => entry.into),
   });
   const httpServer = http.createServer(handler);
   httpServer.listen(port, '127.0.0.1', () => {
