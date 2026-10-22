@@ -21,7 +21,7 @@ SQL Server  <--read-only login--  dws-bridge  --outbound HTTPS-->  Cloudflare  <
 
 ## 3. The list of statements: `queries.json`
 
-`C:\dws-bridge\queries.json` is the complete list of SQL the service can send to SQL Server. At startup the service checks that every entry is one `SELECT` or `WITH ... SELECT` with no `;` and no write, exec, or system-procedure keywords, and refuses to start if any check fails.
+`C:\dws-bridge\queries.json` is the complete list of SQL the service can send to SQL Server. At startup the service checks every entry with a conservative keyword filter: the statement must start with `SELECT` or `WITH`, contain no `;`, and contain none of a list of words covering writes, procedures, transactions, session settings, control flow, and lock hints. The filter is not a parser, so two `SELECT`s in a row would pass it. The read-only login is what makes the statements harmless; the filter only catches mistakes early. If any entry fails, the service stops and does not restart until the file is fixed.
 
 - `mirror`: statements run every interval, each with `sql` and `into`, the target table in Supabase.
 - `live`: named statements callable through the tunnel. Empty today. Adding one requires editing `C:\dws-bridge\queries.json` on the shop computer and restarting the service.
@@ -58,7 +58,9 @@ FROM dbo.tblContact
 
 The company owner has approved this data, including phone numbers, leaving the shop.
 
-The four results total a few thousand rows and copy in seconds. Large tables such as `tblTimesheet` at about 290,000 rows do not belong here; the service refuses any result over 100,000 rows.
+The four results total a few thousand rows and copy in seconds. Large tables such as `tblTimesheet` at about 290,000 rows do not belong here; the service stops reading at 100,000 rows and refuses the result.
+
+Three column types must be cast to text in the statement, because the copy cannot hold them exactly: `time`, `datetimeoffset`, and `decimal` or `numeric` wider than 15 digits. A run that meets one says so in its error. `money` and ordinary dates copy as they are; dates keep millisecond precision.
 
 ### The login
 
@@ -89,7 +91,7 @@ A Windows login with the same grants also works. `db_denydatawriter` in Option A
 
 Two Windows services run on one always-on shop computer, appear in `services.msc`, start at boot, and restart on crash:
 
-- **`dws-bridge`**: About 500 lines of JavaScript, run by Node.js. Runs as `NetworkService` in `C:\dws-bridge\`. Only administrators and `NetworkService` can read `.env`. Logs go to `C:\dws-bridge\logs\bridge.log`.
+- **`dws-bridge`**: About 1,000 lines of JavaScript, run by Node.js, in `C:\dws-bridge\`. It runs under its own virtual service account, `NT SERVICE\dws-bridge`, so only administrators, SYSTEM, and this one service can read `.env`. Logs go to `C:\dws-bridge\logs\bridge.log`.
 - **`cloudflared`**: Cloudflare's outbound tunnel connector.
 
 Nothing is installed inside SQL Server or the Access database.
@@ -120,15 +122,15 @@ No inbound port, forward, or firewall rule is added in the shop. `cloudflared` h
 | Lock | Where it lives | What it stops |
 | --- | --- | --- |
 | 1. Cloudflare Access | Cloudflare's edge, before anything reaches the shop | A caller without the service token is rejected by Cloudflare. The shop never sees the request. |
-| 2. Bridge token | This program | A second secret, checked in constant time. A caller holding only the Cloudflare token gets `401`. |
+| 2. Bridge token | This program | A second secret, checked in constant time. A caller holding only the Cloudflare token gets `401` on `/query/<name>`. `/health` answers to the Cloudflare token alone and shows status only: server and database names, SQL Server version, the query names, and the last run per table. |
 | 3. The statement list | This program | Only a statement written into `queries.json` on the shop computer can run, and the list is checked to be read-only. There is no way to send SQL over the network. |
 | 4. The read-only login | SQL Server | Created and controlled by the administrator. Even if every lock above were beaten, the attacker could only read what that login can read. |
 
-Stolen hosting tokens allow calling only `/health` and named live queries in `queries.json` until a token is rotated or the login is disabled. Compromising the shop computer exposes only the read-only SQL Server login and the `shop_mirror` credential.
+Stolen hosting tokens allow calling only `/health` and named live queries in `queries.json` until a token is rotated or the login is disabled. Compromising the shop computer exposes the read-only SQL Server login and the `shop_mirror` credential, which reaches the `shop` schema and the apps' job list and nothing else.
 
 ### Where the copied data goes
 
-The mirror writes over TLS to Supabase PostgreSQL in Amazon's Ohio region as role `shop_mirror`, which can only create and write tables in schema `shop` and cannot read app tables. Browser keys cannot read `shop`; only server code and admins can. The shop computer holds no app master key, and the apps hold no SQL Server password.
+The mirror writes to Supabase PostgreSQL in Amazon's Ohio region over TLS, and verifies Supabase's certificate against Supabase's own root certificate, shipped with the service as `supabase-ca.crt`. It connects as role `shop_mirror`, which can create and fill tables in schema `shop`, read them, run the job refresh, and read and update the apps' job list (`public.jobs`). It can do nothing else: the job refresh runs with the caller's own rights, so the login's limits are the ceiling. Browser keys cannot read `shop`; only server code and admins can. The shop computer holds no app master key, and the apps hold no SQL Server password.
 
 ### Kill switches
 
@@ -141,7 +143,7 @@ To remove it entirely: `C:\dws-bridge\install\uninstall.ps1 -RemoveFiles` remove
 ### What can be watched
 
 - **In SQL Server**: sessions via section 4's query, and connection events in the error log when login auditing is on.
-- **The log file** `C:\dws-bridge\logs\bridge.log`: one line per table per mirror run with name, row count, duration, and status or error, plus one per tunnel request with route, status code, duration, rows, and the first 80 characters of the statement.
+- **The log file** `C:\dws-bridge\logs\bridge.log`: one line per table per mirror run with name, row count, duration, and status or error, plus one per tunnel request with route, status code, duration, rows, and the first 80 characters of the statement. A database failure also logs the driver's code and message.
 - **The run history**: `shop.sync_runs` in Supabase and `/api/shop/health` on the admin page.
 
 ## 6. Reliability
@@ -157,6 +159,7 @@ Nothing in the office depends on the bridge.
 | A statement is slow | cancelled at 30 seconds | that table's copy is skipped this run |
 | The service crashes | Windows restarts it; the log has the reason | a gap of seconds |
 | A result changes shape (a column added or renamed) | none | that table's copy stops with a clear error until the landing table is dropped and recreated; other tables continue |
+| `queries.json` or a setting is invalid | none | the service stops with the reason in the log and does not restart until it is fixed |
 
 Each table copy runs in one transaction, so readers see either the old copy or the new one. Missing shop rows never delete or deactivate app data.
 
@@ -182,14 +185,14 @@ for f in supabase/migrations/20261017*_shop_*.sql; do
 done
 ```
 
-Generate `<shop_mirror password>` with `openssl rand -base64 24` and set it on `shop_mirror`:
+Generate `<shop_mirror password>` with `openssl rand -hex 24` and set it on `shop_mirror`:
 
 ```sh
 env -u SUPABASE_ACCESS_TOKEN supabase db query --linked --project-ref qebbmojnqzwwdpkhuyyd \
   "alter role shop_mirror password '<shop_mirror password>'"
 ```
 
-In Supabase Connect → Session pooler, copy the host and save `postgresql://shop_mirror.qebbmojnqzwwdpkhuyyd:<password>@<pooler host>:5432/postgres?sslmode=require` as `SHOP_MIRROR_DATABASE_URL`, URL-encoding `@`, `:`, `/` in the password.
+In Supabase Connect → Session pooler, copy the host and save `postgresql://shop_mirror.qebbmojnqzwwdpkhuyyd:<password>@<pooler host>:5432/postgres` as `SHOP_MIRROR_DATABASE_URL`. The service always verifies Supabase's certificate with the `supabase-ca.crt` in this folder, so the URL needs no SSL options.
 
 **The SQL Server login.** Create the login from section 3 and save `SHOP_DB_USER`, `SHOP_DB_PASSWORD`, and `SHOP_DB_DOMAIN` for a Windows account.
 
@@ -215,7 +218,7 @@ In an elevated PowerShell on the shop computer:
    Set-ExecutionPolicy -Scope Process Bypass
    .\install\setup.ps1
    ```
-   The last line should show `"ok": true` and the SQL Server version. "Database unreachable" means the login or the TCP step in section 3; `C:\dws-bridge\logs\` has the exact error.
+   The health JSON shows `"ok":true` and the SQL Server version, followed by a green "The bridge is up and can reach SQL Server." "Database unreachable" means the login or the TCP step in section 3; `C:\dws-bridge\logs\` has the driver's error.
 4. Connect the tunnel:
    ```powershell
    cloudflared.exe service install <token from the command>
@@ -258,7 +261,7 @@ In Vercel project `dws-receipts` → Settings → Environment Variables, add the
 ### Adding or changing a statement
 
 1. Agree the statement with the administrator.
-2. Edit `C:\dws-bridge\queries.json` and the repo copy, then run `Restart-Service dws-bridge`. Non-`SELECT` statements fail startup and log the line.
+2. Edit `C:\dws-bridge\queries.json` and the repo copy, then run `Restart-Service dws-bridge`. A statement the filter rejects stops the service with the entry named in the log, and the service stays stopped until the file is fixed.
 3. A new `mirror` entry creates `shop.<into>` on the next run. Changed columns stop that entry until `drop table shop.<into>` is run in Supabase. Update `shop.refresh_jobs()` if it reads the changed table.
 4. A `live` entry is callable as `POST /query/<name>` after restart.
 
@@ -279,7 +282,7 @@ In Vercel project `dws-receipts` → Settings → Environment Variables, add the
 | `unreachable` or `timeout`, tunnel "Down" in Cloudflare | The shop computer is off, offline, or `cloudflared` stopped: `Get-Service cloudflared`, `Start-Service cloudflared`. |
 | Tunnel healthy, bridge reports `db_unreachable` | SQL Server is down or the login changed. `C:\dws-bridge\logs\` has the driver's message. `sqlcmd -S SQL2016\SQLEXPRESS -d DWS -U dws_bridge_ro -Q "select 1"` from the bridge computer isolates it. |
 | Mirror age keeps growing, bridge fine | The Supabase side: wrong `SHOP_MIRROR_DATABASE_URL`, rotated password, or a changed result shape. `select * from shop.sync_runs where ok = false order by finished_at desc limit 5` shows the error. |
-| The service will not start | A statement in `queries.json` failed the read-only check or the file is malformed. The log names the entry. |
+| The service will not start | A statement in `queries.json` failed the filter, the file is malformed, a setting is out of range, or `supabase-ca.crt` is missing. The log says which; fix it and `Start-Service dws-bridge`. |
 | `public.jobs` is missing a job | It must be open in both `projects` (`Completed` null, not `Archived`) and `open_jobs` (`JobStatus` `O`). `select detail from shop.sync_runs where table_name = 'public.jobs' order by finished_at desc limit 1` shows what the last run saw. |
 
 `shop.refresh_jobs()` never deactivates a job; jobs no longer open are listed in `detail.dropped_from_open` on the `public.jobs` row in `shop.sync_runs`.
@@ -293,10 +296,12 @@ In Vercel project `dws-receipts` → Settings → Environment Variables, add the
 | `server.mjs` | The HTTP service (`/health`, `/query/<name>`). Run directly, it also starts the mirror. |
 | `queries.json` | The only SQL the service runs: `mirror` entries and named `live` queries. |
 | `config.mjs` | Loads and validates `queries.json`. |
-| `guard.mjs` | Decides whether a SQL string is a single read-only `SELECT`. |
+| `guard.mjs` | The keyword filter every statement must pass. |
+| `query.mjs` | Runs one statement with a 30-second deadline and a row cap, streaming rows. |
 | `mirror.mjs` | The mirror loop: run each statement, create the landing table if missing, replace its rows in one transaction, log the run. |
 | `db.mjs` | SQL Server connection settings from the environment, and the shared pool. |
-| `types.mjs` | SQL Server to Postgres type map and the `create table` builder. |
+| `types.mjs` | SQL Server to Postgres type map, value conversion, and the `create table` builder. |
+| `supabase-ca.crt` | Supabase's root certificate, used to verify the Postgres connection. |
 | `install/setup.ps1`, `install/uninstall.ps1` | Install, update, or remove the Windows service. |
 | `*.test.mjs`, `testing-stubs.mjs` | Tests and their fake database drivers. `npm test` needs no database. |
 
@@ -315,12 +320,13 @@ In Vercel project `dws-receipts` → Settings → Environment Variables, add the
 | `SHOP_MIRROR_INTERVAL_MINUTES` | no | Minutes between runs (default `15`) |
 | `SHOP_MIRROR_MAX_ROWS` | no | A result larger than this is refused, not copied (default `100000`) |
 | `SHOP_QUERIES_FILE` | no | Path to the statement file (default: `queries.json` beside the program) |
+| `SHOP_MIRROR_CA_FILE` | no | Path to Supabase's root certificate (default: `supabase-ca.crt` beside the program) |
 
 ### HTTP
 
 Responses are JSON with `Cache-Control: no-store`; errors return `{ "error": { "code": "...", "message": "..." } }`.
 
-`GET /health` takes no token and returns `ok`, `server`, `database`, SQL Server `version`, last mirror run per table, and `queries: { mirror: [...], live: [...] }`, or `"ok": false` with `502` when SQL Server is unreachable or `503` when the service is not configured.
+`GET /health` takes no token and returns `ok`, `server`, `database`, SQL Server `version`, the last mirror run per table and for the job refresh (`refreshJobs.ok` and `refreshJobs.error`), and `queries: { mirror: [...], live: [...] }`, or `"ok": false` with `502` when SQL Server is unreachable or `503` when the service is not configured.
 
 `POST /query/<name>` requires the bearer token and optional body `{ "params": { "k": v }, "maxRows": 100 }`, binds `@k` in the `live` statement, and returns `{ columns, rows, rowCount, truncated, durationMs }`. `maxRows` defaults to 5,000 and caps at 50,000, cancelling the query and setting `truncated` true past the cap.
 
@@ -331,7 +337,7 @@ Responses are JSON with `Cache-Control: no-store`; errors return `{ "error": { "
 | 404 | `not_found` | No live query of that name, or an unknown route |
 | 413 | `payload_too_large` | Body over 64 KiB |
 | 502 | `db_unreachable` | Cannot connect to SQL Server |
-| 503 | `not_configured` | `SHOP_BRIDGE_TOKEN` or `SHOP_DB_SERVER` not set |
+| 503 | `not_configured` | `SHOP_BRIDGE_TOKEN`, `SHOP_DB_SERVER`, or `SHOP_DB_NAME` not set |
 | 504 | `timeout` | The statement ran past 30 seconds and was cancelled |
 
 Tunnel calls also require headers `CF-Access-Client-Id` and `CF-Access-Client-Secret`, sent by `shopQuery(name, params)` in `dws-app/src/lib/shop/query.ts` and `dws-app/scripts/shop-query.mjs`.
@@ -345,7 +351,7 @@ Tunnel calls also require headers `CF-Access-Client-Id` and `CF-Access-Client-Se
 | `pg` | open source | the PostgreSQL client |
 | `cloudflared` | Cloudflare | the outbound tunnel connector |
 | NSSM | open source | wraps the program as a Windows service |
-| `dws-bridge` | us, about 500 lines with automated tests | the program itself |
+| `dws-bridge` | us, about 1,000 lines with automated tests | the program itself |
 
 ### Running it on a developer machine
 

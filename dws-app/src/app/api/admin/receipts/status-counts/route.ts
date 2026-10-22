@@ -1,16 +1,18 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
+import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 
 export async function GET(request: Request) {
   const gate = await requireAdmin();
   if (gate.response) return gate.response;
-  const { supabase } = gate;
 
   const { searchParams } = new URL(request.url);
   const fromDate = searchParams.get('fromDate');
   const toDate = searchParams.get('toDate');
 
-  const { data, error } = await supabase.rpc('get_admin_receipt_status_counts', {
+  // Service role: the function is definer-rights with no check of its own, so only this
+  // route (after requireAdmin) may reach it; see migration 20261022120000.
+  const { data, error } = await supabaseAdmin.rpc('get_admin_receipt_status_counts', {
     from_date: fromDate || null,
     to_date: toDate || null,
   });

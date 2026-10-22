@@ -23,7 +23,7 @@ tables in Supabase, and the web apps reading the office database). **Delivery: g
 Server Express two ways: a live read-only query path for ad-hoc use, and a 15-minute
 mirror of chosen tables in Postgres for the apps. No inbound hole in the shop network.
 Source of truth: this plan, then the ticket, then the research. Locked decisions:
-Decisions 1–20 below. Current phase: **Built on branch `shop-db-bridge` (2026-10-17), then narrowed to a statement file after the admin meeting (2026-10-22, decisions 17–20); Phase 0 items 2, 4, 5, the admin's statements, the production migrations, and the shop install (Phase 3) are Ari's.**
+Decisions 1–24 below. Current phase: **Built on branch `shop-db-bridge` (2026-10-17), then narrowed to a statement file after the admin meeting (2026-10-22, decisions 17–20); Phase 0 items 2, 4, 5, the admin's statements, the production migrations, and the shop install (Phase 3) are Ari's.**
 Stop-and-ask triggers: anything run against the shop's SQL Server or the production
 Supabase project (including migrations); creating or changing a Cloudflare account,
 zone, or token; any production env var. Everything else (file layout, helper names,
@@ -182,6 +182,10 @@ flowchart LR
 | 18. Landing tables are created by the service from the result set (see 14); the Supabase migrations ship only the schema, the role, `sync_runs`, `refresh_jobs()`, and the status function | Follows from 17 | As 14 |
 | 19. Mirror set is `projects`, `locations`, `open_jobs`, `contacts` (all rows of `tblContact`, 10 columns); `tblHardware` dropped | Ari 2026-10-22: all contacts, because only a person who exists as a DWS contact may register an account (employees now, architects and contractors later); hardware is not used by any app | Add a table only by agreement with the admin |
 | 20. One document, `shop-bridge/README.md`, for developer, admin, and future maintainer; shared with the admin as a secret gist rather than the repository | Ari 2026-10-22: do not point the admin at the whole repository; one neutral document instead of a runbook plus an admin explainer | Move to the service's own repository when it gets one |
+| 21. `shop.refresh_jobs()` runs with the caller's rights (security invoker); `shop_mirror` gets `select, insert, update` on `public.jobs` and a narrow RLS policy there, and nothing else in `public` | Independent review 2026-10-22: with a definer function reading tables the mirror role owns, the role could replace a landing table with a view calling its own function and have it run as `postgres`. Invoker rights make the role's grants the ceiling | — |
+| 22. The mirror verifies Supabase's TLS certificate against Supabase's root CA shipped as `shop-bridge/supabase-ca.crt`; URL ssl options are ignored | The pooler's certificate chains to `Supabase Root 2021 CA` (valid to 2031), not a public root, verified with openssl 2026-10-22; without the CA the connection was encrypted but unauthenticated | Re-ship the file when Supabase rotates its CA |
+| 23. The service runs under the virtual account `NT SERVICE\dws-bridge`; `NetworkService` is the documented fallback | `NetworkService` is shared by many services, all of which could read `.env`; the account is set with `sc.exe config ... obj=` because the NSSM 2.24 download predates virtual-account support | Fall back if the box rejects the account |
+| 24. The guard is described as a conservative keyword filter, extended with transaction, session, control-flow and lock-hint words; every statement runs under a 30-second wall-clock deadline and the mirror stops reading at the row cap | Both reviews: T-SQL needs no `;` between statements, so "one SELECT" was not enforced; tedious's requestTimeout only covers the first packet; the cap was checked after buffering | A real T-SQL parser if the filter ever has to prove single-statement |
 
 ## Alternatives considered
 
@@ -510,4 +514,16 @@ Rework on branch `shop-db-bridge`:
 - Raised by the admin and out of this plan's scope: photo and receipt storage buckets are
   public, so any object URL once seen works forever regardless of share-link state; needs
   its own plan (private buckets plus signed URLs), followed by a security audit.
+
+## Review round two (2026-10-22)
+
+Two delegated reviews of `8df0bd4`: a sealed, independent Codex review and a Claude
+review. Both said "not ready to show the admin" and named one thing each: the
+definer-rights escalation (decision 21) and the keyword filter's gap (decision 24). The
+rest: client-side Postgres deadlines (a dead socket left the mirror "in flight" forever),
+a malformed request URL could exit the process, the installer's health check matched the
+wrong `ok`, the `.env` ACL was shared with every NetworkService process, `SHOP_DB_NAME` was
+not enforced, dates and decimals beyond the driver's precision, and a dozen readability
+cuts. All applied on the branch; the document says "about 1,000 lines", which is the
+count.
 
