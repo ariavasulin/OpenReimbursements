@@ -1,39 +1,41 @@
 #!/usr/bin/env node
-// Query the shop database from your laptop through the shop bridge (Cloudflare Tunnel).
-// Read-only: the bridge accepts a single SELECT and the SQL login cannot write.
+// Run one of the shop bridge's named queries from your laptop (through the Cloudflare
+// Tunnel). The bridge accepts no SQL: it runs only the queries named in its own config,
+// listed by --health under queries.live (and queries.mirror for the mirrored ones).
 //
 // Env (same four as Vercel; put them in .env.local):
 //   SHOP_BRIDGE_URL, SHOP_BRIDGE_TOKEN, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET
 //
 // Usage (from dws-app/):
-//   node --env-file=.env.local scripts/shop-query.mjs "select top 5 ProjectID, Project from tblProject order by ProjectID desc"
-//   node --env-file=.env.local scripts/shop-query.mjs --json "select count(*) as n from tblContact"
-//   node --env-file=.env.local scripts/shop-query.mjs --param id=3612 "select * from tblProject where ProjectID = @id"
-//   node --env-file=.env.local scripts/shop-query.mjs --max-rows 20000 "select * from tblProject"
 //   node --env-file=.env.local scripts/shop-query.mjs --health
-//   node --env-file=.env.local scripts/shop-query.mjs --ddl tblPM tblProjContact   # migration SQL for new mirror tables
+//   node --env-file=.env.local scripts/shop-query.mjs <name> [--param k=v ...] [--max-rows N] [--json]
+// --param values that look like numbers, true, false, or null are sent as those types.
+
+const QUERY_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function parseArgs(argv) {
-  const args = { sql: null, json: false, health: false, ddl: [], maxRows: undefined, params: {} };
+  const args = { name: null, json: false, health: false, maxRows: undefined, params: undefined };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--json') args.json = true;
     else if (a === '--health') args.health = true;
-    else if (a === '--ddl') { while (argv[i + 1] && !argv[i + 1].startsWith('--')) args.ddl.push(argv[++i]); }
     else if (a === '--max-rows') args.maxRows = Number(argv[++i]);
     else if (a === '--param') {
-      const [name, ...rest] = String(argv[++i]).split('=');
+      const [key, ...rest] = String(argv[++i]).split('=');
       const raw = rest.join('=');
-      args.params[name] = raw === 'null' ? null : raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
+      args.params ??= {};
+      args.params[key] = raw === 'null' ? null : raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
     } else if (a === '-h' || a === '--help') { usage(); process.exit(0); }
-    else if (args.sql === null) args.sql = a;
+    else if (a.startsWith('--')) { console.error(`Unknown option: ${a}`); usage(); process.exit(2); }
+    else if (args.name === null) args.name = a;
     else { console.error(`Unexpected argument: ${a}`); usage(); process.exit(2); }
   }
   return args;
 }
 
 function usage() {
-  console.error('Usage: node --env-file=.env.local scripts/shop-query.mjs [--json] [--max-rows N] [--param name=value]... "<select ...>" | --health | --ddl tblA [tblB...]');
+  console.error('Usage: node --env-file=.env.local scripts/shop-query.mjs --health');
+  console.error('       node --env-file=.env.local scripts/shop-query.mjs <name> [--param k=v ...] [--max-rows N] [--json]');
 }
 
 function config() {
@@ -94,16 +96,15 @@ async function main() {
     console.log(JSON.stringify(health, null, 2));
     return;
   }
-  if (args.ddl.length) {
-    const body = await request(`/ddl?tables=${encodeURIComponent(args.ddl.join(','))}`, { method: 'GET' });
-    process.stdout.write(typeof body === 'string' ? body : body.sql ?? JSON.stringify(body, null, 2));
-    if (!String(body?.sql ?? body).endsWith('\n')) process.stdout.write('\n');
-    return;
+  if (!args.name) { usage(); process.exit(2); }
+  if (!QUERY_NAME.test(args.name)) {
+    console.error(`Not a query name: ${args.name} (the bridge takes a named query, not SQL; see --health for the list)`);
+    process.exit(2);
   }
-  if (!args.sql) { usage(); process.exit(2); }
-  const payload = { sql: args.sql, params: args.params };
+  const payload = {};
+  if (args.params !== undefined) payload.params = args.params;
   if (args.maxRows !== undefined) payload.maxRows = args.maxRows;
-  const result = await request('/query', { method: 'POST', body: JSON.stringify(payload) });
+  const result = await request(`/query/${args.name}`, { method: 'POST', body: JSON.stringify(payload) });
   if (args.json) {
     console.log(JSON.stringify(result.rows, null, 2));
   } else {

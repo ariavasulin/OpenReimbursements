@@ -4,6 +4,9 @@ import 'server-only';
  * Client for the shop bridge: the read-only query service on the shop's Windows box,
  * reached through a Cloudflare Tunnel. See Docs/shop-bridge-runbook.md.
  *
+ * The bridge runs only queries named in its own config; callers pick one by name
+ * (POST /query/<name>) and may pass its parameters. It accepts no SQL.
+ *
  * Env (all server-only): SHOP_BRIDGE_URL, SHOP_BRIDGE_TOKEN, CF_ACCESS_CLIENT_ID,
  * CF_ACCESS_CLIENT_SECRET. The Cloudflare pair is optional only when calling the bridge
  * on a LAN without the tunnel (tests, the shop box itself).
@@ -24,10 +27,17 @@ export type ShopHealth = {
   database?: string;
   version?: string;
   mirror?: unknown;
+  /** Names of the queries the bridge's config defines: mirrored ones and live (callable) ones. */
+  queries?: { mirror: string[]; live: string[] };
   durationMs?: number;
   error?: unknown;
 };
 
+/**
+ * Codes come from the bridge's error envelope ({ error: { code, message } }), e.g.
+ * not_found (404, no query by that name) or bad_request (400), or from this client:
+ * not_configured, timeout, unreachable, edge_blocked, bad_response, http_<status>.
+ */
 export class ShopBridgeError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
     super(message);
@@ -39,6 +49,7 @@ type Config = { url: string; token: string; accessId?: string; accessSecret?: st
 type FetchLike = typeof fetch;
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+const QUERY_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function config(env: NodeJS.ProcessEnv = process.env): Config {
   const url = env.SHOP_BRIDGE_URL;
@@ -119,31 +130,33 @@ async function call<T>(
   return body as T;
 }
 
-/** Run one read-only SELECT on the shop database and return the full result. */
+/** Run one of the bridge's named queries on the shop database and return the full result. */
 export async function shopQueryResult<T = Record<string, unknown>>(
-  sql: string,
-  params: ShopParams = {},
+  name: string,
+  params?: ShopParams,
   options: ShopQueryOptions = {},
   deps: { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv } = {},
 ): Promise<ShopQueryResult<T>> {
+  if (!QUERY_NAME.test(name)) throw new ShopBridgeError(`Invalid shop query name: ${JSON.stringify(name)}`, 400, 'bad_request');
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const payload: { sql: string; params: ShopParams; maxRows?: number } = { sql, params };
+  const payload: { params?: ShopParams; maxRows?: number } = {};
+  if (params !== undefined) payload.params = params;
   if (options.maxRows !== undefined) payload.maxRows = options.maxRows;
-  return call<ShopQueryResult<T>>('/query', { method: 'POST', body: JSON.stringify(payload) }, timeoutMs, deps);
+  return call<ShopQueryResult<T>>(`/query/${name}`, { method: 'POST', body: JSON.stringify(payload) }, timeoutMs, deps);
 }
 
-/** Run one read-only SELECT on the shop database and return its rows. */
+/** Run one of the bridge's named queries on the shop database and return its rows. */
 export async function shopQuery<T = Record<string, unknown>>(
-  sql: string,
-  params: ShopParams = {},
+  name: string,
+  params?: ShopParams,
   options: ShopQueryOptions = {},
   deps: { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv } = {},
 ): Promise<T[]> {
-  const result = await shopQueryResult<T>(sql, params, options, deps);
+  const result = await shopQueryResult<T>(name, params, options, deps);
   return result.rows;
 }
 
-/** The bridge's own health report (SQL Server reachability, version, mirror status). */
+/** The bridge's own health report (SQL Server reachability, version, mirror status, query names). */
 export async function shopHealth(
   deps: { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
 ): Promise<ShopHealth> {

@@ -6,6 +6,18 @@ import { createFixtures } from '../fixtures';
 // The shop mirror's Supabase side (plans/active/shop-db-bridge/plan.md, Phase 2):
 // the shop_mirror role boundary (AC-10), shop.refresh_jobs() (AC-11), and the
 // admin's public.shop_sync_status(). Office values below are made up.
+
+// No migration creates the landing tables: the bridge does, logged in as shop_mirror,
+// from the columns its queries return. These are the shipped entries' tables, in the
+// bridge's type map (all nullable, no primary key).
+const landingTables: Record<string, string> = {
+  projects: '"ProjectID" integer, "Project" text, "Completed" timestamp, "Archived" boolean, "Location" integer',
+  locations: '"LocationID" integer, "LocationName" text, "LocationAddress" text, "LocationCity" text',
+  open_jobs: '"JobNo" integer, "JobStatus" text',
+  contacts: '"ContactID" integer, "CompanyID" integer, "EmplCode" text, "FirstName" text, "LastName" text, '
+    + '"email" text, "Mobile" text, "OfficePhone" text, "CurrentEmp" text, "dbTermDate" timestamp',
+};
+
 describe('shop mirror schema, role, and jobs refresh', () => {
   let f: Awaited<ReturnType<typeof createFixtures>>;
   let mirror: pg.Client;
@@ -22,6 +34,9 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     url.password = password;
     mirror = new pg.Client({ connectionString: url.toString() });
     await mirror.connect();
+    for (const [name, columns] of Object.entries(landingTables)) {
+      await mirror.query(`create table if not exists shop."${name}" (${columns})`);
+    }
   });
   afterAll(async () => {
     await mirror?.end();
@@ -38,12 +53,26 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     } finally { await client.query('rollback'); client.release(); }
   };
 
+  it('lets the tables shop_mirror creates be read by the service role and refresh_jobs', async () => {
+    const owners = await f.sql.query(`select c.relname, c.relowner::regrole::text as owner,
+        has_table_privilege('service_role', c.oid, 'select') as service_role,
+        exists (select 1 from aclexplode(c.relacl) a
+                where a.grantee = 'postgres'::regrole and a.privilege_type = 'SELECT') as postgres
+      from pg_class c where c.relnamespace = 'shop'::regnamespace and c.relname = any($1) order by c.relname`,
+      [Object.keys(landingTables)]);
+    // postgres is checked against the table's own grants, not membership or superuser:
+    // refresh_jobs() runs as postgres, which is not a superuser on Supabase.
+    expect(owners.rows).toEqual(Object.keys(landingTables).sort().map(relname =>
+      ({ relname, owner: 'shop_mirror', service_role: true, postgres: true })));
+    expect((await asRole('service_role', 'select count(*)::int as n from shop.contacts')).rows).toEqual([{ n: 0 }]);
+  });
+
   it('lets shop_mirror write shop tables and call refresh_jobs, and nothing in public (AC-10)', async () => {
     await mirror.query('begin');
     try {
-      await mirror.query(`insert into shop."tblProject" ("ProjectID", "Project") values (${randomInt(1e8, 2e8)}, 'Role check')`);
-      await mirror.query('delete from shop."tblProject" where "Project" = \'Role check\'');
-      await mirror.query(`insert into shop.sync_runs (table_name, started_at, finished_at, row_count, ok) values ('tblProject', now(), now(), 0, true)`);
+      await mirror.query(`insert into shop.projects ("ProjectID", "Project") values (${randomInt(1e8, 2e8)}, 'Role check')`);
+      await mirror.query('delete from shop.projects where "Project" = \'Role check\'');
+      await mirror.query(`insert into shop.sync_runs (table_name, started_at, finished_at, row_count, ok) values ('projects', now(), now(), 0, true)`);
       expect((await mirror.query('select shop.refresh_jobs() as r')).rows[0].r.ok).toBe(true);
     } finally { await mirror.query('rollback'); }
     for (const statement of [
@@ -51,8 +80,9 @@ describe('shop mirror schema, role, and jobs refresh', () => {
       'select 1 from public.user_profiles limit 1',
       'select 1 from public.receipts limit 1',
       'select 1 from public.jobs limit 1',
-      'update shop."tblProject" set "Project" = null',
+      'create table public.shop_mirror_probe (a integer)',
       'delete from shop.sync_runs',
+      'drop table shop.sync_runs',
       'select public.shop_sync_status()',
     ]) {
       await expect(mirror.query(statement), statement).rejects.toMatchObject({ code: '42501' });
@@ -69,7 +99,9 @@ describe('shop mirror schema, role, and jobs refresh', () => {
 
   it('keeps the shop schema closed to anon and authenticated', async () => {
     for (const role of ['anon', 'authenticated']) {
-      await expect(asRole(role, 'select 1 from shop."tblContact" limit 1')).rejects.toMatchObject({ code: '42501' });
+      for (const table of Object.keys(landingTables)) {
+        await expect(asRole(role, `select 1 from shop.${table} limit 1`)).rejects.toMatchObject({ code: '42501' });
+      }
       await expect(asRole(role, 'select 1 from shop.sync_runs limit 1')).rejects.toMatchObject({ code: '42501' });
       await expect(asRole(role, 'select shop.refresh_jobs()')).rejects.toMatchObject({ code: '42501' });
     }
@@ -83,17 +115,17 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     const handMade = `P-${base}`;
     created.push(...[1, 2, 3, 4, 5, 6, 7].map(k => String(n(k))), handMade);
     // The mirror replaces whole tables, so each scenario starts from empty copies.
-    await f.sql.query('delete from shop."tblProject"; delete from shop."tblMas90JobMasterOpen"; delete from shop."tblLocation"');
-    await f.sql.query(`insert into shop."tblLocation" ("LocationID", "LocationName", "LocationAddress", "LocationCity") values
+    await f.sql.query('delete from shop.projects; delete from shop.open_jobs; delete from shop.locations');
+    await f.sql.query(`insert into shop.locations ("LocationID", "LocationName", "LocationAddress", "LocationCity") values
       (1, ' Harbor Tower ', '1 Main St', 'Oakland'), (2, null, ' 2 Side St ', 'Berkeley')`);
-    await f.sql.query(`insert into shop."tblProject" ("ProjectID", "Project", "Location", "Completed", "Archived") values
+    await f.sql.query(`insert into shop.projects ("ProjectID", "Project", "Location", "Completed", "Archived") values
       ($1, '  Lobby refresh ', 1, null, false),
       ($2, 'Not on the Sage list', 1, null, false),
       ($3, 'Finished job', 1, now(), false),
       ($4, 'Archived job', 1, null, true),
       ($5, 'In the app Trash', 1, null, false),
       ($6, 'Renamed in the office', 2, null, null)`, [n(1), n(2), n(3), n(4), n(5), n(6)]);
-    await f.sql.query(`insert into shop."tblMas90JobMasterOpen" ("JobNo", "JobStatus") values
+    await f.sql.query(`insert into shop.open_jobs ("JobNo", "JobStatus") values
       ($1, 'O'), ($2, 'O'), ($3, 'O'), ($4, 'O'), ($5, 'O')`, [n(1), n(3), n(4), n(5), n(6)]);
     await f.sql.query(`insert into public.jobs (job_number, name, location, is_active, synced_at, deleted_at) values
       ($1, 'Trashed', null, false, now() - interval '1 day', now()),
@@ -161,6 +193,23 @@ describe('shop mirror schema, role, and jobs refresh', () => {
       expect(run).toMatchObject({ ok: false, row_count: null });
       expect(run.error).toContain('shop_test_refuse');
     } finally { await client.query('rollback'); client.release(); }
+    expect(await runCount()).toBe(runsBefore);
+  });
+
+  it('records a failed refresh when a landing table does not exist yet', async () => {
+    const runsBefore = await runCount();
+    await mirror.query('begin');
+    try {
+      // As before the bridge's first run: the function exists, the table does not.
+      await mirror.query('drop table shop.open_jobs');
+      const result = (await mirror.query('select shop.refresh_jobs() as r')).rows[0].r;
+      expect(result).toMatchObject({ ok: false });
+      expect(result.error).toContain('open_jobs');
+      const run = (await mirror.query(`select ok, error, row_count from shop.sync_runs
+        where table_name = 'public.jobs' order by id desc limit 1`)).rows[0];
+      expect(run).toMatchObject({ ok: false, row_count: null });
+      expect(run.error).toContain('open_jobs');
+    } finally { await mirror.query('rollback'); }
     expect(await runCount()).toBe(runsBefore);
   });
 

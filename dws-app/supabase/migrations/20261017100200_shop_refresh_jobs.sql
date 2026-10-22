@@ -1,8 +1,14 @@
--- shop.refresh_jobs(): bring public.jobs up to date from the mirrored office tables.
--- The shop mirror calls it after every run. It follows the rules of the one-off
--- importer dws-app/scripts/import-jobs.mjs:
---   * open office jobs = tblProject rows whose number is on Sage's open list
---     (tblMas90JobMasterOpen, JobStatus 'O'), not Completed, not Archived;
+-- shop.refresh_jobs(): bring public.jobs up to date from the mirrored office data.
+-- The shop mirror calls it after every run. It reads three tables the bridge creates
+-- and fills (see 20261017100000_shop_schema.sql):
+--   shop.projects  (ProjectID, Project, Completed, Archived, Location) from tblProject
+--   shop.open_jobs (JobNo, JobStatus) from tblMas90JobMasterOpen
+--   shop.locations (LocationID, LocationName, LocationAddress, LocationCity) from tblLocation
+-- Those tables may not exist yet when this function is created or called: plpgsql
+-- looks the names up when it runs, and a missing table is caught below as a failed run.
+-- It follows the rules of the one-off importer dws-app/scripts/import-jobs.mjs:
+--   * open office jobs = shop.projects rows whose number is on Sage's open list
+--     (shop.open_jobs, JobStatus 'O'), not Completed, not Archived;
 --   * job_number is the office ProjectID; name is the trimmed project name;
 --   * upsert on job_number, setting name, location, is_active = true, synced_at;
 --   * a number held by a project in Trash is left alone and counted as skipped,
@@ -29,33 +35,33 @@ declare
   result jsonb;
 begin
   begin
-    with open_jobs as (
+    with office_open as (
       select p."ProjectID"::text as job_number,
              -- A blank office name falls back to the number; jobs.name is not null.
              coalesce(nullif(btrim(p."Project"), ''), p."ProjectID"::text) as name,
-             -- Location text: tblLocation's LocationName, else "address, city".
+             -- Location text: the location's LocationName, else "address, city".
              -- (import-jobs.mjs stored tblProject.Location, which is only the
              -- tblLocation id.) Change this one expression to show something else.
              coalesce(
                nullif(btrim(l."LocationName"), ''),
                nullif(concat_ws(', ', nullif(btrim(l."LocationAddress"), ''), nullif(btrim(l."LocationCity"), '')), '')
              ) as location
-      from shop."tblProject" p
-      join shop."tblMas90JobMasterOpen" m on m."JobNo" = p."ProjectID"
-      left join shop."tblLocation" l on l."LocationID" = p."Location"
+      from shop.projects p
+      join shop.open_jobs m on m."JobNo" = p."ProjectID"
+      left join shop.locations l on l."LocationID" = p."Location"
       where upper(btrim(m."JobStatus")) = 'O'
         and p."Completed" is null
         and not coalesce(p."Archived", false)
         and p."ProjectID"::text not like 'P-%'
     ),
     in_trash as (
-      select o.job_number from open_jobs o
+      select o.job_number from office_open o
       join public.jobs t on t.job_number = o.job_number and t.deleted_at is not null
     ),
     written as (
       insert into public.jobs as target (job_number, name, location, is_active, synced_at)
       select o.job_number, o.name, o.location, true, now()
-      from open_jobs o
+      from office_open o
       where not exists (select 1 from in_trash x where x.job_number = o.job_number)
       on conflict (job_number) do update
         set name = excluded.name, location = excluded.location, is_active = true, synced_at = excluded.synced_at
@@ -68,7 +74,7 @@ begin
            (select count(*) from in_trash),
            coalesce((select array_agg(j.job_number order by j.job_number) from public.jobs j
                      where j.synced_at is not null and j.is_active
-                       and not exists (select 1 from open_jobs o where o.job_number = j.job_number)), '{}')
+                       and not exists (select 1 from office_open o where o.job_number = j.job_number)), '{}')
       into upserted, skipped, dropped;
 
     result := jsonb_build_object('ok', true, 'upserted', upserted, 'skipped_trashed', skipped,
