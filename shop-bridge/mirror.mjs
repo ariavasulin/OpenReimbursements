@@ -54,6 +54,8 @@ function defaultCreatePgClient(connectionString, ca) {
   return new pg.Client(pgClientConfig(connectionString, ca));
 }
 
+const errorText = (err) => String(err?.message ?? err).slice(0, ERROR_MAX_CHARS);
+
 const LANDING_COLUMNS_SQL =
   "select column_name from information_schema.columns where table_schema = 'shop' and table_name = $1 order by ordinal_position";
 
@@ -61,10 +63,9 @@ const LANDING_COLUMNS_SQL =
  * Split rows into INSERT statements of at most BATCH_ROWS rows (fewer for very wide tables).
  * @param {string} into  table name in the shop schema
  */
-export function buildInsertBatches(into, columns, rows) {
+export function* buildInsertBatches(into, columns, rows) {
   const perStatement = Math.max(1, Math.min(BATCH_ROWS, Math.floor(PG_MAX_PARAMS / columns.length)));
   const head = `insert into shop.${quoteIdent(into)} (${columns.map(quoteIdent).join(', ')}) values `;
-  const batches = [];
   for (let start = 0; start < rows.length; start += perStatement) {
     const slice = rows.slice(start, start + perStatement);
     const values = [];
@@ -75,9 +76,8 @@ export function buildInsertBatches(into, columns, rows) {
       });
       return `(${ph.join(', ')})`;
     });
-    batches.push({ text: head + tuples.join(', '), values });
+    yield { text: head + tuples.join(', '), values };
   }
-  return batches;
 }
 
 /**
@@ -109,7 +109,7 @@ export function createMirror({
   async function ensureLandingTable(client, into, recordsetColumns, names) {
     await client.query(buildCreateTableFromRecordset(into, recordsetColumns));
     const res = await client.query(LANDING_COLUMNS_SQL, [into]);
-    const existing = (res.rows ?? []).map((r) => r.column_name);
+    const existing = res.rows.map((r) => r.column_name);
     if (existing.length === 0) {
       throw new Error(`landing table shop.${into} is not visible to this login after create table; check the shop_mirror role's grants on schema shop`);
     }
@@ -143,19 +143,15 @@ export function createMirror({
 
     await ensureLandingTable(client, into, recordsetColumns, names);
 
-    let began = false;
+    await client.query('BEGIN');
     try {
-      await client.query('BEGIN');
-      began = true;
       await client.query(`DELETE FROM shop.${quoteIdent(into)}`);
       for (const batch of buildInsertBatches(into, names, rows)) {
         await client.query(batch.text, batch.values);
       }
       await client.query('COMMIT');
     } catch (err) {
-      if (began) {
-        await client.query('ROLLBACK').catch((e) => say(`${into} rollback failed: ${e.message}`));
-      }
+      await client.query('ROLLBACK').catch((e) => say(`${into} rollback failed: ${e.message}`));
       throw err;
     }
     return rows.length;
@@ -198,7 +194,7 @@ export function createMirror({
         } catch (err) {
           ok = false;
           allOk = false;
-          error = String(err?.message ?? err).slice(0, ERROR_MAX_CHARS);
+          error = errorText(err);
         }
         const finishedAt = new Date();
         state.tables[table] = { rowCount, ok, finishedAt: finishedAt.toISOString(), error };
@@ -212,18 +208,18 @@ export function createMirror({
       let refresh;
       try {
         const res = await client.query('SELECT shop.refresh_jobs() AS result');
-        const result = res.rows?.[0]?.result ?? null;
+        const { result } = res.rows[0];
         refresh = { ok: !(result && result.ok === false), result, error: null };
         say(`refresh_jobs ${refresh.ok ? 'ok' : 'FAILED'} ${JSON.stringify(result)}`);
       } catch (err) {
-        refresh = { ok: false, result: null, error: String(err?.message ?? err).slice(0, ERROR_MAX_CHARS) };
+        refresh = { ok: false, result: null, error: errorText(err) };
         say(`refresh_jobs FAILED error=${JSON.stringify(refresh.error)}`);
       }
       if (!refresh.ok) allOk = false;
       state.refreshJobs = { ...refresh, finishedAt: new Date().toISOString() };
     } catch (err) {
       allOk = false;
-      say(`run FAILED error=${JSON.stringify(err?.message ?? String(err))}`);
+      say(`run FAILED error=${JSON.stringify(errorText(err))}`);
     } finally {
       if (client) await client.end().catch(() => {});
       state.lastRunAt = new Date().toISOString();

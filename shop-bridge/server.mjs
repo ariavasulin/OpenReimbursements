@@ -10,13 +10,14 @@ import { fileURLToPath } from 'node:url';
 import { loadQueries } from './config.mjs';
 import { closePool, getPool as defaultGetPool } from './db.mjs';
 import { createMirror, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
-import { runQuery } from './query.mjs';
+import { QUERY_TIMEOUT_MS, runQuery } from './query.mjs';
 import { isIdentifier, plainValue } from './types.mjs';
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_MAX_ROWS = 5000;
 export const MAX_ROWS_CAP = 50000;
 const MIN_TOKEN_CHARS = 32;
+const tokenUsable = (token) => Boolean(token) && token.length >= MIN_TOKEN_CHARS;
 const QUERY_PREFIX = '/query/';
 // Exit code for a configuration problem found at startup. install/setup.ps1 tells
 // NSSM not to restart on it, so a bad setting stops the service instead of looping.
@@ -48,7 +49,7 @@ export function toHttpError(err) {
     return new HttpError(502, 'db_unreachable', `Could not reach the shop database (${err.code ?? 'unknown error'}).`);
   }
   if (err?.code === 'ETIMEOUT') {
-    return new HttpError(504, 'timeout', 'The query ran longer than 30 seconds and was cancelled.');
+    return new HttpError(504, 'timeout', `The query ran longer than ${QUERY_TIMEOUT_MS / 1000} seconds and was cancelled.`);
   }
   if (err?.code === 'EREQUEST' || err?.name === 'RequestError') {
     return new HttpError(400, 'bad_request', `SQL Server rejected the query: ${err.message}`);
@@ -153,7 +154,7 @@ export function createHandler({
   log = (line) => console.log(line),
 } = {}) {
   const queries = { mirror: [...mirrorNames], live: Object.keys(live) };
-  const expectedDigest = token && token.length >= MIN_TOKEN_CHARS ? sha256(token) : null;
+  const expectedDigest = tokenUsable(token) ? sha256(token) : null;
 
   function requireAuth(req) {
     if (!expectedDigest) {
@@ -177,24 +178,16 @@ export function createHandler({
 
   async function health() {
     const started = Date.now();
-    const base = { server, database };
+    const report = (fields) => ({ ...fields, server, database, mirror: mirrorStatus(), queries, durationMs: Date.now() - started });
     try {
       const pool = await getPool();
       const { rows } = await runQuery(pool, 'SELECT @@VERSION AS version', {}, { maxRows: 1 });
       const version = String(rows[0]?.version ?? '').split('\n')[0].trim();
-      return [200, { ok: true, ...base, version, mirror: mirrorStatus(), queries, durationMs: Date.now() - started }];
+      return [200, report({ ok: true, version })];
     } catch (raw) {
       const err = toHttpError(raw);
       logFailure(raw, err.status);
-      return [err.status, {
-        ok: false,
-        ...base,
-        version: null,
-        mirror: mirrorStatus(),
-        queries,
-        durationMs: Date.now() - started,
-        error: { code: err.code, message: err.message },
-      }];
+      return [err.status, report({ ok: false, version: null, ...errorBody(err) })];
     }
   }
 
@@ -225,7 +218,7 @@ export function createHandler({
     try {
       let url;
       try {
-        url = new URL(req.url ?? '/', 'http://bridge.local');
+        url = new URL(req.url, 'http://bridge.local');
       } catch {
         throw new HttpError(400, 'bad_request', 'Invalid request URL.');
       }
@@ -321,7 +314,7 @@ function main() {
   } else {
     say('SHOP_MIRROR_DATABASE_URL is not set: the mirror is off');
   }
-  if (!env.SHOP_BRIDGE_TOKEN || env.SHOP_BRIDGE_TOKEN.length < MIN_TOKEN_CHARS) {
+  if (!tokenUsable(env.SHOP_BRIDGE_TOKEN)) {
     say(`SHOP_BRIDGE_TOKEN is missing or shorter than ${MIN_TOKEN_CHARS} characters: /query/<name> answers 503`);
   }
 
@@ -329,7 +322,7 @@ function main() {
     token: env.SHOP_BRIDGE_TOKEN,
     server: env.SHOP_DB_SERVER ?? null,
     database: env.SHOP_DB_NAME ?? null,
-    mirrorStatus: () => (mirror ? mirror.status() : { enabled: false }),
+    mirrorStatus: mirror ? () => mirror.status() : undefined,
     live: queries.live,
     mirrorNames: queries.mirror.map((entry) => entry.into),
   });

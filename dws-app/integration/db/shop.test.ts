@@ -3,9 +3,8 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
 
-// The shop mirror's Supabase side (plans/active/shop-db-bridge/plan.md, Phase 2):
-// the shop_mirror role boundary (AC-10), shop.refresh_jobs() (AC-11), and the
-// admin's public.shop_sync_status(). Office values below are made up.
+// The shop mirror's Supabase side: the shop_mirror role boundary, shop.refresh_jobs(),
+// and the admin's public.shop_sync_status(). Office values below are made up.
 
 // No migration creates the landing tables: the bridge does, logged in as shop_mirror,
 // from the columns its queries return. These are the shipped entries' tables, in the
@@ -66,7 +65,7 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     expect((await asRole('service_role', 'select count(*)::int as n from shop.contacts')).rows).toEqual([{ n: 0 }]);
   });
 
-  it('lets shop_mirror write shop tables, call refresh_jobs, and read and upsert public.jobs, and nothing else (AC-10)', async () => {
+  it('lets shop_mirror write shop tables, call refresh_jobs, and read and upsert public.jobs, and nothing else', async () => {
     await mirror.query('begin');
     try {
       await mirror.query(`insert into shop.projects ("ProjectID", "Project") values (${randomInt(1e8, 2e8)}, 'Role check')`);
@@ -190,7 +189,7 @@ describe('shop mirror schema, role, and jobs refresh', () => {
   const refresh = async () => (await mirror.query('select shop.refresh_jobs() as r')).rows[0].r;
   const runCount = async () => Number((await f.sql.query(`select count(*) from shop.sync_runs where table_name = 'public.jobs'`)).rows[0].count);
 
-  it('refreshes open office jobs and leaves Trash, P- rows, and closed jobs alone (AC-11)', async () => {
+  it('refreshes open office jobs and leaves Trash, P- rows, and closed jobs alone', async () => {
     const { n, handMade } = await seed();
     const all = [1, 2, 3, 4, 5, 6, 7].map(k => String(n(k)));
     const before = await jobs([String(n(5)), handMade]);

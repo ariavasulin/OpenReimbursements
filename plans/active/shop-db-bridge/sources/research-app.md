@@ -1,7 +1,6 @@
 # Analysis: how office jobs and employee records enter and are read by the app
 
-All paths are relative to the repo root
-`/Users/ariavasulin/orca/workspaces/OpenReimbursements/plan-dws-photos-client-feedback`.
+All paths are relative to the repo root; line numbers as of commit `f32010b`.
 No values from `.env.local` were read or printed.
 
 ## Overview

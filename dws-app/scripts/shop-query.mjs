@@ -12,6 +12,7 @@
 // --param values that look like numbers, true, false, or null are sent as those types.
 
 const QUERY_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const LITERALS = { null: null, true: true, false: false };
 
 function parseArgs(argv) {
   const args = { name: null, json: false, health: false, maxRows: undefined, params: undefined };
@@ -24,7 +25,7 @@ function parseArgs(argv) {
       const [key, ...rest] = String(argv[++i]).split('=');
       const raw = rest.join('=');
       args.params ??= {};
-      args.params[key] = raw === 'null' ? null : raw === 'true' ? true : raw === 'false' ? false : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
+      args.params[key] = Object.hasOwn(LITERALS, raw) ? LITERALS[raw] : /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw;
     } else if (a === '-h' || a === '--help') { usage(); process.exit(0); }
     else if (a.startsWith('--')) { console.error(`Unknown option: ${a}`); usage(); process.exit(2); }
     else if (args.name === null) args.name = a;
@@ -72,7 +73,7 @@ async function request(path, init) {
       console.error(`Blocked at the Cloudflare edge (HTTP ${res.status}). Check CF_ACCESS_CLIENT_ID/SECRET and the Access policy.`);
     } else {
       const err = body?.error;
-      console.error(`Bridge error HTTP ${res.status}: ${typeof err === 'object' && err ? `${err.code ?? ''} ${err.message ?? ''}`.trim() : err || text.slice(0, 200)}`);
+      console.error(`Bridge error HTTP ${res.status}: ${err ? `${err.code ?? ''} ${err.message ?? ''}`.trim() : text.slice(0, 200)}`);
     }
     process.exit(1);
   }

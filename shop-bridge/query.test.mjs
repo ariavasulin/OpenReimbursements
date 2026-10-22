@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { QUERY_TIMEOUT_MS, runQuery } from './query.mjs';
+import { runQuery } from './query.mjs';
 import { mssqlError, stubPool } from './testing-stubs.mjs';
 
 const rows = (n) => Array.from({ length: n }, (_, i) => ({ ID: i + 1 }));
@@ -14,7 +14,6 @@ test('returns the rows, column names, and raw column metadata, binding params', 
   assert.equal(result.truncated, false);
   assert.equal(result.recordsetColumns.ID.type.declaration, 'int');
   assert.deepEqual(pool.requests[0].inputs, { x: 1 });
-  assert.equal(pool.requests[0].stream, true);
 });
 
 test('stops at maxRows: keeps maxRows rows, cancels, and reports truncation', async () => {
@@ -26,7 +25,6 @@ test('stops at maxRows: keeps maxRows rows, cancels, and reports truncation', as
 });
 
 test('a query that keeps running is cancelled at the deadline with ETIMEOUT', async () => {
-  assert.equal(QUERY_TIMEOUT_MS, 30_000);
   const pool = stubPool(() => ({ columns, hang: true }));
   const started = Date.now();
   await assert.rejects(runQuery(pool, 'SELECT ID FROM t', {}, { maxRows: 10, timeoutMs: 50 }), (err) => {

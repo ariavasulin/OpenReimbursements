@@ -3,7 +3,7 @@
 Source checkout: `/Users/ariavasulin/Desktop/dwsTables` (all paths below are relative to it unless absolute).
 Research was read-only. No personal values (names, phone numbers, emails, passwords) appear in this report. Phone and email formats are shown as masked shapes (`9` = digit, `a` = letter).
 
-Note on paths: `CLAUDE.md`/`AGENTS.md` refer to `metadata/sql_server/` and `docs/`. In this checkout the SQL Server metadata lives under `archive/metadata/sql_server/`, the Access metadata under `archive/metadata/access/` (plus a copy of `queries.csv` at `metadata/access/queries.csv`), and the docs under `catalog/docs/`. `scripts/config.py:5` still points at `metadata/sql_server`. `Tables/.cache/dws.sqlite` has not been built in this checkout (the directory does not exist).
+Note on paths: `CLAUDE.md`/`AGENTS.md` refer to `metadata/sql_server/` and `docs/`. In this checkout the SQL Server metadata lives under `archive/metadata/sql_server/`, the Access metadata under `archive/metadata/access/` (plus a copy of `queries.csv` at `metadata/access/queries.csv`), and the docs under `catalog/docs/`.
 
 ---
 
@@ -35,7 +35,7 @@ Source: `archive/metadata/access/msysobjects.csv` (latin-1 encoded; `catalog/doc
 - **8 linked-Access tables** (`tblDocuments`, `tblDWSImages`, `tblEmail`, `tblEmailSend`, `tblFeatureImg`, `tblLocationDrawing`, `tblMatlDrawing`, `tblSignature`) point at a second Access file on a file share: `\\SQL2016\MainData\DWS PMdb\AccessDBs.accdb` (6 links) or `J:\DWS PMdb\AccessDBs.accdb` (2 links, a mapped drive letter).
 - 59 Access-local (not on SQL Server) tables are listed in `archive/metadata/access/tables.txt:1-59`. Examples: `BambooEmployees`, `tmpMas90Employee`, `tmpMas90TransDetail`, `Timesheet Entries`, `BkpContact`, `BkpProject`.
 - `archive/metadata/access/relationships.csv` is empty (no Access-side declared relationships either).
-- A table owned by schema `DWS\jasulin` (`tblSheetHist`) appears at `archive/metadata/sql_server/columns.csv:1068`. This is a Windows-domain-style login (`DWS\...`) owning a schema.
+- A table owned by schema `DWS\<user>` (`tblSheetHist`) appears at `archive/metadata/sql_server/columns.csv:1068`. This is a Windows-domain-style login (`DWS\...`) owning a schema.
 
 ### SQL Server linked servers to Sage (inside the database)
 From `archive/metadata/sql_server/views.csv` (113 views; definitions are cut off at about 4,000 characters because they come from `INFORMATION_SCHEMA.VIEWS`):

@@ -1,5 +1,6 @@
 // The SQL Server connection: config from env, and one lazily created pool.
 import sql from 'mssql';
+import { QUERY_TIMEOUT_MS } from './query.mjs';
 
 /** A missing setting: /health answers 503 not_configured instead of 502. */
 function configError(message) {
@@ -39,8 +40,8 @@ export function buildConfig(env = process.env) {
     server,
     database,
     // Covers only the wait for the server's first packet; query.mjs enforces the
-    // 30-second deadline for the whole statement.
-    requestTimeout: 30000,
+    // deadline for the whole statement.
+    requestTimeout: QUERY_TIMEOUT_MS,
     connectionTimeout: 15000,
     pool: { max: 4, min: 0, idleTimeoutMillis: 30000 },
     options: {

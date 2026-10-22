@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Manual fallback: import active jobs from office DB CSV dumps into public.jobs.
-// The normal path is the shop mirror (shop-bridge/, Docs/shop-bridge-runbook.md), which
+// The normal path is the shop mirror (shop-bridge/README.md), which
 // refreshes public.jobs every 15 minutes via shop.refresh_jobs(). Use this only when the
 // bridge is down for a long time and a CSV export is all you have.
 // Joins tblProject (ProjectID, Project, Location, Archived) with

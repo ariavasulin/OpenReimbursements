@@ -17,7 +17,7 @@ SQL Server  <--read-only login--  dws-bridge  --outbound HTTPS-->  Cloudflare  <
 ```
 
 1. **The mirror.** Every 15 minutes the service runs its `SELECT` list, writes the rows into the `shop` schema in Supabase PostgreSQL, and calls `shop.refresh_jobs()`. The apps read that copy, never `DWS`.
-2. **The tunnel.** Cloudflare's `cloudflared` service holds an outbound connection so the apps can check health or call a named query from the local file. No live queries are defined today.
+2. **The tunnel.** Cloudflare's `cloudflared` service holds an outbound connection so the apps can check health or call a named query from the local file.
 
 ## 3. The list of statements: `queries.json`
 
@@ -218,7 +218,7 @@ In an elevated PowerShell on the shop computer:
    Set-ExecutionPolicy -Scope Process Bypass
    .\install\setup.ps1
    ```
-   The health JSON shows `"ok":true` and the SQL Server version, followed by a green "The bridge is up and can reach SQL Server." "Database unreachable" means the login or the TCP step in section 3; `C:\dws-bridge\logs\` has the driver's error.
+   The health JSON shows `"ok":true` and the SQL Server version, followed by a green "The bridge is up and can reach SQL Server." A yellow "The bridge is up but cannot reach SQL Server." means the login or the TCP step in section 3; `C:\dws-bridge\logs\` has the driver's error.
 4. Connect the tunnel:
    ```powershell
    cloudflared.exe service install <token from the command>
@@ -351,7 +351,7 @@ Tunnel calls also require headers `CF-Access-Client-Id` and `CF-Access-Client-Se
 | `pg` | open source | the PostgreSQL client |
 | `cloudflared` | Cloudflare | the outbound tunnel connector |
 | NSSM | open source | wraps the program as a Windows service |
-| `dws-bridge` | us, about 1,000 lines with automated tests | the program itself |
+| `dws-bridge` | us, with automated tests | the program itself |
 
 ### Running it on a developer machine
 

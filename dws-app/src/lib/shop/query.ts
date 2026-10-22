@@ -2,7 +2,7 @@ import 'server-only';
 
 /**
  * Client for the shop bridge: the read-only query service on the shop's Windows box,
- * reached through a Cloudflare Tunnel. See Docs/shop-bridge-runbook.md.
+ * reached through a Cloudflare Tunnel. See shop-bridge/README.md.
  *
  * The bridge runs only queries named in its own config; callers pick one by name
  * (POST /query/<name>) and may pass its parameters. It accepts no SQL.
@@ -47,6 +47,7 @@ export class ShopBridgeError extends Error {
 
 type Config = { url: string; token: string; accessId?: string; accessSecret?: string };
 type FetchLike = typeof fetch;
+type Deps = { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const QUERY_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -80,7 +81,7 @@ async function call<T>(
   path: string,
   init: RequestInit,
   timeoutMs: number,
-  deps: { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv } = {},
+  deps: Deps = {},
 ): Promise<T> {
   const c = config(deps.env);
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -112,19 +113,17 @@ async function call<T>(
   if (!res.ok) {
     // Cloudflare Access answers a blocked service call with 403 (or a 302 to its login
     // page when it thinks a browser is calling). Neither reaches the bridge.
-    const edge = res.status === 403 || res.status === 302 || (res.status >= 300 && res.status < 400);
-    const err = (body as { error?: { code?: string; message?: string } | string } | null)?.error;
-    const code =
-      typeof err === 'object' && err?.code ? err.code : edge ? 'edge_blocked' : `http_${res.status}`;
-    const message =
-      typeof err === 'object' && err?.message
-        ? err.message
-        : typeof err === 'string'
-          ? err
-          : edge
-            ? 'Blocked at the Cloudflare edge (check CF_ACCESS_CLIENT_ID/SECRET and the Access policy)'
-            : `Shop bridge returned ${res.status}`;
-    throw new ShopBridgeError(message, res.status, code);
+    const edge = res.status === 403 || (res.status >= 300 && res.status < 400);
+    const err = (body as { error?: { code?: string; message?: string } } | null)?.error;
+    if (err?.code) throw new ShopBridgeError(err.message ?? `Shop bridge returned ${res.status}`, res.status, err.code);
+    if (edge) {
+      throw new ShopBridgeError(
+        'Blocked at the Cloudflare edge (check CF_ACCESS_CLIENT_ID/SECRET and the Access policy)',
+        res.status,
+        'edge_blocked',
+      );
+    }
+    throw new ShopBridgeError(`Shop bridge returned ${res.status}`, res.status, `http_${res.status}`);
   }
   if (body === null) throw new ShopBridgeError('Shop bridge returned no JSON', 502, 'bad_response');
   return body as T;
@@ -135,7 +134,7 @@ export async function shopQueryResult<T = Record<string, unknown>>(
   name: string,
   params?: ShopParams,
   options: ShopQueryOptions = {},
-  deps: { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv } = {},
+  deps: Deps = {},
 ): Promise<ShopQueryResult<T>> {
   if (!QUERY_NAME.test(name)) throw new ShopBridgeError(`Invalid shop query name: ${JSON.stringify(name)}`, 400, 'bad_request');
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -150,7 +149,7 @@ export async function shopQuery<T = Record<string, unknown>>(
   name: string,
   params?: ShopParams,
   options: ShopQueryOptions = {},
-  deps: { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv } = {},
+  deps: Deps = {},
 ): Promise<T[]> {
   const result = await shopQueryResult<T>(name, params, options, deps);
   return result.rows;
@@ -158,7 +157,7 @@ export async function shopQuery<T = Record<string, unknown>>(
 
 /** The bridge's own health report (SQL Server reachability, version, mirror status, query names). */
 export async function shopHealth(
-  deps: { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+  deps: Deps & { timeoutMs?: number } = {},
 ): Promise<ShopHealth> {
   return call<ShopHealth>('/health', { method: 'GET' }, deps.timeoutMs ?? 10_000, deps);
 }

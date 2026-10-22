@@ -1,7 +1,7 @@
 ---
 status: active
 created: 2026-10-17
-updated: 2026-10-17
+updated: 2026-10-22
 ---
 
 # Shop database bridge and mirror: read the on-prem SQL Server from the web apps
@@ -45,11 +45,12 @@ test fixtures) is implementation-owned.
 
 One Node service on the bridge box does two jobs:
 
-1. **The bridge.** It accepts a single `SELECT` over HTTPS, runs it on the shop server
-   with a read-only login, and returns rows as JSON. A Cloudflare Tunnel publishes it with
-   no inbound port, and a Cloudflare Access service token in front stops anything without
-   the token at Cloudflare's edge. The apps call it with `shopQuery(sql, params)`; Ari
-   calls it from the laptop with one command. This is for exploring and for one-off reads.
+1. **The bridge.** It runs only the statements listed in `queries.json` on the box, which
+   the shop's admin writes or approves, on the shop server with a read-only login, and
+   returns rows as JSON. A Cloudflare Tunnel publishes it with no inbound port, and a
+   Cloudflare Access service token in front stops anything without the token at
+   Cloudflare's edge. The apps call a named statement with `shopQuery(name, params)`; Ari
+   calls it from the laptop with one command.
 2. **The mirror.** Every 15 minutes it reads each table on a short list from the shop
    server and replaces the copy in Supabase's `shop` schema in one transaction. The apps
    read the mirror like any other Postgres table. After each run a SQL function refreshes
@@ -57,10 +58,9 @@ One Node service on the bridge box does two jobs:
    a CSV.
 
 Why both: the mirror is what the apps use day to day (fast, no dependence on the shop
-being online at request time). The bridge is what makes the system agnostic: any
-question about the shop database can be answered now, and "add a table to the mirror"
-is one config line plus a generated migration, with the bridge used to read the table's
-shape. Adding a table never needs a trip to the shop.
+being online at request time). The bridge serves named live reads and reports health.
+Adding a table to the mirror is one `mirror` entry in `queries.json`, agreed with the
+admin (Decision 17).
 
 Why the mirror is pushed from the shop box and not pulled by Vercel: the Vercel Hobby
 plan runs crons once a day, and Ari wants 15 minutes.
@@ -80,15 +80,16 @@ Security, layer by layer:
 2. Cloudflare Access with a **Service Auth** policy: no token, no entry, and no log line in the shop.
 3. The bridge checks its own bearer token too, so a mis-set tunnel still fails closed.
 4. The shop database login is read-only (`db_datareader` plus `db_denydatawriter`).
-5. The bridge accepts one `SELECT`/`WITH` statement, 30-second timeout, row cap.
+5. The bridge runs only the statements in `queries.json`, each checked by a keyword
+   filter at startup, with a 30-second deadline and a row cap.
 6. The Supabase credential on the bridge box is a dedicated Postgres role, `shop_mirror`,
-   that can write only the `shop` schema and call one function. It cannot read receipts,
+   that can write only the `shop` schema, upsert `public.jobs`, and call one function. It cannot read receipts,
    photos, or users. The box never holds the service-role key.
 7. Every bridge query and every mirror run is logged.
 
 Maintenance: two Windows services that start at boot (`cloudflared` and the bridge),
-one `.env` file on the box, one config file listing the mirrored tables, four secrets in
-Vercel, a runbook with exact commands and a token-rotation checklist.
+one `.env` file on the box, one `queries.json` listing every statement, four secrets in
+Vercel, one document with exact commands and a token-rotation checklist.
 
 Cost: Cloudflare Zero Trust free tier; the tunnel is free; a throwaway domain registered
 in Cloudflare, about $10 a year.
@@ -104,12 +105,12 @@ capability, with a Postgres mirror of specific tables as the everyday path.
 
 ## Goals
 
-- Any server-side code in `dws-app` can run a read-only query on the live `DWS` database.
+- Server-side code in `dws-app` can run the bridge's named read-only statements on the live `DWS` database.
 - The same from Ari's laptop with one command.
 - A `shop` schema in Supabase holds a copy of the listed tables, at most 15 minutes old,
   replaced atomically so readers never see a half-copied table.
 - `public.jobs` refreshes from the mirror after every run.
-- Adding a table to the mirror is a config line and a generated migration.
+- Adding a table to the mirror is one `mirror` entry in `queries.json`.
 - No inbound port or public IP at the shop; the shop box holds only least-privilege credentials.
 - Setup and recovery documented so Ari can do both alone.
 
@@ -189,8 +190,8 @@ flowchart LR
 
 ## Alternatives considered
 
-- **Named-query allowlist instead of free SQL.** Safer on paper, worse DX, and the
-  read-only login already removes the write risk. Reversal path in Decision 2.
+- **Free single-`SELECT` queries instead of a statement file.** The first design; the
+  shop's admin asked for the specific queries instead (Decision 17).
 - **Mirror via `supabase-js` upserts with the service-role key.** Familiar in this repo,
   but REST cannot do a transactional replace, and the box would hold the key to everything.
 - **Mirror pulled by a Vercel cron through the bridge.** Daily only on Hobby.
@@ -199,75 +200,35 @@ flowchart LR
 
 ## Contract surface
 
-### Bridge service (`shop-bridge/`, new top-level directory)
+Decisions 17–24 replaced the first design (ad-hoc `POST /query`, `mirror.config.json`,
+generated table DDL). What is built:
 
-- `GET /health` → `{ ok, server, database, version, mirror: { lastRunAt, lastOk, tables }, durationMs }`.
-- `POST /query` with JSON `{ sql, params?, maxRows? }` → `{ columns, rows, rowCount, truncated, durationMs }`.
-- Rejections: `401` missing or wrong bearer; `400` not a single `SELECT`/`WITH`, contains
-  `;`, or contains a write/exec keyword (`insert update delete merge into exec execute
-  drop alter create truncate grant revoke backup restore`); `413` body over 64 KiB;
-  `504` after the 30-second timeout; `502` when SQL Server is unreachable.
-- Defaults: `maxRows` 5,000, hard cap 50,000. Pool max 4. Request timeout 30 s.
-- Env: `SHOP_DB_SERVER` (`SQL2016\SQLEXPRESS` or `host,port`), `SHOP_DB_NAME=DWS`,
-  `SHOP_DB_USER`, `SHOP_DB_PASSWORD`, optional `SHOP_DB_DOMAIN` (Windows account via
-  NTLM), `SHOP_DB_TRUST_CERT=true`, `SHOP_BRIDGE_TOKEN` (32 bytes hex),
-  `SHOP_BRIDGE_PORT=8787`, `SHOP_MIRROR_DATABASE_URL` (session pooler, role `shop_mirror`),
-  `SHOP_MIRROR_INTERVAL_MINUTES=15`.
-- Log line per request and per mirror run to stdout (NSSM rotates to `C:\dws-bridge\logs\`).
-
-### Mirror (same service)
-
-- Config `shop-bridge/mirror.config.json`, committed and copied to the box:
-  `{ "tables": ["tblProject", "tblLocation", "tblMas90JobMasterOpen", "tblContact", "tblHardware"] }`.
-  These five cover jobs, job locations, Sage's open list, employees and their phones, and
-  company-issued phones. `tblPM` and `tblProjContact` are easy follow-ons.
-- Every `SHOP_MIRROR_INTERVAL_MINUTES`: for each table, `SELECT *` from the shop server,
-  then in one Postgres transaction `DELETE FROM shop."<table>"` and bulk `INSERT` (batched
-  `INSERT ... VALUES` of 500 rows), then `INSERT INTO shop.sync_runs`. A failed table rolls
-  back that table only and is recorded; the run continues. After all tables,
-  `SELECT shop.refresh_jobs()`.
-- Overlap guard: a run that is still going when the next tick arrives is skipped and logged.
-- Column names and casing are kept as in SQL Server (quoted identifiers). Types map:
-  `int/smallint/tinyint` → `integer`, `bigint` → `bigint`, `bit` → `boolean`,
-  `varchar/nvarchar/char/nchar/text` → `text`, `smalldatetime/datetime/date` → `timestamp`,
-  `money/smallmoney/decimal/numeric` → `numeric`, `float/real` → `double precision`,
-  anything else → `text`.
-
-### Supabase side (migrations)
-
-- `shop` schema. `revoke all on schema shop from public, anon, authenticated`.
-- Role `shop_mirror` (login, password set out of band): `usage` on `shop`, `select, insert,
-  delete` on all `shop` tables, `execute` on `shop.refresh_jobs()`. No rights on `public`.
-- `shop.sync_runs (id, table_name, started_at, finished_at, row_count, ok, error)`;
-  the app's admin reads it with the service role.
-- One generated table per configured name, primary key where the source declares one
-  (`ContactID`, `ProjectID`, `JobNo`, `LocationID`, `HardwareID`).
-- `shop.refresh_jobs()`, `security definer`, owner `postgres`: upsert into `public.jobs`
-  from `shop."tblProject"` joined to `shop."tblMas90JobMasterOpen"` (`JobStatus = 'O'`,
-  `Completed IS NULL`, `Archived = false`) and `shop."tblLocation"` for the location text;
+- **Bridge and mirror** (`shop-bridge/`): routes, settings, limits, rejections, and files
+  are in [`shop-bridge/README.md` § 9 Reference](../../../shop-bridge/README.md). The
+  service runs only the statements in `queries.json`: `mirror` entries `{ into, sql }`
+  copied into `shop.<into>` every `SHOP_MIRROR_INTERVAL_MINUTES`, and named `live`
+  statements served at `POST /query/<name>` (none shipped).
+- **Supabase side**: the three `dws-app/supabase/migrations/20261017100*_shop_*.sql`
+  files. `shop` schema; role `shop_mirror` with `usage, create` on `shop` (it owns the
+  landing tables it creates), `execute` on `shop.refresh_jobs()`, and `select, insert,
+  update` plus its own policy on `public.jobs`; `shop.sync_runs`; and
+  `public.shop_sync_status()` for the admin (service role only).
+- **`shop.refresh_jobs()`**, `security invoker`, callable only by `shop_mirror`: upserts
+  into `public.jobs` from `shop.projects` joined to `shop.open_jobs` (`JobStatus = 'O'`,
+  `Completed IS NULL`, `Archived = false`) and `shop.locations` for the location text;
   sets `name`, `location`, `is_active = true`, `synced_at = now()`; skips numbers held by
   trashed rows; never touches `P-` rows; never sets `is_active = false`; returns
-  `{ upserted, skipped_trashed, dropped_from_open text[] }` and writes it to `sync_runs`
+  `{ ok, upserted, skipped_trashed, dropped_from_open }` and writes it to `sync_runs`
   under `table_name = 'public.jobs'`. On failure it records an `ok = false` row and returns
   `{ ok: false, error }` instead of raising (raising would roll back the failure row); the
   mirror reads that flag. Location text is `coalesce(LocationName, "LocationAddress, LocationCity")`.
-- DDL for new mirror tables comes from the bridge itself: `GET /ddl?tables=...` (built on
-  `shop-bridge/ddl.mjs` and the shared type map in `shop-bridge/types.mjs`), fetched from the
-  laptop with `scripts/shop-query.mjs --ddl tblX`, or on the box with `npm run ddl -- tblX`.
-  Ari reviews and applies it like any migration. (Built: the five-table migration was
-  generated from the catalog metadata and matches the bridge generator's output exactly.)
-
-### App client (`dws-app/src/lib/shop/`)
-
-- `shopQuery<T>(sql, params?, { maxRows?, timeoutMs? })` → `T[]`; server-only.
-- `shopHealth()` → the bridge's health object.
-- Env in Vercel: `SHOP_BRIDGE_URL`, `SHOP_BRIDGE_TOKEN`, `CF_ACCESS_CLIENT_ID`,
-  `CF_ACCESS_CLIENT_SECRET`. Server-only; none prefixed `NEXT_PUBLIC_`.
-- CLI: `node --env-file=.env.local scripts/shop-query.mjs "<sql>"` prints a table; `--json` prints rows.
-- `GET /api/shop/health` behind `requireAdmin()`: bridge health plus `public.shop_sync_status()`
-  (the latest `shop.sync_runs` row per table, `security definer`, service role only; it lives in
-  `public` because PostgREST does not expose `shop`), so the admin page can later show
-  "office data: 4 min ago".
+- **App client** (`dws-app/src/lib/shop/query.ts`, server-only): `shopQuery(name, params?,
+  { maxRows?, timeoutMs? })` → rows, `shopQueryResult` for the full result, and
+  `shopHealth()`. Env in Vercel: `SHOP_BRIDGE_URL`, `SHOP_BRIDGE_TOKEN`,
+  `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, none prefixed `NEXT_PUBLIC_`. CLI:
+  `node --env-file=.env.local scripts/shop-query.mjs --health` or `<name> [--param k=v]`.
+  `GET /api/shop/health` behind `requireAdmin()` returns bridge health plus
+  `public.shop_sync_status()`.
 
 ### Acceptance criteria
 
@@ -452,8 +413,8 @@ Vercel env → confirm the health route.
 
 - **Shop internet or power outage.** The mirror goes stale and the bridge is unreachable;
   the apps keep working on the last copy. The health route shows the age.
-- **SQL Server Express limits** (4 cores, 1.4 GB buffer): five small `SELECT *` every
-  15 minutes is light; the bridge's timeout, row cap, and pool of 4 bound ad-hoc queries.
+- **SQL Server Express limits** (4 cores, 1.4 GB buffer): four column-listed statements every
+  15 minutes is light; the bridge's deadline, row cap, and pool of 4 bound every statement.
 - **A table grows.** `tblTimesheet` (289k rows) would not suit a whole-table copy every 15
   minutes; the config keeps it out, and Decision 12 names the incremental path if needed.
 - **Token or password leakage.** Each credential is scoped (edge token, bearer,
@@ -466,17 +427,20 @@ Vercel env → confirm the health route.
   both internet hops are TLS.
 - **Access token expiry.** The runbook records the date; the health route surfaces a `403`
   from the edge as "office database: blocked".
-- **Schema drift at the source.** A new column in SQL Server is ignored until the DDL
-  script is re-run; a dropped column fails that table's run and is recorded in `sync_runs`.
+- **Schema drift at the source.** Statements list their columns, so a new column in SQL
+  Server is not copied until a statement names it; a statement whose result no longer
+  matches its landing table fails that entry, recorded in `sync_runs` (Decision 14).
 
 ## Open questions
 
 - Phase 0 items 2, 4, 5.
-- Whether the live `DWS` schema differs from the Jan 2024 export the research used
-  (the DDL script reads the live metadata, so this resolves itself in Phase 2).
+- Whether the live `DWS` schema differs from the Jan 2024 export the research used.
 - Deactivating closed jobs in `public.jobs`: deferred until the dropped-from-open lists
   have a few weeks of history.
 - What onboarding should do with mirrored `tblContact` rows: a later plan.
+- Raised by the admin and out of this plan's scope: photo and receipt storage buckets are
+  public, so any object URL once seen works forever regardless of share-link state; needs
+  its own plan (private buckets plus signed URLs), followed by a security audit.
 
 ## Relationship to other plans
 
@@ -493,8 +457,6 @@ Vercel env → confirm the health route.
   replaces them with `LocationName` for every open job. Not checked against production.
 - Phase 1 step 5 (SQL Server container test) was not run; the first real SQL Server
   contact is the shop install. The Windows scripts were not executed (no PowerShell here).
-- `shop_mirror` has `select, insert` on `sync_runs` and `select, insert, delete` on the
-  mirror tables; `delete` on `sync_runs` is revoked on purpose.
 
 ## Scope change (2026-10-22)
 
@@ -511,19 +473,16 @@ Rework on branch `shop-db-bridge`:
   pointer. The admin gets it, with the code, as a secret gist.
 - Still Ari's: the admin's account in the apps (phone number pending), the login,
   Phase 0 answers, migrations, shop install.
-- Raised by the admin and out of this plan's scope: photo and receipt storage buckets are
-  public, so any object URL once seen works forever regardless of share-link state; needs
-  its own plan (private buckets plus signed URLs), followed by a security audit.
+- The admin also raised the public storage buckets (see Open questions).
 
 ## Review round two (2026-10-22)
 
-Two delegated reviews of `8df0bd4`: a sealed, independent Codex review and a Claude
+Two delegated reviews of `8994378`: a sealed, independent Codex review and a Claude
 review. Both said "not ready to show the admin" and named one thing each: the
 definer-rights escalation (decision 21) and the keyword filter's gap (decision 24). The
 rest: client-side Postgres deadlines (a dead socket left the mirror "in flight" forever),
 a malformed request URL could exit the process, the installer's health check matched the
 wrong `ok`, the `.env` ACL was shared with every NetworkService process, `SHOP_DB_NAME` was
 not enforced, dates and decimals beyond the driver's precision, and a dozen readability
-cuts. All applied on the branch; the document says "about 1,000 lines", which is the
-count.
+cuts. All applied on the branch; the README's "about 1,000 lines" matches the code.
 

@@ -6,7 +6,7 @@
 --   shop.locations (LocationID, LocationName, LocationAddress, LocationCity) from tblLocation
 -- Those tables may not exist yet when this function is created or called: plpgsql
 -- looks the names up when it runs, and a missing table is caught below as a failed run.
--- It follows the rules of the one-off importer dws-app/scripts/import-jobs.mjs:
+-- It follows the rules of the manual-fallback importer dws-app/scripts/import-jobs.mjs:
 --   * open office jobs = shop.projects rows whose number is on Sage's open list
 --     (shop.open_jobs, JobStatus 'O'), not Completed, not Archived;
 --   * job_number is the office ProjectID; name is the trimmed project name; a

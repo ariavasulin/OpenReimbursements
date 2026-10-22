@@ -5,8 +5,8 @@
 .DESCRIPTION
   Run from an elevated PowerShell:
 
-    powershell -ExecutionPolicy Bypass -File .\shop-bridge\install\uninstall.ps1
-    powershell -ExecutionPolicy Bypass -File .\shop-bridge\install\uninstall.ps1 -RemoveFiles
+    powershell -ExecutionPolicy Bypass -File C:\dws-bridge\install\uninstall.ps1
+    powershell -ExecutionPolicy Bypass -File C:\dws-bridge\install\uninstall.ps1 -RemoveFiles
 
   Safe to re-run: missing pieces are skipped. The folder holds .env with secrets, so
   -RemoveFiles deletes it too; rotate those secrets if the box is being retired.

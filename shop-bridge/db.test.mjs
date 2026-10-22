@@ -12,13 +12,12 @@ test('SHOP_DB_SERVER and SHOP_DB_NAME are both required, as configuration errors
   }
 });
 
-test('buildConfig: named instance, database, encryption, no read-only routing hint', () => {
+test('buildConfig: named instance, database, encryption', () => {
   const config = buildConfig(ENV);
   assert.equal(config.server, 'SQL2016');
   assert.equal(config.options.instanceName, 'SQLEXPRESS');
   assert.equal(config.database, 'DWS');
   assert.equal(config.options.encrypt, true);
-  assert.equal('readOnlyIntent' in config.options, false);
   assert.equal(config.user, 'u');
 });
 

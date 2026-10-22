@@ -1,7 +1,7 @@
 # Plan shape and server-side patterns (OpenReimbursements)
 
-Repo: `/Users/ariavasulin/orca/workspaces/OpenReimbursements/plan-dws-photos-client-feedback` (branch `perf-round-1`, commit `fe41309`).
-No `.map.md` at the repo root, so no map fragments were used. All paths below are relative to the repo root unless absolute.
+Repo: OpenReimbursements, branch `perf-round-1`, commit `fe41309` (the same tree as `f32010b` on `main`).
+All paths below are relative to the repo root unless absolute.
 
 ---
 
@@ -185,60 +185,10 @@ Companion files in `dws-hosted-mcp/`:
 
 ### 1.5 Phases, steps, verify items, acceptance criteria (verbatim)
 
-Template from the frozen contract (`plans/active/dws-hosted-mcp/sources/planning-contract/AGENTS.md:50-65`):
-```markdown
-## Phase N — <name>
-
-What this phase establishes, why it is next, what it defers.
-
-### Steps
-1. <concrete deliverable>
-
-### Verify
-- [ ] [AC-1] <scenario or command>
-- [ ] <existing suite still green for touched modules>
-
-### Exit criteria
-Observable state proving completion.
-```
+Template: `plans/active/dws-hosted-mcp/sources/planning-contract/AGENTS.md:50-65` (Phase N heading; one framing sentence; `### Steps` / `### Verify` with `[AC-n]` checkboxes / `### Exit criteria`).
 And (`AGENTS.md:45`): "Contract requirements use AC IDs (`AC-1`, `AC-2`, ...) plus examples or named scenarios ... every AC advances a plan goal and appears in a phase Verify block where the code lands ... Keep AC-evidence probes such as grep patterns and line anchors in phase Verify blocks, not AC prose."
 
-**Representative phase, verbatim** — `plans/active/dws-photos-client-feedback/plan.md:366-398`:
-```markdown
-## Phase W1-A — Photo admins and the delete rule
-
-Establishes who may delete, before anything real is uploaded. Defers nothing.
-
-### Steps
-1. Migration `..._photo_admin_and_trash_rule.sql`: the W1-A block in § Database. Re-create the
-   three action functions from `20260920234821_photo_open_trash_authority.sql`, adding the
-   `photo_can_trash` check where the removed uploader-or-admin check stood (`:31`, `:48-50`,
-   `:76` of `20260907100400_photo_actions.sql` show the spots); `photo_delete_job` and
-   `photo_purge_request` from `20260923180000_photo_manage_followups.sql`; `photo_delete_album`
-   from `20260921024651_photo_albums.sql`. Restate grants by name.
-2. Routes: `GET /api/photos/actor`; real `can_trash` in `src/app/api/photos/[id]/ownership/route.ts`;
-   `photo_admin` on `PATCH /api/admin/users/[id]` and `POST /api/admin/users`; `requirePhotoActor`
-   gains `isPhotoAdmin` on the actor object (one extra column in its profile select).
-3. Client: a `usePhotoActor()` hook; hide/explain per § Screens "Trash gating" in
-   `selection-bar.tsx`, `photo-info.tsx`, `trash/page.tsx`, `collection-select-bar.tsx`
-   (project Delete), and the album header; "Photo admin" checkbox in `user-form-modal.tsx`.
-4. MCP: `remove_photos` batches now fail materialization for non-deletable photos; the confirm
-   page already shows per-photo failures — confirm the message is plain ("You can only delete
-   photos you uploaded in the last 30 days").
-5. Docs: `Docs/photos-runbook.md` § trash and § hand-made projects state the new rule;
-   `Docs/Admin-Features.md` gains the checkbox.
-
-### Verify
-- [ ] [AC-1] `test:db` + `test:routes`: admin purge 200; employee purge 403; employee project delete 403; employee `photo_delete_album` on own album 200, on another's 403.
-- [ ] [AC-2] `test:db`: employee trashes own 29-day-old photo (fixture `created_at = now()-29d`) → ok; own 31-day-old → `forbidden`; colleague's → `forbidden`; MCP-origin batch with the same photos → `forbidden`. `test:browser`: mixed selection reads "Trash the N you can delete".
-- [ ] [AC-3] `test:db`: employee restores a colleague's photo, tags, renames, moves, creates a project and an album → all ok.
-- [ ] [AC-4] `test:routes`: receipts admin `PATCH /api/admin/users/[id] {photo_admin:true}` → `GET /api/photos/actor` reports true for that user; employee calling the admin route → 403.
-- [ ] `integration/db/authority.test.ts` updated: the only `role='admin'` checks are still the deployment tools; the new checks use `photo_admin`.
-- [ ] Mechanical diff of every re-created function; suites green; `tsc` clean.
-
-### Exit criteria
-A non-admin cannot delete forever, empty the trash, delete a project, or trash a photo that is not their own recent upload, in SQL, in routes, and on screen; a photo admin can do all of it.
-```
+Representative full phase: `plans/active/dws-photos-client-feedback/plan.md:366-398` (W1-A; numbered Steps naming files, Verify items tagged `[AC-n]` with the suite to run, a one-sentence Exit criteria).
 
 Completed-phase variant: checkboxes ticked `[x]` and an `**Observed evidence (date):**` paragraph appended after Exit criteria — `plans/active/dws-hosted-mcp/plan.md:287-299`:
 ```markdown
@@ -627,9 +577,3 @@ Operator-cutover procedure shape (`photos-runbook.md:537-703`): `## Hosted photo
 - `plans/active/dws-photos-client-feedback/sources/research-questions.md:11` (research question on where jobs come from)
 - `public.jobs.synced_at` column (`00000000000003_photos_schema.sql:9`), set by `import-jobs.mjs`
 - Unrelated UI uses: `dws-app/src/hooks/use-photo-deep-link.ts:49`, `dws-app/src/app/globals.css:5`.
-
----
-
-## Map misses
-
-Repo has no `.map.md`; all findings came from direct search.

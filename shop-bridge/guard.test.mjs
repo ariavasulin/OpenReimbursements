@@ -73,8 +73,3 @@ for (const [sql, reason] of rejects) {
 test('two SELECTs in a row still pass: the filter is not a parser', () => {
   assert.deepEqual(checkReadOnlySql('SELECT 1 SELECT 2'), { ok: true });
 });
-
-test('rejects non-strings', () => {
-  assert.equal(checkReadOnlySql(undefined).ok, false);
-  assert.equal(checkReadOnlySql(42).ok, false);
-});

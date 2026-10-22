@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/requireAdmin';
 import { ShopBridgeError, shopHealth } from '@/lib/shop/query';
+import { supabaseAdmin } from '@/lib/supabaseAdminClient';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +14,6 @@ export async function GET() {
   const gate = await requireAdmin();
   if (gate.response) return gate.response;
 
-  const { supabaseAdmin } = await import('@/lib/supabaseAdminClient');
   const [bridge, mirror] = await Promise.all([
     shopHealth().catch((error: unknown) => {
       if (error instanceof ShopBridgeError) {

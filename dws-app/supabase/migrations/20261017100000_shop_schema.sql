@@ -1,6 +1,6 @@
 -- The shop mirror's home: a `shop` schema holding copies of query results from the
 -- office SQL Server database, written every 15 minutes by the service on the shop's
--- bridge box (plans/active/shop-db-bridge/plan.md). PostgREST does not expose this
+-- bridge box. PostgREST does not expose this
 -- schema, and anon and authenticated get nothing in it; the apps read it with the
 -- service role.
 --
@@ -14,13 +14,11 @@
 -- and read tables in this schema, call shop.refresh_jobs(), and read and upsert
 -- public.jobs (select, insert, update; no delete), and nothing else: no other public
 -- table, no function in public, nothing in auth, and membership in no other role.
--- refresh_jobs() runs with its caller's rights, so the public.jobs grant and policy
--- below are what it uses when the bridge calls it.
 --
 -- No password is set here. Supabase's pooler only lets a role log in once it has
 -- one, so the operator sets it out of band, once, after applying this file:
 --   alter role shop_mirror password '<generated secret>';
--- and records where the secret is kept (see the shop bridge runbook).
+-- and records where the secret is kept (see shop-bridge/README.md).
 
 create schema if not exists shop;
 revoke all on schema shop from public;

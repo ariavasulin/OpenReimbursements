@@ -12,10 +12,12 @@ import { checkReadOnlySql } from './guard.mjs';
 import { isIdentifier } from './types.mjs';
 
 // Tables in the shop schema the mirror itself depends on; an entry landing there would wipe them.
-export const RESERVED_INTO = Object.freeze(['sync_runs']);
+const RESERVED_INTO = Object.freeze(['sync_runs']);
 
 const TOP_KEYS = ['mirror', 'live'];
 const ENTRY_KEYS = ['into', 'sql'];
+
+const IDENTIFIER_RULE = '(letters, digits, underscore; not starting with a digit)';
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -29,7 +31,6 @@ function checkSql(where, sql, errors) {
 }
 
 /**
- * Pure validation of the parsed queries.json.
  * @returns {{ ok: boolean, errors: string[], queries: { mirror: { into: string, sql: string }[], live: Record<string, string> } | null }}
  */
 export function validateQueries(obj) {
@@ -55,7 +56,7 @@ export function validateQueries(obj) {
         if (!ENTRY_KEYS.includes(key)) errors.push(`${label}: unknown key "${key}" (expected "into" and "sql")`);
       }
       if (!isIdentifier(entry.into)) {
-        errors.push(`${label}: "into" must be a plain table name (letters, digits, underscore; not starting with a digit)`);
+        errors.push(`${label}: "into" must be a plain table name ${IDENTIFIER_RULE}`);
       } else {
         const lower = entry.into.toLowerCase();
         if (RESERVED_INTO.includes(lower)) {
@@ -76,7 +77,7 @@ export function validateQueries(obj) {
     for (const [name, sql] of Object.entries(obj.live)) {
       const label = `live "${name}"`;
       if (!isIdentifier(name)) {
-        errors.push(`${label}: the name must be a plain identifier (letters, digits, underscore; not starting with a digit)`);
+        errors.push(`${label}: the name must be a plain identifier ${IDENTIFIER_RULE}`);
       }
       checkSql(label, sql, errors);
     }

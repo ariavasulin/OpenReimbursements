@@ -3,15 +3,15 @@
   Install or update the DWS shop bridge as a Windows service on the bridge box.
 
 .DESCRIPTION
-  Run from an elevated PowerShell, from inside the repo copy on the bridge box:
+  Run from an elevated PowerShell, inside the copied shop-bridge folder:
 
-    powershell -ExecutionPolicy Bypass -File .\shop-bridge\install\setup.ps1
+    powershell -ExecutionPolicy Bypass -File .\install\setup.ps1
 
   What it does, in order:
     1. Checks Node.js 22+ and nssm are on PATH (prints download links if not).
     2. Stops the service if it is already installed.
     3. Copies the service files to C:\dws-bridge: everything in shop-bridge\ except
-       node_modules, logs, .env, and tests. That includes queries.json (the only SQL the
+       node_modules, logs, .env, tests, and git files. That includes queries.json (the only SQL the
        service runs), supabase-ca.crt (the CA the mirror checks Supabase's certificate
        against), and install\ (so uninstall.ps1 is on the box).
     4. Registers the NSSM service "dws-bridge" if it is new, and sets the account it runs
@@ -42,7 +42,6 @@
 param(
   [string]$InstallDir = 'C:\dws-bridge',
   [string]$ServiceName = 'dws-bridge',
-  # Defaults to the virtual account of the service named above: NT SERVICE\dws-bridge.
   [string]$ServiceAccount = "NT SERVICE\$ServiceName"
 )
 
@@ -105,19 +104,18 @@ Write-Step "Copying service files from $Source to $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-# install\ and supabase-ca.crt are copied: only these folders and files are skipped.
-$skipDirs = @('node_modules', 'logs', '.git')
-$skipFiles = @('.env', '.gitignore')
-$files = Get-ChildItem -LiteralPath $Source -Force | Where-Object {
-  -not ($_.PSIsContainer -and ($skipDirs -contains $_.Name))
-} | ForEach-Object {
-  if ($_.PSIsContainer) { Get-ChildItem -LiteralPath $_.FullName -Recurse -File -Force } else { $_ }
-} | Where-Object {
-  ($skipFiles -notcontains $_.Name) -and ($_.Name -notlike '*.test.mjs') -and ($_.Name -notlike 'testing-*.mjs')
-}
 if ($Source -eq $InstallDir) {
   Write-Host "  (already running from $InstallDir; nothing to copy)"
 } else {
+  $skipDirs = @('node_modules', 'logs', '.git')
+  $skipFiles = @('.env', '.gitignore')
+  $files = Get-ChildItem -LiteralPath $Source -Force | Where-Object {
+    -not ($_.PSIsContainer -and ($skipDirs -contains $_.Name))
+  } | ForEach-Object {
+    if ($_.PSIsContainer) { Get-ChildItem -LiteralPath $_.FullName -Recurse -File -Force } else { $_ }
+  } | Where-Object {
+    ($skipFiles -notcontains $_.Name) -and ($_.Name -notlike '*.test.mjs') -and ($_.Name -notlike 'testing-*.mjs')
+  }
   foreach ($file in $files) {
     $relative = $file.FullName.Substring($Source.Length).TrimStart('\')
     $target = Join-Path $InstallDir $relative
@@ -167,7 +165,7 @@ $serviceAccountId = switch ($ServiceAccount) {
   'LocalSystem' { '*S-1-5-18' }
   default { $ServiceAccount }
 }
-# Earlier versions of this script ran the service as NetworkService. /grant:r below only
+# An earlier install may have used the NetworkService fallback. /grant:r below only
 # replaces grants for the accounts it names, so drop NetworkService's old grants here.
 if ($serviceAccountId -ne '*S-1-5-20') {
   & icacls $InstallDir /remove:g '*S-1-5-20' /T /C /Q | Out-Null
@@ -222,7 +220,6 @@ function New-Token {
   return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 
-# Name, prompt, default, secret?, optional?
 $settings = @(
   @{ Name = 'SHOP_DB_SERVER'; Prompt = 'SQL Server (HOST\INSTANCE or host,port)'; Default = 'SQL2016\SQLEXPRESS' },
   @{ Name = 'SHOP_DB_NAME'; Prompt = 'Database name'; Default = 'DWS' },
@@ -275,6 +272,7 @@ foreach ($name in $values.Keys) {
 }
 # UTF-8 without a byte-order mark, so Node reads the first key correctly.
 [IO.File]::WriteAllText($EnvPath, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
+$port = $values['SHOP_BRIDGE_PORT']
 $values = $null; $current = $null
 
 # --- 7. The rest of the service settings ----------------------------------------------
@@ -285,7 +283,7 @@ Invoke-Nssm set $ServiceName AppDirectory $InstallDir
 # Node 22 reads the .env file itself, so no secrets live in the service registry entry.
 Invoke-Nssm set $ServiceName AppParameters '--env-file=.env server.mjs'
 Invoke-Nssm set $ServiceName DisplayName 'DWS shop bridge'
-Invoke-Nssm set $ServiceName Description 'Read-only HTTP bridge to the shop SQL Server and 15-minute mirror to Supabase. See shop-bridge/README.md.'
+Invoke-Nssm set $ServiceName Description 'Read-only HTTP bridge to the shop SQL Server and periodic mirror to Supabase. See README.md in this folder.'
 Invoke-Nssm set $ServiceName Start SERVICE_AUTO_START
 Invoke-Nssm set $ServiceName AppStdout (Join-Path $LogDir 'bridge.log')
 Invoke-Nssm set $ServiceName AppStderr (Join-Path $LogDir 'bridge.log')
@@ -306,8 +304,6 @@ Start-Service -Name $ServiceName
 
 # --- 9. Health check ------------------------------------------------------------------
 
-$port = (Read-EnvFile $EnvPath)['SHOP_BRIDGE_PORT']
-if (-not $port) { $port = '8787' }
 $url = "http://127.0.0.1:$port/health"
 Write-Step "Checking $url"
 $body = $null
@@ -327,8 +323,7 @@ for ($i = 0; $i -lt 10 -and -not $body; $i++) {
 if ($body) {
   Write-Host $body
   # Parse the JSON: a text match on "ok": true would also hit mirror.tables.<name>.ok.
-  $healthy = $false
-  try { $healthy = (($body | ConvertFrom-Json).ok -eq $true) } catch { $healthy = $false }
+  $healthy = try { ($body | ConvertFrom-Json).ok -eq $true } catch { $false }
   if ($healthy) {
     Write-Host 'The bridge is up and can reach SQL Server.' -ForegroundColor Green
   } else {

@@ -26,8 +26,9 @@ test('the shipped queries.json is valid', () => {
   const result = loadQueries(fileURLToPath(new URL('./queries.json', import.meta.url)));
   assert.deepEqual(result.errors, []);
   assert.equal(result.ok, true);
-  assert.deepEqual(result.queries.mirror.map((e) => e.into), ['projects', 'locations', 'open_jobs', 'contacts']);
-  assert.deepEqual(result.queries.live, {});
+  // shop.refresh_jobs() reads these three landing tables.
+  const intos = result.queries.mirror.map((e) => e.into);
+  for (const into of ['projects', 'locations', 'open_jobs']) assert.ok(intos.includes(into), into);
 });
 
 test('a valid file passes, and an empty live section is fine', () => {

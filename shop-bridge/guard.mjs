@@ -17,7 +17,7 @@
 // filter still cannot write, and the mirror copies a result only if its columns
 // match the landing table.
 
-export const MAX_SQL_BYTES = 64 * 1024;
+const MAX_SQL_BYTES = 64 * 1024;
 
 // Whole words, case-insensitive. `into` catches `select ... into newtable`;
 // `next` catches `NEXT VALUE FOR` (a sequence write) and so also rules out
@@ -52,7 +52,7 @@ const BANNED_RE = new RegExp(
  * a comment marker inside a string cannot hide code from the checks below.
  * Returns { text } or { error }.
  */
-export function stripComments(sql) {
+function stripComments(sql) {
   let out = '';
   let i = 0;
   const n = sql.length;
@@ -101,7 +101,6 @@ export function stripComments(sql) {
 
 /** @returns {{ ok: true } | { ok: false, reason: string }} */
 export function checkReadOnlySql(sql) {
-  if (typeof sql !== 'string') return { ok: false, reason: 'sql must be a string' };
   if (Buffer.byteLength(sql, 'utf8') > MAX_SQL_BYTES) {
     return { ok: false, reason: 'sql is longer than 64 KiB' };
   }
