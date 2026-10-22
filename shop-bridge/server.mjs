@@ -9,12 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { loadQueries } from './config.mjs';
 import { buildConfig, closePool, getPool as defaultGetPool } from './db.mjs';
 import { createMirror, createMirrorApi, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
-import { QUERY_TIMEOUT_MS, runQuery } from './query.mjs';
-import { isIdentifier, plainRow } from './types.mjs';
+import { QUERY_TIMEOUT_MS, runQuery, timeoutMessage } from './query.mjs';
+import { isIdentifier, isPlainObject, plainRow } from './types.mjs';
 
-export const MAX_BODY_BYTES = 64 * 1024;
-export const DEFAULT_MAX_ROWS = 5000;
-export const MAX_ROWS_CAP = 50000;
+const MAX_BODY_BYTES = 64 * 1024;
+const DEFAULT_MAX_ROWS = 5000;
+const MAX_ROWS_CAP = 50000;
 const MIN_TOKEN_CHARS = 32;
 const tokenUsable = (token) => Boolean(token) && token.length >= MIN_TOKEN_CHARS;
 const QUERY_PREFIX = '/query/';
@@ -38,7 +38,7 @@ class HttpError extends Error {
 }
 
 /** Map any thrown error to an HttpError: HttpErrors pass through, driver errors get a status, the rest are 500. */
-export function toHttpError(err) {
+function toHttpError(err) {
   if (err instanceof HttpError) return err;
   if (err?.code === 'ECONFIG') {
     return new HttpError(503, 'not_configured', `The bridge is not configured: ${err.message}.`);
@@ -48,7 +48,7 @@ export function toHttpError(err) {
     return new HttpError(502, 'db_unreachable', `Could not reach the shop database (${err.code ?? 'unknown error'}).`);
   }
   if (err?.code === 'ETIMEOUT') {
-    return new HttpError(504, 'timeout', `The query ran longer than ${QUERY_TIMEOUT_MS / 1000} seconds and was cancelled.`);
+    return new HttpError(504, 'timeout', timeoutMessage(QUERY_TIMEOUT_MS));
   }
   if (err?.code === 'EREQUEST' || err?.name === 'RequestError') {
     return new HttpError(400, 'bad_request', `SQL Server rejected the query: ${err.message}`);
@@ -99,7 +99,7 @@ function parseQueryBody(text) {
       throw new HttpError(400, 'bad_request', 'The request body is not valid JSON.');
     }
   }
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+  if (!isPlainObject(body)) {
     throw new HttpError(400, 'bad_request', 'The request body must be a JSON object.');
   }
   const unknown = Object.keys(body).find((key) => !BODY_KEYS.includes(key));
@@ -107,7 +107,7 @@ function parseQueryBody(text) {
     throw new HttpError(400, 'bad_request', `Unknown field "${unknown}"; the body takes only "params" and "maxRows".`);
   }
   const params = body.params ?? {};
-  if (typeof params !== 'object' || Array.isArray(params)) {
+  if (!isPlainObject(params)) {
     throw new HttpError(400, 'bad_request', '"params" must be an object of name to value.');
   }
   for (const [name, value] of Object.entries(params)) {

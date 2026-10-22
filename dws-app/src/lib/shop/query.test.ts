@@ -12,7 +12,7 @@ const env = {
 } as unknown as NodeJS.ProcessEnv;
 
 function respond(status: number, body: unknown, headers: Record<string, string> = {}) {
-  return new Response(body === undefined ? null : typeof body === 'string' ? body : JSON.stringify(body), {
+  return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json', ...headers },
   });

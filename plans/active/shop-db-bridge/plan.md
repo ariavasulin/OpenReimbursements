@@ -23,7 +23,7 @@ tables in Supabase, and the web apps reading the office database). **Delivery: g
 Server Express two ways: a live read-only query path for ad-hoc use, and a 15-minute
 mirror of chosen tables in Postgres for the apps. No inbound hole in the shop network.
 Source of truth: this plan, then the ticket, then the research. Locked decisions:
-Decisions 1–28 below. Current phase: **Built on branch `shop-db-bridge` (2026-10-17), then narrowed to a statement file after the admin meeting (2026-10-22, decisions 17–20), then moved to an HTTPS write path with no database login on the box (2026-10-22, decisions 25–28); Phase 0 items 2, 4, 5, the admin's statements, the production migrations, and the shop install (Phase 3) are Ari's.**
+Decisions 1–28 below. Current phase: **Built on branch `shop-db-bridge` (decisions 17–28 applied); Phase 0 items 2, 4, 5, the admin's statements, the production migrations, and the shop install (Phase 3) are Ari's.**
 Stop-and-ask triggers: anything run against the shop's SQL Server or the production
 Supabase project (including migrations); creating or changing a Cloudflare account,
 zone, or token; any production env var. Everything else (file layout, helper names,
@@ -170,7 +170,7 @@ flowchart LR
 | 1. HTTP query service, not the raw SQL port, behind the tunnel | Vercel functions cannot run `cloudflared`, which raw TCP through a tunnel requires | None expected |
 | 2. ~~The bridge accepts arbitrary single `SELECT`s~~ Superseded 2026-10-22 by 17: the bridge runs only statements listed in `queries.json` on the box (mirror entries and named live queries, the latter empty today); the keyword guard, timeout and row cap still apply to every listed statement | The shop's admin asked for the specific queries rather than open query rights; the apps need no ad-hoc reads today | Reopen ad-hoc `SELECT`s only with the admin's agreement |
 | 3. Bridge and mirror run on the bridge box, not on the shop server | Ari's stated setup; keeps new software off the machine that runs the business | Move onto the shop server if the admin prefers |
-| 4. Plain Node (`.mjs`), dependency `mssql` only (`pg` dropped by 25), built-in `http` and `fetch`, no build step | Smallest thing to install and debug on Windows; one language with the rest of the repo | None expected |
+| 4. Plain Node (`.mjs`), dependency `mssql` only, built-in `http` and `fetch`, no build step | Smallest thing to install and debug on Windows; one language with the rest of the repo | None expected |
 | 5. Two auth layers on the bridge (Cloudflare service token at the edge, bearer inside) | Cheap; survives either side being misconfigured | None expected |
 | 6. Bridge binds to `127.0.0.1`; `cloudflared` on the same box is its only client | No LAN exposure of the HTTP service | None expected |
 | 7. Secrets on the box live in `C:\dws-bridge\.env`, NTFS-restricted to the service account and Administrators | Simplest thing that is not world-readable | Admin asks for Windows Credential Manager or a vault |
@@ -204,8 +204,6 @@ flowchart LR
   but plain REST upserts cannot do a transactional replace, and the box would hold the key
   to everything. Decision 25 also uses the HTTPS API, through two functions that each do
   one transactional replace and accept a token that can do nothing else.
-- **A Postgres login for the box (`shop_mirror`).** The design until review round three;
-  no grant stops a Supabase login from adding or dropping extensions (decision 25).
 - **The app pulls the mirror through the tunnel.** Keeps every credential off the box's
   Supabase side, but makes the tunnel required and needs a 15-minute scheduler Hobby lacks.
 - **Mirror pulled by a Vercel cron through the bridge.** Daily only on Hobby.
@@ -214,8 +212,7 @@ flowchart LR
 
 ## Contract surface
 
-Decisions 17–28 replaced the first design (ad-hoc `POST /query`, `mirror.config.json`,
-generated table DDL, a Postgres login on the box). What is built:
+What is built:
 
 - **Bridge and mirror** (`shop-bridge/`): routes, settings, limits, rejections, and files
   are in [`shop-bridge/README.md` § 9 Reference](../../../shop-bridge/README.md). The
@@ -280,7 +277,7 @@ generated table DDL, a Postgres login on the box). What is built:
   `sync_runs` holds the dropped-from-open list.
 - **AC-12 Adding a table.** Adding a `mirror` entry to `queries.json` and restarting the
   service yields a filled `shop.<into>` on the next run, with no code change.
-- **AC-13 Documented.** The runbook covers setup, the env tables (box and Vercel),
+- **AC-13 Documented.** `shop-bridge/README.md` covers setup, the env tables (box and Vercel),
   rotating the Access token, the bearer, and the mirror token, adding a table,
   and recovery when the tunnel, the bridge, the mirror, or SQL Server is down.
 
@@ -314,13 +311,14 @@ Establishes the service and its guards with tests, before any shop setup.
 
 ### Steps
 1. `shop-bridge/server.mjs`: `http` server on `127.0.0.1`; `mssql` pool; `/health` and
-   `/query`; bearer check with `timingSafeEqual`; statement guard as a pure function in
-   `shop-bridge/guard.mjs`.
-2. `shop-bridge/mirror.mjs`: the loop (`setInterval` with an in-flight flag), per-table
-   read, transactional replace through `pg`, `sync_runs` write, `refresh_jobs()` call;
-   `shop-bridge/types.mjs` with the type map shared by the DDL script.
-3. `shop-bridge/mirror.config.json` with the five tables. `package.json` with `mssql` and
-   `pg`; `npm test`.
+   `POST /query/<name>` for named `live` statements; bearer check with `timingSafeEqual`;
+   statement guard as a pure function in `shop-bridge/guard.mjs`, run on every
+   `queries.json` statement at startup.
+2. `shop-bridge/mirror.mjs`: the loop (`setInterval` with an in-flight flag), per-entry
+   read, one `shop_mirror_replace` call per table over HTTPS, then `shop_mirror_refresh`;
+   `shop-bridge/types.mjs` maps result-set column types to the functions' fixed type list.
+3. `shop-bridge/queries.json` with the four mirror entries and no `live` statements.
+   `package.json` with `mssql` only; `npm test`.
 4. Tests: `guard.test.mjs` (accepts `select`/`with`; rejects `;`, write keywords,
    `select ... into`, keywords hidden in comments); `server.test.mjs` with a stub pool
    (auth, size limit, truncation, timeout mapping); `mirror.test.mjs` with stub drivers
@@ -328,7 +326,8 @@ Establishes the service and its guards with tests, before any shop setup.
 5. Integration: SQL Server container (`mcr.microsoft.com/mssql/server:2022-latest`; on
    Apple Silicon enable Rosetta in Docker Desktop) plus the repo's Postgres test harness.
    If the SQL Server container will not run on the Mac, run that test on the bridge box in
-   Phase 3 and say so.
+   Phase 3 and say so. Not run yet: the first real SQL Server contact is the shop install,
+   and the Windows scripts have not been executed (no PowerShell on the Mac).
 6. `shop-bridge/README.md`: what it is, env table, how to run locally.
 
 ### Verify
@@ -347,13 +346,12 @@ Establishes the `shop` schema, the mirror's two token-checked functions, and the
 ### Steps
 1. Migration `<ts>_shop_schema.sql`: schema, grants, `sync_runs`, and (since decision 25)
    `shop.mirror_token` instead of a login role.
-2. Superseded by decisions 18 and 25 (the landing tables are created on first copy).
-3. Migration `<ts>_shop_refresh_jobs.sql`: `shop.refresh_jobs()` per § Contract surface.
+2. Migration `<ts>_shop_refresh_jobs.sql`: `shop.refresh_jobs()` per § Contract surface.
    Decide the location text column by comparing five current `jobs.location` values with
    `tblLocation` fields (read-only query on production, Ari confirms first).
-4. `test:db` cases: the mirror functions' boundary (AC-10); `refresh_jobs()` rules (AC-11) with fixtures
+3. `test:db` cases: the mirror functions' boundary (AC-10); `refresh_jobs()` rules (AC-11) with fixtures
    for a trashed number, a `P-` row, a renamed imported job, and a job that left the open set.
-5. Apply the four shop migrations and `20261022130000_photo_office_jobs.sql` to
+4. Apply the four shop migrations and `20261022130000_photo_office_jobs.sql` to
    production (Ari confirms). The mirror token's hash is stored at the shop install
    (Phase 3), from the statement `setup.ps1` prints.
 
@@ -377,26 +375,26 @@ Establishes the running service in the shop and the tunnel in front of it.
 2. Cloudflare: create the tunnel in Zero Trust, install `cloudflared` as a Windows service
    with the tunnel token, add the public hostname → `http://localhost:8787`, create a
    self-hosted Access application for it, a service token `vercel-dws` (longest duration
-   offered; expiry noted in the runbook), and a Service Auth policy allowing only that token.
+   offered; expiry noted in `shop-bridge/README.md`), and a Service Auth policy allowing only that token.
 3. Prove from Ari's laptop: no token → blocked by Cloudflare; token but wrong bearer →
-   `401`; both → `/health` passes and `select top 5 ProjectID, Project from tblProject`
-   returns rows.
+   `401`; both → `/health` passes. No route accepts SQL and no `live` statement ships
+   (decision 17), so a query probe waits for the first agreed `live` statement.
 4. Run the `insert into shop.mirror_token ...` statement `setup.ps1` printed, watch the
    first mirror run in the log, and confirm `shop.sync_runs` has four `ok` table rows plus
    an `ok` `public.jobs` row and `public.jobs` gained `synced_at` values.
 5. Reboot the bridge box; confirm both services came back and the next run happened.
-6. `Docs/shop-bridge-runbook.md` per AC-13; add it to `Docs/_sidebar.md`.
+6. `shop-bridge/README.md` per AC-13; `Docs/shop-bridge-runbook.md`, listed in `Docs/_sidebar.md`, points to it.
 
 ### Verify
 - [ ] [AC-1] Windows Firewall inbound rules unchanged; `cloudflared` service running.
 - [ ] [AC-2, AC-3] The three laptop probes behave as listed; the no-token probe leaves no bridge log line.
 - [ ] [AC-4] `sqlcmd` as the bridge login: an `insert`/`update` fails with a permission error.
 - [ ] [AC-8, AC-9] After reboot, `/health` passes and a fresh `sync_runs` row appears within 15 minutes.
-- [ ] [AC-13] Runbook present and followed once end to end by Ari.
+- [ ] [AC-13] `shop-bridge/README.md` followed once end to end by Ari.
 
 ### Exit criteria
 The mirror refreshes on its own every 15 minutes; a laptop with the two secrets can
-query the live `DWS` database through the tunnel; nothing else can.
+reach the bridge's `/health` and named `live` statements through the tunnel; nothing else can.
 
 ## Phase 4 — App client, CLI, and health
 
@@ -406,7 +404,8 @@ Establishes the developer experience in the repo and proves it from production.
 1. `dws-app/src/lib/shop/query.ts` (`server-only`): `shopQuery`, `shopHealth`; fetch with
    the four headers, 20 s `AbortSignal.timeout`, errors mapped to a `ShopBridgeError`.
 2. `dws-app/scripts/shop-query.mjs`: the CLI.
-3. `GET /api/shop/health` behind `requireAdmin()`: bridge health plus latest `sync_runs` per table.
+3. `GET /api/shop/health` behind `requireAdmin()`: bridge health plus `public.shop_sync_status()`;
+   `GET /api/shop/mirror-status` feeds the admin receipts page's stale-sync warning.
 4. Vercel env: the four variables, production and preview; `Docs/Configuration.md` updated.
 5. Unit tests with mocked `fetch`. (No route test was written for the health route; it
    is two calls behind `requireAdmin()`.)
@@ -435,7 +434,9 @@ longer be renamed in the photos app (decision 26), and the admin warning stays s
 until the mirror has run. Order on the day:
 
 1. Snapshot `select job_number, name, location from public.jobs where synced_at is not
-   null` (the first refresh rewrites every open office job's name and location).
+   null` (the first refresh rewrites every open office job's name and location;
+   `import-jobs.mjs` stored the `tblLocation` id in `jobs.location`, so production values
+   are probably bare numbers until then, unchecked against production).
 2. Apply the migrations.
 3. Install the box and store the token's hash.
 4. Confirm the first run.
@@ -453,7 +454,7 @@ until the mirror has run. Order on the day:
 - **A table grows.** `tblTimesheet` (289k rows) would not suit a whole-table copy every 15
   minutes; the config keeps it out, and Decision 12 names the incremental path if needed.
 - **Token or password leakage.** Each credential is scoped (edge token, bearer, mirror
-  token, `dws_bridge_ro`); rotation is in the runbook. A stolen mirror token can replace
+  token, `dws_bridge_ro`); rotation is in `shop-bridge/README.md`. A stolen mirror token can replace
   the copied tables' rows (so put made-up jobs in `public.jobs`) until its hash is deleted.
 - **Windows Update reboots.** Both services start at boot (AC-8).
 - **The Sage link "goes to sleep"** (known in the shop). The mirror reads the SQL Server
@@ -461,7 +462,7 @@ until the mirror has run. Order on the day:
   shop-side fix.
 - **Self-signed certificate on the instance.** `SHOP_DB_TRUST_CERT=true` on the LAN hop;
   both internet hops are TLS.
-- **Access token expiry.** The runbook records the date; the health route surfaces a `403`
+- **Access token expiry.** `shop-bridge/README.md` records the date; the health route surfaces a `403`
   from the edge as `edge_blocked`.
 - **Schema drift at the source.** Statements list their columns, so a new column in SQL
   Server is not copied until a statement names it; a statement whose result no longer
@@ -485,40 +486,3 @@ until the mirror has run. Order on the day:
   touched; decision 26 settles renames (the office wins); deactivation stays undecided.
 - `plans/active/dws-hosted-mcp/plan.md`: the stop-and-ask on "another runtime" is
   answered here by the ticket.
-
-## Build notes (2026-10-17)
-
-- `jobs.location` today: `import-jobs.mjs` stored `tblProject.Location`, which is the
-  `tblLocation` id, so production values are probably bare numbers. The first refresh
-  replaces them with `LocationName` for every open job. Not checked against production.
-- Phase 1 step 5 (SQL Server container test) was not run; the first real SQL Server
-  contact is the shop install. The Windows scripts were not executed (no PowerShell here).
-
-## Scope change (2026-10-22)
-
-After Ari met the shop's database admin: she is open to the setup, wants to see the
-specific queries rather than grant open query rights, and will write or approve them.
-Rework on branch `shop-db-bridge`:
-
-- `shop-bridge/queries.json` replaces `mirror.config.json`; ad-hoc `POST /query` and
-  `GET /ddl` are gone; `POST /query/<name>` runs a named `live` statement (none shipped).
-- Landing tables `shop.projects`, `shop.locations`, `shop.open_jobs`, `shop.contacts`
-  are created by the service; the `shop_tables` migration is deleted and
-  `refresh_jobs()` reads the new names.
-- `shop-bridge/README.md` is the single document; the two `Docs/` pages collapse into a
-  pointer. The admin gets it, with the code, as a secret gist.
-- Still Ari's: the admin's account in the apps (phone number pending), the login,
-  Phase 0 answers, migrations, shop install.
-- The admin also raised the public storage buckets (see Open questions).
-
-## Review round two (2026-10-22)
-
-Two delegated reviews of `8994378`: a sealed, independent Codex review and a Claude
-review. Both said "not ready to show the admin" and named one thing each: the
-definer-rights escalation (decision 21) and the keyword filter's gap (decision 24). The
-rest: client-side Postgres deadlines (a dead socket left the mirror "in flight" forever),
-a malformed request URL could exit the process, the installer's health check matched the
-wrong `ok`, the `.env` ACL was shared with every NetworkService process, `SHOP_DB_NAME` was
-not enforced, dates and decimals beyond the driver's precision, and a dozen readability
-cuts. All applied on the branch; the README's "about 1,000 lines" matches the code.
-

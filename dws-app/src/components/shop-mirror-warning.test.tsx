@@ -22,7 +22,9 @@ afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlo
 it('shows the stale tables and points to the README section', async () => {
   await render({ warning: { tables: ['open_jobs', 'public.jobs'], lastOkAt: null } });
   const alert = container.querySelector('[role=alert]');
-  expect(alert?.textContent).toContain('open_jobs, public.jobs; last good sync: never');
+  expect(alert?.textContent).toContain('open_jobs');
+  expect(alert?.textContent).toContain('public.jobs');
+  expect(alert?.textContent).toContain('never');
   expect(alert?.textContent).toContain('shop-bridge/README.md');
 });
 

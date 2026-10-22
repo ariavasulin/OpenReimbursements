@@ -123,7 +123,7 @@ describe('shop mirror API, tables, and jobs refresh', () => {
       for (const type of ['shop.odd', 'text) ; drop table shop.sync_runs; --', 'regclass', 'jsonb']) {
         const res = await replace(`${table}_t`, [], [{ name: 'v', type }]);
         expect(res.ok, type).toBe(false);
-        expect(res.error, type).toContain('not one the mirror allows');
+        expect((await f.sql.query('select to_regclass($1) as t', [`shop.${table}_t`])).rows, type).toEqual([{ t: null }]);
       }
       for (const p_table of ['sync_runs', 'mirror_token', 'Sync_Runs', 'a"b', 'x; drop table shop.sync_runs', '', 'x'.repeat(64)]) {
         const res = await f.anon.rpc('shop_mirror_replace', { p_token: token, p_table, p_columns: [{ name: 'v', type: 'text' }], p_rows: [] });
@@ -182,7 +182,7 @@ describe('shop mirror API, tables, and jobs refresh', () => {
     }
   });
 
-  it('keeps the four admin functions from anon and authenticated (20261022120000)', async () => {
+  it('keeps the four admin functions from anon and authenticated', async () => {
     const grants = await f.sql.query(`select p.proname,
         has_function_privilege('anon', p.oid, 'EXECUTE') as anon,
         has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated,

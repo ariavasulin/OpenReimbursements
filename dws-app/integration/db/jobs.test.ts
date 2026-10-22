@@ -48,7 +48,7 @@ describe('hand-made photo projects (photo-folders AC-2, AC-3, AC-5, AC-6)', () =
     expect((await f.admin.rpc('photo_rename_job', { p_actor: f.employeeA.id, p_job_id: randomUUID(), p_name: 'x' })).error?.message).toBe('not_found');
   });
 
-  it('refuses to rename or renumber an office job (20261022130000)', async () => {
+  it('refuses to rename or renumber an office job', async () => {
     const number = String(randomInt(900_000_000, 999_999_999));
     const office = await f.sql.query(`insert into public.jobs (job_number, name, is_active, synced_at)
       values ($1, 'Office name', true, now()) returning id`, [number]);

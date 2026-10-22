@@ -15,9 +15,6 @@
 // The landing table is created on the first call from the result's columns. After
 // that it is never dropped or altered: if the query's columns change, that entry
 // fails until someone drops the table in Supabase.
-//
-// The entries come from queries.json, already checked by config.mjs at startup
-// (read-only filter, plain table names); nothing changes them after that.
 import { runQuery } from './query.mjs';
 import { landingColumns, mirrorTypeProblem, orderedColumns, plainRow } from './types.mjs';
 

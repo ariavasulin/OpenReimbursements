@@ -67,7 +67,7 @@ async function request(path, init) {
   }
   const text = await res.text();
   let body = null;
-  try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+  try { body = text ? JSON.parse(text) : null; } catch {}
   if (!res.ok) {
     if (res.status === 403 || (res.status >= 300 && res.status < 400)) {
       console.error(`Blocked at the Cloudflare edge (HTTP ${res.status}). Check CF_ACCESS_CLIENT_ID/SECRET and the Access policy.`);
@@ -82,7 +82,7 @@ async function request(path, init) {
 
 function printTable(columns, rows) {
   if (rows.length === 0) { console.log('(0 rows)'); return; }
-  const cell = v => (v === null || v === undefined ? '' : v instanceof Date ? v.toISOString() : String(v));
+  const cell = v => (v === null || v === undefined ? '' : String(v));
   const widths = columns.map(c => Math.min(40, Math.max(c.length, ...rows.map(r => cell(r[c]).length))));
   const line = (vals) => vals.map((v, i) => cell(v).slice(0, widths[i]).padEnd(widths[i])).join('  ');
   console.log(line(columns));

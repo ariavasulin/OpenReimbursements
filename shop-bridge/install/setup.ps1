@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Install or update the DWS shop bridge as a Windows service on the bridge box.
+  Install or update the DWS shop bridge as a Windows service on the shop computer.
 
 .DESCRIPTION
   Run from an elevated PowerShell, inside the copied shop-bridge folder:
@@ -56,7 +56,7 @@ function ConvertTo-PlainText([Security.SecureString]$Secure) {
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 }
 
-# --- 0. Admin and prerequisites -------------------------------------------------------
+# --- Admin and prerequisites -------------------------------------------------------
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -88,7 +88,7 @@ $nssm = $nssmCmd.Source
 Write-Host "  node $nodeVersion at $node"
 Write-Host "  nssm at $nssm"
 
-# --- 1. Stop the service if it exists -------------------------------------------------
+# --- Stop the service if it exists -------------------------------------------------
 
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing -and $existing.Status -ne 'Stopped') {
@@ -96,7 +96,7 @@ if ($existing -and $existing.Status -ne 'Stopped') {
   Stop-Service -Name $ServiceName -Force
 }
 
-# --- 2. Copy the service files --------------------------------------------------------
+# --- Copy the service files --------------------------------------------------------
 
 $Source = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path.TrimEnd('\')
 $LogDir = Join-Path $InstallDir 'logs'
@@ -126,7 +126,7 @@ if ($Source -eq $InstallDir) {
   }
 }
 
-# --- 3. The service and its account -------------------------------------------------
+# --- The service and its account -------------------------------------------------
 
 function Invoke-Nssm {
   & $nssm @args | Out-Null
@@ -137,7 +137,7 @@ function Invoke-Nssm {
 # The service must exist, running as its account, before the folder can be granted to that
 # account: a virtual account (NT SERVICE\<name>) only exists once its service does.
 Write-Step "Registering service $ServiceName to run as $ServiceAccount"
-if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+if (-not $existing) {
   Invoke-Nssm install $ServiceName $node
 }
 $isVirtual = $ServiceAccount -like 'NT SERVICE\*'
@@ -155,11 +155,10 @@ if ($isVirtual) {
   $accountPassword = $null
 }
 
-# --- 4. Folder permissions, before any secret is written there --------------------------
+# --- Folder permissions, before any secret is written there --------------------------
 
 Write-Step "Restricting $InstallDir to Administrators, SYSTEM, and $ServiceAccount"
-# Well-known SIDs for the built-in accounts avoid problems on non-English Windows. A
-# virtual account (NT SERVICE\<name>) and other accounts are passed by name.
+# Well-known SIDs for the built-in accounts avoid problems on non-English Windows.
 $serviceAccountId = switch ($ServiceAccount) {
   'NT AUTHORITY\NetworkService' { '*S-1-5-20' }
   'NT AUTHORITY\LocalService' { '*S-1-5-19' }
@@ -193,7 +192,7 @@ if ($LASTEXITCODE -ne 0) { throw "icacls could not reset the permissions inside 
 & icacls $LogDir /grant "${serviceAccountId}:(OI)(CI)M" /C /Q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls failed on $LogDir" }
 
-# --- 5. Dependencies ------------------------------------------------------------------
+# --- Dependencies ------------------------------------------------------------------
 
 Write-Step 'Installing dependencies (npm ci --omit=dev --ignore-scripts)'
 Push-Location $InstallDir
@@ -204,7 +203,7 @@ try {
   Pop-Location
 }
 
-# --- 6. Settings -> .env --------------------------------------------------------------
+# --- Settings -> .env --------------------------------------------------------------
 
 function Read-EnvFile([string]$Path) {
   $values = @{}
@@ -268,8 +267,7 @@ foreach ($s in $settings) {
   # Kept as they are below, with the settings this script does not ask about.
   if ($s.MirrorOnly -and [string]::IsNullOrEmpty($values['SHOP_MIRROR_SUPABASE_URL'])) { continue }
   if ($s.Secret) {
-    $hint = if ($have) { 'set; Enter keeps it' } elseif ($s.Generate) { 'Enter generates one' } elseif ($s.Optional) { 'optional' } else { 'required' }
-    if ($have -and $s.Optional) { $hint += ', - clears it' }
+    $hint = if ($have) { 'set; Enter keeps it' } elseif ($s.Generate) { 'Enter generates one' } else { 'required' }
     $plain = ConvertTo-PlainText (Read-Host -AsSecureString "  $($s.Prompt) [$hint]")
   } else {
     $shown = if ($have) { $have } elseif ($s.Default) { $s.Default } else { '' }
@@ -294,7 +292,6 @@ if ($values['SHOP_MIRROR_SUPABASE_URL']) {
   # Supabase stores only this hash (shop.mirror_token); it is not a secret.
   $mirrorTokenHash = Get-Sha256Hex $values['SHOP_MIRROR_TOKEN']
 }
-# Keep settings this script does not ask about (e.g. SHOP_MIRROR_MAX_ROWS, SHOP_QUERIES_FILE).
 # A setting cleared with - is in $values as empty, so it is not brought back here.
 foreach ($name in ($current.Keys | Sort-Object)) {
   if (-not $values.Contains($name)) { $values[$name] = $current[$name] }
@@ -309,7 +306,7 @@ foreach ($name in $values.Keys) {
 $port = $values['SHOP_BRIDGE_PORT']
 $values = $null; $current = $null
 
-# --- 7. The rest of the service settings ----------------------------------------------
+# --- The rest of the service settings ----------------------------------------------
 
 Write-Step "Configuring service $ServiceName"
 Invoke-Nssm set $ServiceName Application $node
@@ -331,12 +328,12 @@ Invoke-Nssm set $ServiceName AppExit 78 Exit
 Invoke-Nssm set $ServiceName AppRestartDelay 5000
 Invoke-Nssm set $ServiceName AppStopMethodConsole 5000
 
-# --- 8. Start -------------------------------------------------------------------------
+# --- Start -------------------------------------------------------------------------
 
 Write-Step "Starting $ServiceName"
 Start-Service -Name $ServiceName
 
-# --- 9. Health check ------------------------------------------------------------------
+# --- Health check ------------------------------------------------------------------
 
 $url = "http://127.0.0.1:$port/health"
 Write-Step "Checking $url"
@@ -371,7 +368,7 @@ Write-Host ''
 Write-Host "The bearer token is SHOP_BRIDGE_TOKEN in $EnvPath (open it as Administrator to copy it into Vercel)."
 if ($mirrorTokenHash) {
   Write-Host ''
-  Write-Host 'Mirror: Supabase accepts this box once its token''s hash is stored. Run this once in the' -ForegroundColor Cyan
+  Write-Host 'Mirror: Supabase accepts the shop computer once its token''s hash is stored. Run this once in the' -ForegroundColor Cyan
   Write-Host 'Supabase SQL editor (again after a new token; delete from shop.mirror_token revokes it):' -ForegroundColor Cyan
   Write-Host "  insert into shop.mirror_token (token_sha256) values (decode('$mirrorTokenHash', 'hex'))"
   Write-Host '  on conflict (id) do update set token_sha256 = excluded.token_sha256, set_at = now();'

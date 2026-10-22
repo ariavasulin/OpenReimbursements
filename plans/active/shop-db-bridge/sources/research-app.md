@@ -50,7 +50,6 @@ are created by a CSV script (`onboard-users.mjs`) or the admin UI's
   - `P-` projects are never touched.
   - "How the future office sync should reconcile is undecided" (`Docs/photos-runbook.md:248-254`).
   - Renumbering an imported job means a later import creates a new row under the old number (`Docs/photos-runbook.md:233-236`).
-- **History:** last changed in `53dd82f` on 2026-09-23 (git log).
 
 ## 2. Employee creation: `onboard-users.mjs` and `set-auth-display-names.mjs`
 
@@ -171,7 +170,7 @@ are created by a CSV script (`onboard-users.mjs`) or the admin UI's
 
 ## 5. Scheduled / cron plumbing
 
-- **`dws-app/vercel.json`:** one cron, `{"path": "/api/photos/repair", "schedule": "0 9 * * *"}`, plus `regions: ["cle1"]` and `installCommand: npm install --legacy-peer-deps` (`dws-app/vercel.json:1-8`). There are no `/api/cron/*` routes; the full route list under `dws-app/src/app/api` contains none.
+- **`dws-app/vercel.json`:** one cron, `{"path": "/api/photos/repair", "schedule": "0 9 * * *"}`, plus `regions: ["cle1"]` and `installCommand: npm install --legacy-peer-deps` (`dws-app/vercel.json:1-8`). There are no `/api/cron/*` routes.
 - **The cron route** is `dws-app/src/app/api/photos/repair/route.ts`:
   - `maxDuration = 300` (`dws-app/src/app/api/photos/repair/route.ts:7`).
   - Auth: `process.env.CRON_SECRET` must exist and match `Authorization: Bearer <secret>`, otherwise 401 (`dws-app/src/app/api/photos/repair/route.ts:38-41`).
@@ -214,24 +213,6 @@ are created by a CSV script (`onboard-users.mjs`) or the admin UI's
   - No reference to MAS 90 or SQL Server connectivity exists anywhere in the repo, besides the CSV table names in the import script (git grep). The runbook says the office database is "not yet bridged" (`Docs/photos-runbook.md:221`).
 
 ---
-
-## Established
-- Jobs enter `public.jobs` only through:
-  - the manual CSV script, which upserts on `job_number` with the service role and always writes `is_active=true` plus a run-wide `synced_at` (`dws-app/scripts/import-jobs.mjs:73-79`, `dws-app/scripts/import-jobs.mjs:115-118`);
-  - the in-app `photo_create_job` and `photo_rename_job` RPCs (`dws-app/supabase/migrations/20260923120000_photo_manage_and_purge.sql:82-124`).
-- The import never deactivates or deletes, and it skips numbers held by projects in Trash (`dws-app/scripts/import-jobs.mjs:96-114`).
-- The source columns are `tblProject.ProjectID/Project/Location/Archived` and `tblMas90JobMasterOpen.JobNo/JobStatus='O'` (`dws-app/scripts/import-jobs.mjs:52-76`).
-- `jobs` RLS has only a SELECT policy for `authenticated`. The service role bypasses RLS and has full grants (`dws-app/supabase/migrations/00000000000003_photos_schema.sql:41-44`, `dws-app/supabase/migrations/00000000000000_baseline.sql:493`).
-- The app reads only `id, job_number, name, location, is_active` (and the delete/purge columns); `synced_at` is unused (section 4).
-- Employees are `auth.users` rows with phone-only SMS OTP login, plus `user_profiles` (`full_name, preferred_name, employee_id_internal, role, deleted_at, photo_admin`). Phone exists only in `auth.users.phone`, stored as digits without "+" according to `dws-app/src/lib/needs-name.ts:3-5`.
-- Users are created through `auth.admin.createUser({ phone: '+1…', phone_confirm: true })`, by the onboarding script or the admin API (`dws-app/scripts/onboard-users.mjs:131-139`, `dws-app/src/app/api/admin/users/route.ts:121-129`). A trigger then creates the profile row (`dws-app/supabase/migrations/20260823100000_review_fixes.sql:209-225`).
-- Deactivation is a ban plus `user_profiles.deleted_at` (`dws-app/src/app/api/admin/users/[id]/route.ts:186-212`).
-- Cron plumbing that exists today:
-  - one Vercel cron entry (`dws-app/vercel.json:7`);
-  - the `CRON_SECRET` Bearer check (`dws-app/src/app/api/photos/repair/route.ts:38-41`);
-  - service-role client factories (`dws-app/src/lib/supabaseAdminClient.ts:8-17`, `dws-app/src/app/api/photos/repair/route.ts:11-34`, `dws-app/src/lib/photos/server/purge.ts:23-33`).
-  - There is no `/api/cron/*` directory.
-- No `.env.example` exists. Env vars are documented in `Docs/Configuration.md:5-30` and the runbook.
 
 ## Unknowns
 - **Which CSV files have been run.** The repo does not contain the CSVs (`tblProject.csv`, `tblMas90JobMasterOpen.csv`, `joined_employees.csv`) or the script reports, so it cannot say when imports last ran or what columns the exports actually carry beyond those the scripts read.

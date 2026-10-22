@@ -59,7 +59,7 @@ export function plainValue(value) {
   return value;
 }
 
-/** One result row with every value through plainValue, as both live results and the mirror send it. */
+/** One result row with every value through plainValue. */
 export const plainRow = (row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, plainValue(value)]));
 
 /** Bracket-quote a column name for a T-SQL suggestion, unless it is a plain identifier. */
@@ -71,7 +71,7 @@ const sqlName = (name) => (isIdentifier(name) ? name : `[${String(name).replace(
  * @param {{ name: string, type?: { declaration?: string }, precision?: number }} column  mssql column metadata
  */
 export function mirrorTypeProblem(column) {
-  const type = String(column.type?.declaration ?? '').toLowerCase();
+  const type = column.type?.declaration;
   const col = sqlName(column.name);
   if (type === 'time' || type === 'datetimeoffset') {
     return `column "${column.name}" is ${type}, which the mirror cannot copy exactly; ` +
@@ -85,7 +85,7 @@ export function mirrorTypeProblem(column) {
 }
 
 export function pgType(dataType) {
-  return SQL_TO_PG[String(dataType ?? '').trim().toLowerCase()] ?? 'text';
+  return SQL_TO_PG[dataType] ?? 'text';
 }
 
 /** mssql result-set column metadata (`recordset.columns`), as an array in result order. */
@@ -102,6 +102,9 @@ export function orderedColumns(recordsetColumns) {
 export function landingColumns(recordsetColumns) {
   return orderedColumns(recordsetColumns).map((c) => ({ name: c.name, type: pgType(c.type?.declaration) }));
 }
+
+/** A JSON object: not null, not an array. */
+export const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 /** Plain identifiers only: landing table names, live query names, and query parameter names. */
 export function isIdentifier(name) {

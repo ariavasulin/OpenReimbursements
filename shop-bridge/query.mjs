@@ -1,9 +1,10 @@
 // The one way this program runs a statement on SQL Server: streamed, stopped
-// after a row cap, and cancelled at a wall-clock deadline. Used by the live
-// route, /health, and the mirror.
+// after a row cap, and cancelled at a wall-clock deadline.
 import { orderedColumns } from './types.mjs';
 
 export const QUERY_TIMEOUT_MS = 30_000;
+
+export const timeoutMessage = (ms) => `The query ran longer than ${ms / 1000} seconds and was cancelled.`;
 
 /**
  * Stream the query and stop after maxRows + 1 rows, so a huge result never sits
@@ -33,7 +34,7 @@ export function runQuery(pool, sql, params, { maxRows, timeoutMs = QUERY_TIMEOUT
 
     const deadline = setTimeout(() => {
       error ??= Object.assign(
-        new Error(`The query ran longer than ${timeoutMs / 1000} seconds and was cancelled.`),
+        new Error(timeoutMessage(timeoutMs)),
         { code: 'ETIMEOUT' },
       );
       request.cancel();

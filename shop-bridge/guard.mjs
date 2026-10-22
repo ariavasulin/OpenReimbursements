@@ -1,6 +1,4 @@
 // The statement filter for queries.json: a pure function, no database access.
-// config.mjs runs it on every statement when the file loads, and the service
-// refuses to start if any statement fails it.
 //
 // This is a conservative keyword filter, not a SQL parser. After comments are
 // removed, a statement passes only if it starts with SELECT or WITH, contains no
@@ -102,7 +100,7 @@ function stripComments(sql) {
 /** @returns {{ ok: true } | { ok: false, reason: string }} */
 export function checkReadOnlySql(sql) {
   if (Buffer.byteLength(sql, 'utf8') > MAX_SQL_BYTES) {
-    return { ok: false, reason: 'sql is longer than 64 KiB' };
+    return { ok: false, reason: `sql is longer than ${MAX_SQL_BYTES / 1024} KiB` };
   }
   const stripped = stripComments(sql);
   if (stripped.error) return { ok: false, reason: stripped.error };

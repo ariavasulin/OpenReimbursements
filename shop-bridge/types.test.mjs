@@ -16,9 +16,7 @@ test('type map', () => {
   for (const [sqlType, pg] of Object.entries(expected)) assert.equal(pgType(sqlType), pg);
 });
 
-test('pgType is case-insensitive and defaults to text', () => {
-  assert.equal(pgType('NVARCHAR'), 'text');
-  assert.equal(pgType('DateTime'), 'timestamp');
+test('pgType defaults to text', () => {
   assert.equal(pgType('uniqueidentifier'), 'text');
   assert.equal(pgType('varbinary'), 'text');
   assert.equal(pgType(undefined), 'text');

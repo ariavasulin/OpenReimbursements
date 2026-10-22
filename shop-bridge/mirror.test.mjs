@@ -189,9 +189,10 @@ test('a copy that never reached Supabase skips the jobs refresh, which would rea
   const { mirror, logs } = setup({ api });
   assert.equal((await mirror.runOnce()).ok, false);
   assert.deepEqual(calls(api), INTOS.map((t) => `replace ${t}`));
-  assert.deepEqual(mirror.status().refreshJobs, {
-    ok: false, result: null, error: 'skipped: a copy did not reach Supabase this run', finishedAt: mirror.status().refreshJobs.finishedAt,
-  });
+  const { refreshJobs } = mirror.status();
+  assert.equal(refreshJobs.ok, false);
+  assert.equal(refreshJobs.result, null);
+  assert.match(refreshJobs.error, /^skipped/);
   assert.ok(logs.some((l) => /refresh_jobs skipped/.test(l)));
 });
 

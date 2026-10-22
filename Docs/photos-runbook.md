@@ -249,9 +249,8 @@ project wherever a job is chosen (upload, move, and the `/migrate` page) or with
   longer be restored, and still holds its number until someone deletes it
   forever.
 - Hand-made rows have `synced_at` null and `created_by` set. The office sync
-  is `shop.refresh_jobs()`, which the shop bridge runs after every mirror run
-  (every 15 minutes; see `shop-bridge/README.md`); `scripts/import-jobs.mjs` is
-  the manual fallback for when the bridge is down. Both upsert on `job_number`,
+  is `shop.refresh_jobs()` (every 15 minutes), with `scripts/import-jobs.mjs` as
+  the manual fallback. Both upsert on `job_number`,
   so an office job with the same real number takes over a hand-made row in
   place, sets `synced_at`, and from then on owns its name and location. `P-`
   projects are never touched, and neither is a number held by a project in

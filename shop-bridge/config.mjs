@@ -9,7 +9,7 @@
 // refuses to start if anything here is wrong, and nothing changes them afterwards.
 import { readFileSync } from 'node:fs';
 import { checkReadOnlySql } from './guard.mjs';
-import { isIdentifier } from './types.mjs';
+import { isIdentifier, isPlainObject } from './types.mjs';
 
 // Tables in the shop schema the mirror itself depends on; Supabase refuses an entry landing there.
 const RESERVED_INTO = Object.freeze(['sync_runs', 'mirror_token']);
@@ -18,8 +18,6 @@ const TOP_KEYS = ['mirror', 'live'];
 const ENTRY_KEYS = ['into', 'sql'];
 
 const IDENTIFIER_RULE = '(letters, digits, underscore; not starting with a digit)';
-
-const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function checkSql(where, sql, errors) {
   if (typeof sql !== 'string') {

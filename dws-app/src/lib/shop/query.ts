@@ -50,6 +50,7 @@ type FetchLike = typeof fetch;
 type Deps = { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+const HEALTH_TIMEOUT_MS = 10_000;
 const QUERY_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function config(env: NodeJS.ProcessEnv = process.env): Config {
@@ -108,9 +109,7 @@ async function call<T>(
   let body: unknown = null;
   try {
     body = text ? JSON.parse(text) : null;
-  } catch {
-    body = null;
-  }
+  } catch {}
 
   if (!res.ok) {
     // Cloudflare Access answers a blocked service call with 403 (or a 302 to its login
@@ -158,8 +157,6 @@ export async function shopQuery<T = Record<string, unknown>>(
 }
 
 /** The bridge's own health report (SQL Server reachability, version, mirror status, query names). */
-export async function shopHealth(
-  deps: Deps & { timeoutMs?: number } = {},
-): Promise<ShopHealth> {
-  return call<ShopHealth>('/health', { method: 'GET' }, deps.timeoutMs ?? 10_000, deps);
+export async function shopHealth(deps: Deps = {}): Promise<ShopHealth> {
+  return call<ShopHealth>('/health', { method: 'GET' }, HEALTH_TIMEOUT_MS, deps);
 }

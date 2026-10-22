@@ -14,12 +14,9 @@
 --     contacts copy does not stop it;
 --   * open office jobs = shop.projects rows whose number is on Sage's open list
 --     (shop.open_jobs, JobStatus 'O' in any case or spacing), not Completed, not Archived;
---   * job_number is the office ProjectID; name is the trimmed project name; a
---     number listed more than once (a duplicate row in either office table) counts
+--   * a number listed more than once (a duplicate row in either office table) counts
 --     once, since one upsert cannot write the same row twice;
---   * location is the location's name, else "address, city" (see the expression below);
---   * upsert on job_number, setting name, location, is_active = true, synced_at. A
---     row with synced_at set is an office job, and the photos app refuses to rename
+--   * a row with synced_at set is an office job, and the photos app refuses to rename
 --     or renumber it (20261022130000_photo_office_jobs.sql);
 --   * a number held by a project in Trash is left alone and counted as skipped,
 --     because writing is_active = true there would break jobs_deleted_not_active
@@ -66,7 +63,6 @@ begin
              p."ProjectID"::text as job_number,
              -- A blank office name falls back to the number; jobs.name is not null.
              coalesce(nullif(btrim(p."Project"), ''), p."ProjectID"::text) as name,
-             -- Change this one expression to show something else.
              coalesce(
                nullif(btrim(l."LocationName"), ''),
                nullif(concat_ws(', ', nullif(btrim(l."LocationAddress"), ''), nullif(btrim(l."LocationCity"), '')), '')
