@@ -8,7 +8,7 @@
 // entry fails until someone drops the table in Supabase.
 import pg from 'pg';
 import { checkReadOnlySql } from './guard.mjs';
-import { buildCreateTableFromRecordset, isSafeTableName, orderedColumns, quoteIdent } from './types.mjs';
+import { buildCreateTableFromRecordset, isIdentifier, orderedColumns, quoteIdent } from './types.mjs';
 
 export const BATCH_ROWS = 500;
 export const DEFAULT_MIRROR_MAX_ROWS = 100000;
@@ -46,7 +46,10 @@ const LANDING_COLUMNS_SQL =
 const listNames = (names) => `[${names.join(', ')}]`;
 
 function coerce(value) {
-  if (value instanceof Date) return value;
+  // Dates carry SQL Server's wall-clock time in their UTC fields (db.mjs). Writing them as
+  // zone-less ISO text keeps that wall-clock value in a Postgres `timestamp`, whatever the
+  // bridge computer's time zone; pg would otherwise convert a Date to local time.
+  if (value instanceof Date) return value.toISOString().slice(0, -1);
   if (Buffer.isBuffer(value)) return value.toString('hex');
   return value;
 }
@@ -115,7 +118,7 @@ export function createMirror({
   }
 
   async function copyEntry(client, { into, sql }) {
-    if (!isSafeTableName(into)) throw new Error(`not a plain table name: ${into}`);
+    if (!isIdentifier(into)) throw new Error(`not a plain table name: ${into}`);
     const verdict = checkReadOnlySql(sql);
     if (!verdict.ok) throw new Error(`statement refused by the read-only guard: ${verdict.reason}`);
 
@@ -126,6 +129,10 @@ export function createMirror({
     const names = orderedColumns(recordsetColumns).map((c) => c.name);
     if (names.length === 0) throw new Error('the query returned no columns');
     if (names.some((n) => !n)) throw new Error('the query returns a column with no name; name it with AS');
+    // mssql folds two same-named columns into one array-valued column.
+    if (rows.length > 0 && names.some((n) => Array.isArray(rows[0][n]))) {
+      throw new Error('the query returns two columns with the same name; give each its own AS alias');
+    }
     if (rows.length > maxRows) {
       throw new Error(
         `the query returned ${rows.length} rows, over the limit of ${maxRows} (SHOP_MIRROR_MAX_ROWS); nothing was written`,
@@ -174,6 +181,8 @@ export function createMirror({
     let client = null;
     try {
       client = createPgClient(pgConnectionString);
+      // A connection dropped mid-run emits 'error' on the client; unhandled, that would end the process.
+      client.on('error', (err) => say(`postgres connection error: ${err.message}`));
       await client.connect();
 
       for (const entry of entries) {

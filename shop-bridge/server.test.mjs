@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { after, test } from 'node:test';
-import { createHandler } from './server.mjs';
+import { createHandler, wholeNumber } from './server.mjs';
 import { mssqlError, stubPool } from './testing-stubs.mjs';
 
 const TOKEN = 'a'.repeat(64);
@@ -245,6 +245,22 @@ test('health is 502 when SQL is unreachable, and the mirror can be off', async (
   assert.equal(res.json.error.code, 'db_unreachable');
   assert.deepEqual(res.json.mirror, { enabled: false });
   assert.deepEqual(res.json.queries, { mirror: [], live: [] });
+});
+
+test('health maps a missing SHOP_DB_SERVER to 503 not_configured, not 502', async () => {
+  const configError = Object.assign(new Error('SHOP_DB_SERVER is not set'), { code: 'ECONFIG' });
+  const { call } = await serve({ token: TOKEN, live: {}, getPool: async () => { throw configError; } });
+  const res = await call('GET', '/health', { token: null });
+  assert.equal(res.status, 503);
+  assert.equal(res.json.error.code, 'not_configured');
+});
+
+test('wholeNumber: settings are whole numbers in range, with a fallback when unset', () => {
+  assert.equal(wholeNumber(undefined, 15, 1, 10080), 15);
+  assert.equal(wholeNumber('', 15, 1, 10080), 15);
+  assert.equal(wholeNumber('30', 15, 1, 10080), 30);
+  for (const bad of ['0', '-5', '15m', '1.5', 'NaN', '10081']) assert.equal(wholeNumber(bad, 15, 1, 10080), null, bad);
+  assert.equal(wholeNumber('65536', 8787, 1, 65535), null);
 });
 
 test('404 not_found for unknown routes', async () => {

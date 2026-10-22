@@ -10,14 +10,13 @@ import { loadQueries } from './config.mjs';
 import { closePool, getPool as defaultGetPool } from './db.mjs';
 import { checkReadOnlySql } from './guard.mjs';
 import { createMirror, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
-import { isSafeTableName } from './types.mjs';
+import { isIdentifier, orderedColumns } from './types.mjs';
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_MAX_ROWS = 5000;
 export const MAX_ROWS_CAP = 50000;
 const QUERY_PREFIX = '/query/';
 const BODY_KEYS = ['params', 'maxRows'];
-const PARAM_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // Errors that mean "could not talk to SQL Server at all".
 const CONNECTION_CODES = new Set([
@@ -107,7 +106,7 @@ function parseQueryBody(text) {
     throw new HttpError(400, 'bad_request', '"params" must be an object of name to value.');
   }
   for (const [name, value] of Object.entries(params)) {
-    if (!PARAM_NAME_RE.test(name)) {
+    if (!isIdentifier(name)) {
       throw new HttpError(400, 'bad_request', `Parameter name "${name}" is not a plain identifier.`);
     }
     const t = typeof value;
@@ -152,9 +151,7 @@ export function runQuery(pool, sql, params, maxRows) {
     request.on('recordset', (meta) => {
       recordsets += 1;
       if (recordsets === 1) {
-        columns = Object.values(meta ?? {})
-          .sort((a, b) => a.index - b.index)
-          .map((c) => c.name);
+        columns = orderedColumns(meta).map((c) => c.name);
       }
     });
     request.on('row', (row) => {
@@ -222,15 +219,16 @@ export function createHandler({
       const result = await pool.request().query('SELECT @@VERSION AS version');
       const version = String(result.recordset?.[0]?.version ?? '').split('\n')[0].trim();
       return [200, { ok: true, ...base, version, mirror: mirrorStatus(), queries, durationMs: Date.now() - started }];
-    } catch (err) {
-      return [502, {
+    } catch (raw) {
+      const err = classifyDbError(raw);
+      return [err.status, {
         ok: false,
         ...base,
         version: null,
         mirror: mirrorStatus(),
         queries,
         durationMs: Date.now() - started,
-        error: { code: 'db_unreachable', message: `Could not reach the shop database (${err?.code ?? 'unknown error'}).` },
+        error: { code: err.code, message: err.message },
       }];
     }
   }
@@ -238,13 +236,13 @@ export function createHandler({
   async function query(req, name, info) {
     requireAuth(req);
     // Checked only after auth, so the names cannot be probed without the token.
-    if (!isSafeTableName(name) || !Object.hasOwn(live, name) || typeof live[name] !== 'string') {
+    if (!isIdentifier(name) || !Object.hasOwn(live, name) || typeof live[name] !== 'string') {
       throw new HttpError(404, 'not_found', `No live query named "${name}".`);
     }
-    const { params, maxRows } = parseQueryBody(await readBody(req));
     const sql = live[name];
     info.name = name;
     info.sql = sql;
+    const { params, maxRows } = parseQueryBody(await readBody(req));
     // Already checked when queries.json loaded; failing here means the statement changed under us.
     const verdict = checkReadOnlySql(sql);
     if (!verdict.ok) throw new Error(`live query "${name}" failed the read-only guard at run time: ${verdict.reason}`);
@@ -286,10 +284,30 @@ export function createHandler({
   };
 }
 
+/** A whole number in [min, max] from an env value (fallback when unset), else null. */
+export function wholeNumber(raw, fallback, min, max) {
+  const n = raw === undefined || raw === '' ? fallback : Number(raw);
+  return Number.isInteger(n) && n >= min && n <= max ? n : null;
+}
+
 function main() {
   const env = process.env;
-  const port = Number(env.SHOP_BRIDGE_PORT || 8787);
   const say = (line) => console.log(`${new Date().toISOString()} ${line}`);
+
+  const port = wholeNumber(env.SHOP_BRIDGE_PORT, 8787, 1, 65535);
+  const intervalMinutes = wholeNumber(env.SHOP_MIRROR_INTERVAL_MINUTES, 15, 1, 10080);
+  const maxRows = wholeNumber(env.SHOP_MIRROR_MAX_ROWS, DEFAULT_MIRROR_MAX_ROWS, 1, Number.MAX_SAFE_INTEGER);
+  for (const [name, value, rule] of [
+    ['SHOP_BRIDGE_PORT', port, 'a port number'],
+    ['SHOP_MIRROR_INTERVAL_MINUTES', intervalMinutes, 'a whole number of minutes from 1 to 10080'],
+    ['SHOP_MIRROR_MAX_ROWS', maxRows, 'a positive whole number'],
+  ]) {
+    if (value === null) {
+      say(`${name} must be ${rule} (got ${JSON.stringify(env[name])}); not starting`);
+      process.exitCode = 1;
+      return;
+    }
+  }
 
   // queries.json is the only SQL this program runs. Any problem in it stops the service here.
   const queriesPath = env.SHOP_QUERIES_FILE
@@ -305,13 +323,6 @@ function main() {
   const { queries } = loaded;
   say(`loaded ${queriesPath}: ${queries.mirror.length} mirror, ${Object.keys(queries.live).length} live`);
 
-  const maxRows = Number(env.SHOP_MIRROR_MAX_ROWS || DEFAULT_MIRROR_MAX_ROWS);
-  if (!Number.isInteger(maxRows) || maxRows < 1) {
-    say(`SHOP_MIRROR_MAX_ROWS must be a positive whole number (got ${JSON.stringify(env.SHOP_MIRROR_MAX_ROWS)}); not starting`);
-    process.exitCode = 1;
-    return;
-  }
-
   let mirror = null;
   if (env.SHOP_MIRROR_DATABASE_URL) {
     mirror = createMirror({
@@ -319,7 +330,7 @@ function main() {
       pgConnectionString: env.SHOP_MIRROR_DATABASE_URL,
       mirror: queries.mirror,
       maxRows,
-      intervalMinutes: Number(env.SHOP_MIRROR_INTERVAL_MINUTES || 15),
+      intervalMinutes,
     });
   } else {
     say('SHOP_MIRROR_DATABASE_URL is not set: the mirror is off');

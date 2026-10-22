@@ -95,6 +95,7 @@ export function stubPgClient({
     ended: false,
     async connect() { client.connected = true; },
     async end() { client.ended = true; },
+    on() { return client; },
     async query(text, values) {
       client.queries.push({ text, values });
       await onQuery(text, values);

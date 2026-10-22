@@ -44,10 +44,9 @@ export function buildConfig(env = process.env) {
       // Shows up as program_name in sys.dm_exec_sessions, so the shop's admin can tell
       // the bridge's sessions apart from Access users.
       appName: 'dws-bridge',
-      // Keep datetime values as the wall-clock time stored in SQL Server. With the default
-      // (useUTC: true) a 9:00 shop timestamp would land in Postgres shifted by the box's
-      // UTC offset, because pg writes JS Dates in local time.
-      useUTC: false,
+      // Dates: the driver's default (useUTC) puts SQL Server's wall-clock value in the Date's
+      // UTC fields, so a 9:00 shop timestamp serialises as 09:00Z whatever the bridge
+      // computer's time zone. The mirror writes it as zone-less text (mirror.mjs coerce).
     },
   };
   if (instanceName) config.options.instanceName = instanceName;

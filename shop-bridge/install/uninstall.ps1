@@ -45,6 +45,8 @@ if ($service) {
 
 if ($RemoveFiles) {
   if (Test-Path -LiteralPath $InstallDir) {
+    # This script may live inside the folder; leave it so the delete is not blocked.
+    Set-Location $env:SystemRoot
     Remove-Item -LiteralPath $InstallDir -Recurse -Force
     Write-Host "Deleted $InstallDir (including .env)"
   } else {

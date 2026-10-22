@@ -82,7 +82,7 @@ test('first run: creates each landing table, copies in one transaction, records 
 
   const insert = client.queries.find((q) => q.text.startsWith('insert into shop."projects"'));
   assert.equal(insert.text, 'insert into shop."projects" ("ID", "Name", "When", "Blob") values ($1, $2, $3, $4)');
-  assert.ok(insert.values[2] instanceof Date);
+  assert.equal(insert.values[2], '2026-01-02T03:04:05.000'); // wall clock, no zone
   assert.equal(insert.values[3], 'abcd'); // Buffer -> hex
 
   const runs = syncRuns(client);
@@ -235,6 +235,15 @@ test('a result set with a nameless column fails that entry', async () => {
   const { mirror, clients } = setup({ entries: [ENTRIES[0]], pool });
   await mirror.runOnce();
   assert.match(syncRuns(clients[0])[0].values[5], /column with no name; name it with AS/);
+  assert.ok(!texts(clients[0]).some((t) => t.startsWith('create table')));
+});
+
+test('two columns with the same name fail that entry before anything is written', async () => {
+  // mssql folds a repeated column name into one array-valued column.
+  const pool = stubPool(() => ({ columns: ['ProjectID'], rows: [{ ProjectID: [1860, 12] }] }));
+  const { mirror, clients } = setup({ entries: [ENTRIES[0]], pool });
+  await mirror.runOnce();
+  assert.match(syncRuns(clients[0])[0].values[5], /two columns with the same name/);
   assert.ok(!texts(clients[0]).some((t) => t.startsWith('create table')));
 });
 

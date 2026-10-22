@@ -8,7 +8,7 @@
 // identifier. The service refuses to start if anything here is wrong.
 import { readFileSync } from 'node:fs';
 import { checkReadOnlySql } from './guard.mjs';
-import { isSafeTableName } from './types.mjs';
+import { isIdentifier } from './types.mjs';
 
 // Tables in the shop schema the mirror itself depends on; an entry landing there would wipe them.
 export const RESERVED_INTO = Object.freeze(['sync_runs']);
@@ -53,7 +53,7 @@ export function validateQueries(obj) {
       for (const key of Object.keys(entry)) {
         if (!ENTRY_KEYS.includes(key)) errors.push(`${label}: unknown key "${key}" (expected "into" and "sql")`);
       }
-      if (!isSafeTableName(entry.into)) {
+      if (!isIdentifier(entry.into)) {
         errors.push(`${label}: "into" must be a plain table name (letters, digits, underscore; not starting with a digit)`);
       } else {
         const lower = entry.into.toLowerCase();
@@ -74,7 +74,7 @@ export function validateQueries(obj) {
   } else {
     for (const [name, sql] of Object.entries(obj.live)) {
       const label = `live "${name}"`;
-      if (!isSafeTableName(name)) {
+      if (!isIdentifier(name)) {
         errors.push(`${label}: the name must be a plain identifier (letters, digits, underscore; not starting with a digit)`);
       }
       checkSql(label, sql, errors);

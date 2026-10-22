@@ -34,21 +34,6 @@ export function quoteIdent(name) {
   return `"${String(name).replace(/"/g, '""')}"`;
 }
 
-/**
- * @param {string} table  table name in the shop schema, kept as-is (e.g. "projects")
- * @param {{ name: string, dataType: string, nullable: boolean }[]} columns  in ordinal order
- * @param {string[]} [pkColumns]  primary key columns in key order; omit or pass [] for none
- */
-export function buildCreateTable(table, columns, pkColumns = []) {
-  const lines = columns.map(
-    (c) => `  ${quoteIdent(c.name)} ${pgType(c.dataType)}${c.nullable ? '' : ' not null'}`,
-  );
-  if (pkColumns.length > 0) {
-    lines.push(`  primary key (${pkColumns.map(quoteIdent).join(', ')})`);
-  }
-  return `create table if not exists shop.${quoteIdent(table)} (\n${lines.join(',\n')}\n);`;
-}
-
 /** mssql result-set column metadata (`recordset.columns`), as an array in result order. */
 export function orderedColumns(recordsetColumns) {
   return Object.values(recordsetColumns ?? {}).sort((a, b) => a.index - b.index);
@@ -62,15 +47,13 @@ export function orderedColumns(recordsetColumns) {
  * @param {object} recordsetColumns  mssql `recordset.columns`: { [name]: { index, name, type } }
  */
 export function buildCreateTableFromRecordset(into, recordsetColumns) {
-  const columns = orderedColumns(recordsetColumns).map((c) => ({
-    name: c.name,
-    dataType: c.type?.declaration,
-    nullable: true,
-  }));
-  return buildCreateTable(into, columns);
+  const lines = orderedColumns(recordsetColumns).map(
+    (c) => `  ${quoteIdent(c.name)} ${pgType(c.type?.declaration)}`,
+  );
+  return `create table if not exists shop.${quoteIdent(into)} (\n${lines.join(',\n')}\n);`;
 }
 
-/** Names the mirror and queries.json accept (landing tables, live query names): plain identifiers only. */
-export function isSafeTableName(name) {
+/** Plain identifiers only: landing table names, live query names, and query parameter names. */
+export function isIdentifier(name) {
   return typeof name === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
 }

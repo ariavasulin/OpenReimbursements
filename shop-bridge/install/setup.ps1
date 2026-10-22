@@ -89,7 +89,7 @@ Write-Step "Copying service files from $Source to $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-$skipDirs = @('node_modules', 'install', 'logs', '.git')
+$skipDirs = @('node_modules', 'logs', '.git')
 $skipFiles = @('.env', '.gitignore')
 $files = Get-ChildItem -LiteralPath $Source -Force | Where-Object {
   -not ($_.PSIsContainer -and ($skipDirs -contains $_.Name))
@@ -98,28 +98,39 @@ $files = Get-ChildItem -LiteralPath $Source -Force | Where-Object {
 } | Where-Object {
   ($skipFiles -notcontains $_.Name) -and ($_.Name -notlike '*.test.mjs') -and ($_.Name -notlike 'testing-*.mjs')
 }
-foreach ($file in $files) {
-  $relative = $file.FullName.Substring($Source.Length).TrimStart('\')
-  $target = Join-Path $InstallDir $relative
-  New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
-  Copy-Item -LiteralPath $file.FullName -Destination $target -Force
-  Write-Host "  $relative"
-}
-
-# Older versions shipped these; the service no longer uses them.
-foreach ($stale in @('mirror.config.json', 'ddl.mjs', 'scripts\ddl.mjs')) {
-  $stalePath = Join-Path $InstallDir $stale
-  if (Test-Path -LiteralPath $stalePath) {
-    Remove-Item -LiteralPath $stalePath -Force
-    Write-Host "  removed old $stale"
+if ($Source -eq $InstallDir) {
+  Write-Host "  (already running from $InstallDir; nothing to copy)"
+} else {
+  foreach ($file in $files) {
+    $relative = $file.FullName.Substring($Source.Length).TrimStart('\')
+    $target = Join-Path $InstallDir $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path $target -Parent) | Out-Null
+    Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+    Write-Host "  $relative"
   }
 }
+
+# --- 3. Folder permissions, before any secret is written there --------------------------
+
+Write-Step "Restricting $InstallDir to Administrators, SYSTEM, and $ServiceAccount"
+# Well-known SIDs avoid problems on non-English Windows.
+$serviceAccountId = switch ($ServiceAccount) {
+  'NT AUTHORITY\NetworkService' { '*S-1-5-20' }
+  'NT AUTHORITY\LocalService' { '*S-1-5-19' }
+  'LocalSystem' { '*S-1-5-18' }
+  default { $ServiceAccount }
+}
+& icacls $InstallDir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' "${serviceAccountId}:(OI)(CI)RX" /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls failed on $InstallDir" }
+& icacls $LogDir /grant "${serviceAccountId}:(OI)(CI)M" /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls failed on $LogDir" }
+
 $staleScripts = Join-Path $InstallDir 'scripts'
 if ((Test-Path -LiteralPath $staleScripts) -and -not (Get-ChildItem -LiteralPath $staleScripts -Force)) {
   Remove-Item -LiteralPath $staleScripts -Force
 }
 
-# --- 3. Dependencies ------------------------------------------------------------------
+# --- 4. Dependencies ------------------------------------------------------------------
 
 Write-Step 'Installing dependencies (npm ci --omit=dev)'
 Push-Location $InstallDir
@@ -130,7 +141,7 @@ try {
   Pop-Location
 }
 
-# --- 4. Settings -> .env --------------------------------------------------------------
+# --- 5. Settings -> .env --------------------------------------------------------------
 
 function Read-EnvFile([string]$Path) {
   $values = @{}
@@ -218,26 +229,12 @@ foreach ($name in $values.Keys) {
 [IO.File]::WriteAllText($EnvPath, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
 $values = $null; $current = $null
 
-# --- 5. Folder permissions ------------------------------------------------------------
-
-Write-Step "Restricting $InstallDir to Administrators, SYSTEM, and $ServiceAccount"
-# Well-known SIDs avoid problems on non-English Windows.
-$serviceAccountId = switch ($ServiceAccount) {
-  'NT AUTHORITY\NetworkService' { '*S-1-5-20' }
-  'NT AUTHORITY\LocalService' { '*S-1-5-19' }
-  'LocalSystem' { '*S-1-5-18' }
-  default { $ServiceAccount }
-}
-& icacls $InstallDir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' "${serviceAccountId}:(OI)(CI)RX" /C /Q | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "icacls failed on $InstallDir" }
-& icacls $LogDir /grant "${serviceAccountId}:(OI)(CI)M" /C /Q | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "icacls failed on $LogDir" }
-
 # --- 6. The service -------------------------------------------------------------------
 
 function Invoke-Nssm {
   & $nssm @args | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "nssm $($args -join ' ') failed with exit code $LASTEXITCODE" }
+  # Name only the subcommand and setting: a later argument may be a password.
+  if ($LASTEXITCODE -ne 0) { throw "nssm $($args[0..([Math]::Min(2, $args.Count - 1))] -join ' ') failed with exit code $LASTEXITCODE" }
 }
 
 Write-Step "Configuring service $ServiceName"
