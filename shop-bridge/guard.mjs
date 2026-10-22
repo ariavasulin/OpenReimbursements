@@ -1,20 +1,42 @@
-// The statement guard for queries.json: a pure function, no database access.
-// Every statement is checked when the file loads and again right before it runs.
+// The statement filter for queries.json: a pure function, no database access.
+// config.mjs runs it on every statement when the file loads, and the service
+// refuses to start if any statement fails it.
 //
-// It is a second line of defence. The first is the shop database login itself,
-// which is read-only (db_datareader + db_denydatawriter), so even SQL that slips
-// past this check cannot write. The guard is deliberately conservative: when in
-// doubt it rejects, and a statement can take values through `@params` instead of
-// inlining them (a banned word inside a string literal is still rejected).
+// This is a conservative keyword filter, not a SQL parser. After comments are
+// removed, a statement passes only if it starts with SELECT or WITH, contains no
+// `;`, and contains none of the words listed below anywhere, including inside
+// string literals and [bracketed] names (so a column named [Open] cannot be
+// named in a statement). Values belong in `@params`, not in the SQL text.
+//
+// T-SQL needs no `;` between statements, so the word list is what keeps a second
+// statement out: writes, transactions, session settings (SET, USE), variables,
+// cursors, control flow, and lock hints. It cannot catch everything: two SELECTs
+// in a row (`SELECT 1 SELECT 2`) still pass, and the bridge ignores the second
+// result set. The real limits are elsewhere: the shop database login is
+// read-only (db_datareader + db_denydatawriter), so SQL that slips past this
+// filter still cannot write, and the mirror copies a result only if its columns
+// match the landing table.
 
 export const MAX_SQL_BYTES = 64 * 1024;
 
-// Whole words, case-insensitive. `into` catches `select ... into newtable`.
-// dbcc, kill, deny and reconfigure are additions beyond the plan's list.
+// Whole words, case-insensitive. `into` catches `select ... into newtable`;
+// `next` catches `NEXT VALUE FOR` (a sequence write) and so also rules out
+// `FETCH NEXT`: write `OFFSET ... ROWS FETCH FIRST n ROWS ONLY` instead.
+// `fetch` and `end` stay allowed for that and for `CASE ... END`.
 const BANNED_WORDS = [
+  // Writes and schema changes.
   'insert', 'update', 'delete', 'merge', 'into', 'exec', 'execute', 'drop', 'alter',
-  'create', 'truncate', 'grant', 'revoke', 'deny', 'backup', 'restore', 'openrowset',
-  'opendatasource', 'openquery', 'waitfor', 'shutdown', 'dbcc', 'kill', 'reconfigure',
+  'create', 'truncate', 'grant', 'revoke', 'deny', 'backup', 'restore', 'dbcc', 'kill',
+  'reconfigure', 'shutdown', 'next',
+  // Reaching other servers or files.
+  'openrowset', 'opendatasource', 'openquery',
+  // Transactions, session settings, variables, cursors, Service Broker.
+  'begin', 'commit', 'rollback', 'save', 'set', 'use', 'declare', 'open', 'close',
+  'deallocate', 'receive', 'send', 'conversation',
+  // Control flow.
+  'if', 'while', 'goto', 'return', 'throw', 'raiserror', 'print', 'waitfor',
+  // Lock and isolation hints that would block the shop's own users.
+  'tablockx', 'xlock', 'updlock', 'holdlock', 'serializable', 'repeatableread',
 ];
 // Prefixes: any word starting with these (system and extended stored procedures).
 const BANNED_PREFIXES = ['sp_', 'xp_'];

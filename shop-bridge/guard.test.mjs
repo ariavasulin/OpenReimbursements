@@ -11,6 +11,8 @@ const accepts = [
   'select [Updated At] = 1', // bracketed identifiers are kept, but this one has no banned word
   '  \n\tSelect 1  ',
   'select ProjectIDinto from tblIntoThings', // banned words only match whole words
+  'SELECT ProjectID FROM dbo.tblProject ORDER BY ProjectID OFFSET 0 ROWS FETCH FIRST 10 ROWS ONLY',
+  "SELECT ProjectID, CASE WHEN Archived = 1 THEN 'archived' ELSE 'active' END AS State FROM dbo.tblProject",
 ];
 
 for (const sql of accepts) {
@@ -42,6 +44,18 @@ const rejects = [
   ["select 'unterminated", /unterminated/],
   ['select * from openquery(x, y)', /openquery/],
   ["select 1 waitfor delay '00:01'", /waitfor/],
+  // T-SQL needs no semicolon between statements, so a second statement is caught by its keyword.
+  ['SELECT 1 BEGIN TRAN SELECT * FROM dbo.tblProject WITH (TABLOCKX, HOLDLOCK)', /begin/],
+  ['SELECT * FROM dbo.tblProject WITH (TABLOCKX, HOLDLOCK)', /tablockx/],
+  ['SELECT * FROM dbo.tblProject WITH (UPDLOCK)', /updlock/],
+  ['SELECT 1 SET TRANSACTION ISOLATION LEVEL SERIALIZABLE', /set/],
+  ['SELECT 1 USE master', /use/],
+  ['SELECT 1 DECLARE @x int', /declare/],
+  ['SELECT NEXT VALUE FOR dbo.seq AS n', /next/],
+  ['SELECT 1 COMMIT', /commit/],
+  ["SELECT 1 IF 1 = 1 PRINT 'x'", /if/],
+  ["SELECT 1 RAISERROR('x', 16, 1)", /raiserror/],
+  ['SELECT ProjectID FROM dbo.tblProject ORDER BY ProjectID OFFSET 0 ROWS FETCH NEXT 10 ROWS ONLY', /next/],
   ['', /empty/],
   ['   \n  ', /empty/],
   ['-- only a comment', /empty/],
@@ -55,6 +69,10 @@ for (const [sql, reason] of rejects) {
     assert.match(result.reason, reason);
   });
 }
+
+test('two SELECTs in a row still pass: the filter is not a parser', () => {
+  assert.deepEqual(checkReadOnlySql('SELECT 1 SELECT 2'), { ok: true });
+});
 
 test('rejects non-strings', () => {
   assert.equal(checkReadOnlySql(undefined).ok, false);

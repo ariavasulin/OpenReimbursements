@@ -3,19 +3,24 @@
 // It never runs SQL sent by a caller. cloudflared on the same box is its only
 // client. Run directly, it also starts the mirror loop.
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadQueries } from './config.mjs';
 import { closePool, getPool as defaultGetPool } from './db.mjs';
-import { checkReadOnlySql } from './guard.mjs';
 import { createMirror, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
-import { isIdentifier, orderedColumns } from './types.mjs';
+import { runQuery } from './query.mjs';
+import { isIdentifier, plainValue } from './types.mjs';
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_MAX_ROWS = 5000;
 export const MAX_ROWS_CAP = 50000;
+const MIN_TOKEN_CHARS = 32;
 const QUERY_PREFIX = '/query/';
+// Exit code for a configuration problem found at startup. install/setup.ps1 tells
+// NSSM not to restart on it, so a bad setting stops the service instead of looping.
+const EXIT_CONFIG = 78;
 const BODY_KEYS = ['params', 'maxRows'];
 
 // Errors that mean "could not talk to SQL Server at all".
@@ -32,8 +37,8 @@ class HttpError extends Error {
   }
 }
 
-/** Map a driver error to an HTTP status and error body. */
-export function classifyDbError(err) {
+/** Map any thrown error to an HttpError: HttpErrors pass through, driver errors get a status, the rest are 500. */
+export function toHttpError(err) {
   if (err instanceof HttpError) return err;
   if (err?.code === 'ECONFIG') {
     return new HttpError(503, 'not_configured', `The bridge is not configured: ${err.message}.`);
@@ -124,57 +129,7 @@ function parseQueryBody(text) {
   return { params, maxRows };
 }
 
-function toJsonSafeRow(row) {
-  for (const key of Object.keys(row)) {
-    if (Buffer.isBuffer(row[key])) row[key] = row[key].toString('hex');
-  }
-  return row;
-}
-
-/**
- * Stream the query and stop after maxRows + 1 rows, so a huge result never sits
- * in memory: the extra row proves truncation, then the request is cancelled.
- * mssql emits 'done' after every outcome (including 'error' and cancel).
- */
-export function runQuery(pool, sql, params, maxRows) {
-  return new Promise((resolve, reject) => {
-    const request = pool.request();
-    request.stream = true;
-    for (const [name, value] of Object.entries(params)) request.input(name, value);
-
-    let columns = null;
-    let recordsets = 0;
-    const rows = [];
-    let truncated = false;
-    let error = null;
-
-    request.on('recordset', (meta) => {
-      recordsets += 1;
-      if (recordsets === 1) {
-        columns = orderedColumns(meta).map((c) => c.name);
-      }
-    });
-    request.on('row', (row) => {
-      if (truncated || recordsets > 1) return; // only the first result set is returned
-      if (rows.length < maxRows) {
-        rows.push(toJsonSafeRow(row));
-      } else {
-        truncated = true;
-        request.cancel();
-      }
-    });
-    request.on('error', (err) => {
-      if (truncated && err?.code === 'ECANCEL') return; // our own cancel
-      error ??= err;
-    });
-    request.on('done', () => {
-      if (error) reject(error);
-      else resolve({ columns: columns ?? [], rows, truncated });
-    });
-    const pending = request.query(sql);
-    if (pending && typeof pending.catch === 'function') pending.catch(() => {});
-  });
-}
+const plainRow = (row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, plainValue(value)]));
 
 /**
  * @param {object} deps
@@ -198,11 +153,11 @@ export function createHandler({
   log = (line) => console.log(line),
 } = {}) {
   const queries = { mirror: [...mirrorNames], live: Object.keys(live) };
-  const expectedDigest = token && token.length >= 32 ? sha256(token) : null;
+  const expectedDigest = token && token.length >= MIN_TOKEN_CHARS ? sha256(token) : null;
 
   function requireAuth(req) {
     if (!expectedDigest) {
-      throw new HttpError(503, 'not_configured', 'SHOP_BRIDGE_TOKEN is not set (or is shorter than 32 characters).');
+      throw new HttpError(503, 'not_configured', `SHOP_BRIDGE_TOKEN is not set (or is shorter than ${MIN_TOKEN_CHARS} characters).`);
     }
     const match = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '');
     // Hashing both sides gives equal-length buffers, so the compare leaks neither content nor length.
@@ -211,16 +166,26 @@ export function createHandler({
     }
   }
 
+  // The log file is where the shop's admin finds out why a request failed, so a
+  // server-side failure logs the underlying error's code and message (never the
+  // request's params, headers, or URL).
+  function logFailure(raw, status) {
+    if (raw instanceof HttpError || status < 500) return;
+    log(`${new Date().toISOString()} error ${status}: code=${raw?.code ?? '-'} message=${JSON.stringify(String(raw?.message ?? raw))}`);
+    if (status === 500 && raw?.stack) log(raw.stack);
+  }
+
   async function health() {
     const started = Date.now();
     const base = { server, database };
     try {
       const pool = await getPool();
-      const result = await pool.request().query('SELECT @@VERSION AS version');
-      const version = String(result.recordset?.[0]?.version ?? '').split('\n')[0].trim();
+      const { rows } = await runQuery(pool, 'SELECT @@VERSION AS version', {}, { maxRows: 1 });
+      const version = String(rows[0]?.version ?? '').split('\n')[0].trim();
       return [200, { ok: true, ...base, version, mirror: mirrorStatus(), queries, durationMs: Date.now() - started }];
     } catch (raw) {
-      const err = classifyDbError(raw);
+      const err = toHttpError(raw);
+      logFailure(raw, err.status);
       return [err.status, {
         ok: false,
         ...base,
@@ -236,47 +201,52 @@ export function createHandler({
   async function query(req, name, info) {
     requireAuth(req);
     // Checked only after auth, so the names cannot be probed without the token.
-    if (!isIdentifier(name) || !Object.hasOwn(live, name) || typeof live[name] !== 'string') {
+    // config.mjs already checked every name and statement when queries.json loaded.
+    if (!Object.hasOwn(live, name)) {
       throw new HttpError(404, 'not_found', `No live query named "${name}".`);
     }
     const sql = live[name];
     info.name = name;
     info.sql = sql;
     const { params, maxRows } = parseQueryBody(await readBody(req));
-    // Already checked when queries.json loaded; failing here means the statement changed under us.
-    const verdict = checkReadOnlySql(sql);
-    if (!verdict.ok) throw new Error(`live query "${name}" failed the read-only guard at run time: ${verdict.reason}`);
     const started = Date.now();
     const pool = await getPool();
-    const { columns, rows, truncated } = await runQuery(pool, sql, params, maxRows);
+    const { columns, rows, truncated } = await runQuery(pool, sql, params, { maxRows });
     info.rowCount = rows.length;
     info.truncated = truncated;
-    return [200, { columns, rows, rowCount: rows.length, truncated, durationMs: Date.now() - started }];
+    return [200, { columns, rows: rows.map(plainRow), rowCount: rows.length, truncated, durationMs: Date.now() - started }];
   }
 
   return async function handler(req, res) {
     const started = Date.now();
-    const url = new URL(req.url ?? '/', 'http://bridge.local');
     const info = { name: null, sql: null, rowCount: null, truncated: null };
+    let pathname = '(invalid URL)';
     let status = 500;
     try {
+      let url;
+      try {
+        url = new URL(req.url ?? '/', 'http://bridge.local');
+      } catch {
+        throw new HttpError(400, 'bad_request', 'Invalid request URL.');
+      }
+      pathname = url.pathname;
       let result;
-      if (req.method === 'GET' && url.pathname === '/health') result = await health();
-      else if (req.method === 'POST' && url.pathname.startsWith(QUERY_PREFIX)) {
-        result = await query(req, url.pathname.slice(QUERY_PREFIX.length), info);
-      } else throw new HttpError(404, 'not_found', `No route for ${req.method} ${url.pathname}.`);
+      if (req.method === 'GET' && pathname === '/health') result = await health();
+      else if (req.method === 'POST' && pathname.startsWith(QUERY_PREFIX)) {
+        result = await query(req, pathname.slice(QUERY_PREFIX.length), info);
+      } else throw new HttpError(404, 'not_found', `No route for ${req.method} ${pathname}.`);
       status = result[0];
       sendJson(res, status, result[1]);
     } catch (raw) {
-      const err = classifyDbError(raw);
+      const err = toHttpError(raw);
       status = err.status;
-      if (status === 500) log(`${new Date().toISOString()} unexpected error: ${raw?.stack ?? raw}`);
+      logFailure(raw, status);
       if (status === 413) res.setHeader('Connection', 'close');
       sendJson(res, status, errorBody(err));
     } finally {
       const sqlSnippet = info.sql == null ? '-' : JSON.stringify(info.sql.replace(/\s+/g, ' ').trim().slice(0, 80));
       log([
-        new Date().toISOString(), req.method, url.pathname, status, `${Date.now() - started}ms`,
+        new Date().toISOString(), req.method, pathname, status, `${Date.now() - started}ms`,
         `rows=${info.rowCount ?? '-'}`, `truncated=${info.truncated ?? '-'}`,
         ...(info.name ? [`name=${info.name}`] : []), `sql=${sqlSnippet}`,
       ].join(' '));
@@ -304,7 +274,7 @@ function main() {
   ]) {
     if (value === null) {
       say(`${name} must be ${rule} (got ${JSON.stringify(env[name])}); not starting`);
-      process.exitCode = 1;
+      process.exitCode = EXIT_CONFIG;
       return;
     }
   }
@@ -317,7 +287,7 @@ function main() {
   if (!loaded.ok) {
     say(`${queriesPath} is not valid; not starting:`);
     for (const error of loaded.errors) say(`  ${error}`);
-    process.exitCode = 1;
+    process.exitCode = EXIT_CONFIG;
     return;
   }
   const { queries } = loaded;
@@ -325,9 +295,25 @@ function main() {
 
   let mirror = null;
   if (env.SHOP_MIRROR_DATABASE_URL) {
+    // The CA that signs the Supabase pooler's certificate (see pgClientConfig in mirror.mjs).
+    const caPath = env.SHOP_MIRROR_CA_FILE
+      ? path.resolve(env.SHOP_MIRROR_CA_FILE)
+      : fileURLToPath(new URL('./supabase-ca.crt', import.meta.url));
+    let ca = '';
+    try {
+      ca = readFileSync(caPath, 'utf8');
+    } catch {
+      // reported below
+    }
+    if (ca.trim() === '') {
+      say(`${caPath} is missing or empty: download supabase-ca.crt from Supabase > Database Settings > SSL Configuration and put it beside server.mjs; not starting`);
+      process.exitCode = EXIT_CONFIG;
+      return;
+    }
     mirror = createMirror({
       getPool: defaultGetPool,
       pgConnectionString: env.SHOP_MIRROR_DATABASE_URL,
+      ca,
       mirror: queries.mirror,
       maxRows,
       intervalMinutes,
@@ -335,8 +321,8 @@ function main() {
   } else {
     say('SHOP_MIRROR_DATABASE_URL is not set: the mirror is off');
   }
-  if (!env.SHOP_BRIDGE_TOKEN || env.SHOP_BRIDGE_TOKEN.length < 32) {
-    say('SHOP_BRIDGE_TOKEN is missing or shorter than 32 characters: /query/<name> answers 503');
+  if (!env.SHOP_BRIDGE_TOKEN || env.SHOP_BRIDGE_TOKEN.length < MIN_TOKEN_CHARS) {
+    say(`SHOP_BRIDGE_TOKEN is missing or shorter than ${MIN_TOKEN_CHARS} characters: /query/<name> answers 503`);
   }
 
   const handler = createHandler({

@@ -6,9 +6,12 @@
 // The landing table is created on first run from the result's columns. After
 // that the service never drops or alters it: if the query's columns change, that
 // entry fails until someone drops the table in Supabase.
+//
+// The entries come from queries.json, already checked by config.mjs at startup
+// (read-only filter, plain table names); nothing changes them after that.
 import pg from 'pg';
-import { checkReadOnlySql } from './guard.mjs';
-import { buildCreateTableFromRecordset, isIdentifier, orderedColumns, quoteIdent } from './types.mjs';
+import { runQuery } from './query.mjs';
+import { buildCreateTableFromRecordset, mirrorTypeProblem, orderedColumns, plainValue, quoteIdent } from './types.mjs';
 
 export const BATCH_ROWS = 500;
 export const DEFAULT_MIRROR_MAX_ROWS = 100000;
@@ -16,43 +19,43 @@ const PG_MAX_PARAMS = 65535;
 const ERROR_MAX_CHARS = 500;
 
 /**
- * pg reads `sslmode` from the URL and, in current versions, treats `require` as
- * full certificate verification, which fails against the Supabase pooler's
- * certificate chain. So drop the URL's ssl settings and always require TLS
- * ourselves: encrypted, without verifying the chain (`rejectUnauthorized: false`).
- * That is acceptable here: the target host is fixed in the URL and the
- * password still authenticates us; it is what `sslmode=require` means in libpq.
+ * Connection settings for Supabase's session pooler.
+ *
+ * TLS is always on and the server is always verified: the pooler presents a
+ * certificate signed by Supabase's own CA ("Supabase Root 2021 CA", valid to
+ * 2031), not a public one, so the chain is checked against that CA's file,
+ * shipped beside server.mjs as supabase-ca.crt. The URL's own ssl parameters
+ * (sslmode and friends) are removed so a URL cannot weaken this.
+ *
+ * The timeouts are client-side, so a dead network connection cannot hang a
+ * mirror run (and with it every later run, which would be skipped as "still in
+ * flight"): 15 s to connect, 120 s for any one statement. TCP keepalive probes
+ * start after 30 s idle, so a silently dropped connection is noticed.
+ * @param {string} connectionString  SHOP_MIRROR_DATABASE_URL
+ * @param {string} ca  the PEM text of supabase-ca.crt
  */
-export function pgClientConfig(connectionString) {
+export function pgClientConfig(connectionString, ca) {
   const url = new URL(connectionString);
   for (const key of ['sslmode', 'ssl', 'sslcert', 'sslkey', 'sslrootcert', 'uselibpqcompat']) {
     url.searchParams.delete(key);
   }
   return {
     connectionString: url.toString(),
-    ssl: { rejectUnauthorized: false },
-    statement_timeout: 120000,
+    ssl: { ca, rejectUnauthorized: true },
+    connectionTimeoutMillis: 15000,
+    query_timeout: 120000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 30000,
     application_name: 'dws-shop-bridge-mirror',
   };
 }
 
-function defaultCreatePgClient(connectionString) {
-  return new pg.Client(pgClientConfig(connectionString));
+function defaultCreatePgClient(connectionString, ca) {
+  return new pg.Client(pgClientConfig(connectionString, ca));
 }
 
 const LANDING_COLUMNS_SQL =
   "select column_name from information_schema.columns where table_schema = 'shop' and table_name = $1 order by ordinal_position";
-
-const listNames = (names) => `[${names.join(', ')}]`;
-
-function coerce(value) {
-  // Dates carry SQL Server's wall-clock time in their UTC fields (db.mjs). Writing them as
-  // zone-less ISO text keeps that wall-clock value in a Postgres `timestamp`, whatever the
-  // bridge computer's time zone; pg would otherwise convert a Date to local time.
-  if (value instanceof Date) return value.toISOString().slice(0, -1);
-  if (Buffer.isBuffer(value)) return value.toString('hex');
-  return value;
-}
 
 /**
  * Split rows into INSERT statements of at most BATCH_ROWS rows (fewer for very wide tables).
@@ -67,7 +70,7 @@ export function buildInsertBatches(into, columns, rows) {
     const values = [];
     const tuples = slice.map((row, r) => {
       const ph = columns.map((col, c) => {
-        values.push(coerce(row[col]));
+        values.push(plainValue(row[col]));
         return `$${r * columns.length + c + 1}`;
       });
       return `(${ph.join(', ')})`;
@@ -81,15 +84,17 @@ export function buildInsertBatches(into, columns, rows) {
  * @param {object} opts
  * @param {() => Promise<import('mssql').ConnectionPool>} opts.getPool
  * @param {string} opts.pgConnectionString  SHOP_MIRROR_DATABASE_URL (role shop_mirror, session pooler)
+ * @param {string} opts.ca  PEM text of supabase-ca.crt, the CA the pooler's certificate is checked against
  * @param {{ into: string, sql: string }[]} opts.mirror  the `mirror` entries from queries.json
  * @param {number} [opts.maxRows=100000]  SHOP_MIRROR_MAX_ROWS: an entry returning more rows fails unwritten
  * @param {number} [opts.intervalMinutes=15]
  * @param {(line: string) => void} [opts.log]
- * @param {(connectionString: string) => import('pg').Client} [opts.createPgClient]  for tests
+ * @param {(connectionString: string, ca: string) => import('pg').Client} [opts.createPgClient]  for tests
  */
 export function createMirror({
   getPool,
   pgConnectionString,
+  ca,
   mirror: entries,
   maxRows = DEFAULT_MIRROR_MAX_ROWS,
   intervalMinutes = 15,
@@ -111,32 +116,29 @@ export function createMirror({
     const same = existing.length === names.length && existing.every((name, i) => name === names[i]);
     if (!same) {
       throw new Error(
-        `landing table shop.${into} has columns ${listNames(existing)} but the query returns ${listNames(names)}; ` +
+        `landing table shop.${into} has columns ${JSON.stringify(existing)} but the query returns ${JSON.stringify(names)}; ` +
           `drop table shop.${into} in Supabase and the next run recreates it`,
       );
     }
   }
 
   async function copyEntry(client, { into, sql }) {
-    if (!isIdentifier(into)) throw new Error(`not a plain table name: ${into}`);
-    const verdict = checkReadOnlySql(sql);
-    if (!verdict.ok) throw new Error(`statement refused by the read-only guard: ${verdict.reason}`);
-
     const pool = await getPool();
-    const result = await pool.request().query(sql);
-    const rows = result.recordset ?? [];
-    const recordsetColumns = result.recordset?.columns ?? {};
-    const names = orderedColumns(recordsetColumns).map((c) => c.name);
+    const { columns: names, recordsetColumns, rows, truncated } = await runQuery(pool, sql, {}, { maxRows });
+    if (truncated) {
+      throw new Error(`the query returned more than ${maxRows} rows (SHOP_MIRROR_MAX_ROWS); nothing was written`);
+    }
     if (names.length === 0) throw new Error('the query returned no columns');
     if (names.some((n) => !n)) throw new Error('the query returns a column with no name; name it with AS');
-    // mssql folds two same-named columns into one array-valued column.
+    for (const column of orderedColumns(recordsetColumns)) {
+      const problem = mirrorTypeProblem(column);
+      if (problem) throw new Error(problem);
+    }
+    // mssql folds two same-named columns into one array-valued column, and its column
+    // metadata already lists the name once, so only a row shows it: a result with no
+    // rows passes this check (and then the landing table's column check decides).
     if (rows.length > 0 && names.some((n) => Array.isArray(rows[0][n]))) {
       throw new Error('the query returns two columns with the same name; give each its own AS alias');
-    }
-    if (rows.length > maxRows) {
-      throw new Error(
-        `the query returned ${rows.length} rows, over the limit of ${maxRows} (SHOP_MIRROR_MAX_ROWS); nothing was written`,
-      );
     }
 
     await ensureLandingTable(client, into, recordsetColumns, names);
@@ -180,7 +182,7 @@ export function createMirror({
     let allOk = true;
     let client = null;
     try {
-      client = createPgClient(pgConnectionString);
+      client = createPgClient(pgConnectionString, ca);
       // A connection dropped mid-run emits 'error' on the client; unhandled, that would end the process.
       client.on('error', (err) => say(`postgres connection error: ${err.message}`));
       await client.connect();
@@ -205,22 +207,20 @@ export function createMirror({
       }
 
       // shop.refresh_jobs() writes its own sync_runs row ('public.jobs'), so none is written here.
+      // The function records its own failure row and returns { ok: false, error } rather than
+      // raising, so that row survives; a thrown error here means the call itself failed.
+      let refresh;
       try {
         const res = await client.query('SELECT shop.refresh_jobs() AS result');
         const result = res.rows?.[0]?.result ?? null;
-        // The function records its own failure row and returns { ok: false, error } rather
-        // than raising, so that row survives; it never throws for a data problem.
-        if (result && result.ok === false) {
-          allOk = false;
-          say(`refresh_jobs FAILED ${JSON.stringify(result)}`);
-        } else {
-          say(`refresh_jobs ok ${JSON.stringify(result)}`);
-        }
-        state.refreshJobs = { ok: !(result && result.ok === false), finishedAt: new Date().toISOString(), result };
+        refresh = { ok: !(result && result.ok === false), result, error: null };
+        say(`refresh_jobs ${refresh.ok ? 'ok' : 'FAILED'} ${JSON.stringify(result)}`);
       } catch (err) {
-        allOk = false;
-        say(`refresh_jobs FAILED error=${JSON.stringify(err.message)}`);
+        refresh = { ok: false, result: null, error: String(err?.message ?? err).slice(0, ERROR_MAX_CHARS) };
+        say(`refresh_jobs FAILED error=${JSON.stringify(refresh.error)}`);
       }
+      if (!refresh.ok) allOk = false;
+      state.refreshJobs = { ...refresh, finishedAt: new Date().toISOString() };
     } catch (err) {
       allOk = false;
       say(`run FAILED error=${JSON.stringify(err?.message ?? String(err))}`);

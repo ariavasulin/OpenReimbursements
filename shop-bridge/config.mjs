@@ -4,8 +4,9 @@
 //                            replaces the Postgres table shop.<into>.
 //   live:   { name: sql }    each one is callable as POST /query/<name>.
 //
-// Every statement must pass the read-only guard, and every name must be a plain
-// identifier. The service refuses to start if anything here is wrong.
+// Every statement must pass the read-only filter (guard.mjs), and every name must
+// be a plain identifier. This is the only place statements are checked: the service
+// refuses to start if anything here is wrong, and nothing changes them afterwards.
 import { readFileSync } from 'node:fs';
 import { checkReadOnlySql } from './guard.mjs';
 import { isIdentifier } from './types.mjs';
@@ -45,11 +46,11 @@ export function validateQueries(obj) {
   } else {
     const seen = new Map();
     obj.mirror.forEach((entry, i) => {
-      const label = isPlainObject(entry) && typeof entry.into === 'string' ? `mirror[${i}] (into "${entry.into}")` : `mirror[${i}]`;
       if (!isPlainObject(entry)) {
-        errors.push(`${label}: must be an object with "into" and "sql"`);
+        errors.push(`mirror[${i}]: must be an object with "into" and "sql"`);
         return;
       }
+      const label = typeof entry.into === 'string' ? `mirror[${i}] (into "${entry.into}")` : `mirror[${i}]`;
       for (const key of Object.keys(entry)) {
         if (!ENTRY_KEYS.includes(key)) errors.push(`${label}: unknown key "${key}" (expected "into" and "sql")`);
       }

@@ -1,6 +1,11 @@
 // The SQL Server connection: config from env, and one lazily created pool.
 import sql from 'mssql';
 
+/** A missing setting: /health answers 503 not_configured instead of 502. */
+function configError(message) {
+  return Object.assign(new Error(message), { code: 'ECONFIG' });
+}
+
 /**
  * SHOP_DB_SERVER accepts three shapes:
  *   SQL2016\SQLEXPRESS  -> server SQL2016, named instance SQLEXPRESS (found via SQL Browser)
@@ -9,11 +14,7 @@ import sql from 'mssql';
  */
 export function parseServer(value) {
   const raw = String(value ?? '').trim();
-  if (!raw) {
-    const err = new Error('SHOP_DB_SERVER is not set');
-    err.code = 'ECONFIG';
-    throw err;
-  }
+  if (!raw) throw configError('SHOP_DB_SERVER is not set');
   const slash = raw.indexOf('\\');
   if (slash !== -1) {
     return { server: raw.slice(0, slash), instanceName: raw.slice(slash + 1) };
@@ -29,10 +30,16 @@ export function parseServer(value) {
 
 export function buildConfig(env = process.env) {
   const { server, instanceName, port } = parseServer(env.SHOP_DB_SERVER);
+  // Without a database name the login lands in its default database (usually master),
+  // where every statement fails with "Invalid object name" while /health still says ok.
+  const database = String(env.SHOP_DB_NAME ?? '').trim();
+  if (!database) throw configError('SHOP_DB_NAME is not set');
   const trustCert = (env.SHOP_DB_TRUST_CERT ?? 'true').trim().toLowerCase() !== 'false';
   const config = {
     server,
-    database: env.SHOP_DB_NAME,
+    database,
+    // Covers only the wait for the server's first packet; query.mjs enforces the
+    // 30-second deadline for the whole statement.
     requestTimeout: 30000,
     connectionTimeout: 15000,
     pool: { max: 4, min: 0, idleTimeoutMillis: 30000 },
@@ -40,13 +47,9 @@ export function buildConfig(env = process.env) {
       encrypt: true,
       // The shop instance most likely has a self-signed certificate; this hop stays on the LAN.
       trustServerCertificate: trustCert,
-      readOnlyIntent: true,
       // Shows up as program_name in sys.dm_exec_sessions, so the shop's admin can tell
       // the bridge's sessions apart from Access users.
       appName: 'dws-bridge',
-      // Dates: the driver's default (useUTC) puts SQL Server's wall-clock value in the Date's
-      // UTC fields, so a 9:00 shop timestamp serialises as 09:00Z whatever the bridge
-      // computer's time zone. The mirror writes it as zone-less text (mirror.mjs coerce).
     },
   };
   if (instanceName) config.options.instanceName = instanceName;

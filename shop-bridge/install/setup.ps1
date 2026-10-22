@@ -10,35 +10,51 @@
   What it does, in order:
     1. Checks Node.js 22+ and nssm are on PATH (prints download links if not).
     2. Stops the service if it is already installed.
-    3. Copies the service files to C:\dws-bridge (not node_modules, tests, or install\),
-       including queries.json, the only SQL the service runs. Removes files from older
-       versions that are no longer used.
-    4. Runs `npm ci --omit=dev` there.
-    5. Asks for each setting and writes C:\dws-bridge\.env. Secrets are typed hidden and
-       never printed. On a re-run, pressing Enter keeps the current value, and optional
-       settings added by hand (SHOP_MIRROR_MAX_ROWS, SHOP_QUERIES_FILE) are kept.
-    6. Restricts the folder to Administrators, SYSTEM, and the service account.
-    7. Installs (or updates) the NSSM service "dws-bridge": node --env-file=.env server.mjs,
-       starts at boot, restarts on crash, logs to C:\dws-bridge\logs\ with rotation.
-    8. Starts the service and prints http://127.0.0.1:<port>/health.
+    3. Copies the service files to C:\dws-bridge: everything in shop-bridge\ except
+       node_modules, logs, .env, and tests. That includes queries.json (the only SQL the
+       service runs), supabase-ca.crt (the CA the mirror checks Supabase's certificate
+       against), and install\ (so uninstall.ps1 is on the box).
+    4. Registers the NSSM service "dws-bridge" if it is new, and sets the account it runs
+       as, so that account exists before the next step grants it access.
+    5. Restricts the folder to Administrators, SYSTEM, and the service account, before
+       any secret is written there.
+    6. Runs `npm ci --omit=dev --ignore-scripts` there (no package install scripts run).
+    7. Asks for each setting and writes C:\dws-bridge\.env. Secrets are typed hidden and
+       never printed. On a re-run, pressing Enter keeps the current value, typing - clears
+       an optional setting, and settings added by hand (SHOP_MIRROR_MAX_ROWS,
+       SHOP_QUERIES_FILE, SHOP_MIRROR_CA_FILE) are kept.
+    8. Sets the rest of the service: node --env-file=.env server.mjs, starts at boot,
+       restarts on a crash but not on exit code 78 (a configuration error the log names),
+       logs to C:\dws-bridge\logs\ with rotation.
+    9. Starts the service and prints http://127.0.0.1:<port>/health.
 
   Safe to re-run: it updates the files and settings and restarts the service.
 
 .PARAMETER ServiceAccount
-  Windows account the service runs as. Default NT AUTHORITY\NetworkService (it needs
-  network access to reach SQL Server and Supabase; LocalService cannot authenticate on
-  the network). Pass a domain or local account to override; you will be asked for its password.
+  Windows account the service runs as. Default NT SERVICE\dws-bridge (NT SERVICE\ plus the
+  service name): a virtual account Windows creates for this service alone, so no other
+  service can read .env. It needs no password and reaches the network (SQL Server,
+  Supabase) as the computer account. Fallback if the virtual account is not wanted:
+  NT AUTHORITY\NetworkService (shared with other Windows services). Pass a domain or local
+  account to override; you will be asked for its password.
 #>
 [CmdletBinding()]
 param(
   [string]$InstallDir = 'C:\dws-bridge',
   [string]$ServiceName = 'dws-bridge',
-  [string]$ServiceAccount = 'NT AUTHORITY\NetworkService'
+  # Defaults to the virtual account of the service named above: NT SERVICE\dws-bridge.
+  [string]$ServiceAccount = "NT SERVICE\$ServiceName"
 )
 
 $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
+
+function ConvertTo-PlainText([Security.SecureString]$Secure) {
+  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
+  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
+}
 
 # --- 0. Admin and prerequisites -------------------------------------------------------
 
@@ -89,6 +105,7 @@ Write-Step "Copying service files from $Source to $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
+# install\ and supabase-ca.crt are copied: only these folders and files are skipped.
 $skipDirs = @('node_modules', 'logs', '.git')
 $skipFiles = @('.env', '.gitignore')
 $files = Get-ChildItem -LiteralPath $Source -Force | Where-Object {
@@ -110,38 +127,69 @@ if ($Source -eq $InstallDir) {
   }
 }
 
-# --- 3. Folder permissions, before any secret is written there --------------------------
+# --- 3. The service and its account -------------------------------------------------
+
+function Invoke-Nssm {
+  & $nssm @args | Out-Null
+  # Name only the subcommand and setting: a later argument may be a password.
+  if ($LASTEXITCODE -ne 0) { throw "nssm $($args[0..([Math]::Min(2, $args.Count - 1))] -join ' ') failed with exit code $LASTEXITCODE" }
+}
+
+# The service must exist, running as its account, before the folder can be granted to that
+# account: a virtual account (NT SERVICE\<name>) only exists once its service does.
+Write-Step "Registering service $ServiceName to run as $ServiceAccount"
+if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+  Invoke-Nssm install $ServiceName $node
+}
+$isVirtual = $ServiceAccount -like 'NT SERVICE\*'
+$builtIn = @('NT AUTHORITY\NetworkService', 'NT AUTHORITY\LocalService', 'LocalSystem')
+if ($isVirtual) {
+  # sc.exe rather than nssm: NSSM 2.24, the current stable download, predates virtual
+  # account support and would ask for a password. A virtual account has none.
+  & sc.exe config $ServiceName obj= $ServiceAccount | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "sc.exe config $ServiceName obj= $ServiceAccount failed with exit code $LASTEXITCODE" }
+} elseif ($builtIn -contains $ServiceAccount) {
+  Invoke-Nssm set $ServiceName ObjectName $ServiceAccount
+} else {
+  $accountPassword = ConvertTo-PlainText (Read-Host -AsSecureString "  Windows password for service account $ServiceAccount")
+  Invoke-Nssm set $ServiceName ObjectName $ServiceAccount $accountPassword
+  $accountPassword = $null
+}
+
+# --- 4. Folder permissions, before any secret is written there --------------------------
 
 Write-Step "Restricting $InstallDir to Administrators, SYSTEM, and $ServiceAccount"
-# Well-known SIDs avoid problems on non-English Windows.
+# Well-known SIDs for the built-in accounts avoid problems on non-English Windows. A
+# virtual account (NT SERVICE\<name>) and other accounts are passed by name.
 $serviceAccountId = switch ($ServiceAccount) {
   'NT AUTHORITY\NetworkService' { '*S-1-5-20' }
   'NT AUTHORITY\LocalService' { '*S-1-5-19' }
   'LocalSystem' { '*S-1-5-18' }
   default { $ServiceAccount }
 }
+# Earlier versions of this script ran the service as NetworkService. /grant:r below only
+# replaces grants for the accounts it names, so drop NetworkService's old grants here.
+if ($serviceAccountId -ne '*S-1-5-20') {
+  & icacls $InstallDir /remove:g '*S-1-5-20' /T /C /Q | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "icacls could not remove NetworkService from $InstallDir" }
+}
 & icacls $InstallDir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' "${serviceAccountId}:(OI)(CI)RX" /C /Q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls failed on $InstallDir" }
 & icacls $LogDir /grant "${serviceAccountId}:(OI)(CI)M" /C /Q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls failed on $LogDir" }
 
-$staleScripts = Join-Path $InstallDir 'scripts'
-if ((Test-Path -LiteralPath $staleScripts) -and -not (Get-ChildItem -LiteralPath $staleScripts -Force)) {
-  Remove-Item -LiteralPath $staleScripts -Force
-}
+# --- 5. Dependencies ------------------------------------------------------------------
 
-# --- 4. Dependencies ------------------------------------------------------------------
-
-Write-Step 'Installing dependencies (npm ci --omit=dev)'
+Write-Step 'Installing dependencies (npm ci --omit=dev --ignore-scripts)'
 Push-Location $InstallDir
 try {
-  & npm ci --omit=dev --no-audit --no-fund
+  & npm ci --omit=dev --ignore-scripts --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
 } finally {
   Pop-Location
 }
 
-# --- 5. Settings -> .env --------------------------------------------------------------
+# --- 6. Settings -> .env --------------------------------------------------------------
 
 function Read-EnvFile([string]$Path) {
   $values = @{}
@@ -159,18 +207,12 @@ function Read-EnvFile([string]$Path) {
   return $values
 }
 
-function ConvertTo-PlainText([Security.SecureString]$Secure) {
-  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure)
-  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
-}
-
-# Quote a value for Node's --env-file parser. Single quotes keep everything literal.
+# Quote a value for Node's --env-file parser. Only single quotes keep every character
+# literal (inside double quotes Node turns \n into a line break, which could change a
+# secret), so a value containing a single quote is refused.
 function Format-EnvValue([string]$Name, [string]$Value) {
-  if ($Value -notmatch "'") { return "'" + $Value + "'" }
-  if ($Value -notmatch '`') { return '`' + $Value + '`' }
-  if ($Value -notmatch '"') { return '"' + $Value + '"' }
-  throw "$Name contains single quotes, double quotes and backticks; choose a different value."
+  if ($Value -match "'") { throw "$Name contains a single quote ('), which .env cannot hold literally; choose a value without one." }
+  return "'" + $Value + "'"
 }
 
 function New-Token {
@@ -194,7 +236,7 @@ $settings = @(
   @{ Name = 'SHOP_MIRROR_INTERVAL_MINUTES'; Prompt = 'Mirror interval in minutes'; Default = '15' }
 )
 
-Write-Step "Writing $EnvPath (press Enter to keep the value shown in brackets)"
+Write-Step "Writing $EnvPath (press Enter to keep the value shown in brackets; - clears an optional setting)"
 $current = Read-EnvFile $EnvPath
 $values = [ordered]@{}
 foreach ($s in $settings) {
@@ -202,12 +244,17 @@ foreach ($s in $settings) {
   $have = $current[$name]
   if ($s.Secret) {
     $hint = if ($have) { 'set; Enter keeps it' } elseif ($s.Generate) { 'Enter generates one' } elseif ($s.Optional) { 'optional' } else { 'required' }
+    if ($have -and $s.Optional) { $hint += ', - clears it' }
     $plain = ConvertTo-PlainText (Read-Host -AsSecureString "  $($s.Prompt) [$hint]")
   } else {
     $shown = if ($have) { $have } elseif ($s.Default) { $s.Default } else { '' }
+    if ($have -and $s.Optional) { $shown += '; - clears it' }
     $plain = Read-Host "  $($s.Prompt) [$shown]"
   }
-  if ([string]::IsNullOrEmpty($plain)) {
+  if ($s.Optional -and $plain -eq '-') {
+    $plain = ''
+    Write-Host "    cleared $name"
+  } elseif ([string]::IsNullOrEmpty($plain)) {
     if ($have) { $plain = $have }
     elseif ($s.Generate) { $plain = New-Token; Write-Host '    generated a new token' }
     elseif ($s.Default) { $plain = $s.Default }
@@ -217,6 +264,7 @@ foreach ($s in $settings) {
 }
 if ($values['SHOP_BRIDGE_TOKEN'].Length -lt 32) { throw 'SHOP_BRIDGE_TOKEN must be at least 32 characters.' }
 # Keep settings this script does not ask about (e.g. SHOP_MIRROR_MAX_ROWS, SHOP_QUERIES_FILE).
+# A setting cleared with - is in $values as empty, so it is not brought back here.
 foreach ($name in ($current.Keys | Sort-Object)) {
   if (-not $values.Contains($name)) { $values[$name] = $current[$name] }
 }
@@ -229,18 +277,9 @@ foreach ($name in $values.Keys) {
 [IO.File]::WriteAllText($EnvPath, (($lines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding $false))
 $values = $null; $current = $null
 
-# --- 6. The service -------------------------------------------------------------------
-
-function Invoke-Nssm {
-  & $nssm @args | Out-Null
-  # Name only the subcommand and setting: a later argument may be a password.
-  if ($LASTEXITCODE -ne 0) { throw "nssm $($args[0..([Math]::Min(2, $args.Count - 1))] -join ' ') failed with exit code $LASTEXITCODE" }
-}
+# --- 7. The rest of the service settings ----------------------------------------------
 
 Write-Step "Configuring service $ServiceName"
-if (-not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
-  Invoke-Nssm install $ServiceName $node
-}
 Invoke-Nssm set $ServiceName Application $node
 Invoke-Nssm set $ServiceName AppDirectory $InstallDir
 # Node 22 reads the .env file itself, so no secrets live in the service registry entry.
@@ -253,23 +292,19 @@ Invoke-Nssm set $ServiceName AppStderr (Join-Path $LogDir 'bridge.log')
 Invoke-Nssm set $ServiceName AppRotateFiles 1
 Invoke-Nssm set $ServiceName AppRotateOnline 1
 Invoke-Nssm set $ServiceName AppRotateBytes 10485760
+# Restart after a crash, but not after exit code 78: server.mjs exits with 78 when a
+# setting or queries.json is wrong, and restarting would only repeat the same error.
 Invoke-Nssm set $ServiceName AppExit Default Restart
+Invoke-Nssm set $ServiceName AppExit 78 Exit
 Invoke-Nssm set $ServiceName AppRestartDelay 5000
 Invoke-Nssm set $ServiceName AppStopMethodConsole 5000
 
-$builtIn = @('NT AUTHORITY\NetworkService', 'NT AUTHORITY\LocalService', 'LocalSystem')
-if ($builtIn -contains $ServiceAccount) {
-  Invoke-Nssm set $ServiceName ObjectName $ServiceAccount
-} else {
-  $accountPassword = ConvertTo-PlainText (Read-Host -AsSecureString "  Windows password for service account $ServiceAccount")
-  Invoke-Nssm set $ServiceName ObjectName $ServiceAccount $accountPassword
-  $accountPassword = $null
-}
+# --- 8. Start -------------------------------------------------------------------------
 
 Write-Step "Starting $ServiceName"
 Start-Service -Name $ServiceName
 
-# --- 7. Health check ------------------------------------------------------------------
+# --- 9. Health check ------------------------------------------------------------------
 
 $port = (Read-EnvFile $EnvPath)['SHOP_BRIDGE_PORT']
 if (-not $port) { $port = '8787' }
@@ -291,7 +326,10 @@ for ($i = 0; $i -lt 10 -and -not $body; $i++) {
 }
 if ($body) {
   Write-Host $body
-  if ($body -match '"ok"\s*:\s*true') {
+  # Parse the JSON: a text match on "ok": true would also hit mirror.tables.<name>.ok.
+  $healthy = $false
+  try { $healthy = (($body | ConvertFrom-Json).ok -eq $true) } catch { $healthy = $false }
+  if ($healthy) {
     Write-Host 'The bridge is up and can reach SQL Server.' -ForegroundColor Green
   } else {
     Write-Host "The bridge is up but cannot reach SQL Server. Check $LogDir\bridge.log and the SHOP_DB_* values." -ForegroundColor Yellow

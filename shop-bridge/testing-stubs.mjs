@@ -2,17 +2,23 @@
 import { EventEmitter } from 'node:events';
 
 /**
- * mssql column metadata. A column is a name (typed nvarchar) or `{ name, type }`
+ * mssql column metadata. A column is a name (typed nvarchar) or `{ name, type, precision, scale }`
  * where type is the lowercase SQL Server type name (mssql's `type.declaration`).
  */
 function columnsMeta(columns) {
   return Object.fromEntries(columns.map((col, index) => {
-    const { name, type = 'nvarchar' } = typeof col === 'string' ? { name: col } : col;
-    return [name, { index, name, type: { declaration: type } }];
+    const { name, type = 'nvarchar', precision, scale } = typeof col === 'string' ? { name: col } : col;
+    return [name, { index, name, type: { declaration: type }, precision, scale }];
   }));
 }
 
-/** Mimics an mssql Request: promise mode, or stream mode with recordset/row/error/done events. */
+const cancelError = () => Object.assign(new Error('Canceled.'), { code: 'ECANCEL' });
+
+/**
+ * Mimics an mssql Request in stream mode (the only mode the bridge uses): recordset,
+ * row, error, and done events. `{ hang: true }` sends the columns and then no rows
+ * until the request is cancelled, like a query still running on the server.
+ */
 class FakeRequest extends EventEmitter {
   constructor(behavior) {
     super();
@@ -20,6 +26,7 @@ class FakeRequest extends EventEmitter {
     this.inputs = {};
     this.stream = false;
     this.cancelled = false;
+    this.whenCancelled = new Promise((resolve) => { this.onCancel = resolve; });
   }
 
   input(name, value) {
@@ -29,25 +36,25 @@ class FakeRequest extends EventEmitter {
 
   cancel() {
     this.cancelled = true;
+    this.onCancel();
     return true;
   }
 
   async query(sql) {
     this.sql = sql;
+    if (!this.stream) throw new Error('FakeRequest supports stream mode only');
     const outcome = await this.behavior(sql, this);
-    if (!this.stream) {
-      if (outcome.error) throw outcome.error;
-      const recordset = outcome.rows.map((r) => ({ ...r }));
-      recordset.columns = columnsMeta(outcome.columns);
-      return { recordset, recordsets: [recordset] };
-    }
     if (outcome.error) {
       this.emit('error', outcome.error);
+    } else if (outcome.hang) {
+      this.emit('recordset', columnsMeta(outcome.columns));
+      await this.whenCancelled;
+      this.emit('error', cancelError());
     } else {
       this.emit('recordset', columnsMeta(outcome.columns));
       for (const row of outcome.rows) {
         if (this.cancelled) {
-          this.emit('error', Object.assign(new Error('Canceled.'), { code: 'ECANCEL' }));
+          this.emit('error', cancelError());
           break;
         }
         this.emit('row', { ...row });
@@ -59,7 +66,7 @@ class FakeRequest extends EventEmitter {
 }
 
 /**
- * @param {(sql: string, request: FakeRequest) => ({ columns: string[], rows: object[] } | { error: Error }) | Promise<...>} behavior
+ * @param {(sql: string, request: FakeRequest) => ({ columns: (string|object)[], rows: object[] } | { columns, hang: true } | { error: Error }) | Promise<...>} behavior
  */
 export function stubPool(behavior) {
   const requests = [];
