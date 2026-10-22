@@ -95,6 +95,16 @@ describe('shopQuery', () => {
     expect(error).toMatchObject({ status: 504, code: 'timeout' });
   });
 
+  it('maps a body that stalls past the deadline to 504, not a raw error', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      text: async () => { throw new DOMException('The operation timed out.', 'TimeoutError'); },
+    }) as unknown as Response);
+    const error = await shopQuery('projects', {}, { timeoutMs: 5 }, { fetchImpl, env }).catch(e => e);
+    expect(error).toMatchObject({ status: 504, code: 'timeout' });
+  });
+
   it('maps a network failure to 502', async () => {
     const fetchImpl = vi.fn(async () => {
       throw new TypeError('fetch failed');

@@ -1,7 +1,9 @@
 // SQL Server values and types, as the bridge hands them on: the one value
 // converter (plainValue) used for both live results and the mirror, and the
-// SQL Server -> Postgres type map and landing-table DDL for the mirror.
-// Anything not in the map lands as text.
+// SQL Server -> Postgres type map for the mirror's landing tables. Anything not in
+// the map lands as text. Supabase's shop_mirror_replace accepts exactly the
+// Postgres types this map produces
+// (dws-app/supabase/migrations/20261017100400_shop_mirror_api.sql).
 //
 // Precision, as the driver (mssql/tedious) reads values:
 //   - datetime values keep millisecond precision; datetime2 beyond that is truncated.
@@ -57,6 +59,9 @@ export function plainValue(value) {
   return value;
 }
 
+/** One result row with every value through plainValue, as both live results and the mirror send it. */
+export const plainRow = (row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, plainValue(value)]));
+
 /** Bracket-quote a column name for a T-SQL suggestion, unless it is a plain identifier. */
 const sqlName = (name) => (isIdentifier(name) ? name : `[${String(name).replace(/]/g, ']]')}]`);
 
@@ -83,28 +88,19 @@ export function pgType(dataType) {
   return SQL_TO_PG[String(dataType ?? '').trim().toLowerCase()] ?? 'text';
 }
 
-/** Double-quote an identifier, keeping its case. */
-export function quoteIdent(name) {
-  return `"${String(name).replace(/"/g, '""')}"`;
-}
-
 /** mssql result-set column metadata (`recordset.columns`), as an array in result order. */
 export function orderedColumns(recordsetColumns) {
   return Object.values(recordsetColumns ?? {}).sort((a, b) => a.index - b.index);
 }
 
 /**
- * The landing table for one mirror entry: every column nullable, no primary key
- * (a query's result set has neither). Types come from mssql's `type.declaration`
+ * The landing table's columns for one mirror entry, as shop_mirror_replace takes
+ * them: [{ name, type }] in result order. Types come from mssql's `type.declaration`
  * (lowercase SQL Server type name, e.g. "varchar").
- * @param {string} into  table name in the shop schema
  * @param {object} recordsetColumns  mssql `recordset.columns`: { [name]: { index, name, type } }
  */
-export function buildCreateTableFromRecordset(into, recordsetColumns) {
-  const lines = orderedColumns(recordsetColumns).map(
-    (c) => `  ${quoteIdent(c.name)} ${pgType(c.type?.declaration)}`,
-  );
-  return `create table if not exists shop.${quoteIdent(into)} (\n${lines.join(',\n')}\n);`;
+export function landingColumns(recordsetColumns) {
+  return orderedColumns(recordsetColumns).map((c) => ({ name: c.name, type: pgType(c.type?.declaration) }));
 }
 
 /** Plain identifiers only: landing table names, live query names, and query parameter names. */

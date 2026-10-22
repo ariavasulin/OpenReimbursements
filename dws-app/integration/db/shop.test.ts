@@ -1,180 +1,218 @@
-import { randomBytes, randomInt } from 'node:crypto';
-import pg from 'pg';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
+import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
+// The bridge's own mirror and HTTPS client (no dependencies of their own), for the end-to-end case.
+import { createMirror, createMirrorApi } from '../../../shop-bridge/mirror.mjs';
+import { stubPool } from '../../../shop-bridge/testing-stubs.mjs';
 
-// The shop mirror's Supabase side: the shop_mirror role boundary, shop.refresh_jobs(),
-// and the admin's public.shop_sync_status(). Office values below are made up.
+// The shop mirror's Supabase side: the two functions the bridge box calls over the
+// HTTPS API (public.shop_mirror_replace and public.shop_mirror_refresh), the tables
+// they create, shop.refresh_jobs(), and the admin's public.shop_sync_status(). Every
+// call below goes through PostgREST with the anon key, as the box's calls do. Office
+// values are made up.
 
-// No migration creates the landing tables: the bridge does, logged in as shop_mirror,
-// from the columns its queries return. These are the shipped entries' tables, in the
-// bridge's type map (all nullable, no primary key).
-const landingTables: Record<string, string> = {
-  projects: '"ProjectID" integer, "Project" text, "Completed" timestamp, "Archived" boolean, "Location" integer',
-  locations: '"LocationID" integer, "LocationName" text, "LocationAddress" text, "LocationCity" text',
-  open_jobs: '"JobNo" integer, "JobStatus" text',
-  contacts: '"ContactID" integer, "CompanyID" integer, "EmplCode" text, "FirstName" text, "LastName" text, '
-    + '"email" text, "Mobile" text, "OfficePhone" text, "CurrentEmp" text, "dbTermDate" timestamp',
-};
+// The shipped entries' columns, in the bridge's type map (shop-bridge/types.mjs).
+const landing = {
+  projects: [['ProjectID', 'integer'], ['Project', 'text'], ['Completed', 'timestamp'], ['Archived', 'boolean'], ['Location', 'integer']],
+  locations: [['LocationID', 'integer'], ['LocationName', 'text'], ['LocationAddress', 'text'], ['LocationCity', 'text']],
+  open_jobs: [['JobNo', 'integer'], ['JobStatus', 'text']],
+  contacts: [['ContactID', 'integer'], ['CompanyID', 'integer'], ['EmplCode', 'text'], ['FirstName', 'text'], ['LastName', 'text'],
+    ['email', 'text'], ['Mobile', 'text'], ['OfficePhone', 'text'], ['CurrentEmp', 'text'], ['dbTermDate', 'timestamp']],
+} as const;
+type Table = keyof typeof landing;
+const columns = (table: Table) => landing[table].map(([name, type]) => ({ name, type }));
 
-describe('shop mirror schema, role, and jobs refresh', () => {
+describe('shop mirror API, tables, and jobs refresh', () => {
   let f: Awaited<ReturnType<typeof createFixtures>>;
-  let mirror: pg.Client;
+  const token = randomBytes(32).toString('hex');
   const created: string[] = [];
 
   beforeAll(async () => {
     f = await createFixtures();
-    // The migration sets no password; the operator does, out of band. Do the same
-    // here and log in as the role itself, as the bridge box will.
-    const password = randomBytes(24).toString('hex');
-    await f.sql.query(`alter role shop_mirror password '${password}'`);
-    const url = new URL(process.env.DWS_TEST_DATABASE_URL!);
-    url.username = 'shop_mirror';
-    url.password = password;
-    mirror = new pg.Client({ connectionString: url.toString() });
-    await mirror.connect();
-    for (const [name, columns] of Object.entries(landingTables)) {
-      await mirror.query(`create table if not exists shop."${name}" (${columns})`);
+    // What the operator runs once, with the hash install/setup.ps1 prints.
+    await f.sql.query(`insert into shop.mirror_token (token_sha256) values ($1)
+      on conflict (id) do update set token_sha256 = excluded.token_sha256, set_at = now()`,
+      [createHash('sha256').update(token, 'utf8').digest()]);
+    for (const table of Object.keys(landing) as Table[]) {
+      expect(await replace(table, [])).toEqual({ ok: true, row_count: 0 });
     }
   });
   afterAll(async () => {
-    await mirror?.end();
-    if (created.length) await f.sql.query('delete from public.jobs where job_number = any($1)', [created]);
+    if (created.length) await f?.sql.query('delete from public.jobs where job_number = any($1)', [created]);
+    await f?.sql.query('delete from shop.mirror_token');
     await f?.close();
   });
 
-  const asRole = async (role: string, statement: string) => {
+  // As the bridge calls them: the anon key plus the mirror token.
+  const replace = async (table: string, rows: object[], cols: object[] = columns(table as Table), error?: string) => {
+    const res = await f.anon.rpc('shop_mirror_replace', { p_token: token, p_table: table, p_columns: cols, p_rows: rows, ...(error ? { p_error: error } : {}) });
+    expect(res.error).toBeNull();
+    return res.data;
+  };
+  const refresh = async () => {
+    const res = await f.anon.rpc('shop_mirror_refresh', { p_token: token });
+    expect(res.error).toBeNull();
+    return res.data;
+  };
+
+  // Runs fn in a transaction that is always rolled back.
+  const rolledBack = async <T>(fn: (client: pg.PoolClient) => Promise<T>) => {
     const client = await f.sql.connect();
     try {
       await client.query('begin');
-      await client.query(`set local role ${role}`);
-      return await client.query(statement);
+      return await fn(client);
     } finally { await client.query('rollback'); client.release(); }
   };
+  const asRole = (role: string, statement: string) => rolledBack(async client => {
+    await client.query(`set local role ${role}`);
+    return client.query(statement);
+  });
 
-  it('lets the tables shop_mirror creates be read by the service role, and grants postgres nothing on them', async () => {
-    const owners = await f.sql.query(`select c.relname, c.relowner::regrole::text as owner,
+  it('refuses a missing or wrong token, and any caller other than anon', async () => {
+    for (const p_token of [null, '', 'x'.repeat(64), token.toUpperCase()]) {
+      const replaced = await f.anon.rpc('shop_mirror_replace', { p_token, p_table: 'projects', p_columns: columns('projects'), p_rows: [] });
+      expect(replaced.error?.code, String(p_token)).toBe('42501');
+      expect((await f.anon.rpc('shop_mirror_refresh', { p_token })).error?.code).toBe('42501');
+    }
+    // The signed-in apps and the service role do not call these.
+    for (const client of [f.employeeA.client, f.admin]) {
+      expect((await client.rpc('shop_mirror_refresh', { p_token: token })).error).not.toBeNull();
+    }
+    // Without the stored hash, the right token is refused too: deleting the row revokes the box.
+    await rolledBack(async client => {
+      await client.query('delete from shop.mirror_token');
+      await client.query('set local role anon');
+      await expect(client.query('select public.shop_mirror_refresh($1)', [token])).rejects.toMatchObject({ code: '42501' });
+    });
+    // Nothing else in shop is callable: the token check and refresh_jobs are postgres's.
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      await expect(asRole(role, 'select shop.refresh_jobs()')).rejects.toMatchObject({ code: '42501' });
+      await expect(asRole(role, `select shop.require_mirror_token('${token}')`)).rejects.toMatchObject({ code: '42501' });
+    }
+  });
+
+  it('creates landing tables owned by postgres, readable by the service role only', async () => {
+    const tables = await f.sql.query(`select c.relname, c.relkind, c.relowner::regrole::text as owner,
         has_table_privilege('service_role', c.oid, 'select') as service_role,
-        exists (select 1 from aclexplode(c.relacl) a where a.grantee = 'postgres'::regrole) as postgres
+        has_table_privilege('anon', c.oid, 'select') as anon,
+        has_table_privilege('authenticated', c.oid, 'select') as authenticated
       from pg_class c where c.relnamespace = 'shop'::regnamespace and c.relname = any($1) order by c.relname`,
-      [Object.keys(landingTables)]);
-    // postgres is checked against the table's own grants, not membership or superuser.
-    // refresh_jobs() runs as its caller, so nothing running as postgres needs these.
-    expect(owners.rows).toEqual(Object.keys(landingTables).sort().map(relname =>
-      ({ relname, owner: 'shop_mirror', service_role: true, postgres: false })));
+      [Object.keys(landing)]);
+    expect(tables.rows).toEqual(Object.keys(landing).sort().map(relname =>
+      ({ relname, relkind: 'r', owner: 'postgres', service_role: true, anon: false, authenticated: false })));
+    const types = await f.sql.query(`select a.attname, format_type(a.atttypid, a.atttypmod) as type from pg_attribute a
+      where a.attrelid = 'shop.projects'::regclass and a.attnum > 0 and not a.attisdropped order by a.attnum`);
+    expect(types.rows).toEqual(landing.projects.map(([attname, type]) =>
+      ({ attname, type: type === 'timestamp' ? 'timestamp without time zone' : type })));
+    for (const role of ['anon', 'authenticated']) {
+      for (const table of [...Object.keys(landing), 'sync_runs', 'mirror_token']) {
+        await expect(asRole(role, `select 1 from shop.${table} limit 1`)).rejects.toMatchObject({ code: '42501' });
+      }
+    }
     expect((await asRole('service_role', 'select count(*)::int as n from shop.contacts')).rows).toEqual([{ n: 0 }]);
   });
 
-  it('lets shop_mirror write shop tables, call refresh_jobs, and read and upsert public.jobs, and nothing else', async () => {
-    await mirror.query('begin');
+  it('treats everything the box sends as data: names are quoted, types come from a fixed list', async () => {
+    const table = `probe_${randomBytes(4).toString('hex')}`;
     try {
-      await mirror.query(`insert into shop.projects ("ProjectID", "Project") values (${randomInt(1e8, 2e8)}, 'Role check')`);
-      await mirror.query('delete from shop.projects where "Project" = \'Role check\'');
-      await mirror.query(`insert into shop.sync_runs (table_name, started_at, finished_at, row_count, ok) values ('projects', now(), now(), 0, true)`);
-      expect((await mirror.query('select shop.refresh_jobs() as r')).rows[0].r.ok).toBe(true);
-      // refresh_jobs() runs as its caller, so shop_mirror itself reads and upserts
-      // public.jobs; the policy lets it see every row.
-      const number = `shop-role-${randomBytes(6).toString('hex')}`;
-      await mirror.query(`insert into public.jobs (job_number, name) values ($1, 'Role check')
-        on conflict (job_number) do update set name = excluded.name`, [number]);
-      await mirror.query(`update public.jobs set location = 'Here' where job_number = $1`, [number]);
-      expect((await mirror.query('select location from public.jobs where job_number = $1', [number])).rows)
-        .toEqual([{ location: 'Here' }]);
-      expect(Number((await mirror.query('select count(*) from public.jobs where job_number <> $1', [number])).rows[0].count))
-        .toBe(Number((await f.sql.query('select count(*) from public.jobs')).rows[0].count));
-    } finally { await mirror.query('rollback'); }
-    for (const statement of [
-      'delete from public.jobs where false',
-      'truncate public.jobs',
-      'select 1 from public.photos limit 1',
-      'select 1 from public.user_profiles limit 1',
-      'select 1 from public.receipts limit 1',
-      'select 1 from auth.users limit 1',
-      'select 1 from auth.sessions limit 1',
-      'create table public.shop_mirror_probe (a integer)',
-      'delete from shop.sync_runs',
-      'drop table shop.sync_runs',
-      'select public.shop_sync_status()',
-    ]) {
-      await expect(mirror.query(statement), statement).rejects.toMatchObject({ code: '42501' });
-    }
-    const publicGrants = await f.sql.query(`select c.relname,
-        array(select p from unnest(array['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger']) p
-              where has_table_privilege('shop_mirror', c.oid, p)) as privileges
-      from pg_class c
-      where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'v', 'm', 'p', 'f')
-        and has_table_privilege('shop_mirror', c.oid, 'select, insert, update, delete, truncate, references, trigger')`);
-    expect(publicGrants.rows).toEqual([{ relname: 'jobs', privileges: ['select', 'insert', 'update'] }]);
-    const authGrants = await f.sql.query(`select
-        has_schema_privilege('shop_mirror', 'auth', 'usage, create') as schema,
-        exists (select 1 from pg_class c where c.relnamespace = 'auth'::regnamespace
-                and has_table_privilege('shop_mirror', c.oid, 'select, insert, update, delete, truncate')) as tables`);
-    expect(authGrants.rows).toEqual([{ schema: false, tables: false }]);
-    const policies = await f.sql.query(`select tablename, policyname from pg_policies where 'shop_mirror' = any(roles)`);
-    expect(policies.rows).toEqual([{ tablename: 'jobs', policyname: 'jobs_shop_mirror' }]);
-    const memberships = await f.sql.query(`select roleid::regrole::text from pg_auth_members where member = 'shop_mirror'::regrole`);
-    expect(memberships.rows).toEqual([]);
-    const role = await f.sql.query(`select rolsuper, rolcreaterole, rolcreatedb, rolbypassrls, rolcanlogin from pg_roles where rolname = 'shop_mirror'`);
-    expect(role.rows).toEqual([{ rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolbypassrls: false, rolcanlogin: true }]);
-  });
-
-  it('keeps the shop schema closed to anon and authenticated, and refresh_jobs to the bridge', async () => {
-    for (const role of ['anon', 'authenticated']) {
-      for (const table of Object.keys(landingTables)) {
-        await expect(asRole(role, `select 1 from shop.${table} limit 1`)).rejects.toMatchObject({ code: '42501' });
+      const odd = 'a"); drop table shop.sync_runs; --';
+      expect(await replace(table, [{ [odd]: 'still just a value' }], [{ name: odd, type: 'text' }])).toEqual({ ok: true, row_count: 1 });
+      expect((await f.sql.query(`select * from shop.${table}`)).rows).toEqual([{ [odd]: 'still just a value' }]);
+      expect((await f.sql.query(`select to_regclass('shop.sync_runs') is not null as kept`)).rows).toEqual([{ kept: true }]);
+      for (const type of ['shop.odd', 'text) ; drop table shop.sync_runs; --', 'regclass', 'jsonb']) {
+        const res = await replace(`${table}_t`, [], [{ name: 'v', type }]);
+        expect(res.ok, type).toBe(false);
+        expect(res.error, type).toContain('not one the mirror allows');
       }
-      await expect(asRole(role, 'select 1 from shop.sync_runs limit 1')).rejects.toMatchObject({ code: '42501' });
+      for (const p_table of ['sync_runs', 'mirror_token', 'Sync_Runs', 'a"b', 'x; drop table shop.sync_runs', '', 'x'.repeat(64)]) {
+        const res = await f.anon.rpc('shop_mirror_replace', { p_token: token, p_table, p_columns: [{ name: 'v', type: 'text' }], p_rows: [] });
+        expect(res.error?.code, p_table).toBe('22023');
+      }
+      // Whatever arrived, shop holds only plain tables (and their indexes and
+      // sequences) and functions, all owned by postgres: no view, trigger, policy,
+      // or type the box could have made run as a reader.
+      const objects = await f.sql.query(`
+        select 'relation' as kind, relname as name, relkind::text as detail, relowner::regrole::text as owner
+          from pg_class where relnamespace = 'shop'::regnamespace and relkind not in ('r', 'i', 'S')
+        union all select 'not postgres', relname, relkind::text, relowner::regrole::text
+          from pg_class where relnamespace = 'shop'::regnamespace and relowner <> 'postgres'::regrole
+        union all select 'function', proname, '', proowner::regrole::text
+          from pg_proc where pronamespace = 'shop'::regnamespace and proowner <> 'postgres'::regrole
+        union all select 'type', typname, typtype::text, typowner::regrole::text
+          from pg_type where typnamespace = 'shop'::regnamespace and typtype <> 'c' and typcategory <> 'A'
+        union all select 'trigger', tgname, tgrelid::regclass::text, ''
+          from pg_trigger where not tgisinternal and tgrelid in (select oid from pg_class where relnamespace = 'shop'::regnamespace)
+        union all select 'policy', polname, polrelid::regclass::text, ''
+          from pg_policy where polrelid in (select oid from pg_class where relnamespace = 'shop'::regnamespace)`);
+      expect(objects.rows).toEqual([]);
+    } finally {
+      await f.sql.query(`drop table if exists shop.${table}; drop table if exists shop.${table}_t`);
+      await f.sql.query('delete from shop.sync_runs where table_name like $1', [`${table}%`]);
     }
-    for (const role of ['anon', 'authenticated', 'service_role']) {
-      await expect(asRole(role, 'select shop.refresh_jobs()')).rejects.toMatchObject({ code: '42501' });
-    }
-    const definer = await f.sql.query(`select prosecdef from pg_proc where oid = 'shop.refresh_jobs()'::regprocedure`);
-    expect(definer.rows).toEqual([{ prosecdef: false }]);
   });
 
-  it('lets shop_mirror execute no function in public, and leaves the app roles theirs', async () => {
-    // Postgres grants execute on new functions to PUBLIC; 20261017100000_shop_schema.sql
-    // moves that to the app roles by name. A function added in public later without
-    // `revoke execute ... from public` shows up here.
-    const executable = await f.sql.query(`select p.oid::regprocedure::text as signature from pg_proc p
-      where p.pronamespace = 'public'::regnamespace and has_function_privilege('shop_mirror', p.oid, 'EXECUTE')`);
-    expect(executable.rows).toEqual([]);
-    await expect(mirror.query('select public.trigger_set_timestamp()')).rejects.toMatchObject({ code: '42501' });
-    // The functions that reached every role only through PUBLIC before that migration
-    // (the receipts app's triggers): the three app roles still have them.
-    const kept = await f.sql.query(`select p.proname,
+  it('replaces a table in one go, keeps it on a failed copy, and records every call', async () => {
+    const table = `probe_${randomBytes(4).toString('hex')}`;
+    const cols = [{ name: 'Id', type: 'integer' }, { name: 'When', type: 'timestamp' }, { name: 'Amount', type: 'numeric' }];
+    const runs = async () => (await f.sql.query(`select row_count, ok, error from shop.sync_runs where table_name = $1 order by id`, [table])).rows;
+    try {
+      expect(await replace(table, [{ Id: 1, When: '2026-01-02T09:00:00.000', Amount: 12.5 }, { Id: 2 }], cols)).toEqual({ ok: true, row_count: 2 });
+      expect(await replace(table, [{ Id: 3, When: null, Amount: 1 }], cols)).toEqual({ ok: true, row_count: 1 });
+      const rows = async () => (await f.sql.query(`select "Id", "When"::text as "When", "Amount"::text as "Amount" from shop.${table}`)).rows;
+      expect(await rows()).toEqual([{ Id: 3, When: null, Amount: '1' }]);
+      // A value of the wrong type fails the whole copy, and the last good copy stays.
+      const bad = await replace(table, [{ Id: 4 }, { Id: 'not a number' }], cols);
+      expect(bad.ok).toBe(false);
+      expect(await rows()).toEqual([{ Id: 3, When: null, Amount: '1' }]);
+      // A query whose columns changed fails until someone drops the table.
+      const changed = await replace(table, [], [{ name: 'Id', type: 'integer' }]);
+      expect(changed).toMatchObject({ ok: false });
+      expect(changed.error).toContain(`drop table shop.${table}`);
+      // The box could not read the office table: recorded, the copy left alone.
+      expect(await replace(table, [], cols, 'SQL Server: timeout')).toEqual({ ok: false, error: 'SQL Server: timeout' });
+      expect(await rows()).toHaveLength(1);
+      const recorded = await runs();
+      expect(recorded.map(r => r.ok)).toEqual([true, true, false, false, false]);
+      expect(recorded.slice(0, 2).map(r => r.row_count)).toEqual([2, 1]);
+      expect(recorded[4]).toEqual({ row_count: null, ok: false, error: 'SQL Server: timeout' });
+    } finally {
+      await f.sql.query(`drop table if exists shop.${table}`);
+      await f.sql.query('delete from shop.sync_runs where table_name = $1', [table]);
+    }
+  });
+
+  it('keeps the four admin functions from anon and authenticated (20261022120000)', async () => {
+    const grants = await f.sql.query(`select p.proname,
         has_function_privilege('anon', p.oid, 'EXECUTE') as anon,
         has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated,
         has_function_privilege('service_role', p.oid, 'EXECUTE') as service_role
       from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = any($1) order by p.proname`,
-      [['handle_new_user', 'receipts_guard_status_change', 'trigger_set_timestamp']]);
-    expect(kept.rows).toEqual(['handle_new_user', 'receipts_guard_status_change', 'trigger_set_timestamp']
-      .map(proname => ({ proname, anon: true, authenticated: true, service_role: true })));
-    // A client helper the employee's session calls (20261014120000) is still callable.
-    expect((await f.employeeA.client.rpc('photo_sort_key', { p_name: 'a' })).error).toBeNull();
+      [['get_auth_users_for_admin', 'get_auth_users_count', 'get_admin_receipt_status_counts', 'get_admin_receipts_with_phone']]);
+    expect(grants.rows).toEqual(['get_admin_receipt_status_counts', 'get_admin_receipts_with_phone', 'get_auth_users_count', 'get_auth_users_for_admin']
+      .map(proname => ({ proname, anon: false, authenticated: false, service_role: true })));
   });
 
   // One fresh block of office numbers per scenario, so repeated runs and other
-  // files' jobs never collide with these.
+  // files' jobs never collide with these. The copies are sent as the bridge sends them.
   async function seed() {
     const base = randomInt(10_000, 99_999) * 100;
     const n = (k: number) => base + k;
     const handMade = `P-${base}`;
     created.push(...[1, 2, 3, 4, 5, 6, 7].map(k => String(n(k))), handMade);
-    // The mirror replaces whole tables, so each scenario starts from empty copies. The
-    // landing tables are shop_mirror's, written as the bridge writes them.
-    await mirror.query('delete from shop.projects; delete from shop.open_jobs; delete from shop.locations');
-    await mirror.query(`insert into shop.locations ("LocationID", "LocationName", "LocationAddress", "LocationCity") values
-      (1, ' Harbor Tower ', '1 Main St', 'Oakland'), (2, null, ' 2 Side St ', 'Berkeley')`);
-    await mirror.query(`insert into shop.projects ("ProjectID", "Project", "Location", "Completed", "Archived") values
-      ($1, '  Lobby refresh ', 1, null, false),
-      ($2, 'Not on the Sage list', 1, null, false),
-      ($3, 'Finished job', 1, now(), false),
-      ($4, 'Archived job', 1, null, true),
-      ($5, 'In the app Trash', 1, null, false),
-      ($6, 'Renamed in the office', 2, null, null)`, [n(1), n(2), n(3), n(4), n(5), n(6)]);
-    await mirror.query(`insert into shop.open_jobs ("JobNo", "JobStatus") values
-      ($1, 'O'), ($2, 'O'), ($3, 'O'), ($4, 'O'), ($5, 'O')`, [n(1), n(3), n(4), n(5), n(6)]);
+    expect((await replace('locations', [
+      { LocationID: 1, LocationName: ' Harbor Tower ', LocationAddress: '1 Main St', LocationCity: 'Oakland' },
+      { LocationID: 2, LocationName: null, LocationAddress: ' 2 Side St ', LocationCity: 'Berkeley' },
+    ])).ok).toBe(true);
+    expect((await replace('projects', [
+      { ProjectID: n(1), Project: '  Lobby refresh ', Location: 1, Completed: null, Archived: false },
+      { ProjectID: n(2), Project: 'Not on the Sage list', Location: 1, Completed: null, Archived: false },
+      { ProjectID: n(3), Project: 'Finished job', Location: 1, Completed: '2026-01-02T09:00:00.000', Archived: false },
+      { ProjectID: n(4), Project: 'Archived job', Location: 1, Completed: null, Archived: true },
+      { ProjectID: n(5), Project: 'In the app Trash', Location: 1, Completed: null, Archived: false },
+      { ProjectID: n(6), Project: 'Renamed in the office', Location: 2, Completed: null, Archived: null },
+    ])).ok).toBe(true);
+    expect((await replace('open_jobs', [n(1), n(3), n(4), n(5), n(6)].map(JobNo => ({ JobNo, JobStatus: 'O' })))).ok).toBe(true);
     await f.sql.query(`insert into public.jobs (job_number, name, location, is_active, synced_at, deleted_at) values
       ($1, 'Trashed', null, false, now() - interval '1 day', now()),
       ($2, 'Old office name', '17', true, now() - interval '1 day', null),
@@ -185,8 +223,6 @@ describe('shop mirror schema, role, and jobs refresh', () => {
   const jobs = async (numbers: string[]) => (await f.sql.query(
     `select job_number, name, location, is_active, synced_at is not null as synced, deleted_at is not null as trashed
        from public.jobs where job_number = any($1) order by job_number`, [numbers])).rows;
-  // Called as the bridge calls it: logged in as shop_mirror.
-  const refresh = async () => (await mirror.query('select shop.refresh_jobs() as r')).rows[0].r;
   const runCount = async () => Number((await f.sql.query(`select count(*) from shop.sync_runs where table_name = 'public.jobs'`)).rows[0].count);
 
   it('refreshes open office jobs and leaves Trash, P- rows, and closed jobs alone', async () => {
@@ -227,115 +263,114 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     expect(await runCount()).toBe(runsBefore + 2);
   });
 
+  it('does not refresh when the latest copy of a table it reads failed, but a contacts failure does not stop it', async () => {
+    const { n } = await seed();
+    const before = await jobs([String(n(1)), String(n(6))]);
+    for (const table of ['open_jobs', 'locations', 'projects'] as const) {
+      expect((await replace(table, [], columns(table), 'SQL Server: timeout')).ok).toBe(false);
+      expect(await refresh(), table).toEqual({ ok: false, error: `not refreshed: the latest copy of shop.${table} did not succeed` });
+      expect(await jobs([String(n(1)), String(n(6))])).toEqual(before);
+      await seed();
+    }
+    expect((await replace('contacts', [], columns('contacts'), 'SQL Server: timeout')).ok).toBe(false);
+    expect((await refresh()).ok).toBe(true);
+    expect((await replace('contacts', [])).ok).toBe(true);
+  });
+
   it('records a failed refresh instead of losing it', async () => {
     const { n } = await seed();
     const runsBefore = await runCount();
     const before = await jobs([String(n(6))]);
-    await mirror.query('begin');
-    try {
-      // Force a failure inside the function, as shop_mirror: an office column renamed
-      // without updating refresh_jobs().
-      await mirror.query('alter table shop.locations rename column "LocationCity" to "City"');
-      const result = await refresh();
+    await rolledBack(async client => {
+      // An office column renamed without updating refresh_jobs().
+      await client.query('alter table shop.locations rename column "LocationCity" to "City"');
+      const result = (await client.query('select shop.refresh_jobs() as r')).rows[0].r;
       expect(result).toMatchObject({ ok: false });
       expect(result.error).toContain('LocationCity');
-      expect((await mirror.query('select name from public.jobs where job_number = $1', [String(n(6))])).rows)
+      expect((await client.query('select name from public.jobs where job_number = $1', [String(n(6))])).rows)
         .toEqual([{ name: 'Old office name' }]);
-      const run = (await mirror.query(`select ok, error, row_count from shop.sync_runs
+      const run = (await client.query(`select ok, error, row_count from shop.sync_runs
         where table_name = 'public.jobs' order by id desc limit 1`)).rows[0];
       expect(run).toMatchObject({ ok: false, row_count: null });
       expect(run.error).toContain('LocationCity');
-    } finally { await mirror.query('rollback'); }
+    });
     expect(await runCount()).toBe(runsBefore);
     expect(await jobs([String(n(6))])).toEqual(before);
   });
 
   it('counts a job number listed twice in the office data once', async () => {
     const { n } = await seed();
-    await mirror.query('begin');
-    try {
-      await mirror.query(`insert into shop.open_jobs ("JobNo", "JobStatus") values ($1, 'O'), ($2, ' o ')`, [n(1), n(6)]);
-      expect(await refresh()).toMatchObject({ ok: true, upserted: 2, skipped_trashed: 1 });
-    } finally { await mirror.query('rollback'); }
+    expect((await replace('open_jobs', [n(1), n(3), n(4), n(5), n(6), n(1), n(6)]
+      .map((JobNo, i) => ({ JobNo, JobStatus: i === 6 ? ' o ' : 'O' })))).ok).toBe(true);
+    expect(await refresh()).toMatchObject({ ok: true, upserted: 2, skipped_trashed: 1 });
   });
 
   it('records a failed refresh when a landing table does not exist yet', async () => {
     const runsBefore = await runCount();
-    await mirror.query('begin');
-    try {
+    await rolledBack(async client => {
       // As before the bridge's first run: the function exists, the table does not.
-      await mirror.query('drop table shop.open_jobs');
-      const result = await refresh();
+      await client.query('drop table shop.open_jobs');
+      const result = (await client.query('select shop.refresh_jobs() as r')).rows[0].r;
       expect(result).toMatchObject({ ok: false });
       expect(result.error).toContain('open_jobs');
-      const run = (await mirror.query(`select ok, error, row_count from shop.sync_runs
-        where table_name = 'public.jobs' order by id desc limit 1`)).rows[0];
-      expect(run).toMatchObject({ ok: false, row_count: null });
-      expect(run.error).toContain('open_jobs');
-    } finally { await mirror.query('rollback'); }
+    });
     expect(await runCount()).toBe(runsBefore);
   });
 
-  it('refuses a landing table that is not a plain table, so a swap cannot run code as the caller', async () => {
-    // refresh_jobs() runs as its caller (shop_mirror, which cannot read app tables), and
-    // it also refuses to read a landing table that can run shop_mirror's own code, for
-    // a more privileged caller. Each case swaps shop.locations; shop.steal() copies an
-    // app table into a table shop_mirror can read.
-    await seed();
-    expect(Number((await f.sql.query('select count(*) from public.user_profiles')).rows[0].count)).toBeGreaterThan(0);
-    const steal = `create function shop.steal() returns boolean language plpgsql as $f$
-      begin insert into shop.loot select row_to_json(u)::text from public.user_profiles u; return true; end $f$`;
-    const swaps: Record<string, { statements: string[]; error: string }> = {
-      'a view': {
-        statements: ['alter table shop.locations rename to locations_real',
-          'create view shop.locations as select * from shop.locations_real'],
-        error: 'landing table shop.locations is not a plain table',
-      },
-      'a view over shop_mirror\'s function': {
-        statements: ['alter table shop.locations rename to locations_real', steal,
-          'create view shop.locations as select * from shop.locations_real where shop.steal()'],
-        error: 'landing table shop.locations is not a plain table',
-      },
-      'a policy that calls shop_mirror\'s function': {
-        statements: [steal, 'alter table shop.locations enable row level security',
-          'create policy steal on shop.locations using (shop.steal())'],
-        error: 'landing table shop.locations is not a plain table: it has row level security or a policy',
-      },
-      'a column of shop_mirror\'s own type': {
-        statements: ['create type shop.odd as (v text)', 'alter table shop.locations add column "Odd" shop.odd'],
-        error: 'landing table shop.locations is not a plain table: column Odd has a type that is not built in',
-      },
-    };
-    for (const [name, swap] of Object.entries(swaps)) {
-      await mirror.query('begin');
-      try {
-        await mirror.query('create table shop.loot (row_data text)');
-        for (const statement of swap.statements) await mirror.query(statement);
-        expect(await refresh(), name).toEqual({ ok: false, error: swap.error });
-        expect((await mirror.query('select count(*)::int as n from shop.loot')).rows, name).toEqual([{ n: 0 }]);
-      } finally { await mirror.query('rollback'); }
-    }
-    const relkind = await f.sql.query(`select relkind from pg_class where oid = 'shop.locations'::regclass`);
-    expect(relkind.rows).toEqual([{ relkind: 'r' }]);
-  });
-
-  it('reports the newest run per table to the service role only', async () => {
+  it('reports the newest run and the last good run per table to the service role only', async () => {
     const table = `test-${randomBytes(6).toString('hex')}`;
     await f.sql.query(`insert into shop.sync_runs (table_name, started_at, finished_at, row_count, ok, error) values
-      ($1, now() - interval '20 minutes', now() - interval '20 minutes', 5, false, 'old failure'),
-      ($1, now() - interval '5 minutes', now() - interval '5 minutes', 7, true, null)`, [table]);
+      ($1, now() - interval '20 minutes', now() - interval '20 minutes', 5, true, null),
+      ($1, now() - interval '5 minutes', now() - interval '5 minutes', null, false, 'new failure')`, [table]);
     const status = await f.admin.rpc('shop_sync_status');
     expect(status.error).toBeNull();
     const mine = (status.data as Array<Record<string, unknown>>).filter(row => row.table === table);
     expect(mine).toHaveLength(1);
-    expect(mine[0]).toMatchObject({ table, row_count: 7, ok: true, error: null });
+    expect(mine[0]).toMatchObject({ table, row_count: null, ok: false, error: 'new failure' });
     expect(mine[0].age_seconds).toBeGreaterThanOrEqual(299);
     expect(mine[0].age_seconds).toBeLessThan(400);
     expect(Number.isNaN(Date.parse(String(mine[0].finished_at)))).toBe(false);
+    const lastOk = Date.now() - Date.parse(String(mine[0].last_ok_at));
+    expect(lastOk).toBeGreaterThanOrEqual(19 * 60_000);
+    expect(lastOk).toBeLessThan(25 * 60_000);
 
     expect((await f.anon.rpc('shop_sync_status')).error).not.toBeNull();
     expect((await f.employeeA.client.rpc('shop_sync_status')).error).not.toBeNull();
     await expect(asRole('anon', 'select public.shop_sync_status()')).rejects.toMatchObject({ code: '42501' });
     await f.sql.query('delete from shop.sync_runs where table_name = $1', [table]);
+  });
+
+  it('takes a whole run from the bridge\'s own mirror code, and names a refused token', async () => {
+    const number = randomInt(10_000, 99_999) * 100 + 99;
+    created.push(String(number));
+    // SQL Server-shaped results, as mssql reports them, for the four shipped entries.
+    const results: Record<string, { columns: object[]; rows: object[] }> = {
+      projects: { columns: [{ name: 'ProjectID', type: 'int' }, { name: 'Project', type: 'varchar' }, { name: 'Completed', type: 'datetime' },
+        { name: 'Archived', type: 'bit' }, { name: 'Location', type: 'smallint' }],
+      rows: [{ ProjectID: number, Project: 'From the bridge', Completed: null, Archived: false, Location: 1 }] },
+      locations: { columns: [{ name: 'LocationID', type: 'smallint' }, { name: 'LocationName', type: 'varchar' },
+        { name: 'LocationAddress', type: 'varchar' }, { name: 'LocationCity', type: 'varchar' }],
+      rows: [{ LocationID: 1, LocationName: 'Yard', LocationAddress: null, LocationCity: null }] },
+      open_jobs: { columns: [{ name: 'JobNo', type: 'int' }, { name: 'JobStatus', type: 'varchar' }], rows: [{ JobNo: number, JobStatus: 'O' }] },
+      contacts: { columns: landing.contacts.map(([name, type]) => ({ name, type: type === 'integer' ? 'int' : type === 'timestamp' ? 'datetime' : 'nvarchar' })),
+        rows: [{ ContactID: 1, CompanyID: 1, EmplCode: '1234567', FirstName: 'A', LastName: 'B', email: null, Mobile: null, OfficePhone: null,
+          CurrentEmp: '1', dbTermDate: new Date('2026-01-02T09:00:00Z') }] },
+    };
+    const pool = stubPool((sql: string) => results[/FROM (\w+)/.exec(sql)![1]]);
+    const run = (mirrorToken: string) => createMirror({
+      getPool: async () => pool,
+      api: createMirrorApi({ supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL!, apiKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, token: mirrorToken }),
+      mirror: Object.keys(results).map(into => ({ into, sql: `SELECT * FROM ${into}` })),
+      log: () => {},
+    });
+    const mirror = run(token);
+    expect(await mirror.runOnce()).toEqual({ skipped: false, ok: true });
+    expect((mirror.status().refreshJobs as { result: unknown } | null)?.result).toMatchObject({ ok: true, upserted: 1 });
+    expect(await jobs([String(number)])).toEqual([{ job_number: String(number), name: 'From the bridge', location: 'Yard', is_active: true, synced: true, trashed: false }]);
+    expect((await f.sql.query(`select "dbTermDate"::text as t from shop.contacts`)).rows).toEqual([{ t: '2026-01-02 09:00:00' }]);
+
+    const refused = run('b'.repeat(64));
+    expect(await refused.runOnce()).toEqual({ skipped: false, ok: false });
+    expect(refused.status().lastError).toMatch(/Supabase refused the call \(HTTP 401: shop mirror token refused\)/);
   });
 });

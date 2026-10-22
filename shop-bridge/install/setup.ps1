@@ -12,17 +12,18 @@
     2. Stops the service if it is already installed.
     3. Copies the service files to C:\dws-bridge: everything in shop-bridge\ except
        node_modules, logs, .env, tests, and git files. That includes queries.json (the only SQL the
-       service runs), supabase-ca.crt (the CA the mirror checks Supabase's certificate
-       against), and install\ (so uninstall.ps1 is on the box).
+       service runs) and install\ (so uninstall.ps1 is on the box).
     4. Registers the NSSM service "dws-bridge" if it is new, and sets the account it runs
        as, so that account exists before the next step grants it access.
-    5. Restricts the folder to Administrators, SYSTEM, and the service account, before
+    5. Restricts the folder to Administrators, SYSTEM, and the service account, and removes
+       every other account's access (an earlier install's service account included), before
        any secret is written there.
     6. Runs `npm ci --omit=dev --ignore-scripts` there (no package install scripts run).
     7. Asks for each setting and writes C:\dws-bridge\.env. Secrets are typed hidden and
        never printed. On a re-run, pressing Enter keeps the current value, typing - clears
        an optional setting, and settings added by hand (SHOP_MIRROR_MAX_ROWS,
-       SHOP_QUERIES_FILE, SHOP_MIRROR_CA_FILE) are kept.
+       SHOP_QUERIES_FILE) are kept. With the mirror on, it prints the one SQL statement that
+       stores the mirror token's hash in Supabase.
     8. Sets the rest of the service: node --env-file=.env server.mjs, starts at boot,
        restarts on a crash but not on exit code 78 (a configuration error the log names),
        logs to C:\dws-bridge\logs\ with rotation.
@@ -34,7 +35,7 @@
   Windows account the service runs as. Default NT SERVICE\dws-bridge (NT SERVICE\ plus the
   service name): a virtual account Windows creates for this service alone, so no other
   service can read .env. It needs no password and reaches the network (SQL Server,
-  Supabase) as the computer account. Fallback if the virtual account is not wanted:
+  Supabase's HTTPS API) as the computer account. Fallback if the virtual account is not wanted:
   NT AUTHORITY\NetworkService (shared with other Windows services). Pass a domain or local
   account to override; you will be asked for its password.
 #>
@@ -165,14 +166,30 @@ $serviceAccountId = switch ($ServiceAccount) {
   'LocalSystem' { '*S-1-5-18' }
   default { $ServiceAccount }
 }
-# An earlier install may have used the NetworkService fallback. /grant:r below only
-# replaces grants for the accounts it names, so drop NetworkService's old grants here.
-if ($serviceAccountId -ne '*S-1-5-20') {
-  & icacls $InstallDir /remove:g '*S-1-5-20' /T /C /Q | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw "icacls could not remove NetworkService from $InstallDir" }
+$serviceSid = if ($serviceAccountId.StartsWith('*')) { $serviceAccountId.Substring(1) } else {
+  (New-Object Security.Principal.NTAccount $ServiceAccount).Translate([Security.Principal.SecurityIdentifier]).Value
 }
+# Administrators own everything, so no earlier owner keeps the right to change the permissions.
+& icacls $InstallDir /setowner '*S-1-5-32-544' /T /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls could not make Administrators the owner of $InstallDir" }
+# The folder: no inherited permissions, and these three grants. /grant:r replaces only the
+# grants of the accounts it names, so any other account's explicit grant (an earlier install
+# under another service account, or one added by hand) is removed after it.
 & icacls $InstallDir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' "${serviceAccountId}:(OI)(CI)RX" /C /Q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls failed on $InstallDir" }
+$keep = @('S-1-5-32-544', 'S-1-5-18', $serviceSid)
+$folderAcl = Get-Acl -LiteralPath $InstallDir
+foreach ($rule in $folderAcl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) {
+  $sid = $rule.IdentityReference.Value
+  if ($keep -notcontains $sid) {
+    & icacls $InstallDir /remove "*$sid" /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls could not remove $sid from $InstallDir" }
+  }
+}
+# Everything inside: drop explicit grants, so each file and folder has only what it
+# inherits from the folder above.
+& icacls (Join-Path $InstallDir '*') /reset /T /C /Q | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "icacls could not reset the permissions inside $InstallDir" }
 & icacls $LogDir /grant "${serviceAccountId}:(OI)(CI)M" /C /Q | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "icacls failed on $LogDir" }
 
@@ -213,6 +230,12 @@ function Format-EnvValue([string]$Name, [string]$Value) {
   return "'" + $Value + "'"
 }
 
+function Get-Sha256Hex([string]$Text) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { $hash = $sha.ComputeHash((New-Object Text.UTF8Encoding $false).GetBytes($Text)) } finally { $sha.Dispose() }
+  return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
 function New-Token {
   $bytes = New-Object byte[] 32
   $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
@@ -229,8 +252,11 @@ $settings = @(
   @{ Name = 'SHOP_DB_TRUST_CERT'; Prompt = 'Trust the SQL Server certificate (true/false)'; Default = 'true' },
   @{ Name = 'SHOP_BRIDGE_TOKEN'; Prompt = 'Bridge bearer token (blank = generate a new one)'; Secret = $true; Generate = $true },
   @{ Name = 'SHOP_BRIDGE_PORT'; Prompt = 'Local port for the bridge'; Default = '8787' },
-  @{ Name = 'SHOP_MIRROR_DATABASE_URL'; Prompt = 'Supabase session pooler URL for role shop_mirror (blank = mirror off)'; Secret = $true; Optional = $true },
-  @{ Name = 'SHOP_MIRROR_INTERVAL_MINUTES'; Prompt = 'Mirror interval in minutes'; Default = '15' }
+  @{ Name = 'SHOP_MIRROR_SUPABASE_URL'; Prompt = 'Supabase project URL, https://<project-ref>.supabase.co (blank = mirror off)'; Optional = $true },
+  # Asked only when the mirror is on (a Supabase URL is set).
+  @{ Name = 'SHOP_MIRROR_API_KEY'; Prompt = 'Supabase anon (or publishable) key'; MirrorOnly = $true },
+  @{ Name = 'SHOP_MIRROR_TOKEN'; Prompt = 'Mirror token (blank = generate a new one)'; Secret = $true; Generate = $true; MirrorOnly = $true },
+  @{ Name = 'SHOP_MIRROR_INTERVAL_MINUTES'; Prompt = 'Mirror interval in minutes'; Default = '15'; MirrorOnly = $true }
 )
 
 Write-Step "Writing $EnvPath (press Enter to keep the value shown in brackets; - clears an optional setting)"
@@ -239,6 +265,8 @@ $values = [ordered]@{}
 foreach ($s in $settings) {
   $name = $s.Name
   $have = $current[$name]
+  # Kept as they are below, with the settings this script does not ask about.
+  if ($s.MirrorOnly -and [string]::IsNullOrEmpty($values['SHOP_MIRROR_SUPABASE_URL'])) { continue }
   if ($s.Secret) {
     $hint = if ($have) { 'set; Enter keeps it' } elseif ($s.Generate) { 'Enter generates one' } elseif ($s.Optional) { 'optional' } else { 'required' }
     if ($have -and $s.Optional) { $hint += ', - clears it' }
@@ -260,6 +288,12 @@ foreach ($s in $settings) {
   $values[$name] = $plain
 }
 if ($values['SHOP_BRIDGE_TOKEN'].Length -lt 32) { throw 'SHOP_BRIDGE_TOKEN must be at least 32 characters.' }
+$mirrorTokenHash = $null
+if ($values['SHOP_MIRROR_SUPABASE_URL']) {
+  if ($values['SHOP_MIRROR_TOKEN'].Length -lt 32) { throw 'SHOP_MIRROR_TOKEN must be at least 32 characters.' }
+  # Supabase stores only this hash (shop.mirror_token); it is not a secret.
+  $mirrorTokenHash = Get-Sha256Hex $values['SHOP_MIRROR_TOKEN']
+}
 # Keep settings this script does not ask about (e.g. SHOP_MIRROR_MAX_ROWS, SHOP_QUERIES_FILE).
 # A setting cleared with - is in $values as empty, so it is not brought back here.
 foreach ($name in ($current.Keys | Sort-Object)) {
@@ -335,3 +369,10 @@ if ($body) {
 }
 Write-Host ''
 Write-Host "The bearer token is SHOP_BRIDGE_TOKEN in $EnvPath (open it as Administrator to copy it into Vercel)."
+if ($mirrorTokenHash) {
+  Write-Host ''
+  Write-Host 'Mirror: Supabase accepts this box once its token''s hash is stored. Run this once in the' -ForegroundColor Cyan
+  Write-Host 'Supabase SQL editor (again after a new token; delete from shop.mirror_token revokes it):' -ForegroundColor Cyan
+  Write-Host "  insert into shop.mirror_token (token_sha256) values (decode('$mirrorTokenHash', 'hex'))"
+  Write-Host '  on conflict (id) do update set token_sha256 = excluded.token_sha256, set_at = now();'
+}

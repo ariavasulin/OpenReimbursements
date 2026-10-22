@@ -11,8 +11,8 @@ import { readFileSync } from 'node:fs';
 import { checkReadOnlySql } from './guard.mjs';
 import { isIdentifier } from './types.mjs';
 
-// Tables in the shop schema the mirror itself depends on; an entry landing there would wipe them.
-const RESERVED_INTO = Object.freeze(['sync_runs']);
+// Tables in the shop schema the mirror itself depends on; Supabase refuses an entry landing there.
+const RESERVED_INTO = Object.freeze(['sync_runs', 'mirror_token']);
 
 const TOP_KEYS = ['mirror', 'live'];
 const ENTRY_KEYS = ['into', 'sql'];

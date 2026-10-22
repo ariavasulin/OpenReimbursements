@@ -42,6 +42,7 @@ import {
   useInvalidateAdminReceipts,
 } from "@/hooks/use-admin-receipts"
 import { useAdminPrefetch } from "@/hooks/use-admin-prefetch"
+import { ShopMirrorWarning } from "@/components/shop-mirror-warning"
 
 export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promise<void> }) {
   useAdminPrefetch()
@@ -363,6 +364,7 @@ export default function ReceiptDashboard({ onLogout }: { onLogout?: () => Promis
       </div>
 
       <div className="flex-1 space-y-4 p-4 md:p-8 pt-6 overflow-y-auto">
+        <ShopMirrorWarning />
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <Card className="bg-[#333333] text-white border-[#444444]">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

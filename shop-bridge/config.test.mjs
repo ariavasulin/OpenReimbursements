@@ -72,14 +72,16 @@ test('unsafe or reserved names are refused', () => {
       { into: 'shop.projects', sql: 'SELECT 1 AS a' },
       { into: 'sync_runs', sql: 'SELECT 1 AS a' },
       { into: '1st', sql: 'SELECT 1 AS a' },
+      { into: 'Mirror_Token', sql: 'SELECT 1 AS a' },
     ],
     live: { 'bad-name': 'SELECT 1 AS a' },
   }));
-  assert.equal(errors.length, 4);
+  assert.equal(errors.length, 5);
   assert.match(errors[0], /^mirror\[0\] \(into "shop\.projects"\): "into" must be a plain table name/);
   assert.match(errors[1], /^mirror\[1\] \(into "sync_runs"\): shop\.sync_runs is used by the mirror itself/);
   assert.match(errors[2], /^mirror\[2\] \(into "1st"\): "into" must be a plain table name/);
-  assert.match(errors[3], /^live "bad-name": the name must be a plain identifier/);
+  assert.match(errors[3], /^mirror\[3\] \(into "Mirror_Token"\): shop\.Mirror_Token is used by the mirror itself/);
+  assert.match(errors[4], /^live "bad-name": the name must be a plain identifier/);
 });
 
 test('shape errors say which entry is wrong', () => {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import { after, test } from 'node:test';
-import { createHandler, wholeNumber } from './server.mjs';
+import { createHandler, mirrorSettingsProblem, wholeNumber } from './server.mjs';
 import { mssqlError, stubPool } from './testing-stubs.mjs';
 
 const TOKEN = 'a'.repeat(64);
@@ -291,4 +291,14 @@ test('wholeNumber: settings are whole numbers in range, with a fallback when uns
   assert.equal(wholeNumber('30', 15, 1, 10080), 30);
   for (const bad of ['0', '-5', '15m', '1.5', 'NaN', '10081']) assert.equal(wholeNumber(bad, 15, 1, 10080), null, bad);
   assert.equal(wholeNumber('65536', 8787, 1, 65535), null);
+});
+
+test('mirrorSettingsProblem: an https Supabase URL, an API key, and a token of 32+ characters', () => {
+  const good = { SHOP_MIRROR_SUPABASE_URL: 'https://ref.supabase.co', SHOP_MIRROR_API_KEY: 'sb_publishable_x', SHOP_MIRROR_TOKEN: TOKEN };
+  assert.equal(mirrorSettingsProblem(good), null);
+  assert.equal(mirrorSettingsProblem({ ...good, SHOP_MIRROR_SUPABASE_URL: 'http://127.0.0.1:54321' }), null);
+  assert.match(mirrorSettingsProblem({ ...good, SHOP_MIRROR_SUPABASE_URL: 'ref.supabase.co' }), /is not a URL/);
+  assert.match(mirrorSettingsProblem({ ...good, SHOP_MIRROR_SUPABASE_URL: 'http://ref.supabase.co' }), /must start with https:\/\//);
+  assert.match(mirrorSettingsProblem({ ...good, SHOP_MIRROR_API_KEY: ' ' }), /SHOP_MIRROR_API_KEY is not set/);
+  assert.match(mirrorSettingsProblem({ ...good, SHOP_MIRROR_TOKEN: 'short' }), /SHOP_MIRROR_TOKEN is missing or shorter than 32/);
 });

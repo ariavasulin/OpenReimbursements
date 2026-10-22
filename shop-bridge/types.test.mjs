@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildCreateTableFromRecordset, isIdentifier, mirrorTypeProblem, pgType, plainValue, SQL_TO_PG } from './types.mjs';
+import { landingColumns, isIdentifier, mirrorTypeProblem, pgType, plainValue, SQL_TO_PG } from './types.mjs';
 
 test('type map', () => {
   const expected = {
@@ -24,29 +24,22 @@ test('pgType is case-insensitive and defaults to text', () => {
   assert.equal(pgType(undefined), 'text');
 });
 
-test('buildCreateTableFromRecordset: result order, mapped types, all nullable, no primary key', () => {
+test('landingColumns: result order, mapped types, names kept as they are', () => {
   // mssql recordset.columns: keyed by name, ordered by `index`, type.declaration is the SQL Server type.
   const columns = {
     Archived: { index: 2, name: 'Archived', type: { declaration: 'bit' } },
     ProjectID: { index: 0, name: 'ProjectID', type: { declaration: 'int' } },
     Project: { index: 1, name: 'Project', type: { declaration: 'varchar' } },
     Completed: { index: 3, name: 'Completed', type: { declaration: 'datetime' } },
-    Odd: { index: 4, name: 'Odd', type: {} },
+    'a"b': { index: 4, name: 'a"b', type: {} },
   };
-  assert.equal(
-    buildCreateTableFromRecordset('projects', columns),
-    'create table if not exists shop."projects" (\n' +
-      '  "ProjectID" integer,\n' +
-      '  "Project" text,\n' +
-      '  "Archived" boolean,\n' +
-      '  "Completed" timestamp,\n' +
-      '  "Odd" text\n' +
-      ');',
-  );
-  assert.equal(
-    buildCreateTableFromRecordset('x', { 'a"b': { index: 0, name: 'a"b', type: { declaration: 'int' } } }),
-    'create table if not exists shop."x" (\n  "a""b" integer\n);',
-  );
+  assert.deepEqual(landingColumns(columns), [
+    { name: 'ProjectID', type: 'integer' },
+    { name: 'Project', type: 'text' },
+    { name: 'Archived', type: 'boolean' },
+    { name: 'Completed', type: 'timestamp' },
+    { name: 'a"b', type: 'text' },
+  ]);
 });
 
 test('isIdentifier', () => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildInsertBatches, createMirror, pgClientConfig } from './mirror.mjs';
-import { stubPgClient, stubPool } from './testing-stubs.mjs';
+import { createMirror, createMirrorApi } from './mirror.mjs';
+import { stubMirrorApi, stubPool } from './testing-stubs.mjs';
 
 const ENTRIES = [
   { into: 'projects', sql: 'SELECT ID, Name, When, Blob FROM dbo.tblProject' },
@@ -15,8 +15,6 @@ const COLUMNS = [
   { name: 'When', type: 'datetime' },
   { name: 'Blob', type: 'varbinary' },
 ];
-const NAMES = COLUMNS.map((c) => c.name);
-const CA = '-----BEGIN CERTIFICATE-----\nstub\n-----END CERTIFICATE-----\n';
 
 const sourceTable = (sql) => /FROM dbo\.(\w+)/.exec(sql)[1];
 
@@ -28,184 +26,75 @@ function sourcePool(rowsByTable = {}) {
   });
 }
 
-function setup({ entries = ENTRIES, pool = sourcePool(), clientOpts, maxRows } = {}) {
+function setup({ entries = ENTRIES, pool = sourcePool(), api = stubMirrorApi(), maxRows } = {}) {
   const logs = [];
-  const clients = [];
   const mirror = createMirror({
     getPool: async () => pool,
-    pgConnectionString: 'postgresql://shop_mirror:pw@pooler.example.com:5432/postgres?sslmode=require',
-    ca: CA,
+    api,
     mirror: entries,
     ...(maxRows === undefined ? {} : { maxRows }),
     intervalMinutes: 15,
     log: (l) => logs.push(l),
-    createPgClient: (connectionString, ca) => {
-      assert.equal(ca, CA);
-      const c = stubPgClient(clientOpts);
-      clients.push(c);
-      return c;
-    },
   });
-  return { mirror, logs, clients, pool };
+  return { mirror, logs, api, pool };
 }
 
-// Short labels for the pg statements, in order.
-const label = (text) => (text.startsWith('select column_name from information_schema.columns') ? 'COLUMNS' : text.split(' (')[0]);
-const texts = (client) => client.queries.map((q) => label(q.text));
-const syncRuns = (client) => client.queries.filter((q) => q.text.startsWith('INSERT INTO shop.sync_runs'));
-const steps = (into) => [
-  `create table if not exists shop."${into}"`, 'COLUMNS',
-  'BEGIN', `DELETE FROM shop."${into}"`, `insert into shop."${into}"`, 'COMMIT', 'INSERT INTO shop.sync_runs',
-];
+const calls = (api) => api.calls.map((c) => `${c.fn}${c.table ? ` ${c.table}` : ''}`);
 
-test('first run: creates each landing table, copies in one transaction, records sync_runs, then refresh_jobs', async () => {
-  const { mirror, clients, pool } = setup();
-  const result = await mirror.runOnce();
-  assert.deepEqual(result, { skipped: false, ok: true });
-  assert.equal(clients.length, 1);
-  const [client] = clients;
-  assert.ok(client.connected && client.ended);
-
-  // Exactly the statements from the config, nothing else, on SQL Server, streamed.
-  assert.deepEqual(pool.requests.map((r) => r.sql), ENTRIES.map((e) => e.sql));
-  assert.ok(pool.requests.every((r) => r.stream === true));
-  assert.deepEqual(texts(client), [...INTOS.flatMap(steps), 'SELECT shop.refresh_jobs() AS result']);
-
-  const lookup = client.queries.find((q) => label(q.text) === 'COLUMNS');
-  assert.deepEqual(lookup.values, ['projects']);
-  assert.deepEqual(client.tables, { projects: NAMES, locations: NAMES, contacts: NAMES });
-
-  const insert = client.queries.find((q) => q.text.startsWith('insert into shop."projects"'));
-  assert.equal(insert.text, 'insert into shop."projects" ("ID", "Name", "When", "Blob") values ($1, $2, $3, $4)');
-  assert.equal(insert.values[2], '2026-01-02T03:04:05.000'); // wall clock, no zone
-  assert.equal(insert.values[3], 'abcd'); // Buffer -> hex
-
-  const runs = syncRuns(client);
-  assert.equal(runs.length, ENTRIES.length);
-  for (const [i, run] of runs.entries()) {
-    const [table, startedAt, finishedAt, rowCount, ok, error] = run.values;
-    assert.equal(table, INTOS[i]);
-    assert.ok(startedAt instanceof Date && finishedAt instanceof Date);
-    assert.equal(rowCount, 1);
-    assert.equal(ok, true);
-    assert.equal(error, null);
-  }
-  // refresh_jobs writes its own sync_runs row; the mirror does not add one for public.jobs.
-  assert.ok(!runs.some((r) => r.values[0] === 'public.jobs'));
-
+test('a run sends each entry with its columns and plain rows, then asks for the jobs refresh', async () => {
+  const { mirror, api } = setup();
+  assert.deepEqual(await mirror.runOnce(), { skipped: false, ok: true });
+  assert.deepEqual(calls(api), [...INTOS.map((t) => `replace ${t}`), 'refresh']);
+  assert.deepEqual(api.calls[0].columns, [
+    { name: 'ID', type: 'integer' },
+    { name: 'Name', type: 'text' },
+    { name: 'When', type: 'timestamp' },
+    { name: 'Blob', type: 'text' },
+  ]);
+  // Zone-less wall-clock dates and hex binary, as types.mjs plainValue makes them.
+  assert.deepEqual(api.calls[0].rows, [{ ID: 1, Name: 'tblProject row', When: '2026-01-02T03:04:05.000', Blob: 'abcd' }]);
   const status = mirror.status();
   assert.equal(status.lastOk, true);
-  assert.equal(status.inFlight, false);
-  assert.ok(status.lastRunAt);
+  assert.equal(status.lastError, null);
   assert.deepEqual(Object.keys(status.tables), INTOS);
-  assert.equal(status.tables.projects.rowCount, 1);
-  assert.equal(status.tables.projects.ok, true);
+  assert.deepEqual(status.tables.projects, { rowCount: 1, ok: true, finishedAt: status.tables.projects.finishedAt, error: null });
+  assert.deepEqual(status.refreshJobs.result, { ok: true, upserted: 0 });
 });
 
-test('an existing landing table with the same columns is reused', async () => {
-  const tables = { projects: [...NAMES] };
-  const { mirror, clients } = setup({ entries: [ENTRIES[0]], clientOpts: { tables } });
-  assert.equal((await mirror.runOnce()).ok, true);
-  assert.deepEqual(texts(clients[0]).slice(0, 7), steps('projects'));
-  assert.deepEqual(tables.projects, NAMES);
-});
-
-test('a landing table whose columns differ fails that entry only, recorded in sync_runs; nothing is dropped', async () => {
-  const tables = { locations: ['ID', 'Name'] };
-  const { mirror, clients, logs } = setup({ clientOpts: { tables } });
-  const result = await mirror.runOnce();
-  assert.equal(result.ok, false);
-  const [client] = clients;
-  assert.deepEqual(texts(client), [
-    ...steps('projects'),
-    'create table if not exists shop."locations"', 'COLUMNS', 'INSERT INTO shop.sync_runs',
-    ...steps('contacts'),
-    'SELECT shop.refresh_jobs() AS result',
-  ]);
-  assert.ok(!client.queries.some((q) => /^(drop|alter)\b/i.test(q.text)));
-
-  const message =
-    'landing table shop.locations has columns ["ID","Name"] but the query returns ["ID","Name","When","Blob"]; ' +
-    'drop table shop.locations in Supabase and the next run recreates it';
-  const failed = syncRuns(client)[1].values;
-  assert.equal(failed[0], 'locations');
-  assert.equal(failed[3], null);
-  assert.equal(failed[4], false);
-  assert.equal(failed[5], message);
-  assert.ok(logs.some((l) => l.includes('locations FAILED') && l.includes('drop table shop.locations in Supabase')));
-
-  const status = mirror.status();
-  assert.equal(status.lastOk, false);
-  assert.equal(status.tables.locations.ok, false);
-  assert.equal(status.tables.locations.error, message);
-  assert.equal(status.tables.projects.ok, true);
-  assert.equal(status.tables.contacts.ok, true);
-});
-
-test('the column comparison is exact: case and order both count', async () => {
-  for (const existing of [['id', 'Name', 'When', 'Blob'], ['Name', 'ID', 'When', 'Blob']]) {
-    const { mirror, clients } = setup({ entries: [ENTRIES[0]], clientOpts: { tables: { projects: existing } } });
-    assert.equal((await mirror.runOnce()).ok, false);
-    assert.match(syncRuns(clients[0])[0].values[5], /^landing table shop\.projects has columns \[/);
-    assert.ok(!texts(clients[0]).includes('BEGIN'));
-  }
-});
-
-test('the row cap stops reading an oversized entry and fails it before anything is written; the others still run', async () => {
-  const rows = (n) => Array.from({ length: n }, (_, i) => ({ ID: i, Name: 'x', When: null, Blob: null }));
-  const pool = sourcePool({ tblProject: rows(3), tblLocation: rows(2), tblContact: rows(1) });
-  const { mirror, clients } = setup({ pool, maxRows: 2 });
-  const result = await mirror.runOnce();
-  assert.equal(result.ok, false);
-  const [client] = clients;
-  assert.deepEqual(texts(client), [
-    'INSERT INTO shop.sync_runs',
-    ...steps('locations'),
-    ...steps('contacts'),
-    'SELECT shop.refresh_jobs() AS result',
-  ]);
-  const [projects, locations] = syncRuns(client).map((r) => r.values);
-  assert.equal(projects[4], false);
-  assert.equal(projects[5], 'the query returned more than 2 rows (SHOP_MIRROR_MAX_ROWS); nothing was written');
-  assert.equal(pool.requests[0].cancelled, true); // stopped at row 3 instead of reading the whole result
-  assert.equal(locations[3], 2); // exactly at the cap is fine
-  assert.equal(pool.requests[1].cancelled, false);
-});
-
-test('one insert fails: it rolls back and is recorded, the others commit, refresh_jobs still runs', async () => {
-  const { mirror, clients } = setup({
-    clientOpts: {
-      fail: (text) => (text.startsWith('insert into shop."locations"') ? new Error('column "Gone" does not exist') : null),
-    },
-  });
-  const result = await mirror.runOnce();
-  assert.equal(result.ok, false);
-  const [client] = clients;
-  assert.deepEqual(texts(client), [
-    ...steps('projects'),
-    'create table if not exists shop."locations"', 'COLUMNS',
-    'BEGIN', 'DELETE FROM shop."locations"', 'insert into shop."locations"', 'ROLLBACK', 'INSERT INTO shop.sync_runs',
-    ...steps('contacts'),
-    'SELECT shop.refresh_jobs() AS result',
-  ]);
-  const failed = syncRuns(client)[1].values;
-  assert.equal(failed[0], 'locations');
-  assert.equal(failed[4], false);
-  assert.equal(failed[5], 'column "Gone" does not exist');
-});
-
-test('a source read failure is recorded without touching Postgres; long errors are cut to 500 chars', async () => {
+test('a source read failure is sent as that table\'s failure, and the other entries still run; long errors are cut to 500 chars', async () => {
   const pool = stubPool((sql) => (sql.includes('tblLocation')
     ? { error: new Error('x'.repeat(900)) }
     : { columns: ['ID'], rows: [{ ID: 1 }] }));
-  const { mirror, clients } = setup({ pool });
-  await mirror.runOnce();
-  const runs = syncRuns(clients[0]);
-  assert.equal(runs[1].values[4], false);
-  assert.equal(runs[1].values[5].length, 500);
-  assert.ok(!texts(clients[0]).includes('create table if not exists shop."locations"'));
-  assert.equal(texts(clients[0]).filter((t) => t === 'BEGIN').length, 2);
-  assert.ok(!texts(clients[0]).includes('ROLLBACK'));
+  const { mirror, api } = setup({ pool });
+  assert.equal((await mirror.runOnce()).ok, false);
+  assert.deepEqual(calls(api), ['replace projects', 'recordFailure locations', 'replace contacts', 'refresh']);
+  assert.equal(api.calls[1].error.length, 500);
+  assert.equal(mirror.status().tables.locations.ok, false);
+  // The refresh itself decides whether to run on a failed dependency (shop.refresh_jobs()).
+  assert.equal(mirror.status().lastError, null);
+});
+
+test('a copy Supabase reports as failed fails that entry with Supabase\'s reason', async () => {
+  const api = stubMirrorApi({
+    respond: (call) => (call.table === 'locations'
+      ? { ok: false, error: 'landing table shop.locations has columns ["ID"] but the query returns ["ID","Name"]; drop table shop.locations in Supabase and the next run recreates it' }
+      : { ok: true, row_count: call.rows.length }),
+  });
+  const { mirror } = setup({ api });
+  assert.equal((await mirror.runOnce()).ok, false);
+  const { locations, contacts } = mirror.status().tables;
+  assert.equal(locations.ok, false);
+  assert.match(locations.error, /drop table shop\.locations/);
+  assert.equal(contacts.ok, true);
+});
+
+test('the row cap stops reading an oversized entry, which is sent as a failure; the others still run', async () => {
+  const big = Array.from({ length: 5 }, (_, i) => ({ ID: i, Name: 'n', When: null, Blob: null }));
+  const { mirror, api, pool } = setup({ pool: sourcePool({ tblLocation: big }), maxRows: 3 });
+  assert.equal((await mirror.runOnce()).ok, false);
+  assert.deepEqual(calls(api), ['replace projects', 'recordFailure locations', 'replace contacts', 'refresh']);
+  assert.match(api.calls[1].error, /more than 3 rows \(SHOP_MIRROR_MAX_ROWS\); nothing was written/);
+  assert.ok(pool.requests.find((r) => r.sql.includes('tblLocation')).cancelled);
 });
 
 test('time, datetimeoffset, and wide decimal columns fail that entry with the cast that fixes it', async () => {
@@ -216,164 +105,158 @@ test('time, datetimeoffset, and wide decimal columns fail that entry with the ca
   ];
   for (const column of cases) {
     const pool = stubPool(() => ({ columns: ['ID', column], rows: [{ ID: 1, [column.name]: null }] }));
-    const { mirror, clients } = setup({ entries: [ENTRIES[0]], pool });
+    const { mirror, api } = setup({ entries: [ENTRIES[0]], pool });
     assert.equal((await mirror.runOnce()).ok, false);
-    assert.match(syncRuns(clients[0])[0].values[5], /CONVERT\(/, column.type);
-    assert.ok(!texts(clients[0]).some((t) => t.startsWith('create table')), column.type);
+    assert.equal(api.calls[0].fn, 'recordFailure', column.type);
+    assert.match(api.calls[0].error, /CONVERT\(/, column.type);
   }
 });
 
-test('money and decimals of up to 15 digits copy as they are', async () => {
+test('money and decimals of up to 15 digits copy as they are; NUL characters are removed from text', async () => {
   const pool = stubPool(() => ({
-    columns: [{ name: 'Price', type: 'money' }, { name: 'Qty', type: 'decimal', precision: 15, scale: 2 }],
-    rows: [{ Price: 12.5, Qty: 3.25 }],
+    columns: [{ name: 'Price', type: 'money' }, { name: 'Qty', type: 'decimal', precision: 15, scale: 2 }, 'Name'],
+    rows: [{ Price: 12.5, Qty: 3.25, Name: 'a\u0000b' }],
   }));
-  const { mirror, clients } = setup({ entries: [ENTRIES[0]], pool });
+  const { mirror, api } = setup({ entries: [ENTRIES[0]], pool });
   assert.equal((await mirror.runOnce()).ok, true);
-  assert.deepEqual(clients[0].queries.find((q) => q.text.startsWith('insert into')).values, [12.5, 3.25]);
+  assert.deepEqual(api.calls[0].rows, [{ Price: 12.5, Qty: 3.25, Name: 'ab' }]);
+  assert.deepEqual(api.calls[0].columns.map((c) => c.type), ['numeric', 'numeric', 'text']);
 });
 
-test('NUL characters are removed from text before it reaches Postgres', async () => {
-  const pool = stubPool(() => ({ columns: ['Name'], rows: [{ Name: 'a\u0000b' }] }));
-  const { mirror, clients } = setup({ entries: [ENTRIES[0]], pool });
+test('a nameless column, or two columns with the same name, fail that entry before anything is sent', async () => {
+  for (const [behavior, reason] of [
+    [() => ({ columns: [''], rows: [{ '': 1 }] }), /column with no name; name it with AS/],
+    // mssql folds a repeated column name into one array-valued column.
+    [() => ({ columns: ['ProjectID'], rows: [{ ProjectID: [1860, 12] }] }), /two columns with the same name/],
+  ]) {
+    const { mirror, api } = setup({ entries: [ENTRIES[0]], pool: stubPool(behavior) });
+    await mirror.runOnce();
+    assert.equal(api.calls[0].fn, 'recordFailure');
+    assert.match(api.calls[0].error, reason);
+  }
+});
+
+test('zero source rows: an empty copy is sent', async () => {
+  const { mirror, api } = setup({ entries: [ENTRIES[0]], pool: sourcePool({ tblProject: [] }) });
   assert.equal((await mirror.runOnce()).ok, true);
-  assert.deepEqual(clients[0].queries.find((q) => q.text.startsWith('insert into')).values, ['ab']);
-});
-
-test('a result set with a nameless column fails that entry', async () => {
-  const pool = stubPool(() => ({ columns: [''], rows: [{ '': 1 }] }));
-  const { mirror, clients } = setup({ entries: [ENTRIES[0]], pool });
-  await mirror.runOnce();
-  assert.match(syncRuns(clients[0])[0].values[5], /column with no name; name it with AS/);
-  assert.ok(!texts(clients[0]).some((t) => t.startsWith('create table')));
-});
-
-test('two columns with the same name fail that entry before anything is written', async () => {
-  // mssql folds a repeated column name into one array-valued column.
-  const pool = stubPool(() => ({ columns: ['ProjectID'], rows: [{ ProjectID: [1860, 12] }] }));
-  const { mirror, clients } = setup({ entries: [ENTRIES[0]], pool });
-  await mirror.runOnce();
-  assert.match(syncRuns(clients[0])[0].values[5], /two columns with the same name/);
-  assert.ok(!texts(clients[0]).some((t) => t.startsWith('create table')));
+  assert.deepEqual(api.calls[0].rows, []);
 });
 
 test('an overlapping tick is skipped and logged', async () => {
   let release;
   const gate = new Promise((r) => { release = r; });
-  const { mirror, logs, clients } = setup({
-    clientOpts: { onQuery: (text) => (text === 'BEGIN' ? gate : undefined) },
-  });
+  const api = stubMirrorApi({ onCall: (call) => (call.table === 'projects' ? gate : undefined) });
+  const { mirror, logs } = setup({ api });
   const first = mirror.runOnce();
   await new Promise((r) => setImmediate(r));
   assert.equal(mirror.status().inFlight, true);
-  const second = await mirror.runOnce();
-  assert.deepEqual(second, { skipped: true });
+  assert.deepEqual(await mirror.runOnce(), { skipped: true });
   assert.ok(logs.some((l) => /skipped: previous run still in flight/.test(l)));
   release();
   await first;
-  assert.equal(clients.length, 1);
+  assert.equal(api.calls.filter((c) => c.fn === 'refresh').length, 1);
   assert.equal(mirror.status().inFlight, false);
 });
 
-test('batches of 500 rows: ceil(n/500) INSERTs with matching placeholder counts', async () => {
-  const n = 1234;
-  const rows = Array.from({ length: n }, (_, i) => ({ ID: i, Name: `r${i}` }));
-  const pool = stubPool(() => ({ columns: ['ID', 'Name'], rows }));
-  const { mirror, clients } = setup({ entries: [ENTRIES[2]], pool });
-  await mirror.runOnce();
-  const inserts = clients[0].queries.filter((q) => q.text.startsWith('insert into'));
-  assert.equal(inserts.length, Math.ceil(n / 500));
-  const sizes = [500, 500, 234];
-  for (const [i, ins] of inserts.entries()) {
-    const placeholders = ins.text.match(/\$\d+/g);
-    assert.equal(placeholders.length, sizes[i] * 2);
-    assert.equal(ins.values.length, sizes[i] * 2);
-    assert.equal(placeholders.at(-1), `$${sizes[i] * 2}`);
-  }
-  assert.equal(syncRuns(clients[0])[0].values[3], n);
-});
-
-test('very wide tables use smaller batches to stay under the 65,535 parameter limit', () => {
-  const columns = Array.from({ length: 200 }, (_, i) => `C${i}`);
-  const rows = Array.from({ length: 700 }, () => Object.fromEntries(columns.map((c) => [c, 1])));
-  const batches = [...buildInsertBatches('wide', columns, rows)];
-  assert.ok(batches[0].text.startsWith('insert into shop."wide" ("C0", '));
-  for (const b of batches) assert.ok(b.values.length <= 65535);
-  assert.equal(batches.reduce((sum, b) => sum + b.values.length, 0), 700 * 200);
-});
-
-test('zero source rows: the copy is emptied and no INSERT is sent', async () => {
-  const pool = stubPool(() => ({ columns: ['ID'], rows: [] }));
-  const { mirror, clients } = setup({ entries: [ENTRIES[2]], pool });
-  await mirror.runOnce();
-  assert.deepEqual(texts(clients[0]).slice(0, 5), [
-    'create table if not exists shop."contacts"', 'COLUMNS', 'BEGIN', 'DELETE FROM shop."contacts"', 'COMMIT',
-  ]);
-});
-
-test('a Postgres connect failure marks the run failed and does not throw', async () => {
-  const logs = [];
-  const mirror = createMirror({
-    getPool: async () => sourcePool(),
-    pgConnectionString: 'postgresql://u:p@h:5432/db',
-    mirror: ENTRIES,
-    log: (l) => logs.push(l),
-    createPgClient: () => ({ connect: async () => { throw new Error('ECONNREFUSED'); }, end: async () => {} }),
+test('when Supabase cannot be reached or refuses the call, the reason is kept in status().lastError', async () => {
+  const api = stubMirrorApi({
+    respond: () => { throw new Error('Supabase refused the call (HTTP 401: shop mirror token refused)'); },
   });
+  const { mirror } = setup({ api });
   assert.deepEqual(await mirror.runOnce(), { skipped: false, ok: false });
-  assert.equal(mirror.status().lastOk, false);
-  assert.ok(logs.some((l) => /run FAILED/.test(l)));
-});
-
-test('pgClientConfig verifies the server against the Supabase CA, ignores the URL ssl settings, and sets client-side deadlines', () => {
-  const cfg = pgClientConfig(
-    'postgresql://shop_mirror:pw@aws-0.pooler.supabase.com:5432/postgres?sslmode=disable&sslrootcert=x.crt&uselibpqcompat=true&ssl=false',
-    CA,
-  );
-  assert.deepEqual(cfg, {
-    connectionString: 'postgresql://shop_mirror:pw@aws-0.pooler.supabase.com:5432/postgres',
-    ssl: { ca: CA, rejectUnauthorized: true },
-    connectionTimeoutMillis: 15000,
-    query_timeout: 120000,
-    keepAlive: true,
-    keepAliveInitialDelayMillis: 30000,
-    application_name: 'dws-shop-bridge-mirror',
-  });
-});
-
-test('refresh_jobs returning ok:false marks the run failed without throwing', async () => {
-  const { mirror, logs, clients } = setup({ clientOpts: { refreshResult: { ok: false, error: 'boom' } } });
-  const result = await mirror.runOnce();
-  assert.equal(result.ok, false);
-  assert.equal(syncRuns(clients[0]).length, ENTRIES.length); // entry rows still recorded
-  assert.ok(logs.some((l) => /refresh_jobs FAILED/.test(l)));
   const status = mirror.status();
-  assert.equal(status.lastOk, false);
+  assert.match(status.lastError, /HTTP 401: shop mirror token refused/);
+  assert.equal(status.tables.projects.ok, false);
+  assert.match(status.tables.projects.error, /HTTP 401/);
   assert.equal(status.refreshJobs.ok, false);
-  assert.deepEqual(status.refreshJobs.result, { ok: false, error: 'boom' });
 });
 
-test('refresh_jobs throwing replaces an earlier ok in the status', async () => {
-  let fail = false;
-  const { mirror, logs } = setup({
-    clientOpts: { fail: (text) => (fail && /refresh_jobs/.test(text) ? new Error('Query read timeout') : null) },
+test('a refresh call that fails keeps its reason in status().lastError', async () => {
+  const api = stubMirrorApi({ refresh: () => { throw new Error('could not reach Supabase (no answer within 60 s)'); } });
+  const { mirror } = setup({ api });
+  assert.deepEqual(await mirror.runOnce(), { skipped: false, ok: false });
+  assert.equal(mirror.status().refreshJobs.ok, false);
+  assert.match(mirror.status().lastError, /no answer within 60 s/);
+});
+
+test('a copy that never reached Supabase skips the jobs refresh, which would read that table\'s previous copy', async () => {
+  const api = stubMirrorApi({
+    respond: (call) => {
+      if (call.table === 'locations') throw new Error('could not reach Supabase (no answer within 60 s)');
+      return { ok: true, row_count: call.rows.length };
+    },
   });
-  assert.equal((await mirror.runOnce()).ok, true);
-  assert.equal(mirror.status().refreshJobs.ok, true);
-  fail = true;
+  const { mirror, logs } = setup({ api });
   assert.equal((await mirror.runOnce()).ok, false);
-  const { refreshJobs } = mirror.status();
-  assert.equal(refreshJobs.ok, false);
-  assert.equal(refreshJobs.result, null);
-  assert.equal(refreshJobs.error, 'Query read timeout');
-  assert.ok(refreshJobs.finishedAt);
-  assert.ok(logs.some((l) => /refresh_jobs FAILED error="Query read timeout"/.test(l)));
+  assert.deepEqual(calls(api), INTOS.map((t) => `replace ${t}`));
+  assert.deepEqual(mirror.status().refreshJobs, {
+    ok: false, result: null, error: 'skipped: a copy did not reach Supabase this run', finishedAt: mirror.status().refreshJobs.finishedAt,
+  });
+  assert.ok(logs.some((l) => /refresh_jobs skipped/.test(l)));
 });
 
-test('refresh_jobs returning ok:true keeps the run ok and exposes the result', async () => {
-  const { mirror, clients } = setup({ clientOpts: { refreshResult: { ok: true, upserted: 2, skipped_trashed: 0, dropped_from_open: [] } } });
-  const result = await mirror.runOnce();
-  assert.equal(result.ok, true);
-  assert.equal(clients[0].ended, true);
-  assert.equal(mirror.status().refreshJobs.result.upserted, 2);
+test('a refresh Supabase reports as failed marks the run failed and exposes the result', async () => {
+  const result = { ok: false, error: 'not refreshed: the latest copy of shop.open_jobs did not succeed' };
+  const { mirror, logs } = setup({ api: stubMirrorApi({ refresh: () => result }) });
+  assert.equal((await mirror.runOnce()).ok, false);
+  assert.deepEqual(mirror.status().refreshJobs.result, result);
+  assert.equal(mirror.status().lastError, null);
+  assert.ok(logs.some((l) => /refresh_jobs FAILED/.test(l)));
+});
+
+// --- the HTTPS client ------------------------------------------------------------------
+
+function fakeFetch(answer) {
+  const requests = [];
+  const impl = async (url, init) => {
+    requests.push({ url, init, body: JSON.parse(init.body) });
+    const { status = 200, body = { ok: true, row_count: 0 }, throws } = typeof answer === 'function' ? answer(url, init) : (answer ?? {});
+    if (throws) throw throws;
+    return new Response(typeof body === 'string' ? body : JSON.stringify(body), { status });
+  };
+  return { impl, requests };
+}
+
+const TOKEN = 'a'.repeat(64);
+
+test('the client posts each call to its RPC with the anon key, the token, and a deadline', async () => {
+  const fetch = fakeFetch();
+  const api = createMirrorApi({ supabaseUrl: 'https://ref.supabase.co/', apiKey: 'sb_publishable_x', token: TOKEN, fetchImpl: fetch.impl });
+  await api.replace('projects', [{ name: 'ID', type: 'integer' }], [{ ID: 1 }]);
+  await api.recordFailure('locations', 'SQL Server: timeout');
+  await api.refresh();
+  assert.deepEqual(fetch.requests.map((r) => r.url), [
+    'https://ref.supabase.co/rest/v1/rpc/shop_mirror_replace',
+    'https://ref.supabase.co/rest/v1/rpc/shop_mirror_replace',
+    'https://ref.supabase.co/rest/v1/rpc/shop_mirror_refresh',
+  ]);
+  assert.deepEqual(fetch.requests.map((r) => r.body), [
+    { p_token: TOKEN, p_table: 'projects', p_columns: [{ name: 'ID', type: 'integer' }], p_rows: [{ ID: 1 }] },
+    { p_token: TOKEN, p_table: 'locations', p_error: 'SQL Server: timeout' },
+    { p_token: TOKEN },
+  ]);
+  const { init } = fetch.requests[0];
+  assert.equal(init.method, 'POST');
+  assert.equal(init.headers.apikey, 'sb_publishable_x');
+  assert.equal(init.headers.authorization, undefined);
+  assert.ok(init.signal instanceof AbortSignal);
+  assert.equal(init.redirect, 'error');
+  // A legacy anon key is a JWT, which also goes in Authorization.
+  const legacy = fakeFetch();
+  await createMirrorApi({ supabaseUrl: 'https://ref.supabase.co', apiKey: 'h.p.s', token: TOKEN, fetchImpl: legacy.impl }).refresh();
+  assert.equal(legacy.requests[0].init.headers.authorization, 'Bearer h.p.s');
+});
+
+test('the client names a refused token, other HTTP errors, unreachable hosts, timeouts, and non-JSON answers', async () => {
+  const make = (answer) => createMirrorApi({ supabaseUrl: 'https://ref.supabase.co', apiKey: 'k', token: TOKEN, fetchImpl: fakeFetch(answer).impl, timeoutMs: 5000 });
+  await assert.rejects(make({ status: 401, body: { code: '42501', message: 'shop mirror token refused' } }).refresh(),
+    /HTTP 401: shop mirror token refused.*SHOP_MIRROR_TOKEN/);
+  await assert.rejects(make({ status: 400, body: { message: 'shop_mirror_replace: x is not a mirror table name' } }).refresh(),
+    /HTTP 400: shop_mirror_replace: x is not a mirror table name/);
+  await assert.rejects(make({ status: 502, body: '<html>bad gateway</html>' }).refresh(), /HTTP 502: <html>bad gateway/);
+  await assert.rejects(make({ throws: Object.assign(new TypeError('fetch failed'), { cause: new Error('getaddrinfo ENOTFOUND ref.supabase.co') }) }).refresh(),
+    /could not reach Supabase \(getaddrinfo ENOTFOUND ref\.supabase\.co\)/);
+  await assert.rejects(make({ throws: new DOMException('The operation timed out.', 'TimeoutError') }).refresh(),
+    /could not reach Supabase \(no answer within 5 s\)/);
+  await assert.rejects(make({ status: 200, body: 'not json' }).refresh(), /HTTP 200 without a JSON result/);
 });

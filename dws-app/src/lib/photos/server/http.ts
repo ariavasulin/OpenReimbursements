@@ -12,6 +12,7 @@ const errors = {
   job_number_taken: [409, 'Another project already uses that number.'],
   job_in_trash: [409, 'A project with that number is in Trash. Restore it, or delete it forever first.'],
   job_number_reserved: [400, 'Numbers starting with P- are made by the app. Choose another project number.'],
+  job_office_managed: [409, 'This project comes from the office system, so its name and number change there. An office rename shows up here within 15 minutes.'],
   photo_name_invalid: [400, 'A photo name cannot contain / or \\, and must be 200 characters or fewer.'],
   new_folders_require_review: [409, 'New folders were found after this import was approved. Start a new import to review them. Photos already imported are kept.'],
   handoff_expired: [410, 'This handoff has expired.'],
@@ -109,7 +110,7 @@ export function throwPhotoDatabaseError(error: { code?: string; message?: string
   if (message === 'invalid_actor') throw new PhotoApiError('unauthenticated');
   // PostgREST refused the session's token (bad signature, expired, malformed): a sign-in problem.
   if (error.code === 'PGRST301' || error.code === 'PGRST302' || error.code === 'PGRST303') throw new PhotoApiError('unauthenticated');
-  for (const code of ['handoff_expired', 'new_folders_require_review', 'job_number_taken', 'job_in_trash', 'job_number_reserved', 'photo_name_invalid'] as const) {
+  for (const code of ['handoff_expired', 'new_folders_require_review', 'job_number_taken', 'job_in_trash', 'job_number_reserved', 'job_office_managed', 'photo_name_invalid'] as const) {
     if (message === code) throw new PhotoApiError(code);
   }
   if (error.code === '42501' || message === 'forbidden' || message === 'wrong_consumer' || message === 'wrong_script') {

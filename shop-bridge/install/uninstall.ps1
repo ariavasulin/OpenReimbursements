@@ -9,7 +9,8 @@
     powershell -ExecutionPolicy Bypass -File C:\dws-bridge\install\uninstall.ps1 -RemoveFiles
 
   Safe to re-run: missing pieces are skipped. The folder holds .env with secrets, so
-  -RemoveFiles deletes it too; rotate those secrets if the box is being retired.
+  -RemoveFiles deletes it too. If the box is being retired, rotate those secrets, and
+  revoke its mirror token in the Supabase SQL editor: delete from shop.mirror_token;
 #>
 [CmdletBinding()]
 param(

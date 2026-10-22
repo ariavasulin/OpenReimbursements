@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createFixtures } from '../fixtures';
 
@@ -46,6 +46,23 @@ describe('hand-made photo projects (photo-folders AC-2, AC-3, AC-5, AC-6)', () =
     expect(renamed.error).toBeNull();
     expect(renamed.data.job).toEqual({ ...job, name: 'After' });
     expect((await f.admin.rpc('photo_rename_job', { p_actor: f.employeeA.id, p_job_id: randomUUID(), p_name: 'x' })).error?.message).toBe('not_found');
+  });
+
+  it('refuses to rename or renumber an office job (20261022130000)', async () => {
+    const number = String(randomInt(900_000_000, 999_999_999));
+    const office = await f.sql.query(`insert into public.jobs (job_number, name, is_active, synced_at)
+      values ($1, 'Office name', true, now()) returning id`, [number]);
+    const id = office.rows[0].id as string;
+    try {
+      const rename = (p_name: string, p_job_number?: string) => f.admin.rpc('photo_rename_job',
+        { p_actor: f.employeeA.id, p_job_id: id, p_name, p_job_number: p_job_number ?? null });
+      expect((await rename('App name')).error?.message).toBe('job_office_managed');
+      expect((await rename('Office name', randomUUID().slice(0, 8))).error?.message).toBe('job_office_managed');
+      // Sending back what it already has changes nothing and is not refused.
+      expect((await rename(' Office  name ', number)).error).toBeNull();
+      expect((await f.sql.query('select name, job_number from public.jobs where id = $1', [id])).rows)
+        .toEqual([{ name: 'Office name', job_number: number }]);
+    } finally { await f.sql.query('delete from public.jobs where id = $1', [id]); }
   });
 
   it('refuses both with the write gate closed, an unknown actor, or a session role', async () => {

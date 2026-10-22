@@ -1,4 +1,4 @@
-// Test doubles for the mssql pool and pg client. Not shipped to the bridge box.
+// Test doubles for the mssql pool and the mirror's Supabase API. Not shipped to the bridge box.
 import { EventEmitter } from 'node:events';
 
 /**
@@ -80,48 +80,28 @@ export function stubPool(behavior) {
   };
 }
 
-const CREATE_RE = /^create table if not exists shop\."((?:[^"]|"")+)" \(/;
-const COLUMN_RE = /^ {2}"((?:[^"]|"")+)"/gm;
-const unquote = (s) => s.replace(/""/g, '"');
-
 /**
- * Records every pg query; `fail(text, values)` returning an Error makes that query reject.
- * `tables` maps shop table name -> column names already in Postgres; `create table if not
- * exists` adds to it and the information_schema.columns lookup reads from it.
+ * Stands in for createMirrorApi: records every call as { fn, table, columns, rows, error }.
+ * `respond(call)` returns the call's result (default { ok: true, row_count: rows.length },
+ * and { ok: false, error } for a recorded failure), or throws to act as a failed request.
  */
-export function stubPgClient({
-  fail = () => null,
-  onQuery = async () => {},
-  refreshResult = { upserted: 0 },
-  tables = {},
+export function stubMirrorApi({
+  respond = (call) => (call.error ? { ok: false, error: call.error } : { ok: true, row_count: call.rows.length }),
+  refresh = () => ({ ok: true, upserted: 0 }),
+  onCall = async () => {},
 } = {}) {
-  const client = {
-    tables,
-    queries: [],
-    connected: false,
-    ended: false,
-    async connect() { client.connected = true; },
-    async end() { client.ended = true; },
-    on() { return client; },
-    async query(text, values) {
-      client.queries.push({ text, values });
-      await onQuery(text, values);
-      const err = fail(text, values);
-      if (err) throw err;
-      if (/refresh_jobs/.test(text)) return { rows: [{ result: refreshResult }] };
-      const created = CREATE_RE.exec(text);
-      if (created) {
-        const table = unquote(created[1]);
-        tables[table] ??= [...text.matchAll(COLUMN_RE)].map((m) => unquote(m[1]));
-        return { rows: [], rowCount: 0 };
-      }
-      if (/information_schema\.columns/.test(text)) {
-        return { rows: (tables[values[0]] ?? []).map((column_name) => ({ column_name })), rowCount: 0 };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+  const calls = [];
+  const record = async (call) => {
+    calls.push(call);
+    await onCall(call);
+    return call.fn === 'refresh' ? refresh(call) : respond(call);
   };
-  return client;
+  return {
+    calls,
+    replace: (table, columns, rows) => record({ fn: 'replace', table, columns, rows }),
+    recordFailure: (table, error) => record({ fn: 'recordFailure', table, error }),
+    refresh: () => record({ fn: 'refresh' }),
+  };
 }
 
 export const mssqlError = (code, name = 'RequestError') =>

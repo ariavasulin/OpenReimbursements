@@ -86,7 +86,9 @@ async function call<T>(
   const c = config(deps.env);
   const fetchImpl = deps.fetchImpl ?? fetch;
   let res: Response;
+  let text: string;
   try {
+    // The deadline covers reading the body too, so a bridge that stalls mid-answer is a timeout.
     res = await fetchImpl(`${c.url}${path}`, {
       ...init,
       headers: headers(c),
@@ -94,6 +96,7 @@ async function call<T>(
       cache: 'no-store',
       redirect: 'manual',
     });
+    text = await res.text();
   } catch (error) {
     const name = error instanceof Error ? error.name : '';
     if (name === 'TimeoutError' || name === 'AbortError') {
@@ -102,7 +105,6 @@ async function call<T>(
     throw new ShopBridgeError('Shop bridge unreachable', 502, 'unreachable');
   }
 
-  const text = await res.text();
   let body: unknown = null;
   try {
     body = text ? JSON.parse(text) : null;

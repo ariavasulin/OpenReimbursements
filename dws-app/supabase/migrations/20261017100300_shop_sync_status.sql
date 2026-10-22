@@ -1,10 +1,10 @@
 -- public.shop_sync_status(): the newest shop.sync_runs row per table, for the admin
--- health route (supabaseAdmin.rpc('shop_sync_status')). It lives in public because
--- PostgREST exposes only public; the shop schema itself stays unexposed.
+-- health route and the admin page's stale-sync warning
+-- (supabaseAdmin.rpc('shop_sync_status')). It lives in public because PostgREST
+-- exposes only public; the shop schema itself stays unexposed.
 -- Returns a JSON array ordered by table name, [] before the first run:
---   [{ table, finished_at, row_count, ok, error, age_seconds }]
--- shop is left off the search_path: shop_mirror can create objects there, and this
--- function runs as its owner.
+--   [{ table, finished_at, row_count, ok, error, age_seconds, last_ok_at }]
+-- last_ok_at is the newest successful run for that table, null if none ever was.
 create or replace function public.shop_sync_status()
 returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce(jsonb_agg(jsonb_build_object(
@@ -13,7 +13,9 @@ returns jsonb language sql stable security definer set search_path = public, pg_
            'row_count', r.row_count,
            'ok', r.ok,
            'error', r.error,
-           'age_seconds', floor(extract(epoch from now() - r.finished_at))::integer
+           'age_seconds', floor(extract(epoch from now() - r.finished_at))::integer,
+           'last_ok_at', (select max(o.finished_at) from shop.sync_runs o
+                          where o.table_name = r.table_name and o.ok)
          ) order by r.table_name), '[]'::jsonb)
   from (select distinct on (table_name) table_name, finished_at, row_count, ok, error
         from shop.sync_runs

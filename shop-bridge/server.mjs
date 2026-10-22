@@ -3,15 +3,14 @@
 // It never runs SQL sent by a caller. cloudflared on the same box is its only
 // client. Run directly, it also starts the mirror loop.
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadQueries } from './config.mjs';
-import { closePool, getPool as defaultGetPool } from './db.mjs';
-import { createMirror, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
+import { buildConfig, closePool, getPool as defaultGetPool } from './db.mjs';
+import { createMirror, createMirrorApi, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
 import { QUERY_TIMEOUT_MS, runQuery } from './query.mjs';
-import { isIdentifier, plainValue } from './types.mjs';
+import { isIdentifier, plainRow } from './types.mjs';
 
 export const MAX_BODY_BYTES = 64 * 1024;
 export const DEFAULT_MAX_ROWS = 5000;
@@ -130,8 +129,6 @@ function parseQueryBody(text) {
   return { params, maxRows };
 }
 
-const plainRow = (row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, plainValue(value)]));
-
 /**
  * @param {object} deps
  * @param {() => Promise<object>} [deps.getPool]  mssql pool (stubbed in tests)
@@ -193,7 +190,6 @@ export function createHandler({
 
   async function query(req, name, info) {
     requireAuth(req);
-    // Checked only after auth, so the names cannot be probed without the token.
     // config.mjs already checked every name and statement when queries.json loaded.
     if (!Object.hasOwn(live, name)) {
       throw new HttpError(404, 'not_found', `No live query named "${name}".`);
@@ -253,6 +249,27 @@ export function wholeNumber(raw, fallback, min, max) {
   return Number.isInteger(n) && n >= min && n <= max ? n : null;
 }
 
+/** Why the mirror settings cannot be used, or null. Called when SHOP_MIRROR_SUPABASE_URL is set. */
+export function mirrorSettingsProblem(env) {
+  let url;
+  try {
+    url = new URL(env.SHOP_MIRROR_SUPABASE_URL.trim());
+  } catch {
+    return 'SHOP_MIRROR_SUPABASE_URL is not a URL (expected https://<project-ref>.supabase.co)';
+  }
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
+    return 'SHOP_MIRROR_SUPABASE_URL must start with https://';
+  }
+  if (!(env.SHOP_MIRROR_API_KEY ?? '').trim()) {
+    return 'SHOP_MIRROR_API_KEY is not set (the Supabase project\'s anon or publishable key)';
+  }
+  if (!tokenUsable(env.SHOP_MIRROR_TOKEN)) {
+    return `SHOP_MIRROR_TOKEN is missing or shorter than ${MIN_TOKEN_CHARS} characters`;
+  }
+  return null;
+}
+
 function main() {
   const env = process.env;
   const say = (line) => console.log(`${new Date().toISOString()} ${line}`);
@@ -286,33 +303,34 @@ function main() {
   const { queries } = loaded;
   say(`loaded ${queriesPath}: ${queries.mirror.length} mirror, ${Object.keys(queries.live).length} live`);
 
+  // The SQL Server settings are first used on the first query; check them now, so a
+  // wrong one stops the service instead of failing every run.
+  try {
+    buildConfig(env);
+  } catch (err) {
+    say(`${err.message}; not starting`);
+    process.exitCode = EXIT_CONFIG;
+    return;
+  }
+
   let mirror = null;
-  if (env.SHOP_MIRROR_DATABASE_URL) {
-    // The CA that signs the Supabase pooler's certificate (see pgClientConfig in mirror.mjs).
-    const caPath = env.SHOP_MIRROR_CA_FILE
-      ? path.resolve(env.SHOP_MIRROR_CA_FILE)
-      : fileURLToPath(new URL('./supabase-ca.crt', import.meta.url));
-    let ca = '';
-    try {
-      ca = readFileSync(caPath, 'utf8');
-    } catch {
-      // reported below
-    }
-    if (ca.trim() === '') {
-      say(`${caPath} is missing or empty: download supabase-ca.crt from Supabase > Database Settings > SSL Configuration and put it beside server.mjs; not starting`);
+  const supabaseUrl = (env.SHOP_MIRROR_SUPABASE_URL ?? '').trim();
+  if (supabaseUrl) {
+    const problem = mirrorSettingsProblem(env);
+    if (problem) {
+      say(`${problem}; not starting`);
       process.exitCode = EXIT_CONFIG;
       return;
     }
     mirror = createMirror({
       getPool: defaultGetPool,
-      pgConnectionString: env.SHOP_MIRROR_DATABASE_URL,
-      ca,
+      api: createMirrorApi({ supabaseUrl, apiKey: env.SHOP_MIRROR_API_KEY.trim(), token: env.SHOP_MIRROR_TOKEN }),
       mirror: queries.mirror,
       maxRows,
       intervalMinutes,
     });
   } else {
-    say('SHOP_MIRROR_DATABASE_URL is not set: the mirror is off');
+    say('SHOP_MIRROR_SUPABASE_URL is not set: the mirror is off');
   }
   if (!tokenUsable(env.SHOP_BRIDGE_TOKEN)) {
     say(`SHOP_BRIDGE_TOKEN is missing or shorter than ${MIN_TOKEN_CHARS} characters: /query/<name> answers 503`);
