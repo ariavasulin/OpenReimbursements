@@ -119,14 +119,40 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     expect(role.rows).toEqual([{ rolsuper: false, rolcreaterole: false, rolcreatedb: false, rolbypassrls: false, rolcanlogin: true }]);
   });
 
-  it('keeps the shop schema closed to anon and authenticated', async () => {
+  it('keeps the shop schema closed to anon and authenticated, and refresh_jobs to the bridge', async () => {
     for (const role of ['anon', 'authenticated']) {
       for (const table of Object.keys(landingTables)) {
         await expect(asRole(role, `select 1 from shop.${table} limit 1`)).rejects.toMatchObject({ code: '42501' });
       }
       await expect(asRole(role, 'select 1 from shop.sync_runs limit 1')).rejects.toMatchObject({ code: '42501' });
+    }
+    for (const role of ['anon', 'authenticated', 'service_role']) {
       await expect(asRole(role, 'select shop.refresh_jobs()')).rejects.toMatchObject({ code: '42501' });
     }
+    const definer = await f.sql.query(`select prosecdef from pg_proc where oid = 'shop.refresh_jobs()'::regprocedure`);
+    expect(definer.rows).toEqual([{ prosecdef: false }]);
+  });
+
+  it('lets shop_mirror execute no function in public, and leaves the app roles theirs', async () => {
+    // Postgres grants execute on new functions to PUBLIC; 20261017100000_shop_schema.sql
+    // moves that to the app roles by name. A function added in public later without
+    // `revoke execute ... from public` shows up here.
+    const executable = await f.sql.query(`select p.oid::regprocedure::text as signature from pg_proc p
+      where p.pronamespace = 'public'::regnamespace and has_function_privilege('shop_mirror', p.oid, 'EXECUTE')`);
+    expect(executable.rows).toEqual([]);
+    await expect(mirror.query('select public.trigger_set_timestamp()')).rejects.toMatchObject({ code: '42501' });
+    // The functions that reached every role only through PUBLIC before that migration
+    // (the receipts app's triggers): the three app roles still have them.
+    const kept = await f.sql.query(`select p.proname,
+        has_function_privilege('anon', p.oid, 'EXECUTE') as anon,
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated,
+        has_function_privilege('service_role', p.oid, 'EXECUTE') as service_role
+      from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = any($1) order by p.proname`,
+      [['handle_new_user', 'receipts_guard_status_change', 'trigger_set_timestamp']]);
+    expect(kept.rows).toEqual(['handle_new_user', 'receipts_guard_status_change', 'trigger_set_timestamp']
+      .map(proname => ({ proname, anon: true, authenticated: true, service_role: true })));
+    // A client helper the employee's session calls (20261014120000) is still callable.
+    expect((await f.employeeA.client.rpc('photo_sort_key', { p_name: 'a' })).error).toBeNull();
   });
 
   // One fresh block of office numbers per scenario, so repeated runs and other
@@ -208,22 +234,30 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     const before = await jobs([String(n(6))]);
     await mirror.query('begin');
     try {
-      // Force a failure inside the upsert, as shop_mirror: the same job number listed
-      // open twice makes one insert touch the same public.jobs row twice.
-      await mirror.query(`insert into shop.open_jobs ("JobNo", "JobStatus") values ($1, 'O')`, [n(1)]);
+      // Force a failure inside the function, as shop_mirror: an office column renamed
+      // without updating refresh_jobs().
+      await mirror.query('alter table shop.locations rename column "LocationCity" to "City"');
       const result = await refresh();
       expect(result).toMatchObject({ ok: false });
-      expect(result.error).toContain('cannot affect row a second time');
-      // The upsert's other rows were rolled back with it.
+      expect(result.error).toContain('LocationCity');
       expect((await mirror.query('select name from public.jobs where job_number = $1', [String(n(6))])).rows)
         .toEqual([{ name: 'Old office name' }]);
       const run = (await mirror.query(`select ok, error, row_count from shop.sync_runs
         where table_name = 'public.jobs' order by id desc limit 1`)).rows[0];
       expect(run).toMatchObject({ ok: false, row_count: null });
-      expect(run.error).toContain('cannot affect row a second time');
+      expect(run.error).toContain('LocationCity');
     } finally { await mirror.query('rollback'); }
     expect(await runCount()).toBe(runsBefore);
     expect(await jobs([String(n(6))])).toEqual(before);
+  });
+
+  it('counts a job number listed twice in the office data once', async () => {
+    const { n } = await seed();
+    await mirror.query('begin');
+    try {
+      await mirror.query(`insert into shop.open_jobs ("JobNo", "JobStatus") values ($1, 'O'), ($2, ' o ')`, [n(1), n(6)]);
+      expect(await refresh()).toMatchObject({ ok: true, upserted: 2, skipped_trashed: 1 });
+    } finally { await mirror.query('rollback'); }
   });
 
   it('records a failed refresh when a landing table does not exist yet', async () => {
@@ -243,28 +277,45 @@ describe('shop mirror schema, role, and jobs refresh', () => {
     expect(await runCount()).toBe(runsBefore);
   });
 
-  it('runs a landing-table swap with shop_mirror\'s rights, so it cannot read app tables', async () => {
-    // The attack refresh_jobs() would allow if it ran with its owner's rights: shop_mirror
-    // swaps a landing table for a view over its own function, which copies an app table
-    // into a table shop_mirror can read.
+  it('refuses a landing table that is not a plain table, so a swap cannot run code as the caller', async () => {
+    // refresh_jobs() runs as its caller (shop_mirror, which cannot read app tables), and
+    // it also refuses to read a landing table that can run shop_mirror's own code, for
+    // a more privileged caller. Each case swaps shop.locations; shop.steal() copies an
+    // app table into a table shop_mirror can read.
     await seed();
     expect(Number((await f.sql.query('select count(*) from public.user_profiles')).rows[0].count)).toBeGreaterThan(0);
-    await mirror.query('begin');
-    try {
-      await mirror.query('alter table shop.locations rename to locations_real');
-      await mirror.query('create table shop.loot (row_data text)');
-      await mirror.query(`create function shop.steal() returns setof shop.locations_real
-        language plpgsql security invoker as $f$
-        begin
-          insert into shop.loot select row_to_json(u)::text from public.user_profiles u;
-          return query select * from shop.locations_real;
-        end $f$`);
-      await mirror.query('create view shop.locations as select * from shop.steal()');
-      const result = await refresh();
-      expect(result).toMatchObject({ ok: false });
-      expect(result.error).toContain('permission denied for table user_profiles');
-      expect((await mirror.query('select count(*)::int as n from shop.loot')).rows).toEqual([{ n: 0 }]);
-    } finally { await mirror.query('rollback'); }
+    const steal = `create function shop.steal() returns boolean language plpgsql as $f$
+      begin insert into shop.loot select row_to_json(u)::text from public.user_profiles u; return true; end $f$`;
+    const swaps: Record<string, { statements: string[]; error: string }> = {
+      'a view': {
+        statements: ['alter table shop.locations rename to locations_real',
+          'create view shop.locations as select * from shop.locations_real'],
+        error: 'landing table shop.locations is not a plain table',
+      },
+      'a view over shop_mirror\'s function': {
+        statements: ['alter table shop.locations rename to locations_real', steal,
+          'create view shop.locations as select * from shop.locations_real where shop.steal()'],
+        error: 'landing table shop.locations is not a plain table',
+      },
+      'a policy that calls shop_mirror\'s function': {
+        statements: [steal, 'alter table shop.locations enable row level security',
+          'create policy steal on shop.locations using (shop.steal())'],
+        error: 'landing table shop.locations is not a plain table: it has row level security or a policy',
+      },
+      'a column of shop_mirror\'s own type': {
+        statements: ['create type shop.odd as (v text)', 'alter table shop.locations add column "Odd" shop.odd'],
+        error: 'landing table shop.locations is not a plain table: column Odd has a type that is not built in',
+      },
+    };
+    for (const [name, swap] of Object.entries(swaps)) {
+      await mirror.query('begin');
+      try {
+        await mirror.query('create table shop.loot (row_data text)');
+        for (const statement of swap.statements) await mirror.query(statement);
+        expect(await refresh(), name).toEqual({ ok: false, error: swap.error });
+        expect((await mirror.query('select count(*)::int as n from shop.loot')).rows, name).toEqual([{ n: 0 }]);
+      } finally { await mirror.query('rollback'); }
+    }
     const relkind = await f.sql.query(`select relkind from pg_class where oid = 'shop.locations'::regclass`);
     expect(relkind.rows).toEqual([{ relkind: 'r' }]);
   });

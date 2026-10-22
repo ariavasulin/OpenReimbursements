@@ -9,7 +9,9 @@
 -- It follows the rules of the one-off importer dws-app/scripts/import-jobs.mjs:
 --   * open office jobs = shop.projects rows whose number is on Sage's open list
 --     (shop.open_jobs, JobStatus 'O'), not Completed, not Archived;
---   * job_number is the office ProjectID; name is the trimmed project name;
+--   * job_number is the office ProjectID; name is the trimmed project name; a
+--     number listed more than once (a duplicate row in either office table) counts
+--     once, since one upsert cannot write the same row twice;
 --   * upsert on job_number, setting name, location, is_active = true, synced_at;
 --   * a number held by a project in Trash is left alone and counted as skipped,
 --     because writing is_active = true there would break jobs_deleted_not_active
@@ -21,13 +23,17 @@
 -- Each call writes one shop.sync_runs row under table_name 'public.jobs' and returns
 -- the same jsonb: { ok, upserted, skipped_trashed, dropped_from_open }.
 --
--- It runs with its caller's rights (security invoker), as shop_mirror when the bridge
--- calls it. shop_mirror owns the landing tables and can create objects in shop, so it
--- could swap a landing table for a view over its own function; a security definer
--- refresh would then run that function with the owner's rights and could copy app
--- tables out. Run as the caller, the function can do no more than shop_mirror itself:
--- read shop and read and upsert public.jobs (20261017100000_shop_schema.sql). For the
--- same reason shop is not on the search_path; every shop name is written in full.
+-- It runs with its caller's rights (security invoker), and only shop_mirror, the
+-- bridge, may call it. shop_mirror owns the landing tables and can create objects in
+-- shop, so it could swap a landing table for a view over its own function; a security
+-- definer refresh would then run that function with the owner's rights and could copy
+-- app tables out. Run as the caller, the function can do no more than shop_mirror
+-- itself: read shop and read and upsert public.jobs (20261017100000_shop_schema.sql).
+-- For the same reason shop is not on the search_path; every shop name is written in
+-- full. In case a more privileged role ever calls it, it first locks the three landing
+-- tables (so none can be swapped while it runs) and refuses to read one that is not a
+-- plain table: a view, row level security or a policy, or a column whose type is not
+-- built in can each run shop_mirror's own code as the caller.
 --
 -- A failure does not raise. The work is rolled back, an ok = false row with the
 -- error is recorded, and { ok: false, error } is returned. A raised error would roll
@@ -41,10 +47,32 @@ declare
   skipped integer;
   dropped text[];
   result jsonb;
+  landing text;
+  rel record;
 begin
   begin
+    foreach landing in array array['projects', 'locations', 'open_jobs'] loop
+      -- A missing table fails here, which is recorded as a failed run.
+      execute format('lock table shop.%I in access share mode', landing);
+      select c.relkind,
+             c.relrowsecurity or exists (select 1 from pg_policy pol where pol.polrelid = c.oid) as rls,
+             (select min(a.attname) from pg_attribute a join pg_type t on t.oid = a.atttypid
+               where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+                 and t.typnamespace <> 'pg_catalog'::regnamespace) as odd_column
+        into rel
+        from pg_class c where c.oid = format('shop.%I', landing)::regclass;
+      if rel.relkind <> 'r' then
+        raise exception 'landing table shop.% is not a plain table', landing;
+      elsif rel.rls then
+        raise exception 'landing table shop.% is not a plain table: it has row level security or a policy', landing;
+      elsif rel.odd_column is not null then
+        raise exception 'landing table shop.% is not a plain table: column % has a type that is not built in', landing, rel.odd_column;
+      end if;
+    end loop;
+
     with office_open as (
-      select p."ProjectID"::text as job_number,
+      select distinct on (p."ProjectID")
+             p."ProjectID"::text as job_number,
              -- A blank office name falls back to the number; jobs.name is not null.
              coalesce(nullif(btrim(p."Project"), ''), p."ProjectID"::text) as name,
              -- Location text: the location's LocationName, else "address, city".
@@ -61,6 +89,7 @@ begin
         and p."Completed" is null
         and not coalesce(p."Archived", false)
         and p."ProjectID"::text not like 'P-%'
+      order by p."ProjectID", p."Project", l."LocationID"
     ),
     in_trash as (
       select o.job_number from office_open o
@@ -99,5 +128,5 @@ begin
 end $$;
 
 alter function shop.refresh_jobs() owner to postgres;
-revoke execute on function shop.refresh_jobs() from public, anon, authenticated;
-grant execute on function shop.refresh_jobs() to shop_mirror, service_role;
+revoke execute on function shop.refresh_jobs() from public, anon, authenticated, service_role;
+grant execute on function shop.refresh_jobs() to shop_mirror;
