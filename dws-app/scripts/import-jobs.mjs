@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-// One-time import of active jobs from the office DB CSV dumps into public.jobs.
+// Manual fallback: import active jobs from office DB CSV dumps into public.jobs.
+// The normal path is the shop mirror (shop-bridge/README.md), which
+// refreshes public.jobs every 15 minutes via shop.refresh_jobs(). Use this only when the
+// bridge is down for a long time and a CSV export is all you have.
 // Joins tblProject (ProjectID, Project, Location, Archived) with
 // tblMas90JobMasterOpen (JobNo, JobStatus) on ProjectID = JobNo, keeps open
 // un-archived rows, and upserts by job_number with the service-role client.

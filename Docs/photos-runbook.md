@@ -105,8 +105,9 @@ also stops every upload and edit.
 to Trash, with no selection limit. Then trash the photos left with no project,
 up to 500 selected at a time, and delete each album. Finally press **Empty
 trash** and keep the tab open until the toast says the trash is emptied. After
-Empty trash, the next `scripts/import-jobs.mjs` run recreates any deleted
-project that is still an open office job, because its number is free again.
+Empty trash, the next office sync (`shop.refresh_jobs()`, every 15 minutes, or a
+manual `scripts/import-jobs.mjs` run) recreates any deleted project that is still
+an open office job, because its number is free again.
 
 A legacy duplicate in trash points to its canonical photo. Review the canonical
 target before restoring or moving it; restoration never creates another active
@@ -232,8 +233,10 @@ project wherever a job is chosen (upload, move, and the `/migrate` page) or with
   project will do. A number held by a project in Trash is refused (`job_in_trash`).
 - Rename can also change the number (`photo_rename_job` with `p_job_number`).
   A number another project holds is refused (`job_number_taken`); so is one held
-  by a project in Trash (`job_in_trash`). Renumbering an imported office job means
-  a later `scripts/import-jobs.mjs` run creates a new row under the old number.
+  by a project in Trash (`job_in_trash`). An office job (`synced_at` set) cannot
+  be renamed or renumbered at all (`job_office_managed`,
+  `20261022130000_photo_office_jobs.sql`): the office wins, so its name and number
+  change in the office database and reach the app with the next sync.
 - **Deleting a project** (`photo_delete_job`, photo admins only) sends it and every active photo in
   it to Trash together, with one shared timestamp. Only an active project can be
   deleted. It stays hidden from project lists and pickers (`is_active` false,
@@ -245,13 +248,15 @@ project wherever a job is chosen (upload, move, and the `/migrate` page) or with
   back with no project. After 30 days the project stays listed in Trash, can no
   longer be restored, and still holds its number until someone deletes it
   forever.
-- Hand-made rows have `synced_at` null and `created_by` set.
-  `scripts/import-jobs.mjs` upserts on `job_number`, so an import row with the
-  same real office number takes over a hand-made row in place, and may overwrite
-  a renamed imported job's name. `P-` projects are never touched by the import,
-  and neither is a number held by a project in Trash: the script skips and lists
-  those, since the `jobs_deleted_not_active` check would fail the whole upsert.
-  How the future office sync should reconcile is undecided.
+- Hand-made rows have `synced_at` null and `created_by` set. The office sync
+  is `shop.refresh_jobs()` (every 15 minutes), with `scripts/import-jobs.mjs` as
+  the manual fallback. Both upsert on `job_number`,
+  so an office job with the same real number takes over a hand-made row in
+  place, sets `synced_at`, and from then on owns its name and location. `P-`
+  projects are never touched, and neither is a number held by a project in
+  Trash: both skip and list those, since the `jobs_deleted_not_active` check
+  would fail the whole upsert. Neither ever deactivates a job; whether a job
+  that leaves the office's open list should be deactivated is still undecided.
 
 ## Importing folders (`/migrate`)
 

@@ -1,0 +1,6 @@
+node_modules/
+.env
+logs/
+# The repo root ignores *.json and .env*; these two belong in git.
+!queries.json
+!.env.example

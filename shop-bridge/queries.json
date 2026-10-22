@@ -1,0 +1,9 @@
+{
+  "mirror": [
+    { "into": "projects",  "sql": "SELECT ProjectID, Project, Completed, Archived, Location FROM dbo.tblProject" },
+    { "into": "locations", "sql": "SELECT LocationID, LocationName, LocationAddress, LocationCity FROM dbo.tblLocation" },
+    { "into": "open_jobs", "sql": "SELECT JobNo, JobStatus FROM dbo.tblMas90JobMasterOpen" },
+    { "into": "contacts",  "sql": "SELECT ContactID, CompanyID, EmplCode, FirstName, LastName, email, Mobile, OfficePhone, CurrentEmp, dbTermDate FROM dbo.tblContact" }
+  ],
+  "live": {}
+}

@@ -1,0 +1,17 @@
+{
+  "name": "dws-shop-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Read-only HTTP bridge to the shop's SQL Server, plus a periodic mirror into Supabase over its HTTPS API. Runs only the SQL in queries.json.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "mssql": "^12.7.9"
+  }
+}
