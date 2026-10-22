@@ -10,9 +10,12 @@
 -- set), so those tables are owned by shop_mirror. After that it only replaces
 -- their rows; it never drops or alters them.
 --
--- The bridge box connects as its own login role, shop_mirror, which can create and
--- write tables only in this schema and call shop.refresh_jobs(). It gets no grants on
--- public tables and is a member of no other role.
+-- The bridge box connects as its own login role, shop_mirror. It can create, fill,
+-- and read tables in this schema, call shop.refresh_jobs(), and read and upsert
+-- public.jobs (select, insert, update; no delete), and nothing else: no other public
+-- table, nothing in auth, and membership in no other role. refresh_jobs() runs with
+-- its caller's rights, so the public.jobs grant and policy below are what it uses
+-- when the bridge calls it.
 --
 -- No password is set here. Supabase's pooler only lets a role log in once it has
 -- one, so the operator sets it out of band, once, after applying this file:
@@ -38,16 +41,24 @@ alter default privileges in schema shop grant all on tables to service_role;
 alter default privileges in schema shop revoke execute on functions from public;
 
 -- The tables the bridge creates are owned by shop_mirror, so the lines above do not
--- reach them. These do: the apps read them with the service role, and
--- shop.refresh_jobs() runs as postgres (security definer), which on Supabase is not a
--- superuser and needs its own grant. Only a member of shop_mirror may set its default
--- privileges, so postgres (which applies migrations) joins it for these two
--- statements and leaves. Name the role: `grant ... to current_user` crashes the
--- Supabase Postgres 15 backend (signal 11, seen on the local image).
+-- reach them. This does: the apps read them with the service role. Only a member of
+-- shop_mirror may set its default privileges, so postgres (which applies migrations)
+-- joins it for this statement and leaves. Name the role: `grant ... to current_user`
+-- crashes the Supabase Postgres 15 backend (signal 11, seen on the local image).
+-- postgres gets no such grant: nothing that runs as postgres reads these tables.
 grant shop_mirror to postgres;
 alter default privileges for role shop_mirror in schema shop grant all on tables to service_role;
-alter default privileges for role shop_mirror in schema shop grant all on tables to postgres;
 revoke shop_mirror from postgres;
+
+-- What shop.refresh_jobs() needs on public.jobs when the bridge calls it as
+-- shop_mirror: read, insert, and update (the upsert), never delete. public.jobs has
+-- row level security and its only other policy is for authenticated, so shop_mirror
+-- gets its own. The grant, not the policy, is what keeps out delete. The table's
+-- defaults (gen_random_uuid(), now()) use no sequence.
+grant select, insert, update on table public.jobs to shop_mirror;
+drop policy if exists jobs_shop_mirror on public.jobs;
+create policy jobs_shop_mirror on public.jobs
+  for all to shop_mirror using (true) with check (true);
 
 -- One row per mirror entry per run, under table_name = the entry's `into` name
 -- ('projects', 'contacts', ...), plus one per shop.refresh_jobs() call under

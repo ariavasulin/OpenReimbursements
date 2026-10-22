@@ -3,8 +3,10 @@
 -- PostgREST exposes only public; the shop schema itself stays unexposed.
 -- Returns a JSON array ordered by table name, [] before the first run:
 --   [{ table, finished_at, row_count, ok, error, age_seconds }]
+-- shop is left off the search_path: shop_mirror can create objects there, and this
+-- function runs as its owner.
 create or replace function public.shop_sync_status()
-returns jsonb language sql stable security definer set search_path = shop, public, pg_temp as $$
+returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce(jsonb_agg(jsonb_build_object(
            'table', r.table_name,
            'finished_at', r.finished_at,

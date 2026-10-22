@@ -21,12 +21,20 @@
 -- Each call writes one shop.sync_runs row under table_name 'public.jobs' and returns
 -- the same jsonb: { ok, upserted, skipped_trashed, dropped_from_open }.
 --
+-- It runs with its caller's rights (security invoker), as shop_mirror when the bridge
+-- calls it. shop_mirror owns the landing tables and can create objects in shop, so it
+-- could swap a landing table for a view over its own function; a security definer
+-- refresh would then run that function with the owner's rights and could copy app
+-- tables out. Run as the caller, the function can do no more than shop_mirror itself:
+-- read shop and read and upsert public.jobs (20261017100000_shop_schema.sql). For the
+-- same reason shop is not on the search_path; every shop name is written in full.
+--
 -- A failure does not raise. The work is rolled back, an ok = false row with the
 -- error is recorded, and { ok: false, error } is returned. A raised error would roll
 -- back the failure row with everything else, and the admin's status view reads
 -- sync_runs, so the caller must check ok.
 create or replace function shop.refresh_jobs()
-returns jsonb language plpgsql security definer set search_path = public, shop, pg_temp as $$
+returns jsonb language plpgsql security invoker set search_path = public, pg_temp as $$
 declare
   started timestamptz := clock_timestamp();
   upserted integer;
