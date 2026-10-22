@@ -22,12 +22,12 @@
     7. Asks for each setting and writes C:\dws-bridge\.env. Secrets are typed hidden and
        never printed. On a re-run, pressing Enter keeps the current value, typing - clears
        an optional setting, and settings added by hand (SHOP_MIRROR_MAX_ROWS,
-       SHOP_QUERIES_FILE) are kept. With the mirror on, it prints the one SQL statement that
-       stores the mirror token's hash in Supabase.
+       SHOP_QUERIES_FILE) are kept.
     8. Sets the rest of the service: node --env-file=.env server.mjs, starts at boot,
        restarts on a crash but not on exit code 78 (a configuration error the log names),
        logs to C:\dws-bridge\logs\ with rotation.
-    9. Starts the service and prints http://127.0.0.1:<port>/health.
+    9. Starts the service and prints its /health response, then, with the mirror on, the one
+       SQL statement that stores the mirror token's hash in Supabase.
 
   Safe to re-run: it updates the files and settings and restarts the service.
 
@@ -264,7 +264,7 @@ $values = [ordered]@{}
 foreach ($s in $settings) {
   $name = $s.Name
   $have = $current[$name]
-  # Kept as they are below, with the settings this script does not ask about.
+  # A skipped mirror setting keeps its current value: the loop after this one copies back every setting not asked here.
   if ($s.MirrorOnly -and [string]::IsNullOrEmpty($values['SHOP_MIRROR_SUPABASE_URL'])) { continue }
   if ($s.Secret) {
     $hint = if ($have) { 'set; Enter keeps it' } elseif ($s.Generate) { 'Enter generates one' } else { 'required' }

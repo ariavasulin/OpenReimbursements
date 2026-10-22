@@ -19,6 +19,7 @@ import { runQuery } from './query.mjs';
 import { landingColumns, mirrorTypeProblem, orderedColumns, plainRow } from './types.mjs';
 
 export const DEFAULT_MIRROR_MAX_ROWS = 100000;
+export const DEFAULT_MIRROR_INTERVAL_MINUTES = 15;
 // One API call, body included. The largest shipped table (contacts) is about 1 MB of JSON.
 const API_TIMEOUT_MS = 60000;
 const ERROR_MAX_CHARS = 500;
@@ -88,7 +89,7 @@ export function createMirrorApi({ supabaseUrl, apiKey, token, fetchImpl = fetch,
  * @param {ReturnType<typeof createMirrorApi>} opts.api
  * @param {{ into: string, sql: string }[]} opts.mirror  the `mirror` entries from queries.json
  * @param {number} [opts.maxRows=100000]  SHOP_MIRROR_MAX_ROWS: an entry returning more rows fails unwritten
- * @param {number} [opts.intervalMinutes=15]
+ * @param {number} [opts.intervalMinutes=DEFAULT_MIRROR_INTERVAL_MINUTES]
  * @param {(line: string) => void} [opts.log]
  */
 export function createMirror({
@@ -96,7 +97,7 @@ export function createMirror({
   api,
   mirror: entries,
   maxRows = DEFAULT_MIRROR_MAX_ROWS,
-  intervalMinutes = 15,
+  intervalMinutes = DEFAULT_MIRROR_INTERVAL_MINUTES,
   log = (line) => console.log(line),
 }) {
   const say = (msg) => log(`${new Date().toISOString()} mirror ${msg}`);

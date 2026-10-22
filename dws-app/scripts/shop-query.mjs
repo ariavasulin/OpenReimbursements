@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Run one of the shop bridge's named queries from your laptop (through the Cloudflare
 // Tunnel). The bridge accepts no SQL: it runs only the queries named in its own config,
-// listed by --health under queries.live (and queries.mirror for the mirrored ones).
+// listed by --health under queries.live.
 //
 // Env (same four as Vercel; put them in .env.local):
 //   SHOP_BRIDGE_URL, SHOP_BRIDGE_TOKEN, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET

@@ -35,8 +35,8 @@ export type ShopHealth = {
 
 /**
  * Codes come from the bridge's error envelope ({ error: { code, message } }), e.g.
- * not_found (404, no query by that name) or bad_request (400), or from this client:
- * not_configured, timeout, unreachable, edge_blocked, bad_response, http_<status>.
+ * not_found (404, no query by that name), or from this client: bad_request, not_configured,
+ * timeout, unreachable, edge_blocked, bad_response, http_<status>.
  */
 export class ShopBridgeError extends Error {
   constructor(message: string, readonly status: number, readonly code: string) {
@@ -46,8 +46,7 @@ export class ShopBridgeError extends Error {
 }
 
 type Config = { url: string; token: string; accessId?: string; accessSecret?: string };
-type FetchLike = typeof fetch;
-type Deps = { fetchImpl?: FetchLike; env?: NodeJS.ProcessEnv };
+type Deps = { fetchImpl?: typeof fetch; env?: NodeJS.ProcessEnv };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const HEALTH_TIMEOUT_MS = 10_000;

@@ -180,7 +180,7 @@ flowchart LR
 | 11. The mirror is pushed from the bridge box every 15 minutes, in the same service as the bridge | Vercel Hobby crons are daily; one service is one thing to install and watch | Pull from a Vercel cron if the plan becomes Pro and the box is unwanted |
 | 12. Each mirrored table is replaced whole, inside one Postgres transaction (since 25: one `shop_mirror_replace` call per table, not a direct `pg` connection) | No reliable modified-at columns in the source; tables are small; a transaction means readers never see a half-copied table | Incremental sync for a large table if one is ever added |
 | 13. ~~The box holds a dedicated Postgres role `shop_mirror` with rights only on the `shop` schema and `execute` on `shop.refresh_jobs()`~~ Superseded 2026-10-22 by 25 | Least privilege; the box never holds the service-role key | — |
-| 14. ~~Mirror table DDL is generated into a migration file~~ Superseded 2026-10-22 by 18: the service creates each landing table (`shop.<into>`, all columns nullable, no PK) from the statement's result set on first run, and stops that entry with a clear error if the shape later differs; it never drops or alters | The admin authors the statements, so their shape is not known when migrations are written | Return to committed DDL if the admin wants the landing shape reviewed in the repo |
+| 14. ~~Mirror table DDL is generated into a migration file~~ Superseded 2026-10-22 by 18: each landing table (`shop.<into>`, all columns nullable, no PK) is created from the statement's result set on first run (since 25 by `shop_mirror_replace`); a later shape change stops that entry with a clear error, and nothing drops or alters the table | The admin authors the statements, so their shape is not known when migrations are written | Return to committed DDL if the admin wants the landing shape reviewed in the repo |
 | 15. `public.jobs` refresh runs in SQL (`shop.refresh_jobs()`) after each mirror run, follows `import-jobs.mjs`'s rules (the differences are listed in its migration's header), and never deactivates | Pure SQL is testable in `test:db`; deactivation hides photos and the runbook calls it undecided | Decide deactivation after a few weeks of "dropped from open" logs |
 | 16. A new runtime is being added (the hosted-MCP plan asks before this) | Ari asked for it explicitly in the ticket | — |
 | 17. Least privilege by a statement file: `queries.json` on the box is the complete list of SQL the service can run; the admin writes or approves every line; the shipped statements are suggestions with the needed columns named | Ari 2026-10-22, after meeting the admin: limit the bridge to what the receipts and photos apps need now and build trust; "she can write the queries" | Add statements only by agreement with the admin |
@@ -344,8 +344,8 @@ The service runs locally against containers with every guard and the mirror prov
 Establishes the `shop` schema, the mirror's two token-checked functions, and the jobs refresh.
 
 ### Steps
-1. Migration `<ts>_shop_schema.sql`: schema, grants, `sync_runs`, and (since decision 25)
-   `shop.mirror_token` instead of a login role.
+1. Migration `<ts>_shop_schema.sql`: schema, grants, `sync_runs`, and
+   `shop.mirror_token`.
 2. Migration `<ts>_shop_refresh_jobs.sql`: `shop.refresh_jobs()` per § Contract surface.
    Decide the location text column by comparing five current `jobs.location` values with
    `tblLocation` fields (read-only query on production, Ari confirms first).
@@ -407,8 +407,7 @@ Establishes the developer experience in the repo and proves it from production.
 3. `GET /api/shop/health` behind `requireAdmin()`: bridge health plus `public.shop_sync_status()`;
    `GET /api/shop/mirror-status` feeds the admin receipts page's stale-sync warning.
 4. Vercel env: the four variables, production and preview; `Docs/Configuration.md` updated.
-5. Unit tests with mocked `fetch`. (No route test was written for the health route; it
-   is two calls behind `requireAdmin()`.)
+5. Unit tests with mocked `fetch`.
 6. Mark `dws-app/scripts/import-jobs.mjs` as the manual fallback in its header comment and
    in `Docs/photos-runbook.md` § hand-made projects.
 
@@ -435,8 +434,7 @@ until the mirror has run. Order on the day:
 
 1. Snapshot `select job_number, name, location from public.jobs where synced_at is not
    null` (the first refresh rewrites every open office job's name and location;
-   `import-jobs.mjs` stored the `tblLocation` id in `jobs.location`, so production values
-   are probably bare numbers until then, unchecked against production).
+   `import-jobs.mjs` may have stored bare `tblLocation` ids).
 2. Apply the migrations.
 3. Install the box and store the token's hash.
 4. Confirm the first run.

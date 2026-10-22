@@ -199,7 +199,8 @@ describe('shop mirror API, tables, and jobs refresh', () => {
     const base = randomInt(10_000, 99_999) * 100;
     const n = (k: number) => base + k;
     const handMade = `P-${base}`;
-    created.push(...[1, 2, 3, 4, 5, 6, 7].map(k => String(n(k))), handMade);
+    const numbers = [1, 2, 3, 4, 5, 6, 7].map(k => String(n(k)));
+    created.push(...numbers, handMade);
     expect((await replace('locations', [
       { LocationID: 1, LocationName: ' Harbor Tower ', LocationAddress: '1 Main St', LocationCity: 'Oakland' },
       { LocationID: 2, LocationName: null, LocationAddress: ' 2 Side St ', LocationCity: 'Berkeley' },
@@ -218,7 +219,7 @@ describe('shop mirror API, tables, and jobs refresh', () => {
       ($2, 'Old office name', '17', true, now() - interval '1 day', null),
       ($3, 'Left the open list', null, true, now() - interval '1 day', null),
       ($4, 'Hand-made', 'Somewhere', true, null, null)`, [String(n(5)), String(n(6)), String(n(7)), handMade]);
-    return { n, handMade };
+    return { n, handMade, numbers };
   }
   const jobs = async (numbers: string[]) => (await f.sql.query(
     `select job_number, name, location, is_active, synced_at is not null as synced, deleted_at is not null as trashed
@@ -226,8 +227,7 @@ describe('shop mirror API, tables, and jobs refresh', () => {
   const runCount = async () => Number((await f.sql.query(`select count(*) from shop.sync_runs where table_name = 'public.jobs'`)).rows[0].count);
 
   it('refreshes open office jobs and leaves Trash, P- rows, and closed jobs alone', async () => {
-    const { n, handMade } = await seed();
-    const all = [1, 2, 3, 4, 5, 6, 7].map(k => String(n(k)));
+    const { n, handMade, numbers: all } = await seed();
     const before = await jobs([String(n(5)), handMade]);
     const runsBefore = await runCount();
 
@@ -252,8 +252,8 @@ describe('shop mirror API, tables, and jobs refresh', () => {
   });
 
   it('gives the same state when run twice, with a run row each time', async () => {
-    const { n, handMade } = await seed();
-    const all = [...[1, 2, 3, 4, 5, 6, 7].map(k => String(n(k))), handMade];
+    const { handMade, numbers } = await seed();
+    const all = [...numbers, handMade];
     const runsBefore = await runCount();
     const first = await refresh();
     const afterFirst = await jobs(all);

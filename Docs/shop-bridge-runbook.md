@@ -9,4 +9,4 @@ The app-side pieces are `dws-app/src/lib/shop/query.ts` (server code),
 the admin receipts page's stale-sync warning (`/api/shop/mirror-status`). The bridge
 writes into Supabase only through the two functions in
 `dws-app/supabase/migrations/20261017100400_shop_mirror_api.sql`.
-The four environment variables they use are listed in [Configuration](Configuration.md).
+The app's four environment variables are listed in [Configuration](Configuration.md).

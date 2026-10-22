@@ -85,10 +85,7 @@ export function validateQueries(obj) {
   return {
     ok: true,
     errors: [],
-    queries: {
-      mirror: obj.mirror.map(({ into, sql }) => ({ into, sql })),
-      live: { ...obj.live },
-    },
+    queries: { mirror: obj.mirror, live: obj.live },
   };
 }
 

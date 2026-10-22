@@ -16,8 +16,8 @@
 --     (shop.open_jobs, JobStatus 'O' in any case or spacing), not Completed, not Archived;
 --   * a number listed more than once (a duplicate row in either office table) counts
 --     once, since one upsert cannot write the same row twice;
---   * a row with synced_at set is an office job, and the photos app refuses to rename
---     or renumber it (20261022130000_photo_office_jobs.sql);
+--   * every row it writes gets synced_at, which marks an office job; the photos app
+--     refuses to rename or renumber one (20261022130000_photo_office_jobs.sql);
 --   * a number held by a project in Trash is left alone and counted as skipped,
 --     because writing is_active = true there would break jobs_deleted_not_active
 --     (purged rows already had their number replaced, so deleted_at covers both);

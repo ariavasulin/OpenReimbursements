@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadQueries } from './config.mjs';
 import { buildConfig, closePool, getPool as defaultGetPool } from './db.mjs';
-import { createMirror, createMirrorApi, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
+import { createMirror, createMirrorApi, DEFAULT_MIRROR_INTERVAL_MINUTES, DEFAULT_MIRROR_MAX_ROWS } from './mirror.mjs';
 import { QUERY_TIMEOUT_MS, runQuery, timeoutMessage } from './query.mjs';
 import { isIdentifier, isPlainObject, plainRow } from './types.mjs';
 
@@ -85,7 +85,7 @@ async function readBody(req) {
     }
     chunks.push(chunk);
   }
-  if (tooLarge) throw new HttpError(413, 'payload_too_large', 'The request body is over 64 KiB.');
+  if (tooLarge) throw new HttpError(413, 'payload_too_large', `The request body is over ${MAX_BODY_BYTES / 1024} KiB.`);
   return Buffer.concat(chunks).toString('utf8');
 }
 
@@ -275,7 +275,7 @@ function main() {
   const say = (line) => console.log(`${new Date().toISOString()} ${line}`);
 
   const port = wholeNumber(env.SHOP_BRIDGE_PORT, 8787, 1, 65535);
-  const intervalMinutes = wholeNumber(env.SHOP_MIRROR_INTERVAL_MINUTES, 15, 1, 10080);
+  const intervalMinutes = wholeNumber(env.SHOP_MIRROR_INTERVAL_MINUTES, DEFAULT_MIRROR_INTERVAL_MINUTES, 1, 10080);
   const maxRows = wholeNumber(env.SHOP_MIRROR_MAX_ROWS, DEFAULT_MIRROR_MAX_ROWS, 1, Number.MAX_SAFE_INTEGER);
   for (const [name, value, rule] of [
     ['SHOP_BRIDGE_PORT', port, 'a port number'],

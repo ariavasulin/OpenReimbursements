@@ -196,7 +196,7 @@ done
 
 Save `https://qebbmojnqzwwdpkhuyyd.supabase.co` as `SHOP_MIRROR_SUPABASE_URL`, and the project's anon (public) key from Supabase → Project Settings → API Keys as `SHOP_MIRROR_API_KEY`. The mirror token is generated at the shop (7.2).
 
-**The SQL Server login.** Create the login from section 4 and save `SHOP_DB_USER`, `SHOP_DB_PASSWORD`, and `SHOP_DB_DOMAIN` for a Windows account.
+**The SQL Server login.** Create the login from section 4 and save `SHOP_DB_USER` and `SHOP_DB_PASSWORD`, plus `SHOP_DB_DOMAIN` for a Windows login.
 
 **Checklist to bring:**
 
@@ -267,9 +267,9 @@ In Vercel project `dws-receipts` → Settings → Environment Variables, add the
 2. Edit `C:\dws-bridge\queries.json` and the repo copy, then run `Restart-Service dws-bridge`. If the filter rejects a statement, the service stops until the file is fixed; the log names the entry.
 3. Then, by kind of change:
    - **New `mirror` entry**: creates `shop.<into>` on the next run.
-   - **Changed columns**: stop that entry until `drop table shop.<into>` is run in Supabase. Update `shop.refresh_jobs()` if it reads the changed table.
+   - **Changed columns**: that table's copy fails until `drop table shop.<into>` is run in Supabase; update `shop.refresh_jobs()` if it reads the table.
    - **Removed entry**: run `delete from shop.sync_runs where table_name = '<into>'`, or the admin page keeps warning that its copy is stale.
-4. A `live` entry is callable as `POST /query/<name>` after restart.
+   - **New `live` entry**: callable as `POST /query/<name>` after the restart.
 
 ### Rotating a secret
 
